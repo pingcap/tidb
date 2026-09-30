@@ -132,7 +132,7 @@ impl Session {
              '0000-00-00 00:00:00', '', '', 'builtin')",
             lock = BUILTIN_PSEUDO_SQL_FOR_BIND_LOCK
         );
-        self.with_catalog_mut(|catalog| {
+        self.with_staged_catalog(|catalog| {
             tidb_executor::run_insert_in(&insert, catalog, "mysql", &insert_ctx).map(|_| ())
         })?;
 
@@ -160,7 +160,7 @@ impl Session {
              \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \
              \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"Y\", \"N\", \"Y\", \"Y\", \"Y\", \"Y\", \
              \"Y\", null, \"\")";
-        self.with_catalog_mut(|catalog| {
+        self.with_staged_catalog(|catalog| {
             tidb_executor::run_insert_in(root, catalog, "mysql", &insert_ctx).map(|_| ())
         })
     }

@@ -114,7 +114,7 @@ impl Session {
                     }
                 })?,
                 Stmt::Dml(dml) => match &**dml {
-                    tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_mut(|catalog| {
+                    tidb_ast::DmlStmt::Insert(insert) => self.with_staged_catalog(|catalog| {
                         tidb_executor::explain_analyze_insert_stmt(
                             insert,
                             catalog,
@@ -123,7 +123,7 @@ impl Session {
                             format,
                         )
                     })?,
-                    tidb_ast::DmlStmt::Update(update) => self.with_catalog_mut(|catalog| {
+                    tidb_ast::DmlStmt::Update(update) => self.with_staged_catalog(|catalog| {
                         tidb_executor::explain_analyze_update_stmt(
                             update,
                             catalog,
@@ -132,7 +132,7 @@ impl Session {
                             format,
                         )
                     })?,
-                    tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_mut(|catalog| {
+                    tidb_ast::DmlStmt::Delete(delete) => self.with_staged_catalog(|catalog| {
                         tidb_executor::explain_analyze_delete_stmt(
                             delete,
                             catalog,

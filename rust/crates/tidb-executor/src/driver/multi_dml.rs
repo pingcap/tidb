@@ -49,7 +49,8 @@
 //!   `UPDATE z1 AS p JOIN z1 AS q ON p.id = q.id SET p.v = p.v + 1,
 //!   q.v = q.v + 10` reports 4 for a two-row table and stores `q`'s value:
 //!   the update-once key is the target POSITION, so each alias writes the
-//!   row once and the later write wins.
+//!   row once. Their assigned columns merge by base-table/row identity;
+//!   a later assignment to the same column wins.
 //! * **DELETE dedups by physical TABLE, not by position.** Go's `tblRowMap`
 //!   is keyed by `TblID`, so `DELETE t1, t1 FROM ...` removes each row once
 //!   and reports 1. A target row reachable through several join paths is
@@ -101,11 +102,7 @@ use crate::kv_table::TableHandle;
 /// stored table, and the row's position for a matrix-backed one (which has
 /// no handles; the position is stable because every write of one statement
 /// is applied to a snapshot taken before the first of them).
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum RowId {
-    Kv(TableHandle),
-    Mem(usize),
-}
+use super::dml::update_record::{UpdateRecords, UpdateRowId as RowId};
 
 /// Where a `FROM` source's rows live, and therefore whether a write may name
 /// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
@@ -886,29 +883,67 @@ pub(crate) fn run_multi_update(
 
     account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
 
+    // Go keeps updatedRowKeys per target position, but mergedRowData per
+    // base table and handle. Neither map can stand in for the other.
+    let targets: Vec<_> = source
+        .tables
+        .iter()
+        .enumerate()
+        .map(|(slot, table)| {
+            if !assignments.iter().any(|assignment| assignment.slot == slot) {
+                return None;
+            }
+            match &table.origin {
+                SourceOrigin::Base { database, name } => {
+                    Some((database.to_lowercase(), name.to_lowercase()))
+                }
+                SourceOrigin::Derived => None,
+            }
+        })
+        .collect();
+    let multiple: Vec<_> = targets
+        .iter()
+        .map(|target| {
+            target.as_ref().is_some_and(|target| {
+                targets
+                    .iter()
+                    .flatten()
+                    .filter(|other| *other == target)
+                    .count()
+                    > 1
+            })
+        })
+        .collect();
+    let mut merged: BTreeMap<((String, String), RowId), Vec<Datum>> = BTreeMap::new();
+    let accountant = ctx
+        .statement_memory()
+        .write_accountant(crate::mem_quota::label::UPDATE);
+    let mut records = UpdateRecords::default();
     let mut once: UpdateOnce = BTreeMap::new();
+    let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
     for (ids, values) in &rows {
         let chunk = row_chunk(values, &field_types)?;
+        let mut prepared = Vec::with_capacity(source.tables.len());
+        // Compose every target from the same input row before merging aliases.
         for (slot, table) in source.tables.iter().enumerate() {
-            // Nothing assigned to this table, or an outer join NULL-padded
-            // it: Go's `tableUpdatable` is false either way.
-            let Some(id) = &ids[slot] else { continue };
-            if !assignments.iter().any(|a| a.slot == slot) {
+            let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
+                prepared.push(None);
                 continue;
-            }
+            };
             if once.get(&(slot, id.clone())) == Some(&true) {
+                prepared.push(None);
                 continue;
             }
-            let old = &values[table.offset..table.end()];
-            let mut new_row = old.to_vec();
+            let mut old = values[table.offset..table.end()].to_vec();
+            let mut new = old.clone();
             for assignment in assignments.iter().filter(|a| a.slot == slot) {
                 let value = assignment
                     .value
                     .eval(ctx, chunk.get_row(0))
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                new_row[assignment.column] = cast_value_for_update_assignment(
+                new[assignment.column] = cast_value_for_update_assignment(
                     value,
                     &table.columns[assignment.column].1,
                     &table.columns[assignment.column].0,
@@ -916,23 +951,85 @@ pub(crate) fn run_multi_update(
                     ctx,
                 )?;
             }
-            let changed = on_update_now[slot].apply(old, &mut new_row, ctx, chunk.get_row(0))?;
-            if changed {
-                // Go `updateRecord` step 5 follows both the changed comparison
-                // and the implicit clock assignment.
-                let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-                for (value, (name, field_type)) in new_row.iter_mut().zip(table.columns.iter()) {
-                    crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
+            if multiple[slot] {
+                let key = (
+                    targets[slot].clone().expect("an assigned base table"),
+                    id.clone(),
+                );
+                if let Some(previous) = merged.get_mut(&key) {
+                    for (column, meta) in table.default_meta.iter().enumerate() {
+                        if meta.generated {
+                            continue;
+                        }
+                        old[column] = previous[column].clone();
+                        if assignments
+                            .iter()
+                            .any(|a| a.slot == slot && a.column == column)
+                        {
+                            previous[column] = new[column].clone();
+                        } else {
+                            new[column] = previous[column].clone();
+                        }
+                    }
+                } else {
+                    merged.insert(key, new.clone());
                 }
-                write_row(catalog, table, id, &new_row, ctx)?;
-                changed_rows += 1;
+                accountant.account_row(&new).map_err(DriverError::from)?;
             }
-            touched_rows += 1;
-            once.insert((slot, id.clone()), changed);
+            prepared.push(Some((old, new)));
+        }
+        for (slot, prepared) in prepared.iter_mut().enumerate() {
+            let Some((old, new)) = prepared else { continue };
+            let table = &source.tables[slot];
+            let id = ids[slot].as_ref().expect("prepared target has an identity");
+            let (database, name) = targets[slot]
+                .as_ref()
+                .expect("prepared target is a base table");
+            let merge_key = ((database.clone(), name.clone()), id.clone());
+            if multiple[slot] {
+                let previous = &merged[&merge_key];
+                for (column, meta) in table.default_meta.iter().enumerate() {
+                    if meta.generated {
+                        old[column] = previous[column].clone();
+                        new[column] = previous[column].clone();
+                    }
+                }
+            }
+            if !once.contains_key(&(slot, id.clone())) {
+                matched_rows += 1;
+            }
+            on_update_now[slot].apply(old, new, ctx, chunk.get_row(0))?;
+            let outcome = records.write(
+                catalog,
+                database,
+                name,
+                id,
+                old,
+                new,
+                None,
+                update.ignore,
+                ctx,
+            )?;
+            if multiple[slot] {
+                let previous = merged
+                    .get_mut(&merge_key)
+                    .expect("non-generated merge ran first");
+                for (column, meta) in table.default_meta.iter().enumerate() {
+                    if meta.generated {
+                        previous[column] = new[column].clone();
+                    }
+                }
+            }
+            changed_rows += u64::from(outcome.changed());
+            touched_rows += u64::from(outcome.touched());
+            if !outcome.ignored() {
+                once.insert((slot, id.clone()), outcome.changed());
+            }
         }
     }
+    records.finish(catalog, ctx)?;
     ctx.set_message(format!(
-        "Rows matched: {touched_rows}  Changed: {changed_rows}  Warnings: {}",
+        "Rows matched: {matched_rows}  Changed: {changed_rows}  Warnings: {}",
         ctx.warning_count()
     ));
     Ok(if ctx.client_found_rows() {
@@ -1061,38 +1158,6 @@ fn resolve_assignments(
         });
     }
     Ok(resolved)
-}
-
-fn write_row(
-    catalog: &mut Catalog,
-    table: &SourceTable,
-    id: &RowId,
-    row: &[Datum],
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    // Only a `SourceOrigin::Base` reaches here: `resolve_assignments` refused
-    // every other kind before a single row was read.
-    let SourceOrigin::Base { database, name } = &table.origin else {
-        return Err(table.not_updatable("UPDATE"));
-    };
-    let entry = catalog.get_mut_in(database, name).ok_or_else(|| {
-        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        )))
-    })?;
-    match (entry, id) {
-        (TableEntry::Mem(mem), RowId::Mem(index)) => {
-            mem.rows[*index] = row.to_vec();
-            Ok(())
-        }
-        (TableEntry::Kv(kv), RowId::Kv(handle)) => std::sync::Arc::make_mut(kv)
-            .update_row_with_context(handle, row, ctx)
-            .map_err(kv_write_error),
-        // The identity was read off this very entry a moment ago.
-        _ => Err(DriverError::unsupported(
-            "table storage changed during a multi-table write",
-        )),
-    }
 }
 
 /// Runs a multi-table `DELETE`, returning the number of removed rows.

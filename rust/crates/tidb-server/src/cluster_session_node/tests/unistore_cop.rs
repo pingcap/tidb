@@ -9263,3 +9263,46 @@ fn pushed_conditionals_keep_the_request_timezone() {
         assert_eq!(displayed(rows(&mut session, sql)), [["1"]], "{zone}");
     }
 }
+
+#[test]
+fn shared_update_record_uses_cluster_statement_buffer() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(683)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.merged_update (id INT PRIMARY KEY, x INT, y INT, KEY ix(x))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.merged_update VALUES (1,10,20),(2,30,40)",
+    );
+    rows(&mut session, "UPDATE test.merged_update a JOIN test.merged_update b ON a.id=b.id SET a.x=a.x+1,b.y=b.y+1");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id,x,y FROM test.merged_update ORDER BY id"
+        )),
+        [["1", "11", "21"], ["2", "31", "41"]]
+    );
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(
+        &mut session,
+        "INSERT INTO test.merged_update VALUES (3,50,60)",
+    );
+    let before = session.buffer.snapshot();
+    let error = match session.execute("UPDATE test.merged_update a JOIN test.merged_update b ON a.id=b.id SET a.id=IF(a.id=1,11,3) WHERE a.id<3") {
+        Err(error) => error,
+        Ok(_) => panic!("the later duplicate must fail the statement"),
+    };
+    assert_eq!(error.code, 1062);
+    assert_eq!(session.buffer.snapshot(), before);
+    session.control_transaction("COMMIT").unwrap();
+    let mut reader = stack.factory.open_session(session_context(684)).unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT id,x,y FROM test.merged_update ORDER BY id"
+        )),
+        [["1", "11", "21"], ["2", "31", "41"], ["3", "50", "60"]]
+    );
+}

@@ -1356,3 +1356,165 @@ fn multi_table_dml_explains_the_optimized_join_plan() {
     );
     assert_eq!(column(&mut session, "SELECT id FROM uj1"), ["3"]);
 }
+
+// Source-derived regressions for Go master UpdateExec.mergeNonGenerated,
+// updateRecord, and ExecStmt.handleForeignKeyTrigger, not historical captures.
+#[test]
+fn shared_update_record_merges_alias_columns_and_generated_indexes() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE merged (id INT PRIMARY KEY, x INT, y INT, g INT AS (x+y) STORED, KEY ix(x), KEY ig(g))").unwrap();
+    session
+        .run("INSERT INTO merged(id,x,y) VALUES (1,10,20)")
+        .unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE merged a JOIN merged b ON a.id=b.id SET a.x=a.x+1,b.y=b.y+1"
+        ),
+        2
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id,x,y,g FROM merged"),
+        ["1|11|21|32"]
+    );
+    session.run("ADMIN CHECK TABLE merged").unwrap();
+}
+
+#[test]
+fn shared_update_record_checks_joined_child_and_ignore_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent_u (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE child_u (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES parent_u(id))").unwrap();
+    session.run("INSERT INTO parent_u VALUES (1),(2)").unwrap();
+    session
+        .run("INSERT INTO child_u VALUES (1,1),(2,1)")
+        .unwrap();
+    let error = session
+        .run("UPDATE child_u c JOIN parent_u p ON c.pid=p.id SET c.pid=999")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1452);
+    assert_eq!(
+        column(&mut session, "SELECT id,pid FROM child_u ORDER BY id"),
+        ["1|1", "2|1"]
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE IGNORE child_u c JOIN parent_u p ON c.pid=p.id SET c.pid=IF(c.id=1,2,999)"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id,pid FROM child_u ORDER BY id"),
+        ["1|2", "2|1"]
+    );
+}
+
+#[test]
+fn shared_update_record_cascades_joined_parent_changes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent_c (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE child_c (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES parent_c(id) ON UPDATE CASCADE)").unwrap();
+    session.run("INSERT INTO parent_c VALUES (1)").unwrap();
+    session.run("INSERT INTO child_c VALUES (10,1)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE parent_c p JOIN child_c c ON p.id=c.pid SET p.id=2"
+        ),
+        1
+    );
+    assert_eq!(column(&mut session, "SELECT pid FROM child_c"), ["2"]);
+}
+
+#[test]
+fn shared_update_record_restricts_joined_parent_with_ignore() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent_r (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE child_r (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES parent_r(id))").unwrap();
+    session.run("INSERT INTO parent_r VALUES (1)").unwrap();
+    session.run("INSERT INTO child_r VALUES (10,1)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE IGNORE parent_r p JOIN child_r c ON p.id=c.pid SET p.id=2"
+        ),
+        0
+    );
+    assert_eq!(column(&mut session, "SELECT id FROM parent_r"), ["1"]);
+}
+
+#[test]
+fn shared_update_record_checks_odku_result_instead_of_candidate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent_o (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE child_o (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES parent_o(id))").unwrap();
+    session.run("INSERT INTO parent_o VALUES (1)").unwrap();
+    session.run("INSERT INTO child_o VALUES (1,1)").unwrap();
+    let error = session
+        .run("INSERT INTO child_o VALUES (1,1) ON DUPLICATE KEY UPDATE pid=999")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1452);
+    assert_eq!(column(&mut session, "SELECT pid FROM child_o"), ["1"]);
+    assert_eq!(
+        affected(
+            &mut session,
+            "INSERT INTO child_o VALUES (1,999) ON DUPLICATE KEY UPDATE pid=1"
+        ),
+        0
+    );
+}
+
+#[test]
+fn shared_update_record_checks_final_statement_parent_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent_f (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE child_f (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES parent_f(id))").unwrap();
+    session.run("INSERT INTO parent_f VALUES (1)").unwrap();
+    session.run("INSERT INTO child_f VALUES (10,1)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE child_f c JOIN parent_f p ON c.pid=p.id SET c.pid=2,p.id=2"
+        ),
+        2
+    );
+    assert_eq!(column(&mut session, "SELECT pid FROM child_f"), ["2"]);
+    assert_eq!(column(&mut session, "SELECT id FROM parent_f"), ["2"]);
+}
+
+#[test]
+fn shared_update_record_odku_ignore_keeps_earlier_writes() {
+    let mut session = Session::new();
+    session.set_client_found_rows(true);
+    session
+        .run("CREATE TABLE od_ignore (id INT PRIMARY KEY, u INT UNIQUE)")
+        .unwrap();
+    session
+        .run("INSERT INTO od_ignore VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "INSERT IGNORE INTO od_ignore VALUES (1,11),(2,11) ON DUPLICATE KEY UPDATE u=VALUES(u)"
+        ),
+        2
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id,u FROM od_ignore ORDER BY id"),
+        ["1|11", "2|20", "3|30"]
+    );
+    session.run("ADMIN CHECK TABLE od_ignore").unwrap();
+}

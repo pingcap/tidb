@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 41 open ownership/contract findings, review candidates and the
+consolidates 41 tracked ownership/contract findings, review candidates and the
 limits of the review. The [complete remaining protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -361,3 +361,7 @@ Other worker validation/error identities and the previously listed admission,
 reorg, rollback dependency/GC, scheduler, MDL-disabled and TiFlash ownership
 gaps remain. The supported action list is unchanged; no unaccepted seed action
 was dispatched and no package-complete parity or performance claim is made.
+
+The [shared UPDATE owner repair](shared-update-owner-repair.md) removes the
+UPDATE/ODKU write bypasses and executor undo logs, with fail-before/pass-after
+regressions. E01 is repaired; E02 still requires FK plan integration.

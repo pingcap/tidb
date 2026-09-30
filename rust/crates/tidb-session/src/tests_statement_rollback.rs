@@ -301,3 +301,29 @@ fn a_panicking_statement_inside_a_transaction_leaves_the_working_catalog_intact(
         [["1"], ["2"]]
     );
 }
+
+#[test]
+fn explain_analyze_dml_uses_the_statement_rollback_owner() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ea_parent (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE ea_child (id INT PRIMARY KEY, pid INT, FOREIGN KEY(pid) REFERENCES ea_parent(id) ON UPDATE CASCADE)").unwrap();
+    session.run("INSERT INTO ea_parent VALUES (1),(2)").unwrap();
+    session
+        .run("INSERT INTO ea_child VALUES (10,1),(20,2)")
+        .unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO ea_parent VALUES (3)").unwrap();
+    let error = session.run("EXPLAIN ANALYZE UPDATE ea_parent p JOIN ea_child c ON p.id=c.pid SET p.id=IF(p.id=1,11,3)").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1062);
+    session.run("COMMIT").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM ea_parent ORDER BY id"),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT pid FROM ea_child ORDER BY id"),
+        [["1"], ["2"]]
+    );
+}

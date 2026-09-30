@@ -82,11 +82,8 @@
 //!
 //! # NOT MODELLED (documented)
 //!
-//! * A partial mutation is not rolled back when a later dependent restricts:
-//!   the cascade pass runs a whole-level `RESTRICT` check before it mutates
-//!   anything at that level, so a single-level statement is all-or-nothing,
-//!   but a deeper level that restricts after a shallower one cascaded leaves
-//!   the shallower change applied. Real TiDB rolls the statement back.
+//! * Cascades rely on the session/cluster statement stage for rollback. The
+//!   functions here do not create a second transaction or replay row preimages.
 //! * Multi-action ALTER atomicity remains outside this module's metadata
 //!   model. Whole-table renames rewrite `ref_schema` and `ref_table` through
 //!   [`rewrite_table_references`], and column renames rewrite `cols` and
@@ -261,6 +258,35 @@ pub(crate) fn check_child_rows(
     rows: &[Vec<Datum>],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<DriverError>>, DriverError> {
+    check_child_row_changes(catalog, database, table, None, rows, zone)
+}
+
+pub(crate) fn require_updated_child_rows(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    old: &[Vec<Datum>],
+    new: &[Vec<Datum>],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<(), DriverError> {
+    match check_child_row_changes(catalog, database, table, Some(old), new, zone)?
+        .into_iter()
+        .flatten()
+        .next()
+    {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn check_child_row_changes(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    old: Option<&[Vec<Datum>]>,
+    rows: &[Vec<Datum>],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Vec<Option<DriverError>>, DriverError> {
     let mut verdicts = vec![None; rows.len()];
     let (keys, columns) = declared(catalog, database, table);
     for foreign_key in &keys {
@@ -279,6 +305,10 @@ pub(crate) fn check_child_rows(
             let Some(key) = key_at(row, &child) else {
                 continue;
             };
+            // FKCheckExec.updateRowNeedToCheck skips unchanged child keys.
+            if old.is_some_and(|old| key_at(&old[index], &child).as_ref() == Some(&key)) {
+                continue;
+            }
             match wanted.iter_mut().find(|(seen, _)| *seen == key) {
                 Some((_, indexes)) => indexes.push(index),
                 None => wanted.push((key, vec![index])),
@@ -400,13 +430,10 @@ pub(crate) enum ParentChange<'a> {
     },
 }
 
-/// Go `FKCascadeExec` on the PARENT side: applies every dependent
-/// constraint's own action to `changes`, which the caller has NOT yet
-/// applied to the parent itself.
-///
-/// The caller applies its own change afterwards, so a `RESTRICT` that fires
-/// here leaves the parent untouched -- which is what makes a restricted
-/// `DELETE` a no-op rather than a half-done statement.
+/// Go `FKCascadeExec` on the parent side. UPDATE completes these actions
+/// after the statement's record writes and checks; DELETE/REPLACE currently
+/// call here before withdrawing their parent rows. Statement staging owns
+/// rollback of both parent and dependent rows if any action fails.
 pub(crate) fn cascade_parent_changes(
     catalog: &mut Catalog,
     database: &str,
@@ -414,7 +441,19 @@ pub(crate) fn cascade_parent_changes(
     changes: &[ParentChange<'_>],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    cascade_at_depth(catalog, database, table, changes, 0, ctx)
+    cascade_at_depth(catalog, database, table, changes, 0, false, ctx)
+}
+
+/// The restricting FK checks run before cascades and, under IGNORE, before
+/// the candidate row is written. Reuse the cascade planner without applying it.
+pub(crate) fn check_parent_changes(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    changes: &[ParentChange<'_>],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    cascade_at_depth(catalog, database, table, changes, 0, true, ctx)
 }
 
 fn cascade_at_depth(
@@ -423,6 +462,7 @@ fn cascade_at_depth(
     table: &str,
     changes: &[ParentChange<'_>],
     depth: usize,
+    check_only: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if depth > MAX_CASCADE_DEPTH {
@@ -446,6 +486,20 @@ fn cascade_at_depth(
     // restricts changes nothing at this level.
     let mut plans = Vec::with_capacity(dependents.len());
     for (child_db, child_table, foreign_key) in dependents {
+        // `ON DELETE`/`ON UPDATE` are separate actions on the same
+        // constraint; which one applies is decided by the statement.
+        let deleting = changes
+            .iter()
+            .any(|change| matches!(change, ParentChange::Delete(_)));
+        let action = if deleting {
+            foreign_key.on_delete
+        } else {
+            foreign_key.on_update
+        };
+        if check_only && !action.is_restricting() {
+            continue;
+        }
+
         let Some((offsets, _)) = parent_offsets(catalog, &foreign_key) else {
             continue;
         };
@@ -496,16 +550,6 @@ fn cascade_at_depth(
         if affected.is_empty() {
             continue;
         }
-        // `ON DELETE`/`ON UPDATE` are separate actions on the same
-        // constraint; which one applies is decided by the statement.
-        let deleting = changes
-            .iter()
-            .any(|change| matches!(change, ParentChange::Delete(_)));
-        let action = if deleting {
-            foreign_key.on_delete
-        } else {
-            foreign_key.on_update
-        };
         if action.is_restricting() {
             return Err(violation(
                 Side::Parent,
@@ -525,6 +569,10 @@ fn cascade_at_depth(
         ));
     }
 
+    if check_only {
+        return Ok(());
+    }
+
     for (child_db, child_table, _foreign_key, action, deleting, affected, child) in plans {
         let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
@@ -542,7 +590,15 @@ fn cascade_at_depth(
                     .collect();
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
-                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
+                cascade_at_depth(
+                    catalog,
+                    &child_db,
+                    &child_table,
+                    &nested,
+                    depth + 1,
+                    false,
+                    ctx,
+                )?;
                 delete_rows(catalog, &child_db, &child_table, &doomed, ctx)?;
             }
             FkAction::Cascade | FkAction::SetNull => {
@@ -566,7 +622,15 @@ fn cascade_at_depth(
                     .iter()
                     .map(|(old, new)| ParentChange::Update { old, new })
                     .collect();
-                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
+                cascade_at_depth(
+                    catalog,
+                    &child_db,
+                    &child_table,
+                    &nested,
+                    depth + 1,
+                    false,
+                    ctx,
+                )?;
                 rewrite_rows(catalog, &child_db, &child_table, &rewritten, ctx)?;
             }
         }

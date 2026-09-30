@@ -10,6 +10,10 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 ## Progress
 
 
+- [x] Migrate ordinary/joined UPDATE and ODKU record writes to a shared owner; remove executor undo logs and route remaining session DML callers through statement staging.
+- [x] Reproduce alias/FK/ODKU/EXPLAIN rollback failures before fixes; preserve distinct per-target update tracking and base-row merging.
+- [x] Validate shared UPDATE changes and record remaining plan-driven FK/materialized-source gaps; publication uses the mandatory hook and fresh pre-push builds.
+
 - [x] Pull integration and refresh master; clean initial tree.
 - [x] Enumerate upstream scope: 856 Go package directories, 4,420 Go source/test files; 83 Rust crate manifests.
 - [x] Inventory all tracked TiDB and pinned client-go artifacts and Rust gap candidates; classify confirmed mismatches separately from unreviewed evidence.
@@ -70,6 +74,21 @@ The old testport manifest contains only 45 package mappings and does not describ
 ## Decision Log
 
 
+The next production milestone repairs the existing executor UPDATE owner at
+Go master e953a09d9d5e29e60c62f42d3aacebb819af49a5. Ordinary UPDATE, joined
+UPDATE, and ON DUPLICATE KEY UPDATE must share row validation, unchanged-row
+locking, IGNORE decisions and foreign-key completion. Keep update-once state
+per target position and a separate row merge per physical table/handle, as
+UpdateExec does. Remove the multi-update raw write bypass and executor undo
+logs after confirming session/cluster statement staging owns rollback.
+Ordinary FK checks run after the statement writes; IGNORE performs its checks
+before each row, and cascades follow statement checks. Tests in the existing
+session DML suite must fail on alias lost updates/FK bypass before migration,
+then pass alongside statement rollback, FK and DML tests. This maintains
+already integrated paths; it does not accept the complete upstream executor
+package or close unrelated audit findings.
+
+
 Keep this follow-up an audit with executable diagnostic evidence. Preserve
 the complete probe source/output under current-audit and run it as a temporary
 example using the existing locked session crate, then remove that temporary
@@ -100,6 +119,16 @@ schema publication or require another action tick.
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
+
+
+The shared UPDATE follow-up removes the raw joined write and statement-specific
+undo owners. The eight new in-process regressions and embedded cluster buffer
+checks pass; ordinary FK, generated-column and rollback tests retain their
+behavior. The four DML/default and 31 grant-suite failures reproduce on unchanged HEAD and
+remain explicit. See parity/current-audit/shared-update-owner-repair.md for
+exact commands and limitations. E01 is repaired; E02 runtime behavior is
+repaired while joined FK plan metadata still needs integration. Full package
+acceptance and the remaining structural findings are not complete.
 
 
 The session/executor follow-up extends the register from 29 to 41 findings.

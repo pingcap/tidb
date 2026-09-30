@@ -117,7 +117,7 @@ impl Session {
         // machinery's sql-mode inputs.
         let ctx = self.statement_context(true);
         let head = sql.trim_start();
-        self.with_catalog_mut(|catalog| {
+        self.with_staged_catalog(|catalog| {
             if head.len() >= 6 && head[..6].eq_ignore_ascii_case("INSERT") {
                 tidb_executor::run_insert_in(sql, catalog, "mysql", &ctx).map(|_| ())
             } else if head.len() >= 6 && head[..6].eq_ignore_ascii_case("UPDATE") {

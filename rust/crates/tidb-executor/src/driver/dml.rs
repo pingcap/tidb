@@ -23,6 +23,9 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 
 mod correlated;
 mod defaults;
+pub(crate) mod update_record;
+
+use update_record::{UpdateRecords, UpdateRowId};
 
 use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 
@@ -1125,7 +1128,7 @@ fn run_insert_with_physical(
     // Go's `FKCheckExec` sits between the row build and the write, which is
     // why the table's own borrow is released for it: the check reads the
     // PARENT tables, which the statement never named.
-    let fk_verdicts = if ctx.foreign_key_checks() {
+    let fk_verdicts = if ctx.foreign_key_checks() && insert.on_duplicate.is_empty() {
         crate::foreign_key::check_child_rows(
             catalog,
             &database,
@@ -1191,14 +1194,7 @@ fn run_insert_with_physical(
             false
         };
     inserted = 0;
-    // Go executes an INSERT inside a transaction, so a failure part-way
-    // through the write phase (a duplicate key on a later row, a violated
-    // CHECK) rolls the statement back: earlier rows of the same statement
-    // vanish, while the AUTO_INCREMENT allocator does NOT rewind -- id gaps
-    // persist. This harness commits row state as it goes, so the writes
-    // record an undo log here that replays in reverse on failure. Row DATA
-    // reverts; allocator counters are deliberately left advanced.
-    let mut undo: Vec<InsertUndo> = Vec::new();
+    let mut updates = UpdateRecords::default();
     for (position, row) in new_rows.iter().enumerate() {
         // Go's `FKCheckExec` runs per row, before the row is added, and
         // under `INSERT IGNORE` its violation is a warning and a skip rather
@@ -1271,16 +1267,13 @@ fn run_insert_with_physical(
                     // parent where it was rather than half-applied.
                     if let (true, Some(existing)) = (ctx.foreign_key_checks(), &existing) {
                         let changes = [crate::foreign_key::ParentChange::Delete(existing)];
-                        if let Err(error) = crate::foreign_key::cascade_parent_changes(
+                        crate::foreign_key::cascade_parent_changes(
                             catalog,
                             &database,
                             &table_name,
                             &changes,
                             ctx,
-                        ) {
-                            apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
-                            return Err(error);
-                        }
+                        )?;
                     }
                     // Otherwise the conflicting row goes, and the affected
                     // count is one per deleted row plus one for the inserted
@@ -1292,50 +1285,49 @@ fn run_insert_with_physical(
                             ctx,
                         )
                         .map_err(|e| kv_read_error("row delete failed", e))?;
-                    undo.push(InsertUndo::Deleted {
-                        handle: handle.clone(),
-                        row: existing.expect("unchanged rows continued above").to_vec(),
-                    });
                     inserted += 1;
                 }
                 if unchanged {
                     continue;
                 }
             } else if !insert.on_duplicate.is_empty() {
-                // The undo entry needs the row the update is about to
-                // overwrite, read before `apply_on_duplicate` replaces it.
-                let dup_old_row = target(catalog, &database, &table_name)
-                    .get_row_by_handle(&conflicts[0].handle, &ctx.session_zone())
-                    .map_err(|e| kv_read_error("row read failed", e))?;
-                let result = apply_on_duplicate(
-                    target(catalog, &database, &table_name),
+                inserted += apply_on_duplicate(
+                    catalog,
+                    &database,
                     &conflicts[0].handle,
                     row,
                     &prepared_on_duplicate,
                     &column_list,
                     position,
                     &table_name,
+                    insert.ignore,
+                    &mut updates,
                     ctx,
-                );
-                match result {
-                    Ok(affected) => {
-                        undo.push(InsertUndo::Updated {
-                            handle: conflicts[0].handle.clone(),
-                            row: dup_old_row.unwrap_or_default(),
-                        });
-                        inserted += affected;
-                    }
-                    Err(error) => {
-                        apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
-                        handle_partition_write_error(error, insert.ignore, ctx)?;
-                    }
-                }
+                )?;
                 continue;
             } else if insert.ignore {
                 let conflict = conflicts.into_iter().next().expect("a conflict was found");
                 let warning = kv_write_error(conflict.error).to_mysql_error();
                 ctx.append_warning_parts(warning.code, &warning.message);
                 continue;
+            }
+        }
+        // ODKU checks the row actually written. Its rejected insert candidate
+        // must not fail the FK check before duplicate resolution.
+        if ctx.foreign_key_checks() && !insert.on_duplicate.is_empty() {
+            if let Err(error) = crate::foreign_key::require_child_rows(
+                catalog,
+                &database,
+                &table_name,
+                std::slice::from_ref(row),
+                &ctx.session_zone(),
+            ) {
+                if insert.ignore && matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
+                    let warning = error.to_mysql_error();
+                    ctx.append_warning_parts(warning.code, &warning.message);
+                    continue;
+                }
+                return Err(error);
             }
         }
         // Go publishes the statement's first allocated id the moment a row is
@@ -1386,29 +1378,18 @@ fn run_insert_with_physical(
             )
         };
         match insert_result {
-            Ok(handle) => {
-                undo.push(InsertUndo::Inserted {
-                    handle,
-                    row: row.to_vec(),
-                });
-                inserted += 1;
-            }
+            Ok(_) => inserted += 1,
             Err(error) => {
                 let rendered = kv_write_error(error);
                 // Under IGNORE a skipped row counts in NEITHER the stored
                 // rows nor the affected count -- Go's per-row skip writes
                 // nothing and rewinds nothing; earlier conforming rows of
                 // the same statement survive.
-                match handle_partition_write_error(rendered, insert.ignore, ctx) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
-                        return Err(error);
-                    }
-                }
+                handle_partition_write_error(rendered, insert.ignore, ctx)?;
             }
         }
     }
+    updates.finish(catalog, ctx)?;
     Ok((inserted, first_allocated))
 }
 
@@ -1483,55 +1464,6 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
 /// Applies Go's `ErrCtx.HandleError` rule for partition-routing failures on
 /// `INSERT/UPDATE IGNORE`: report one warning and skip the row. Other write
 /// failures retain their normal error identity.
-/// One row write an INSERT statement performed, recorded so a mid-statement
-/// failure can replay the writes in reverse -- Go's statement rollback.
-enum InsertUndo {
-    /// A row this statement added; removed again on rollback.
-    Inserted {
-        handle: crate::kv_table::TableHandle,
-        row: Vec<Datum>,
-    },
-    /// A row REPLACE withdrew; written back on rollback.
-    Deleted {
-        handle: crate::kv_table::TableHandle,
-        row: Vec<Datum>,
-    },
-    /// A row ON DUPLICATE KEY UPDATE rewrote; restored on rollback.
-    Updated {
-        handle: crate::kv_table::TableHandle,
-        row: Vec<Datum>,
-    },
-}
-
-/// Replays an INSERT statement's row writes in reverse, leaving the tables as
-/// they were before the statement while allocator counters stay advanced --
-/// exactly what Go's transaction rollback preserves and discards.
-fn apply_insert_undo(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    undo: &mut Vec<InsertUndo>,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    for entry in undo.drain(..).rev() {
-        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, table_name) else {
-            return Err(DriverError::unsupported(
-                "the INSERT target changed storage during rollback",
-            ));
-        };
-        let table = std::sync::Arc::make_mut(table);
-        match entry {
-            InsertUndo::Inserted { handle, row } => table
-                .delete_row_with_old_context(&handle, &row, ctx)
-                .map_err(|e| kv_read_error("rollback delete failed", e))?,
-            InsertUndo::Deleted { handle, row } | InsertUndo::Updated { handle, row } => table
-                .update_row_with_context(&handle, &row, ctx)
-                .map_err(|e| kv_read_error("rollback restore failed", e))?,
-        }
-    }
-    Ok(())
-}
-
 fn handle_partition_write_error(
     error: DriverError,
     ignore: bool,
@@ -1848,16 +1780,22 @@ fn prepare_on_duplicate_assignments(
 /// nothing counts 0 (or 1 under `CLIENT_FOUND_ROWS`), and one that changes
 /// something counts 2.
 fn apply_on_duplicate(
-    table: &mut crate::KvTable,
+    catalog: &mut Catalog,
+    database: &str,
     handle: &crate::kv_table::TableHandle,
     candidate: &[Datum],
     prepared: &PreparedOnDuplicate,
     column_list: &[(String, FieldType)],
     row_index: usize,
     target_table_name: &str,
+    ignore: bool,
+    updates: &mut UpdateRecords,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    let Some(existing) = table
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, target_table_name) else {
+        unreachable!("ODKU targets a byte-backed table")
+    };
+    let Some(existing) = std::sync::Arc::make_mut(table)
         .get_row_by_handle(handle, &ctx.session_zone())
         .map_err(|e| kv_read_error("row read failed", e))?
     else {
@@ -1907,21 +1845,25 @@ fn apply_on_duplicate(
         )?;
     }
     let updated_chunk = row_chunk(&updated, &field_types)?;
-    if !prepared
+    prepared
         .on_update_now
-        .apply(&existing, &mut updated, ctx, updated_chunk.get_row(0))?
-    {
-        return Ok(u64::from(ctx.client_found_rows()));
-    }
-    if let Some(partitions) = &prepared.selected_partitions {
-        table
-            .validate_update_partitions(&existing, &updated, partitions, ctx)
-            .map_err(kv_write_error)?;
-    }
-    table
-        .update_row_with_context(handle, &updated, ctx)
-        .map_err(kv_write_error)?;
-    Ok(2)
+        .apply(&existing, &mut updated, ctx, updated_chunk.get_row(0))?;
+    let outcome = updates.write(
+        catalog,
+        database,
+        target_table_name,
+        &UpdateRowId::Kv(handle.clone()),
+        &existing,
+        &mut updated,
+        prepared.selected_partitions.as_deref(),
+        ignore,
+        ctx,
+    )?;
+    Ok(if outcome.changed() {
+        2
+    } else {
+        u64::from(outcome.unchanged() && ctx.client_found_rows())
+    })
 }
 
 /// Replaces every `VALUES(col)` in an `ON DUPLICATE KEY UPDATE` assignment
@@ -2940,7 +2882,6 @@ fn run_update_with_physical(
     planned_update_expressions: Option<&[Option<Expression>]>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let zone = ctx.session_zone();
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`. `StmtContext`
     // already carries `IgnoreErr`, so casts, bad NULLs, and other value-level
@@ -3305,7 +3246,9 @@ fn run_update_with_physical(
     let mut matched = 0u64;
     let mut touched = 0u64;
     let mut changed = 0u64;
-    let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
+    let mut rewrites = Vec::new();
+    let mut update_partitions = None;
+    let mut records = UpdateRecords::default();
     let row_evaluator = UpdateRowEvaluator {
         field_types: &field_types,
         column_names: &column_names,
@@ -3319,23 +3262,13 @@ fn run_update_with_physical(
     };
     match source_rows {
         SourceRows::Mem(rows) => {
-            let mut updates = Vec::new();
-            for (index, row) in rows.iter().enumerate() {
-                if !physical_kv_source && row_limit.is_some_and(|cap| matched >= cap) {
+            for (index, row) in rows.into_iter().enumerate() {
+                if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                let matched_before = matched;
-                if let Some(new_row) = row_evaluator.compute(row, None, None, &mut matched)? {
-                    updates.push((index, new_row));
+                if let Some(new_row) = row_evaluator.compute(&row, None, None, &mut matched)? {
+                    rewrites.push((UpdateRowId::Mem(index), row, new_row));
                 }
-                touched += u64::from(matched != matched_before);
-            }
-            changed = updates.len() as u64;
-            let Some(TableEntry::Mem(mem)) = catalog.get_mut_in(&database, &name) else {
-                unreachable!("the update source kind cannot change within one statement")
-            };
-            for (index, new_row) in updates {
-                mem.rows[index] = new_row;
             }
         }
         SourceRows::Kv {
@@ -3345,9 +3278,7 @@ fn run_update_with_physical(
             let accountant = ctx
                 .statement_memory()
                 .write_accountant(mem_quota::label::UPDATE);
-            let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) else {
-                unreachable!("the update source kind cannot change within one statement")
-            };
+            update_partitions = partition_ids;
             let PhysicalWriteRows {
                 rows,
                 field_types: physical_field_types,
@@ -3356,166 +3287,37 @@ fn run_update_with_physical(
                 accountant
                     .account_row(&row.stored)
                     .map_err(DriverError::from)?;
-                let matched_before = matched;
                 let computed = row_evaluator.compute(
                     &row.stored,
                     extra_handle_value(&row.handle),
                     Some((&row.output, &physical_field_types)),
                     &mut matched,
                 )?;
-                if let Some(mut new_row) = computed {
-                    kv.materialize_generated(&mut new_row, ctx)
-                        .map_err(kv_write_error)?;
-                    if let Some(partitions) = &partition_ids {
-                        if let Err(error) =
-                            kv.validate_update_partitions(&row.stored, &new_row, partitions, ctx)
-                        {
-                            handle_partition_write_error(
-                                kv_write_error(error),
-                                update.ignore,
-                                ctx,
-                            )?;
-                            continue;
-                        }
-                    }
+                if let Some(new_row) = computed {
                     accountant
                         .account_row(&new_row)
                         .map_err(DriverError::from)?;
-                    rewrites.push((row.handle, row.stored, new_row));
-                } else {
-                    // An unchanged selected row is touched immediately in Go;
-                    // a predicate miss did not advance `matched` at all.
-                    if matched != matched_before {
-                        // Go updateRecord retains unchanged selected rows for locking.
-                        if let Some(keys) = ctx.selected_lock_keys() {
-                            keys.insert(
-                                kv.row_lock_key(&row.handle, &row.stored, ctx)
-                                    .map_err(kv_write_error)?,
-                            );
-                        }
-                        touched += 1;
-                    }
+                    rewrites.push((UpdateRowId::Kv(row.handle), row.stored, new_row));
                 }
             }
         }
     }
-    if !rewrites.is_empty() {
-        if update.ignore {
-            // Go's IGNORE path resolves each write in statement order. A key
-            // moved by an earlier row is consequently free for a later row,
-            // while any row that still conflicts becomes one warning and no
-            // write. Checking all staged replacements against the original
-            // table would reject that valid ordered move.
-            for (handle, old_row, new_row) in rewrites {
-                let duplicate = {
-                    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-                        unreachable!("only a byte-backed table stages rewrites")
-                    };
-                    let kv = std::sync::Arc::make_mut(kv);
-                    match kv.row_conflicts(&new_row, ctx) {
-                        Ok(conflicts) => conflicts
-                            .into_iter()
-                            .find(|conflict| conflict.handle != handle),
-                        Err(error) => {
-                            handle_partition_write_error(kv_write_error(error), true, ctx)?;
-                            touched += 1;
-                            continue;
-                        }
-                    }
-                };
-                if let Some(conflict) = duplicate {
-                    // Go increments TouchedRows before the table write detects
-                    // a duplicate that UPDATE IGNORE later downgrades.
-                    touched += 1;
-                    let warning = kv_write_error(conflict.error).to_mysql_error();
-                    ctx.append_warning_parts(warning.code, &warning.message);
-                    continue;
-                }
-                if ctx.foreign_key_checks() {
-                    let rows = [new_row.clone()];
-                    if let Err(error) = crate::foreign_key::require_child_rows(
-                        catalog, &database, &name, &rows, &zone,
-                    ) {
-                        let warning = error.to_mysql_error();
-                        ctx.append_warning_parts(warning.code, &warning.message);
-                        continue;
-                    }
-                    let changes = [crate::foreign_key::ParentChange::Update {
-                        old: &old_row,
-                        new: &new_row,
-                    }];
-                    if let Err(error) = crate::foreign_key::cascade_parent_changes(
-                        catalog, &database, &name, &changes, ctx,
-                    ) {
-                        let warning = error.to_mysql_error();
-                        ctx.append_warning_parts(warning.code, &warning.message);
-                        continue;
-                    }
-                }
-                touched += 1;
-                let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-                    unreachable!("only a byte-backed table stages rewrites")
-                };
-                let kv = std::sync::Arc::make_mut(kv);
-                match kv.update_row_with_old_context(&handle, Some(&old_row), &new_row, ctx) {
-                    Ok(()) => changed += 1,
-                    Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) => {
-                        let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
-                        ctx.append_warning_parts(warning.code, &warning.message);
-                    }
-                    Err(error) => {
-                        handle_partition_write_error(kv_write_error(error), true, ctx)?;
-                    }
-                }
-            }
-        } else {
-            if ctx.foreign_key_checks() {
-                let new_rows: Vec<Vec<Datum>> = rewrites
-                    .iter()
-                    .map(|(_, _, new_row)| new_row.clone())
-                    .collect();
-                crate::foreign_key::require_child_rows(
-                    catalog, &database, &name, &new_rows, &zone,
-                )?;
-                let changes: Vec<crate::foreign_key::ParentChange<'_>> = rewrites
-                    .iter()
-                    .map(
-                        |(_, old, new_row)| crate::foreign_key::ParentChange::Update {
-                            old,
-                            new: new_row,
-                        },
-                    )
-                    .collect();
-                crate::foreign_key::cascade_parent_changes(
-                    catalog, &database, &name, &changes, ctx,
-                )?;
-            }
-            touched += rewrites.len() as u64;
-            let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-                unreachable!("only a byte-backed table stages rewrites")
-            };
-            let kv = std::sync::Arc::make_mut(kv);
-            // Go's UPDATE runs in one transaction: a failure on a LATER row
-            // (a violated CHECK, a duplicate key) rolls back the EARLIER rows
-            // this statement already rewrote, while the allocator state does
-            // not rewind. The rewrites carry each row's pre-image, so the
-            // applied prefix replays in reverse on failure.
-            let mut applied: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
-            for (handle, old_row, new_row) in &rewrites {
-                match kv.update_row_with_old_context(handle, Some(old_row), new_row, ctx) {
-                    Ok(()) => applied.push((handle.clone(), old_row.clone())),
-                    Err(error) => {
-                        for (undone_handle, undone_row) in applied.drain(..).rev() {
-                            kv.update_row_with_context(&undone_handle, &undone_row, ctx)
-                                .map_err(|e| kv_read_error("rollback restore failed", e))?;
-                        }
-                        return Err(kv_write_error(error));
-                    }
-                }
-                changed += 1;
-            }
-        }
+    for (id, old_row, mut new_row) in rewrites {
+        let outcome = records.write(
+            catalog,
+            &database,
+            &name,
+            &id,
+            &old_row,
+            &mut new_row,
+            update_partitions.as_deref(),
+            update.ignore,
+            ctx,
+        )?;
+        touched += u64::from(outcome.touched());
+        changed += u64::from(outcome.changed());
     }
+    records.finish(catalog, ctx)?;
     ctx.set_message(format!(
         "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
         ctx.warning_count()
@@ -3542,9 +3344,8 @@ struct UpdateRowEvaluator<'a> {
 }
 
 impl UpdateRowEvaluator<'_> {
-    /// Applies the `SET` assignments to one row, returning the new row only
-    /// when the `WHERE` selected it AND a column actually changed (Go's
-    /// `changed` flag).
+    /// Evaluates one selected row. The shared record owner decides whether
+    /// it changed and retains unchanged selected rows for locking.
     fn compute(
         &self,
         row: &[Datum],
@@ -3578,9 +3379,8 @@ impl UpdateRowEvaluator<'_> {
                 return Ok(None);
             }
         }
-        // The `WHERE` selected this row. That is what a `Selection`'s `actRows`
-        // counts -- not the narrower `changed` below, which Go reports as
-        // `affected` rather than as rows the filter passed.
+        // Matched rows include unchanged rows; the record owner separately
+        // counts touched and affected rows.
         *matched += 1;
         // Every assignment reads the row as the statement found it, so
         // `SET a = 100, b = a` stores the ORIGINAL `a` in `b`, and
@@ -3610,24 +3410,10 @@ impl UpdateRowEvaluator<'_> {
                 self.ctx,
             )?;
         }
-        if !self
-            .on_update_now
-            .apply(row, &mut new_row, self.ctx, chunk.get_row(0))?
-        {
-            // Go counts a no-op row as touched, not affected.
-            return Ok(None);
-        }
-        // Go `updateRecord` step 5 runs only after the changed comparison and
-        // implicit clock assignment. Zipped rather than indexed because an
-        // expression index can append a hidden column to the stored row while
-        // Go loops only the public `t.Cols()` here.
-        let level = crate::bad_null::NullLevel::from_is_error(self.ctx.strict());
-        for ((value, field_type), name) in new_row
-            .iter_mut()
-            .zip(self.field_types.iter())
-            .zip(self.column_names.iter())
-        {
-            crate::bad_null::handle_bad_null(value, field_type, name, level, self.ctx)?;
+        self.on_update_now
+            .apply(row, &mut new_row, self.ctx, chunk.get_row(0))?;
+        if self.extra_handle {
+            new_row.truncate(new_row.len() - 1);
         }
         Ok(Some(new_row))
     }
