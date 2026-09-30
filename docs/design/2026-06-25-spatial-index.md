@@ -219,8 +219,10 @@ geodesics on the ellipsoid. The two diverge by metres to kilometres, growing wit
 length (the basic design measures a 7,796 m band on the hypotenuse of
 `POLYGON((0 0, 80 0, 0 80, 0 0))`), so a covering that is
 exact for the great-circle polygon can omit a cell MySQL considers inside: an
-unrecoverable false negative. Phase 2 must pad the covering by that deviation, exactly as
-the bbox pre-filter is padded (see Query path). Points are unaffected, having no edges.
+unrecoverable false negative. The covering must be padded by that deviation, exactly as the
+bbox pre-filter is padded (see Query path). A *stored* point has no edges and needs none of
+this, but the query geometry does, so the padding is required from Phase 1 rather than
+Phase 2.
 
 Two tuning knobs are distinct: **max level** controls cell precision; **max cells per
 geometry** caps fan-out for extents (points are always one entry regardless of level).
@@ -581,8 +583,10 @@ Risks:
   is one reason it is rejected.
 - **Prerequisite coupling**: the index depends on the geometry type and `ST_*` functions
   landing; mitigated by coding against a thin accessor so churn stays localized.
-- **Refine library gaps**: exact `ST_*` predicates use `simplefeatures` (pure-Go OGC/DE-9IM,
-  validated byte-identical to MySQL in the PoC); a coprocessor port (Layer B) must match it.
+- **Refine library gaps**: the exact `ST_*` predicates use `simplefeatures` on SRID 0
+  (pure-Go OGC/DE-9IM, validated byte-identical to MySQL in the PoC) and Andoyer edges on
+  4326, which the basic design settles on and which no Go library implements; a coprocessor
+  port (Layer B) must match both.
 - **Global index costs** (Phase 3): cross-partition writes and partition-DDL cleanup are
   the usual global-index costs, inherited because global is the spatial default.
 - **SRID 0 domain**: data outside the configured bounds is clamped to the boundary cell
