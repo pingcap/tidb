@@ -835,7 +835,7 @@ fn read_stored_record_one(
     match store.get(&key) {
         Ok(entry) => Ok(Some((key, entry))),
         Err(StorageError::NotFound) => Ok(None),
-        Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
+        Err(error) => Err(KvTableError::from(error)),
     }
 }
 
@@ -849,7 +849,7 @@ fn read_stored_record(
         match store.get(&key) {
             Ok(entry) => return Ok(Some((key, entry))),
             Err(StorageError::NotFound) => {}
-            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+            Err(error) => return Err(KvTableError::from(error)),
         }
     }
     Ok(None)
@@ -938,20 +938,23 @@ impl StagedWrites {
     }
 }
 
+/// The conflicting handle and its original constraint diagnostic travel together.
+/// Go's duplicate-check path retains both instead of reading the same key again.
+#[derive(Debug)]
+pub(crate) struct RowConflict {
+    pub(crate) handle: TableHandle,
+    pub(crate) error: KvTableError,
+}
+
 impl From<crate::storage::StorageError> for KvTableError {
     fn from(error: crate::storage::StorageError) -> Self {
-        match error {
-            crate::storage::StorageError::Sql(error) => Self::Sql(error),
-            other => Self::Storage(format!("{other:?}")),
-        }
+        Self::Storage(error)
     }
 }
 
 /// A failure while encoding or decoding table bytes.
 #[derive(Debug)]
 pub enum KvTableError {
-    /// A SQL error from storage, with its original code, state and message.
-    Sql(crate::MysqlError),
     /// A row failed to encode.
     Encode(String),
     /// Go `ErrDupKeyName` (1061).
@@ -1029,7 +1032,7 @@ pub enum KvTableError {
     /// A stored value failed to decode.
     Decode(String),
     /// The storage layer refused a read or write.
-    Storage(String),
+    Storage(StorageError),
     /// TiDB `ErrOptOnCacheTable` (8242).
     CacheTableUnsupported(&'static str),
 }
@@ -1412,13 +1415,11 @@ impl KvTable {
             let mut iterator = self
                 .store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
             let mut rows = 0;
             while iterator.valid() {
                 rows += 1;
-                iterator
-                    .next()
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                iterator.next().map_err(KvTableError::from)?;
             }
             iterator.close();
             counts.push((definition.name.clone(), rows));
@@ -1448,13 +1449,11 @@ impl KvTable {
         let mut iterator = self
             .store
             .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         let mut rows = 0i64;
         while iterator.valid() {
             rows += 1;
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            iterator.next().map_err(KvTableError::from)?;
         }
         iterator.close();
         Ok(rows)
@@ -1774,10 +1773,7 @@ impl KvTable {
                 values: Default::default(),
             });
         }
-        let found = self
-            .store
-            .batch_get(&keys)
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let found = self.store.batch_get(&keys).map_err(KvTableError::from)?;
         for (index, key) in positions.into_iter().zip(keys) {
             // The first matching candidate answers an unrouted handle.
             if rows[index].is_none() {
@@ -2533,6 +2529,26 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<(), KvTableError> {
+        // Go's transaction owns backfill rollback. The nontransactional test
+        // store needs one COW image for the entire backfill instead of repair
+        // writes that can themselves fail or hide the original error.
+        let original =
+            (!self.store.has_external_statement_rollback()).then(|| self.store.clone_box());
+        let result = self.backfill_index(index, ctx, decode_context);
+        if result.is_err() {
+            if let Some(original) = original {
+                self.store = original;
+            }
+        }
+        result
+    }
+
+    fn backfill_index(
+        &mut self,
+        index: KvIndex,
+        ctx: &impl tidb_expr::Columns,
+        decode_context: &RowDecodeContext,
+    ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
         if self
             .indexes
@@ -2546,7 +2562,6 @@ impl KvTable {
         // before an index entry is persisted, including STORED columns whose
         // old bytes may predate this backfill.
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
-        let mut written = Vec::new();
         for (handle, row) in &rows {
             if !self.index_condition_holds(&index, row, &zone)? {
                 continue;
@@ -2554,26 +2569,20 @@ impl KvTable {
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let (key, distinct) = self.index_key(&index, row, handle, physical_id, &zone)?;
             let key = Key::from_bytes(key);
-            if distinct && self.store.get(&key).is_ok() {
-                // Undo the entries this backfill already wrote, so a rejected
-                // CREATE INDEX leaves no partial index behind.
-                for key in written {
-                    let _ = self.store.delete(key);
-                }
-                return Err(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&self.index_values(&index, row)),
-                    key: self.qualified_key(&index.name),
-                });
+            if distinct {
+                self.check_insert_key(
+                    &key,
+                    &duplicate_value_text(&self.index_values(&index, row)),
+                    &self.qualified_key(&index.name),
+                    false,
+                )?;
             }
             // The same entry value an INSERT writes, restored data and all --
             // a backfill that stored a simpler one would leave the index
             // holding two different formats for the same table.
             let value =
                 self.index_entry_value(&index, row, handle, distinct, physical_id, &zone)?;
-            self.store
-                .set(key.clone(), value)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            written.push(key);
+            self.store.set(key, value).map_err(KvTableError::from)?;
         }
         self.indexes_mut().push(index);
         Ok(())
@@ -2619,7 +2628,7 @@ impl KvTable {
             let (key, _) = self.index_key(&index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
         }
         self.remove_partial_index_condition(index.id);
         Ok(true)
@@ -2927,9 +2936,7 @@ impl KvTable {
                 &handle.record_handle(),
             ));
             self.write_index_entries(row, handle, *physical_id, zone, false, false)?;
-            self.store
-                .set(key, value)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            self.store.set(key, value).map_err(KvTableError::from)?;
         }
         Ok(())
     }
@@ -2974,23 +2981,32 @@ impl KvTable {
     /// error), which is why a single REPLACE can delete more than one row --
     /// captured: replacing a row that duplicates one row's primary key and
     /// another row's unique key deletes BOTH.
-    pub fn conflicting_handles(
+    pub(crate) fn row_conflicts(
         &mut self,
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
-    ) -> Result<Vec<TableHandle>, KvTableError> {
+    ) -> Result<Vec<RowConflict>, KvTableError> {
         let zone = ctx.time_zone();
         let physical_id = self.record_physical_id(row, ctx)?;
-        let mut found: Vec<TableHandle> = Vec::new();
+        let mut found: Vec<RowConflict> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
             let handle = self.handle_of_row(row, &zone, 0)?;
             if self.row_exists(&handle)? {
-                found.push(handle);
+                found.push(RowConflict {
+                    handle,
+                    error: KvTableError::DuplicateEntry {
+                        value: clustered_key_text(self, row),
+                        key: self.qualified_key("PRIMARY"),
+                    },
+                });
             }
         }
         for index in self.indexes.as_ref().clone() {
-            if !index.unique || index.clustered_primary {
+            if !index.unique
+                || index.clustered_primary
+                || !self.index_condition_holds(&index, row, &zone)?
+            {
                 continue;
             }
             // A distinct entry's key does not carry the handle, so the
@@ -3000,16 +3016,24 @@ impl KvTable {
             if !distinct {
                 continue;
             }
-            let Ok(value) = self.store.get(&Key::from_bytes(key)) else {
-                continue;
+            let value = match self.store.get(&Key::from_bytes(key)) {
+                Ok(value) if !value.is_empty() => value,
+                Ok(_) | Err(StorageError::NotFound) => continue,
+                Err(error) => return Err(error.into()),
             };
             let handle = tidb_tablecodec::decode_handle_in_index_value(&value)
                 .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
             let handle = handle
                 .ok_or_else(|| KvTableError::Decode("index value contains no handle".to_owned()))?;
             let handle = index_entries::convert_handle(&handle);
-            if !found.contains(&handle) {
-                found.push(handle);
+            if !found.iter().any(|conflict| conflict.handle == handle) {
+                found.push(RowConflict {
+                    handle,
+                    error: KvTableError::DuplicateEntry {
+                        value: duplicate_value_text(&self.index_values(&index, row)),
+                        key: self.qualified_key(&index.name),
+                    },
+                });
             }
         }
         Ok(found)
@@ -3056,46 +3080,8 @@ impl KvTable {
             }
             keys.push(key);
         }
-        let found = self
-            .store
-            .batch_get(&keys)
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let found = self.store.batch_get(&keys).map_err(KvTableError::from)?;
         Ok(Some(found.is_empty()))
-    }
-
-    /// The duplicate-entry error a conflicting row would raise, which names
-    /// the key it collided on the way Go's `ErrDupEntry` does.
-    pub fn duplicate_entry_error(
-        &mut self,
-        row: &[Datum],
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<KvTableError, KvTableError> {
-        let zone = ctx.time_zone();
-        let physical_id = self.record_physical_id(row, ctx)?;
-        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        if clustered {
-            let handle = self.handle_of_row(row, &zone, 0)?;
-            if self.row_exists(&handle)? {
-                return Ok(KvTableError::DuplicateEntry {
-                    value: clustered_key_text(self, row),
-                    key: self.qualified_key("PRIMARY"),
-                });
-            }
-        }
-        for index in self.indexes.as_ref().clone() {
-            if !index.unique || index.clustered_primary {
-                continue;
-            }
-            let (key, distinct) =
-                self.index_key(&index, row, &TableHandle::Int(0), physical_id, &zone)?;
-            if distinct && self.store.get(&Key::from_bytes(key)).is_ok() {
-                return Ok(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&self.index_values(&index, row)),
-                    key: self.qualified_key(&index.name),
-                });
-            }
-        }
-        Err(KvTableError::Encode("no conflict to report".to_owned()))
     }
 
     /// Adds an index, whose entries every later write maintains. A
@@ -3366,16 +3352,11 @@ impl KvTable {
     /// [`crate::storage::TableStorage`], so the whole key set is readable
     /// directly.
     pub fn stored_keys(&mut self) -> Result<Vec<Vec<u8>>, KvTableError> {
-        let mut iterator = self
-            .store
-            .iter(None, None)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut iterator = self.store.iter(None, None).map_err(KvTableError::from)?;
         let mut keys = Vec::new();
         while iterator.valid() {
             keys.push(iterator.key().as_slice().to_vec());
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            iterator.next().map_err(KvTableError::from)?;
         }
         iterator.close();
         keys.sort_unstable();
@@ -3492,7 +3473,9 @@ impl KvTable {
                 // home once per reserved window.
                 self.auto_id
                     .rebase_allocating(value as u64)
-                    .map_err(|error| KvTableError::Storage(error.0))?;
+                    .map_err(|error| {
+                        KvTableError::from(crate::storage::StorageError::Backend(error.0))
+                    })?;
                 Some(TableHandle::Int(value))
             }
             _ => None,
@@ -3555,7 +3538,7 @@ impl KvTable {
                     tidb_txnkv::AssertionOp::AssertNotExist
                 },
             )
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, 1, 1);
         }
@@ -3597,7 +3580,7 @@ impl KvTable {
     pub fn delete_raw_key_for_test(&mut self, key: &[u8]) -> Result<(), KvTableError> {
         self.store
             .delete(Key::from_bytes(key.to_vec()))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+            .map_err(KvTableError::from)
     }
 
     /// Removes one row's record entry, leaving its index entries orphaned.
@@ -3798,9 +3781,9 @@ impl KvTable {
             };
             // Same arm Go's insert arms use: the rebase reserves a window on
             // its one store crossing, matching `Rebase(..., true)`.
-            self.auto_id
-                .rebase_allocating(assigned)
-                .map_err(|error| KvTableError::Storage(error.0))?;
+            self.auto_id.rebase_allocating(assigned).map_err(|error| {
+                KvTableError::from(crate::storage::StorageError::Backend(error.0))
+            })?;
         }
         self.rebase_auto_random_from_row(row)?;
         // A clustered primary key IS the row handle, and the record value omits
@@ -3875,17 +3858,19 @@ impl KvTable {
                     if let Err(error) =
                         self.rewrite_changed_index_entries(old, row, handle, new_physical_id, &zone)
                     {
-                        // Restore every entry the failed update disturbed, so a
-                        // rejected statement leaves the index as it found it.
-                        self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                        self.write_index_entries(
-                            old,
-                            handle,
-                            old_physical_id,
-                            &zone,
-                            false,
-                            false,
-                        )?;
+                        // Cluster sessions restore their native statement
+                        // checkpoint; only the in-process backend needs repair.
+                        if !self.store.has_external_statement_rollback() {
+                            self.delete_index_entries(old, handle, old_physical_id, &zone)?;
+                            self.write_index_entries(
+                                old,
+                                handle,
+                                old_physical_id,
+                                &zone,
+                                false,
+                                false,
+                            )?;
+                        }
                         return Err(error);
                     }
                 }
@@ -3899,16 +3884,16 @@ impl KvTable {
                         false,
                         false,
                     ) {
-                        // Restore the entries the failed update removed, so a
-                        // rejected statement leaves the index as it found it.
-                        self.write_index_entries(
-                            old,
-                            handle,
-                            old_physical_id,
-                            &zone,
-                            false,
-                            false,
-                        )?;
+                        if !self.store.has_external_statement_rollback() {
+                            self.write_index_entries(
+                                old,
+                                handle,
+                                old_physical_id,
+                                &zone,
+                                false,
+                                false,
+                            )?;
+                        }
                         return Err(error);
                     }
                 }
@@ -3948,7 +3933,7 @@ impl KvTable {
             }
             self.store
                 .delete_with_assertion(old_key, tidb_txnkv::AssertionOp::AssertExist)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
         }
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx
@@ -3957,7 +3942,7 @@ impl KvTable {
         }
         self.store
             .set_with_assertion(key, value, record_assertion)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         if let Some(stats_ctx) = stats_ctx {
             if old_physical_id == new_physical_id {
                 stats_ctx.update_table_delta(old_physical_id, 0, 1);
@@ -4029,7 +4014,7 @@ impl KvTable {
         }
         self.store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         Ok(())
     }
 
@@ -4069,7 +4054,7 @@ impl KvTable {
         }
         self.store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, -1, 1);
         }
@@ -4529,6 +4514,57 @@ mod tests {
             "exactly one entry, moved not copied"
         );
         assert_ne!(after_touched, before, "entry follows the new indexed value");
+    }
+
+    #[test]
+    fn row_conflicts_only_include_matching_partial_indexes() {
+        let mut table = test_table();
+        table.set_name("partial_conflicts");
+        table.set_pk_handle_offset(0);
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "unique_s".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![1],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let condition = tidb_model::generated_expr::parse_expression("a > 0").unwrap();
+        table
+            .add_partial_index_condition(1, "unique_s", &condition, &SessionTimeZone::utc(), b'\\')
+            .unwrap();
+        table
+            .insert_row(
+                &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        assert!(table
+            .row_conflicts(
+                &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
+                &tidb_expr::NoColumns
+            )
+            .unwrap()
+            .is_empty());
+        let conflicts = table
+            .row_conflicts(
+                &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].handle, TableHandle::Int(1));
+        assert!(
+            matches!(&conflicts[0].error, KvTableError::DuplicateEntry { value, key }
+            if value == "same" && key == "partial_conflicts.unique_s")
+        );
     }
 
     #[test]

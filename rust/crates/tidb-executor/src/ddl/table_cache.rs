@@ -54,11 +54,7 @@ pub(super) fn alter_cache_action(
                 crate::kv_table::KvTableError::CacheTableUnsupported(operation) => {
                     DriverError::OperationOnCachedTable(operation)
                 }
-                crate::kv_table::KvTableError::Storage(message)
-                    if message.starts_with("Retryable(") =>
-                {
-                    DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
-                }
+                crate::kv_table::KvTableError::Storage(error) => error.into(),
                 other => {
                     DriverError::unsupported(format!("cache table size check failed: {other:?}"))
                 }

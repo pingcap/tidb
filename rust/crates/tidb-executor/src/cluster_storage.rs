@@ -1649,10 +1649,22 @@ mod tests {
         /// Every pair this snapshot handed back, summed over all scans.
         rows_read: usize,
         fail_with: Option<StorageError>,
+        index_gets: usize,
+        fail_index_get: Option<(usize, StorageError)>,
     }
 
     impl ClusterSnapshot for MockSnapshot {
         fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+            if tidb_tablecodec::is_index_key(key.as_bytes()) {
+                self.index_gets += 1;
+                if self
+                    .fail_index_get
+                    .as_ref()
+                    .is_some_and(|(at, _)| *at == self.index_gets)
+                {
+                    return Err(self.fail_index_get.take().unwrap().1);
+                }
+            }
             if let Some(error) = self.fail_with.clone() {
                 return Err(error);
             }
@@ -1999,12 +2011,142 @@ mod tests {
             )
             .expect_err("a failed eager index read is not an absent key");
         assert!(
-            matches!(error, crate::kv_table::KvTableError::Storage(detail) if detail.contains("index read failed"))
+            matches!(error, crate::kv_table::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
         );
         assert!(
             buffer.is_empty(),
             "read failure must not stage the index or record"
         );
+    }
+
+    #[test]
+    fn unique_index_read_failures_are_not_absence() {
+        use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        let mut failures = Vec::new();
+        for operation in [
+            "insert",
+            "update",
+            "partial_update",
+            "backfill",
+            "conflicts",
+        ] {
+            for error in [
+                StorageError::Backend("index unavailable".to_owned()),
+                StorageError::Retryable("region changed".to_owned()),
+                StorageError::Sql(crate::MysqlError::new(9007, "write conflict")),
+            ] {
+                let (store, snapshot, buffer) = storage(&[]);
+                let mut table = KvTable::with_storage(
+                    42,
+                    ["id", "v"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, name)| KvColumn {
+                            name: name.to_owned(),
+                            id: i as i64 + 1,
+                            field_type: FieldType::new(FieldTypeCode::LongLong),
+                            column_info_version:
+                                tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                            default_value: None,
+                            origin_default: None,
+                            comment: String::new(),
+                            generated: None,
+                        })
+                        .collect(),
+                    Box::new(store),
+                );
+                table.set_name("index_errors");
+                table.set_pk_handle_offset(0);
+                let index = KvIndex {
+                    id: 1,
+                    name: "unique_v".to_owned(),
+                    comment: String::new(),
+                    unique: true,
+                    column_offsets: vec![1],
+                    prefix_lengths: vec![-1],
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                };
+                let ctx = crate::StmtContext::default();
+                if operation != "backfill" {
+                    table.add_index(index.clone(), false);
+                }
+                if operation == "partial_update" {
+                    let condition = tidb_model::generated_expr::parse_expression("v > 0").unwrap();
+                    table
+                        .add_partial_index_condition(
+                            1,
+                            "unique_v",
+                            &condition,
+                            &ctx.session_zone(),
+                            b'\\',
+                        )
+                        .unwrap();
+                }
+                let old = [Datum::Int(1), Datum::Int(-1)];
+                table.insert_row(&old, &ctx).unwrap();
+                table
+                    .insert_row(&[Datum::Int(2), Datum::Int(2)], &ctx)
+                    .unwrap();
+                for (key, value) in buffer.snapshot() {
+                    snapshot
+                        .lock()
+                        .unwrap()
+                        .data
+                        .insert(key.into_bytes(), value.unwrap());
+                }
+                buffer.reset();
+                let before = table.indexes().len();
+                // Keep an earlier statement's write outside this checkpoint.
+                buffer.set(key(b"earlier"), b"keep".to_vec()).unwrap();
+                let checkpoint = buffer.checkpoint();
+                snapshot.lock().unwrap().index_gets = 0;
+                snapshot.lock().unwrap().fail_index_get =
+                    Some((if operation == "backfill" { 2 } else { 1 }, error.clone()));
+                let candidate = [Datum::Int(3), Datum::Int(3)];
+                let result = match operation {
+                    "insert" => table.insert_row(&candidate, &ctx).map(|_| ()),
+                    "update" | "partial_update" => table.update_row_with_old_context(
+                        &TableHandle::Int(1),
+                        Some(&old),
+                        &[Datum::Int(1), Datum::Int(3)],
+                        &ctx,
+                    ),
+                    "backfill" => table.create_index_with_context(index, &ctx),
+                    "conflicts" => table.row_conflicts(&candidate, &ctx).map(|_| ()),
+                    _ => unreachable!(),
+                };
+                match result {
+                    Ok(()) => failures.push(format!("{operation}: swallowed {error:?}")),
+                    Err(actual) => match (actual, &error) {
+                        (crate::kv_table::KvTableError::Storage(actual), expected)
+                            if actual == *expected => {}
+                        (actual, expected) => {
+                            failures.push(format!("{operation}: {actual:?}, expected {expected:?}"))
+                        }
+                    },
+                }
+                buffer.restore(checkpoint);
+                assert_eq!(
+                    buffer.snapshot(),
+                    [(key(b"earlier"), Some(b"keep".to_vec()))]
+                );
+                if table.indexes().len() != before {
+                    failures.push(format!("{operation}: failed backfill published its index"));
+                }
+                assert_eq!(
+                    table
+                        .get_row_by_handle(&TableHandle::Int(1), &ctx.session_zone())
+                        .unwrap(),
+                    Some(old.to_vec())
+                );
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]

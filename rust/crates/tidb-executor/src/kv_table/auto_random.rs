@@ -299,6 +299,8 @@ impl KvTable {
         // reserve a window on the one store crossing.
         self.auto_random_id
             .rebase_allocating(value & spec.incremental_mask())
-            .map_err(|error| super::KvTableError::Storage(error.0))
+            .map_err(|error| {
+                super::KvTableError::from(crate::storage::StorageError::Backend(error.0))
+            })
     }
 }

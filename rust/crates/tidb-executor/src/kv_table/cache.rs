@@ -69,7 +69,7 @@ impl KvTable {
         let mut iterator = self
             .store
             .iter(Some(&prefix), Some(&upper_bound))
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            .map_err(KvTableError::from)?;
         let mut size = 0usize;
         while iterator.valid() {
             size = size
@@ -81,7 +81,7 @@ impl KvTable {
             }
             if let Err(error) = iterator.next() {
                 iterator.close();
-                return Err(KvTableError::Storage(format!("{error:?}")));
+                return Err(KvTableError::from(error));
             }
         }
         iterator.close();

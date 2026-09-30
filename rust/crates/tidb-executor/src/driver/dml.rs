@@ -1226,7 +1226,7 @@ fn run_insert_with_physical(
         let conflicts = if lazy_dup_check || !resolves_conflicts {
             Vec::new()
         } else {
-            match target(catalog, &database, &table_name).conflicting_handles(row, ctx) {
+            match target(catalog, &database, &table_name).row_conflicts(row, ctx) {
                 Ok(conflicts) => conflicts,
                 Err(error) => {
                     handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
@@ -1253,7 +1253,8 @@ fn run_insert_with_physical(
                 // Go's `TestInsertLockUnchangedKeys` drives it with
                 // `replace into t values (1)` over the same row.
                 let mut unchanged = false;
-                for handle in &conflicts {
+                for conflict in &conflicts {
+                    let handle = &conflict.handle;
                     let existing = target(catalog, &database, &table_name)
                         .get_row_by_handle(handle, &ctx.session_zone())
                         .map_err(|e| kv_read_error("row read failed", e))?;
@@ -1304,11 +1305,11 @@ fn run_insert_with_physical(
                 // The undo entry needs the row the update is about to
                 // overwrite, read before `apply_on_duplicate` replaces it.
                 let dup_old_row = target(catalog, &database, &table_name)
-                    .get_row_by_handle(&conflicts[0], &ctx.session_zone())
+                    .get_row_by_handle(&conflicts[0].handle, &ctx.session_zone())
                     .map_err(|e| kv_read_error("row read failed", e))?;
                 let result = apply_on_duplicate(
                     target(catalog, &database, &table_name),
-                    &conflicts[0],
+                    &conflicts[0].handle,
                     row,
                     &prepared_on_duplicate,
                     &column_list,
@@ -1319,7 +1320,7 @@ fn run_insert_with_physical(
                 match result {
                     Ok(affected) => {
                         undo.push(InsertUndo::Updated {
-                            handle: conflicts[0].clone(),
+                            handle: conflicts[0].handle.clone(),
                             row: dup_old_row.unwrap_or_default(),
                         });
                         inserted += affected;
@@ -1331,13 +1332,9 @@ fn run_insert_with_physical(
                 }
                 continue;
             } else if insert.ignore {
-                let reported = target(catalog, &database, &table_name)
-                    .duplicate_entry_error(row, ctx)
-                    .map_err(kv_write_error)?;
-                if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
-                    let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
-                    ctx.append_warning_parts(warning.code, &warning.message);
-                }
+                let conflict = conflicts.into_iter().next().expect("a conflict was found");
+                let warning = kv_write_error(conflict.error).to_mysql_error();
+                ctx.append_warning_parts(warning.code, &warning.message);
                 continue;
             }
         }
@@ -1445,9 +1442,7 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 /// would replace the code an application branches on.
 pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
-        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
-            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
-        }
+        crate::kv_table::KvTableError::Storage(error) => error.into(),
         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
             DriverError::DuplicateEntry { value, key }
         }
@@ -1564,9 +1559,7 @@ fn handle_partition_write_error(
 /// retryable-region signal as a transaction error instead of a parse error.
 pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableError) -> DriverError {
     match error {
-        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
-            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
-        }
+        crate::kv_table::KvTableError::Storage(error) => error.into(),
         // A row that could not be READ is a runtime storage/decode failure;
         // Go surfaces it through its generic 1105 path -- never a 1064, which
         // would tell the client its SQL TEXT was at fault.
@@ -3419,8 +3412,10 @@ fn run_update_with_physical(
                         unreachable!("only a byte-backed table stages rewrites")
                     };
                     let kv = std::sync::Arc::make_mut(kv);
-                    match kv.conflicting_handles(&new_row, ctx) {
-                        Ok(conflicts) => conflicts.iter().any(|conflict| conflict != &handle),
+                    match kv.row_conflicts(&new_row, ctx) {
+                        Ok(conflicts) => conflicts
+                            .into_iter()
+                            .find(|conflict| conflict.handle != handle),
                         Err(error) => {
                             handle_partition_write_error(kv_write_error(error), true, ctx)?;
                             touched += 1;
@@ -3428,18 +3423,11 @@ fn run_update_with_physical(
                         }
                     }
                 };
-                if duplicate {
+                if let Some(conflict) = duplicate {
                     // Go increments TouchedRows before the table write detects
                     // a duplicate that UPDATE IGNORE later downgrades.
                     touched += 1;
-                    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-                        unreachable!("only a byte-backed table stages rewrites")
-                    };
-                    let kv = std::sync::Arc::make_mut(kv);
-                    let error = kv
-                        .duplicate_entry_error(&new_row, ctx)
-                        .map_err(kv_write_error)?;
-                    let warning = kv_write_error(error).to_mysql_error();
+                    let warning = kv_write_error(conflict.error).to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
                     continue;
                 }

@@ -65,7 +65,7 @@
 //! Every byte-level read and write in this tier is inside
 //! [`KvTable`], and all of them now go through [`TableStorage`]: the point
 //! reads (`read_row`, `row_exists`, `lookup_unique`, the unique-index probes
-//! in `conflicting_handles`/`duplicate_entry_error`/`write_index_entries`),
+//! in `row_conflicts`/`write_index_entries`),
 //! the two range scans (`scan_rows_with_handles`, `scan_index_range`), and the
 //! writes (`insert_row`, `update_row`, `delete_row`, `create_index`,
 //! `drop_index`, `modify_column`, `truncate`). The read path and the write
@@ -111,8 +111,8 @@ use crate::remote_scan::{PushdownScan, PushdownScanRequest};
 
 /// A failure reported by a storage backend.
 ///
-/// The variant names match [`MemStorageError`]'s so the text a
-/// `KvTableError::Storage` carries is unchanged by the seam.
+/// Kept typed through the table and SQL adapters so a diagnostic's text never
+/// decides whether an operation is absent, retryable, or a SQL failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageError {
     /// A SQL error returned by the coprocessor, retained without string encoding.
@@ -145,6 +145,16 @@ impl From<MemStorageError> for StorageError {
         match error {
             MemStorageError::NotFound => StorageError::NotFound,
             MemStorageError::InvalidIterator => StorageError::InvalidIterator,
+        }
+    }
+}
+
+impl From<StorageError> for crate::DriverError {
+    fn from(error: StorageError) -> Self {
+        match error {
+            StorageError::Sql(error) => Self::Mysql(error),
+            StorageError::Retryable(_) => Self::Txn(crate::TxnErrorKind::RegionUnavailable),
+            other => Self::Exec(crate::ExecError::Internal(other.to_string().into())),
         }
     }
 }

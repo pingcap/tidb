@@ -52,11 +52,21 @@ struct BatchReadCountingStorage {
     inner: MemTableStorage,
     gets: Arc<AtomicUsize>,
     batch_gets: Arc<AtomicUsize>,
+    index_fault: Arc<std::sync::Mutex<Option<(usize, StorageError)>>>,
 }
 
 impl TableStorage for BatchReadCountingStorage {
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.gets.fetch_add(1, Ordering::Relaxed);
+        if tidb_tablecodec::is_index_key(key.as_bytes()) {
+            let mut fault = self.index_fault.lock().unwrap();
+            if let Some((skip, _)) = fault.as_mut() {
+                if *skip == 0 {
+                    return Err(fault.take().unwrap().1);
+                }
+                *skip -= 1;
+            }
+        }
         self.inner.get(key)
     }
 
@@ -119,6 +129,7 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
         inner: MemTableStorage::new(),
         gets: Arc::clone(&gets),
         batch_gets: Arc::clone(&batch_gets),
+        ..Default::default()
     }));
     let ctx = crate::StmtContext::for_query();
     run_insert_on(
@@ -144,11 +155,156 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
 }
 
 #[test]
+fn failed_in_process_backfill_restores_its_storage_image() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE backfill_error (id INT PRIMARY KEY, v INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let index_fault = Arc::new(std::sync::Mutex::new(None));
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
+        panic!("expected KV table")
+    };
+    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
+        index_fault: index_fault.clone(),
+        ..Default::default()
+    }));
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO backfill_error VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    *index_fault.lock().unwrap() = Some((
+        1,
+        StorageError::Sql(crate::MysqlError::new(9007, "backfill read failed")),
+    ));
+    let sql = "CREATE UNIQUE INDEX unique_v ON backfill_error(v)";
+    let error = crate::run_create_index_in(sql, &mut catalog, "test", &ctx).unwrap_err();
+    assert_eq!(
+        error.to_mysql_error(),
+        crate::MysqlError::new(9007, "backfill read failed")
+    );
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
+        unreachable!()
+    };
+    assert!(!table.indexes().iter().any(|index| index.name == "unique_v"));
+    // The first attempted entry must be gone or this retry sees a duplicate.
+    crate::run_create_index_in(sql, &mut catalog, "test", &ctx).unwrap();
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
+        unreachable!()
+    };
+    let table = Arc::make_mut(table);
+    let index_id = table
+        .indexes()
+        .iter()
+        .find(|index| index.name == "unique_v")
+        .unwrap()
+        .id;
+    assert_eq!(table.index_entries_for_check(index_id).unwrap().len(), 2);
+}
+
+#[test]
+fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE conflict_identity (id INT PRIMARY KEY, v INT, UNIQUE KEY unique_v(v))",
+        &mut catalog,
+    )
+    .unwrap();
+    let gets = Arc::new(AtomicUsize::new(0));
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "conflict_identity").unwrap() else {
+        panic!("expected KV table")
+    };
+    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
+        gets: gets.clone(),
+        ..Default::default()
+    }));
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO conflict_identity VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    gets.store(0, Ordering::Relaxed);
+    assert_eq!(
+        run_insert_on(
+            "INSERT IGNORE INTO conflict_identity VALUES (3, 20)",
+            &mut catalog,
+            &ctx
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        gets.load(Ordering::Relaxed),
+        2,
+        "one primary read and one unique-index read"
+    );
+    let warnings = ctx.take_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].1, 1062);
+    assert_eq!(
+        warnings[0].2,
+        "Duplicate entry '20' for key 'conflict_identity.unique_v'"
+    );
+
+    run_update_on(
+        "UPDATE IGNORE conflict_identity SET v = 20 WHERE id = 1",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let warnings = ctx.take_warnings();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        warnings[0].2,
+        "Duplicate entry '20' for key 'conflict_identity.unique_v'"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id, v FROM conflict_identity ORDER BY id",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(10)],
+            vec![Datum::Int(2), Datum::Int(20)]
+        ]
+    );
+}
+
+#[test]
+fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
+    use crate::storage::StorageError;
+    for storage in [
+        StorageError::Sql(crate::MysqlError::new(9007, "write conflict")),
+        StorageError::Backend("backend unavailable".to_owned()),
+        StorageError::Backend("Retryable(backend diagnostic text)".to_owned()),
+    ] {
+        for error in [
+            kv_read_error("row read failed", storage.clone().into()),
+            kv_write_error(storage.clone().into()),
+        ] {
+            let error = error.to_mysql_error();
+            match &storage {
+                StorageError::Sql(expected) => assert_eq!(&error, expected),
+                _ => assert_eq!(error.code, 1105, "{error:?}"),
+            }
+        }
+    }
+}
+
+#[test]
 fn retryable_storage_errors_keep_their_transaction_identity() {
     let retryable = || {
-        crate::kv_table::KvTableError::Storage(
-            "Retryable(\"region response no longer matches observed route\")".to_owned(),
-        )
+        crate::kv_table::KvTableError::from(crate::storage::StorageError::Retryable(
+            "region response no longer matches observed route".to_owned(),
+        ))
     };
 
     for error in [
@@ -162,7 +318,9 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 
     let ordinary = kv_read_error(
         "row read failed",
-        crate::kv_table::KvTableError::Storage("Backend(\"disk error\")".to_owned()),
+        crate::kv_table::KvTableError::from(crate::storage::StorageError::Backend(
+            "disk error".to_owned(),
+        )),
     );
     // A storage failure is a runtime 1105, never a 1064: the client's SQL
     // text was fine.

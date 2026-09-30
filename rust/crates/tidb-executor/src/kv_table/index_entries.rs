@@ -76,7 +76,7 @@ impl UniquePointRead {
                     return Ok(Some(convert_handle(&handle)));
                 }
                 Err(StorageError::NotFound) => {}
-                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+                Err(error) => return Err(KvTableError::from(error)),
             }
         }
         Ok(None)
@@ -116,7 +116,7 @@ impl KvTable {
                 }
                 Ok(lazy)
             }
-            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
+            Err(error) => Err(KvTableError::from(error)),
         }
     }
 
@@ -129,16 +129,11 @@ impl KvTable {
         new_key: Vec<u8>,
     ) -> Result<(), KvTableError> {
         let old_key = tidb_txnkv::Key::from_bytes(old_key.to_vec());
-        let value = self
-            .store
-            .get(&old_key)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        self.store
-            .delete(old_key)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let value = self.store.get(&old_key).map_err(KvTableError::from)?;
+        self.store.delete(old_key).map_err(KvTableError::from)?;
         self.store
             .set(tidb_txnkv::Key::from_bytes(new_key), value)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+            .map_err(KvTableError::from)
     }
 
     /// Every stored entry of one index, as `(entry key, the handle it names)`.
@@ -177,15 +172,13 @@ impl KvTable {
             let mut iterator = self
                 .store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                .map_err(KvTableError::from)?;
             while iterator.valid() {
                 let key = iterator.key().as_bytes().to_vec();
                 let value = iterator.value().to_vec();
                 let handle = index_entry_handle(&index, &key, &value, common)?;
                 entries.push(IndexEntryForCheck { key, value, handle });
-                iterator
-                    .next()
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                iterator.next().map_err(KvTableError::from)?;
             }
             iterator.close();
         }
@@ -226,20 +219,14 @@ impl KvTable {
     ) -> Result<(), KvTableError> {
         let left_key = tidb_txnkv::Key::from_bytes(left.to_vec());
         let right_key = tidb_txnkv::Key::from_bytes(right.to_vec());
-        let left_value = self
-            .store
-            .get(&left_key)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        let right_value = self
-            .store
-            .get(&right_key)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let left_value = self.store.get(&left_key).map_err(KvTableError::from)?;
+        let right_value = self.store.get(&right_key).map_err(KvTableError::from)?;
         self.store
             .set(left_key, right_value)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            .map_err(KvTableError::from)?;
         self.store
             .set(right_key, left_value)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+            .map_err(KvTableError::from)
     }
 
     /// The values one index entry is built from: the indexed columns of
@@ -527,7 +514,7 @@ impl KvTable {
             };
             self.store
                 .set_with_assertion(key, value, assertion)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
         }
         Ok(())
     }
@@ -553,7 +540,7 @@ impl KvTable {
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
             self.store
                 .delete_with_assertion(Key::from_bytes(key), AssertionOp::AssertExist)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
         }
         Ok(())
     }
@@ -604,22 +591,24 @@ impl KvTable {
                         zone,
                     )?;
                     let key = Key::from_bytes(new_key);
-                    if new_distinct && self.store.get(&key).is_ok() {
-                        return Err(KvTableError::DuplicateEntry {
-                            value: duplicate_value_text(&self.index_values(index, new_row)),
-                            key: self.qualified_key(&index.name),
-                        });
+                    if new_distinct {
+                        self.check_insert_key(
+                            &key,
+                            &duplicate_value_text(&self.index_values(index, new_row)),
+                            &self.qualified_key(&index.name),
+                            false,
+                        )?;
                     }
                     self.store
                         .set_with_assertion(key, value, AssertionOp::AssertNotExist)
-                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                        .map_err(KvTableError::from)?;
                     continue;
                 }
                 (true, false) => {
                     let (old_key, _) = self.index_key(index, old_row, handle, physical_id, zone)?;
                     self.store
                         .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
-                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                        .map_err(KvTableError::from)?;
                     continue;
                 }
                 (true, true) => {}
@@ -669,24 +658,26 @@ impl KvTable {
                         new_value,
                         AssertionOp::AssertExist,
                     )
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                    .map_err(KvTableError::from)?;
                 continue;
             }
             let value =
                 self.index_entry_value(index, new_row, handle, new_distinct, physical_id, zone)?;
             let key = Key::from_bytes(new_key);
-            if new_distinct && self.store.get(&key).is_ok() {
-                return Err(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&self.index_values(index, new_row)),
-                    key: self.qualified_key(&index.name),
-                });
+            if new_distinct {
+                self.check_insert_key(
+                    &key,
+                    &duplicate_value_text(&self.index_values(index, new_row)),
+                    &self.qualified_key(&index.name),
+                    false,
+                )?;
             }
             self.store
                 .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
             self.store
                 .set_with_assertion(key, value, AssertionOp::AssertNotExist)
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                .map_err(KvTableError::from)?;
         }
         Ok(())
     }
@@ -794,9 +785,7 @@ impl KvTable {
         let entries = if request.is_empty() {
             std::collections::HashMap::new()
         } else {
-            self.store
-                .batch_get(&request)
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?
+            self.store.batch_get(&request).map_err(KvTableError::from)?
         };
         keys.into_iter()
             .map(|key| {

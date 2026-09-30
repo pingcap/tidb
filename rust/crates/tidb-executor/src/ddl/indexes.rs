@@ -597,6 +597,7 @@ pub(crate) fn add_index_to_table(
             ctx,
         )
         .map_err(|e| match e {
+            crate::kv_table::KvTableError::Storage(error) => error.into(),
             crate::kv_table::KvTableError::DuplicateKeyName(name) => {
                 DriverError::DuplicateKeyName(name)
             }

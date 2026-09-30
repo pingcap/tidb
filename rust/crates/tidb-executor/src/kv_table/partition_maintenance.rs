@@ -38,19 +38,15 @@ impl KvTable {
             let mut iterator = self
                 .store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                .map_err(KvTableError::from)?;
             let mut keys = Vec::new();
             while iterator.valid() {
                 keys.push(iterator.key().clone());
-                iterator
-                    .next()
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                iterator.next().map_err(KvTableError::from)?;
             }
             iterator.close();
             for key in keys {
-                self.store
-                    .delete(key)
-                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+                self.store.delete(key).map_err(KvTableError::from)?;
             }
         }
         Ok(())
