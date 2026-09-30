@@ -213,23 +213,12 @@ versions can widen either end without a migration: ingest could try to recognise
 assume MySQL's, and bare output could do something better than erroring, so long as it is
 neither silent truncation nor a format the input side will not take back.
 
-**Self-describing values.** A stored geometry always carries its SRID, so any reader can
-determine it from the bytes alone. EWKB allows omitting the flag where a `SRID n` column
-fixes the value, and leaving it out would be safe if TiDB were the only reader, since the
-SQL layer always has the column's schema and could stamp the SRID on the way out.
-
-It is not the only reader. The coprocessor, if the exact predicate is ever pushed down, the
-index refine, TiCDC and TiFlash all read the stored value from the KV layer rather than
-through SQL ([Compatibility](#compatibility)), and at that point there is no column in
-sight. Omitting the flag would mean giving each of them its own way to recover the SRID: a
-tipb field, a schema lookup, a per-consumer convention. That is four readers across three
-repositories, each needing plumbing to carry one integer that could have travelled with the
-value.
-
-The cost is four bytes on a value whose SRID is identical in every row of its column, which
-is the most compressible shape a redundant field can take. A later format version may drop
-it again, since introducing one is a coordinated change that updates its readers anyway, but
-it would have to answer the same question: how a reader with no schema recovers the SRID.
+**Self-describing values.** A stored geometry carries its SRID, so a reader with no schema
+can determine it from the bytes alone. That matters because the coprocessor under pushdown,
+the index refine, TiCDC and TiFlash all read the stored value from the KV layer, where there
+is no column in sight ([Compatibility](#compatibility)). In EWKB that means the SRID flag is
+always set, even where a `SRID n` column fixes it; a later format may do it differently as
+long as the invariant holds.
 
 **Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
 `max_allowed_packet` can nest millions deep. MySQL guards this pre-emptively: on 9.7.2 with
