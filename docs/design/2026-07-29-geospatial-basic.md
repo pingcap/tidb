@@ -638,8 +638,7 @@ Out of scope here, each with a home:
   `POLYGON((0 0, 80 0, 0 80, 0 0))`, probed on longitude 70 at latitude 45.035 and 45.5, the
   first inside and the second outside. That is MySQL's boundary at 45.070155 and not a
   sphere's at 45.000000, and 45.035 is the probe a spherical engine answers the other way, so
-  the test fails if the edge model ever quietly reverts. The same probe run against MySQL and
-  PostGIS is what measured those two latitudes in the first place.
+  the test fails if the edge model ever quietly reverts.
 - SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN rejection,
   and mixed-SRID arguments to a binary geometry function giving `ERROR 3033`, while the
   SQL comparison operators keep comparing the stored bytes without erroring.
@@ -753,9 +752,8 @@ Risks:
   being a re-parse inside the predicate library that no format can remove. The version byte
   defers the choice without a migration.
 - **Matching MySQL's stored bytes.** Rejected as a non-goal: I/O compatibility is a boundary
-  conversion, and MySQL does the same internally. Exposing that conversion as a function
-  pair, so MySQL bytes can be loaded and converted in place, is in
-  [Future extensions](#future-extensions).
+  conversion, and MySQL does the same internally. No conversion function pair is needed
+  either, since the bare path already exchanges MySQL's format in both directions.
 - **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
   `libgeos` in the Bazel/CI sandbox, which broke the build. The PoC moved to pure-Go
   `simplefeatures` and stayed MySQL byte-identical. Revisit for the processing tail.
@@ -995,63 +993,36 @@ ellipsoidal *measurement* and spherical *topology*, and neither offers a switch:
 on `geography` do not. So a spherical point-in-polygon is not a shortfall against PostGIS;
 it is what PostGIS does, and MySQL is the outlier.
 
-PostGIS can still construct an exact geodesic by hand, out of `ST_Azimuth` and
-`ST_Project`, even though no predicate consumes it. That is the provenance of the
-exact-geodesic row in [Unresolved Questions](#unresolved-questions): PostGIS and an
-independent Vincenty computation both place that edge at latitude 45.070235.
-
 ### A `GEOGRAPHY` type
 
 The extension a PostGIS user asks for, since it is how PostGIS spells geodetic work.
-Nothing in this design forecloses it, and little of it would be new work:
+Nothing in this design forecloses it, and little of it would be new work.
 
-- **Storage costs nothing.** EWKB behind a format-version byte is exactly what PostGIS
-  stores for `geography`, so such a column needs no new bytes, no second codec and no
-  migration of existing geometry columns.
-- **The math is already scoped, and is less than it looks.** Matching PostGIS needs a
-  spherical relate, which is the great-circle rung in [Reference surface](#srid-model), plus
-  Karney as the metric and for area. It does not need the geodesic relate that matching
-  MySQL's edges needs ([Unresolved Questions](#unresolved-questions)), and it adds no
-  formula that the geographic-SRS step in [Future extensions](#future-extensions) does not
-  already require.
-- **The open question is semantic, not mechanical.** Because the surface is chosen by SRS
-  class rather than by type, `SRID 4326` is already the geography equivalent, so
-  `GEOGRAPHY SRID 0` would mean nothing. Giving `GEOMETRY` PostGIS's always-planar meaning
-  at the same time would break MySQL parity, so that pairing is a fork in the road, not an
-  addition to this design.
-- **What it would actually buy is the PostGIS duality, not accuracy.** PostGIS `geography`
-  is great-circle edges with a spheroidal metric: the sphere decides containment and which
-  points get measured, and Karney converts that pair into metres. Matching PostGIS therefore
-  means reproducing that split, not being as exact as possible, and a `GEOGRAPHY` built on
-  Karney edges throughout would be more exact than PostGIS and disagree with its predicates
-  by the same margin a sphere disagrees with MySQL. The split is legitimate under
-  the consistency invariant in [Reference surface](#srid-model), since one edge model still
-  decides all topology. It is also the cheaper reading, because great-circle edges are a
-  rung already reachable.
-  With that, one engine covers all three audiences:
+**Storage costs nothing.** EWKB behind a format-version byte is exactly what PostGIS stores
+for `geography`, so such a column needs no new bytes, no second codec and no migration.
 
-  | Spelling | Edge model | Metric | Matches |
-  | --- | --- | --- | --- |
-  | `GEOMETRY` `SRID 0` | plane | plane | PostGIS `geometry` and MySQL, all three agree |
-  | `GEOMETRY` `SRID 4326`, and further SRIDs later | Andoyer | Andoyer | MySQL |
-  | `GEOGRAPHY`, if added | great circle | Karney | PostGIS `geography` |
+**What it would buy is the PostGIS duality, not accuracy.** PostGIS `geography` is
+great-circle edges with a spheroidal metric: the sphere decides containment and which points
+get measured, and Karney converts that pair into metres. Matching PostGIS therefore means
+reproducing that split rather than being as exact as possible, and it stays within the
+consistency invariant in [Reference surface](#srid-model), since one edge model still
+decides all topology. So one engine could cover all three audiences:
 
-  The row that does not appear is PostGIS `geometry` at `SRID 4326`, which is planar on
-  degrees. No TiDB spelling reproduces it, so that is a behavior difference on migration
-  rather than an extension: `ST_Distance` changes from degrees to metres and predicates
-  flip where curvature matters.
-- **A formula-only split would be the wrong axis.** Separating `GEOMETRY` from `GEOGRAPHY`
-  by Andoyer against Karney reuses PostGIS's two names for a different distinction: PostGIS
-  splits planar from curved, this would split approximate-curved from exact-curved, so a
-  PostGIS user would read `GEOMETRY` as planar and get neither. The payoff is thin as well,
-  9.9 cm at 10 km and kilometres only near antipodes, against a new field type and the
-  plumbing below. Where exactness is wanted as a choice, PostGIS itself uses a parameter
-  rather than a type, `use_spheroid` on `ST_Distance`, `ST_Length` and `ST_DWithin`, which
-  costs a fraction of that and collides with nobody's mental model.
-- **Type plumbing is the part worth deciding before it is needed**: whether `GEOGRAPHY`
-  becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the parser,
-  DDL, `SHOW CREATE TABLE`, `information_schema.columns` and the tool metadata path in
-  [Compatibility](#compatibility). No constant is reserved for it here.
+| Spelling | Edge model | Metric | Matches |
+| --- | --- | --- | --- |
+| `GEOMETRY` `SRID 0` | plane | plane | PostGIS `geometry` and MySQL, all three agree |
+| `GEOMETRY` `SRID 4326`, and further SRIDs later | Andoyer | Andoyer | MySQL |
+| `GEOGRAPHY`, if added | great circle | Karney | PostGIS `geography` |
+
+The row that does not appear is PostGIS `geometry` at `SRID 4326`, planar on degrees. No
+TiDB spelling reproduces it, so that is a behavior difference on migration rather than an
+extension: `ST_Distance` changes from degrees to metres and predicates flip where curvature
+matters.
+
+**Type plumbing is the part worth deciding before it is needed**: whether `GEOGRAPHY`
+becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the parser, DDL,
+`SHOW CREATE TABLE`, `information_schema.columns` and the tool metadata path in
+[Compatibility](#compatibility). No constant is reserved for it here.
 
 ### Remaining delta
 
