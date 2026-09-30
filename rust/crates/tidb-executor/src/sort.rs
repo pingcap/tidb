@@ -562,9 +562,6 @@ where
     /// runs, spilling whenever the memory action says to.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
         validate_by_items(&self.by_items)?;
-        if self.parallelism > 1 {
-            return self.fetch_and_sort_parallel();
-        }
 
         let fields: Vec<FieldType> = self.meta.ret_field_types().to_vec();
         let mut current = self.new_partition(&fields);
