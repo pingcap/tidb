@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -390,6 +391,7 @@ func (r *HistoryReader) scheduleTasks(
 				}
 				select {
 				case filesCh <- file:
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
 				case <-ctx.Done():
 					file.closeAndLogError()
 					return
@@ -841,6 +843,7 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
+		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines

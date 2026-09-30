@@ -51,7 +51,9 @@ import (
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
 	enableScalarPushDown bool
-	pushedDownFuncs      map[string]func(string) string
+	// Statement summary time pruning may resolve execution-bound constants.
+	enableDeferredConst bool
+	pushedDownFuncs     map[string]func(string) string
 
 	// Store whether the extracted strings for a specific column are converted to lower case
 	extractLowerString map[string]bool
@@ -215,10 +217,24 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil {
+	if !ok {
 		return "", nil, false
 	}
 	v := constant.Value
+	if constant.DeferredExpr != nil {
+		if !helper.enableDeferredConst || !expression.IsRuntimeConstExpr(constant.DeferredExpr) ||
+			expression.IsMutableEffectsExpr(constant.DeferredExpr) {
+			return "", nil, false
+		}
+		var err error
+		v, err = constant.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return "", nil, false
+		}
+		// The extracted range belongs to this execution's bindings. Even an
+		// empty-range plan must not cache it for the next execution.
+		ctx.GetExprCtx().SetSkipPlanCache("statement summary time range depends on deferred constants")
+	}
 	if constant.ParamMarker != nil {
 		var err error
 		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
@@ -1691,8 +1707,13 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	predicates []expression.Expression,
 ) *TimeRange {
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
-	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
-	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	// FROM_UNIXTIME(?) remains a deferred constant while planning prepared
+	// queries. Resolve it only for this coarse prefilter; retain the original
+	// predicates for the exact SQL comparison and the nonpersistent reader.
+	helper := e.extractHelper
+	helper.enableDeferredConst = true
+	_, _, endTime := helper.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := helper.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)
 }
 
