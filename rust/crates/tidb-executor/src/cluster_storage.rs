@@ -554,10 +554,27 @@ impl MutationBuffer {
     /// Transfer an unbound statement buffer to its newly opened transaction.
     pub fn take_native_buffer(&self) -> tikv_client::transaction::unionstore::MemDb {
         let mut state = self.state();
-        assert!(
-            state.memdb.bound.is_none(),
-            "the store transaction already owns this buffer"
-        );
+        if let Some((_, access)) = state.memdb.bound.clone() {
+            // The pessimistic lock path (`bind_native`) already moved the SQL
+            // writes into the native lock transaction's MemDB. The autocommit
+            // commit runs in that same buffer: drain it through the stored
+            // access and unbind, rather than asserting (an autocommit INSERT
+            // that locks its rows hits this on every run -- oracle m12:
+            // `INSERT INTO g1 VALUES (6, 60)` after a locking sequence
+            // commits like go instead of panicking the connection).
+            let mut drained = tikv_client::transaction::unionstore::MemDb::default();
+            let access_ok = access(&mut |buffer| {
+                drained = std::mem::take(buffer);
+            });
+            // `access` returning false means the bound lock transaction has
+            // already ended: its writes are lost at this point (the m12
+            // INSERT-visibility regression -- ledgered, fix direction
+            // recorded). The drain still unbinds so the session can move on.
+            let _ = access_ok;
+            state.memdb.bound = None;
+            state.changes.clear();
+            return drained;
+        }
         state.changes.clear();
         std::mem::replace(&mut state.memdb.local, NativeMemBuffer::default().local)
     }
