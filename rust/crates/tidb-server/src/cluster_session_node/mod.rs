@@ -4581,6 +4581,7 @@ impl ClusterServerSession {
         );
         let delta_savepoint = self.session.table_delta_savepoint();
         let mut retried: u32 = 0;
+        self.session.begin_external_mpp_query_scope();
         let outcome = loop {
             match self.attempt_statement(
                 shape,
@@ -4617,6 +4618,7 @@ impl ClusterServerSession {
                 }
             }
         };
+        self.session.end_external_mpp_query_scope(outcome.is_err());
         self.buffer.release(savepoint);
         self.session.set_selected_lock_keys(None);
         // Go's `cleanRetryInfo` (`pkg/session/session.go:329-336`, deferred

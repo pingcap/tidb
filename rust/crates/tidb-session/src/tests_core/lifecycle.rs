@@ -475,3 +475,127 @@ fn update_and_delete_through_the_session() {
         StmtKind::Write
     );
 }
+
+#[test]
+fn mpp_statement_contexts_share_counters_until_completion() {
+    use tidb_executor::remote_scan::PushdownStatementContext;
+
+    let mut session = Session::new();
+    session.begin_statement_execution("select 1").unwrap();
+    let context = session.statement_context(false);
+    let request = PushdownStatementContext::from_stmt(&context);
+    let id = request.mpp_query_info.query_id(request.mpp_server_id);
+    assert_eq!(request.mpp_query_info.alloc_task_id(), 1);
+    assert_eq!(request.mpp_query_info.alloc_gather_id(), 1);
+    // Rebuilding an executor context (including retry construction) must not
+    // become a new MPP query or restart either counter.
+    let rebuilt = session.statement_context(true);
+    let retry = PushdownStatementContext::from_stmt(&rebuilt);
+    assert!(Arc::ptr_eq(&request.mpp_query_info, &retry.mpp_query_info));
+    assert_eq!(retry.mpp_query_info.query_id(retry.mpp_server_id), id);
+    assert_eq!(retry.mpp_query_info.alloc_task_id(), 2);
+    assert_eq!(retry.mpp_query_info.alloc_gather_id(), 2);
+    session.finish_statement_state(&Ok(StatementCompletion::Affected(0)));
+    let next = session.statement_context(false);
+    assert_ne!(
+        next.mpp_query_info().query_id(0).local_query_id,
+        id.local_query_id
+    );
+    assert_eq!(next.mpp_query_info().alloc_task_id(), 1);
+    assert_eq!(next.mpp_query_info().alloc_gather_id(), 1);
+    // A retained, closed reader cannot allocate IDs in the new statement.
+    assert_eq!(request.mpp_query_info.alloc_task_id(), 3);
+    assert_eq!(next.mpp_query_info().alloc_task_id(), 2);
+}
+
+#[test]
+fn mpp_identity_is_retired_when_record_sets_close_or_execution_fails() {
+    let mut session = Session::new();
+    for sql in ["select 1", "select * from missing_mpp_test_table"] {
+        let old = session.mpp_query_info.clone();
+        let id = old.query_id(0);
+        let result = session.run(sql);
+        assert_eq!(result.is_err(), sql.contains("missing_mpp_test_table"));
+        assert!(!Arc::ptr_eq(&old, &session.mpp_query_info));
+        let current = session.statement_context(false);
+        assert_ne!(
+            id.local_query_id,
+            current.mpp_query_info().query_id(0).local_query_id
+        );
+        assert_eq!(current.mpp_query_info().alloc_task_id(), 1);
+    }
+}
+
+#[test]
+fn mpp_context_uses_the_live_server_info_identity() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tidb_executor::remote_scan::PushdownStatementContext;
+
+    let mut session = Session::new();
+    assert_eq!(session.statement_context(false).mpp_server_id(), 0);
+    let id = Arc::new(AtomicU64::new(42));
+    let getter_id = id.clone();
+    let mut info = tidb_domain::serverinfo::ServerInfo::default();
+    info.static_info.json_server_id = 7; // Getter wins over the serialized copy.
+    info.static_info.server_id_getter = Some(Arc::new(move || getter_id.load(Ordering::SeqCst)));
+    session.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        info, None,
+    )));
+    let context = session.statement_context(false);
+    let request = PushdownStatementContext::from_stmt(&context);
+    assert_eq!(request.mpp_server_id, 42);
+    id.store(99, Ordering::SeqCst);
+    assert_eq!(session.statement_context(false).mpp_server_id(), 99);
+    assert_eq!(request.mpp_server_id, 42); // Already-built request retains its identity.
+}
+
+#[test]
+fn mpp_retry_scope_keeps_closed_attempts_and_defers_stream_completion() {
+    let mut session = Session::new();
+    session.begin_external_mpp_query_scope();
+    let owner = session.mpp_query_info.clone();
+    let id = owner.query_id(0);
+    assert_eq!(owner.alloc_gather_id(), 1);
+    assert!(session
+        .run("select * from missing_mpp_retry_table")
+        .is_err());
+    assert!(Arc::ptr_eq(&owner, &session.mpp_query_info));
+
+    // A successful retry returns an open stream to the outer server runner.
+    let sql = "select 1";
+    let stmt = session.parse(sql).unwrap();
+    let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(stmt, sql).unwrap()
+    else {
+        panic!("SELECT returns a record set");
+    };
+    assert_eq!(
+        session
+            .statement_context(false)
+            .mpp_query_info()
+            .query_id(0),
+        id
+    );
+    assert_eq!(session.mpp_query_info.alloc_gather_id(), 2);
+    session.end_external_mpp_query_scope(false);
+    assert!(Arc::ptr_eq(&owner, &session.mpp_query_info));
+    let mut chunk = result.new_chunk();
+    result.next(&mut session, &mut chunk).unwrap();
+    result.finish(&mut session).unwrap();
+    assert!(Arc::ptr_eq(&owner, &session.mpp_query_info));
+    result.close(&mut session).unwrap();
+    assert!(!Arc::ptr_eq(&owner, &session.mpp_query_info));
+
+    // A collected result closes inside the scope, so ending the scope retires it.
+    session.begin_external_mpp_query_scope();
+    let owner = session.mpp_query_info.clone();
+    session.run("select 1").unwrap();
+    assert!(Arc::ptr_eq(&owner, &session.mpp_query_info));
+    session.end_external_mpp_query_scope(false);
+    assert!(!Arc::ptr_eq(&owner, &session.mpp_query_info));
+
+    // A storage failure may happen before a session attempt can open at all.
+    session.begin_external_mpp_query_scope();
+    let owner = session.mpp_query_info.clone();
+    session.end_external_mpp_query_scope(true);
+    assert!(!Arc::ptr_eq(&owner, &session.mpp_query_info));
+}

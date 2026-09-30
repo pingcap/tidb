@@ -508,6 +508,10 @@ pub struct PushdownScanRequest {
 /// one and forget the other.
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
+    /// One query identity and allocation state for every MPP gather in this statement.
+    pub mpp_query_info: Arc<crate::MppQueryInfo>,
+    /// Domain/server-info ID, never the operating system process ID.
+    pub mpp_server_id: u64,
     /// Go's TryCopLiteWorker permits only one inline reader per statement.
     pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
     /// Physical scan plan ID used by Go `RuntimeStatsColl`.
@@ -560,6 +564,8 @@ pub struct PushdownStatementContext {
 impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
+            mpp_query_info: Arc::default(),
+            mpp_server_id: 0,
             plan_id: 0,
             push_down_flags: 0,
             cop_lite_worker: Arc::default(),
@@ -584,6 +590,8 @@ impl PushdownStatementContext {
     #[must_use]
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
+            mpp_query_info: ctx.mpp_query_info(),
+            mpp_server_id: ctx.mpp_server_id(),
             plan_id: 0,
             push_down_flags: ctx.push_down_flags(),
             cop_lite_worker: ctx.cop_lite_worker(),

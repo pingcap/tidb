@@ -631,6 +631,8 @@ pub struct Session {
     /// here is the tier that has no node identity at all -- an embedded
     /// session -- and reads back as an empty table.
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    /// The domain identity getter shared with server-info publication.
+    server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
     /// reports. Absent on the in-process tier, whose catalog is not a
     /// cluster's.
@@ -803,6 +805,11 @@ pub struct Session {
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
     planned_apply: Arc<std::sync::atomic::AtomicBool>,
+    /// Go StmtCtx.MPPQueryInfo, shared by contexts of the current statement.
+    mpp_query_info: Arc<tidb_executor::MppQueryInfo>,
+    /// The cluster runner may retry after the session closes an attempt.
+    external_mpp_query_scope: bool,
+    mpp_attempt_completed: bool,
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
     process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
@@ -883,6 +890,7 @@ impl Session {
             current_tso: tidb_executor::CurrentTso::default(),
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
+            server_id_getter: Arc::new(|| 0),
             cluster_schema_version: None,
             workload_repository: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
@@ -930,6 +938,9 @@ impl Session {
             global_binding_writer: None,
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
+            mpp_query_info: Arc::default(),
+            external_mpp_query_scope: false,
+            mpp_attempt_completed: false,
             process_plan_info: Arc::default(),
             binary_prepared_execution: false,
             found_in_binding: false,
@@ -942,6 +953,33 @@ impl Session {
             .get(tidb_util::breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
             .and_then(|value| value.downcast_ref::<Arc<dyn Fn(String) + Send + Sync + 'static>>())
             .cloned()
+    }
+
+    fn reset_mpp_query_info(&mut self) {
+        if let Some(info) = Arc::get_mut(&mut self.mpp_query_info) {
+            info.reset();
+        } else {
+            // A retained, closed record set must not share the next query's state.
+            self.mpp_query_info = Arc::default();
+        }
+    }
+
+    /// Holds MPP identity across all attempts owned by the cluster runner.
+    #[doc(hidden)]
+    pub fn begin_external_mpp_query_scope(&mut self) {
+        self.external_mpp_query_scope = true;
+        self.mpp_attempt_completed = false;
+    }
+
+    /// Retires a completed/failed query after the retry decision. A successful
+    /// open record set still owns the query until its later Close.
+    #[doc(hidden)]
+    pub fn end_external_mpp_query_scope(&mut self, failed: bool) {
+        self.external_mpp_query_scope = false;
+        if failed || self.mpp_attempt_completed {
+            self.reset_mpp_query_info();
+        }
+        self.mpp_attempt_completed = false;
     }
 
     /// Starts one server-owned execution attempt. `notify` is false for a
@@ -1139,6 +1177,11 @@ impl Session {
         &mut self,
         syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
     ) {
+        let info = syncer.local_server_info();
+        self.server_id_getter = info.static_info.server_id_getter.unwrap_or_else(|| {
+            let id = info.static_info.json_server_id;
+            Arc::new(move || id)
+        });
         self.server_info_syncer = Some(syncer);
     }
 
@@ -2096,6 +2139,7 @@ impl Session {
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.
     fn begin_statement_execution(&mut self, sql: &str) -> Result<(), DriverError> {
+        self.mpp_attempt_completed = false;
         if !self.external_executor_breakpoint_scope {
             self.executor_first_run_breakpoint
                 .store(false, std::sync::atomic::Ordering::Release);
@@ -2237,6 +2281,14 @@ impl Session {
     }
 
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
+        // Go ExecStmt.FinishExecuteStmt clears MPPQueryInfo only at completion.
+        // Retained readers are detached from the next statement's counters;
+        // ordinary completion reuses the allocation. Retries never reset it.
+        if self.external_mpp_query_scope {
+            self.mpp_attempt_completed = true;
+        } else {
+            self.reset_mpp_query_info();
+        }
         self.publish_statement_status(result);
         if let Some(guard) = &self.process {
             let affected_rows = match result {

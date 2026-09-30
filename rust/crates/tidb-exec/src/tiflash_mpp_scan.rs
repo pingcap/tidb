@@ -29,7 +29,6 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 use tidb_chunk::chunk::Chunk;
@@ -211,45 +210,8 @@ impl TiFlashMppScanSource {
         for column in &mut columns {
             column.collation = tidb_datatype::rewrite_new_collation_id_if_needed(column.collation);
         }
-        let query_ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs())
-            .unwrap_or_default();
-
-        // Go `EstablishMPPConns`' receiver meta: the TiDB coordinator-side
-        // pseudo task, task_id -1. The SAME encoding rides the sender's
-        // encoded_task_meta in the dispatch (Go `buildDAGRec` /
-        // `appendMPPDispatchReq`), which is how TiFlash marks the task root.
-        let receiver_meta = TaskMeta {
-            start_ts: request.snapshot_ts,
-            task_id: -1,
-            gather_id: 1,
-            query_ts,
-            local_query_id: 1,
-            server_id: u64::from(std::process::id()),
-            mpp_version: 3,
-            resource_group_name: request.statement.resource_group_name.clone(),
-            ..TaskMeta::default()
-        };
-        let meta = TaskMeta {
-            start_ts: request.snapshot_ts,
-            task_id: 1,
-            partition_id: -1,
-            address: address.clone(),
-            gather_id: 1,
-            query_ts,
-            local_query_id: 1,
-            server_id: u64::from(std::process::id()),
-            mpp_version: 3,
-            coordinator_address: "tidb-mpp-coordinator".to_owned(),
-            report_execution_summary: false,
-            resource_group_name: request.statement.resource_group_name.clone(),
-            connection_id: 0,
-            connection_alias: String::new(),
-            sql_digest: String::new(),
-            plan_digest: String::new(),
-            ..TaskMeta::default()
-        };
+        let (meta, receiver_meta) =
+            mpp_task_metadata(request.snapshot_ts, &request.statement, &address);
 
         let scan_executor = Executor {
             tp: Some(ExecType::TypeTableScan as i32),
@@ -374,9 +336,6 @@ impl TiFlashMppScanSource {
         );
         let encoded_plan = dag.encode_to_vec();
 
-        // Go `mppTaskGenerator.AllocMPPQueryID`: one query timestamp in
-        // seconds plus a session-local query id; the server id names the
-        // coordinator. Task ids count from one per query.
         // Region infos are clipped to the table's record range: PD answers
         // with whole regions whose bounds may straddle the prefix.
         let region_infos = regions
@@ -621,6 +580,51 @@ impl PushdownRowStream for MppRowStream {
     }
 }
 
+fn mpp_task_metadata(
+    snapshot_ts: u64,
+    statement: &tidb_executor::remote_scan::PushdownStatementContext,
+    address: &str,
+) -> (TaskMeta, TaskMeta) {
+    let query = statement.mpp_query_info.query_id(statement.mpp_server_id);
+    let gather_id = statement.mpp_query_info.alloc_gather_id();
+
+    // Go `EstablishMPPConns`' receiver meta: the TiDB coordinator-side
+    // pseudo task, task_id -1. The SAME encoding rides the sender's
+    // encoded_task_meta in the dispatch (Go `buildDAGRec` /
+    // `appendMPPDispatchReq`), which is how TiFlash marks the task root.
+    let receiver_meta = TaskMeta {
+        start_ts: snapshot_ts,
+        task_id: -1,
+        gather_id,
+        query_ts: query.query_ts,
+        local_query_id: query.local_query_id,
+        server_id: query.server_id,
+        mpp_version: 3,
+        resource_group_name: statement.resource_group_name.clone(),
+        ..TaskMeta::default()
+    };
+    let meta = TaskMeta {
+        start_ts: snapshot_ts,
+        task_id: statement.mpp_query_info.alloc_task_id(),
+        partition_id: -1,
+        address: address.to_owned(),
+        gather_id,
+        query_ts: query.query_ts,
+        local_query_id: query.local_query_id,
+        server_id: query.server_id,
+        mpp_version: 3,
+        coordinator_address: "tidb-mpp-coordinator".to_owned(),
+        report_execution_summary: false,
+        resource_group_name: statement.resource_group_name.clone(),
+        connection_id: 0,
+        connection_alias: String::new(),
+        sql_digest: String::new(),
+        plan_digest: String::new(),
+        ..TaskMeta::default()
+    };
+    (meta, receiver_meta)
+}
+
 fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequest {
     use tikv_client::tikv::Request;
 
@@ -636,6 +640,83 @@ fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequ
 #[cfg(test)]
 mod dispatch_context_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks() {
+        use tidb_executor::{remote_scan::PushdownStatementContext, StmtContext};
+
+        let context = StmtContext::for_query();
+        let first = PushdownStatementContext::from_stmt(&context);
+        let second = PushdownStatementContext::from_stmt(&context.clone());
+        let (a, receiver_a) = mpp_task_metadata(77, &first, "tiflash:3930");
+        let (b, receiver_b) = mpp_task_metadata(77, &second, "tiflash:3930");
+        assert_eq!(a.local_query_id, b.local_query_id);
+        assert_eq!(a.query_ts, b.query_ts);
+        assert_eq!((a.gather_id, b.gather_id), (1, 2));
+        assert_eq!((a.task_id, b.task_id), (1, 2));
+        for (sender, receiver) in [(a, receiver_a), (b, receiver_b)] {
+            assert_eq!(receiver.task_id, -1);
+            assert_eq!(sender.start_ts, 77);
+            assert_eq!(sender.gather_id, receiver.gather_id);
+            assert_eq!(sender.query_ts, receiver.query_ts);
+            assert_eq!(sender.local_query_id, receiver.local_query_id);
+        }
+    }
+
+    #[test]
+    fn mpp_query_identity_is_unique_even_at_the_same_snapshot() {
+        use tidb_executor::{remote_scan::PushdownStatementContext, StmtContext};
+
+        let a = PushdownStatementContext::from_stmt(&StmtContext::for_query());
+        let b = PushdownStatementContext::from_stmt(&StmtContext::for_query());
+        let (a, _) = mpp_task_metadata(77, &a, "tiflash:3930");
+        let (b, _) = mpp_task_metadata(77, &b, "tiflash:3930");
+        assert_ne!(a.local_query_id, b.local_query_id);
+        assert_eq!((a.task_id, b.task_id), (1, 1));
+    }
+
+    #[test]
+    fn mpp_query_timestamp_uses_unix_nanoseconds() {
+        use tidb_executor::{remote_scan::PushdownStatementContext, StmtContext};
+
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let context = PushdownStatementContext::from_stmt(&StmtContext::for_query());
+        let (meta, _) = mpp_task_metadata(77, &context, "tiflash:3930");
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        assert!(
+            (before..=after).contains(&meta.query_ts),
+            "{} not in {before}..={after}",
+            meta.query_ts
+        );
+    }
+
+    #[test]
+    fn mpp_metadata_carries_the_domain_server_id() {
+        let statement = tidb_executor::remote_scan::PushdownStatementContext {
+            mpp_server_id: 42,
+            ..Default::default()
+        };
+        let (sender, receiver) = mpp_task_metadata(77, &statement, "tiflash:3930");
+        assert_eq!(sender.server_id, 42);
+        assert_eq!(receiver.server_id, 42);
+        let dispatch = encode_dispatch_request(DispatchTaskRequest {
+            meta: Some(sender.clone()),
+            ..Default::default()
+        });
+        let dispatched = dispatch.meta.unwrap();
+        assert_eq!(dispatched.local_query_id, sender.local_query_id);
+        assert_eq!(dispatched.query_ts, receiver.query_ts);
+        assert_eq!(dispatched.gather_id, receiver.gather_id);
+        assert_eq!(dispatched.task_id, sender.task_id);
+        assert_eq!(dispatched.server_id, 42);
+    }
 
     #[test]
     fn classic_mpp_dispatch_uses_the_transactional_v1_codec() {

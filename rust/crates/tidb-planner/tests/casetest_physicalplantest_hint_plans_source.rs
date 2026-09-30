@@ -407,18 +407,9 @@ fn rule_agg_elimination_4join_cascades_template_with_issue_62331() {}
 #[ignore = "go-parity-gap: limit-pushdown cost decisions need injected stats cache + optimize pipeline"]
 fn limit_pushdown_injected_histogram_stats_goldens() {}
 
-/// GO PORT of `physical_plan_test.go:1674 TestAllocMPPID`.
-///
-/// Re-derived contract (fragment.go:192-195): `AllocMPPTaskID(ctx)` returns
-/// `StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Add(1)`; the counter is
-/// per-statement (reset when the query finishes), so three successive calls
-/// on one fresh `mock.NewContext()` answer EXACTLY 1, 2, 3 (:1678-1680).
-/// The Rust workspace ports no MPPQueryInfo counter (no AllocatedMPPTaskID
-/// surface anywhere under rust/crates), so the contract is recorded here,
-/// not reimplemented.
-#[test]
-#[ignore = "go-parity-gap: AllocatedMPPTaskID atomic counter on StmtCtx.MPPQueryInfo is outside the ported surface"]
-fn alloc_mpp_task_id_increments_one_per_call_from_fresh_context() {}
+// Go TestAllocMPPID runs in tidb-executor/src/mpp_query.rs, alongside the
+// statement owner. Keeping the executable test there avoids a dependency
+// cycle from the planner back to the executor's statement context.
 
 /// GO PORT of `physical_plan_test.go:1681 TestSemiJoinRewriter`.
 ///

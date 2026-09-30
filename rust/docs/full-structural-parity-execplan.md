@@ -14,6 +14,7 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Enumerate upstream scope: 856 Go package directories, 4,420 Go source/test files; 83 Rust crate manifests.
 - [x] Inventory all tracked TiDB and pinned client-go artifacts and Rust gap candidates; classify confirmed mismatches separately from unreviewed evidence.
 - [x] Replace partial TiPB schema ownership with the complete pinned external package inputs, generation and drift gate; validate original Go tests and Rust consumers.
+- [x] Repair MPP statement/query/gather/task identity and carry the existing server-info identity; focused regressions and lifecycle tests pass. Publication gates in progress.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -231,3 +232,98 @@ Disk cleanup confirmed no cargo/rustc/rustdoc process was active and removed
 44 GiB; no source, worktree, fixtures or generated checked-in inputs were
 removed. Publication still runs the required hook and fresh locked server
 build even though caches were reclaimed.
+
+
+## MPP identity owner repair receipt (2026-09-30)
+
+Refreshed hparser-integration and origin/master; both unchanged. The supported
+single-fragment MPP path synthesizes fixed IDs, process ID and Unix seconds.
+Master executor/mpp_gather.go and stmtctx.MPPQueryInfo require shared statement
+query ID/nanoseconds, with monotonically allocated task/gather IDs; adapter.go
+clears state only at statement completion, not ResetForRetry. Add that owner to
+the existing statement context and preserve it across separately built contexts,
+clones and scan requests. Allocate one gather per supported scan coordinator.
+Use the existing server-info getter, not process ID. The separate domain server-ID
+lease allocator is absent from Rust and remains an explicit audit gap; this
+repair does not claim to implement it or complete all MPP packages.
+
+First extract the current metadata construction without changing its behavior
+and demonstrate failing metadata regressions. Then implement the owner, session
+lifecycle and wire consumers, translate the previously ignored upstream task-ID
+test at the owning Rust context boundary, and test concurrent allocation and
+statement completion. Validate affected crates, lint and required publication
+build gates. No Go/Bazel changes or failpoints are required.
+
+
+MPP implementation and validation update: the production metadata helper was
+first extracted unchanged. Three runtime assertions then failed: two queries
+both used ID 1, two gathers both used ID 1, and query timestamps were seconds
+instead of nanoseconds (/private/tmp/tidb-mpp-identity-red.log). They now pass.
+MppQueryInfo is the statement-owned atomic state, shared through StmtContext and
+PushdownStatementContext. Its process query-ID allocator and per-statement
+counters match master. The existing single-fragment coordinator allocates one
+gather and task for each open; its receiver stays task -1. Both dispatch and
+connection metadata derive from this state. The original TestAllocMPPID now
+executes at the Rust statement owner instead of remaining an ignored planner
+placeholder, avoiding a planner/executor dependency cycle.
+
+Tracing actual retries found that the cluster runner closes attempts before it
+decides whether to retry. Its outer scope now defers retirement through that
+decision. A returned open stream retains its state until record-set Close;
+completed results and final failures release it at the outer boundary. Ordinary
+session completion resets uniquely owned storage in place; retained readers are
+detached from the next statement by replacing the Arc. Query IDs and clocks are
+allocated lazily on the MPP path. The session captures the existing server-info
+getter once when bound, avoiding a cloned ServerInfo/lock on every statement.
+No cluster server-ID allocation is invented: that absent domain owner and the
+two detached TiFlash replica pollers discovered during tracing are explicit open
+audit entries.
+
+Focused tests currently pass: five MPP metadata/codec tests, two statement-owner
+tests (including 32 concurrent gathers), and all 18 session lifecycle tests.
+The latter cover rebuilt/retried contexts, successful/failed completion, streaming
+finish versus close, and a live server identity getter. All targets in the five
+affected consumer crates compile. Remaining publication checks and exact command
+receipt will be recorded below. This is maintenance of the existing MPP path,
+not acceptance of entire Go executor/stmtctx/planner/session packages; their
+complete source/test/platform/build/fixture inventories remain unreviewed in
+package-coverage.json. No Go or Bazel files changed.
+
+
+Final MPP validation commands, from rust/ unless otherwise noted:
+
+    cargo test --locked -p tidb-exec --lib dispatch_context_tests
+    cargo test --locked -p tidb-executor --lib mpp_query
+    cargo test --locked -p tidb-session --lib tests_core::lifecycle
+    cargo test --locked -p tidb-executor --lib stmt_context::
+    cargo test --locked -p tidb-executor --lib remote_scan::
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::autocommit_transactions
+    cargo check --locked -p tidb-server -p tidb-session -p tidb-executor -p tidb-exec -p tidb-planner --all-targets
+    make lint  # repository root
+    git diff --check  # repository root
+
+All passed: 5 + 2 + 18 + 19 + 31 + 23 = 98 targeted tests. The server fixture
+initially failed in the sandbox because macOS sysctl hw.memsize was denied;
+the same command passed with host access. Lint first lacked network access for
+its pinned revive dependency and passed on the permitted rerun. Existing
+compiler warnings remain. Logs: /private/tmp/tidb-mpp-{identity-green,
+owner-green,lifecycle,stmt-context,remote-scan,server-retry,check,lint}.log.
+
+Changed implementation files: tidb-executor/src/{mpp_query.rs,lib.rs,
+stmt_context.rs,remote_scan.rs}, tidb-exec/src/tiflash_mpp_scan.rs,
+tidb-session/src/{lib.rs,stmt_ctx.rs}, and
+tidb-server/src/cluster_session_node/mod.rs. Test changes are in the metadata
+helper's unit tests, mpp_query.rs, tidb-session/src/tests_core/lifecycle.rs and
+tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs (moving the
+ignored upstream task-ID case to its executable owner). This plan and the
+current-audit README retain the receipt and unresolved findings.
+
+Compatibility: fixed protocol identity fields now match Go's units and lifetime;
+statement/task IDs are concurrent atomics and retry state is retained until the
+outer completion decision. No SQL syntax, transaction algorithm or dependency
+revision changed. The domain numeric ID lease allocator remains absent; the
+existing server-info getter's zero/default is no substitute for that owner.
+Real TiFlash/cluster interoperability, complete upstream Go package test suites,
+full-workspace runtime tests and sysbench/TPC-C/TPC-H/YCSB benchmarks were not
+run. No speedup or complete MPP/package/repository parity is claimed. The 10
+previous baseline embedded failures were not rerun or reclassified here.

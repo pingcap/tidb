@@ -1176,6 +1176,8 @@ impl Session {
             allow_invalid_dates: sql_mode.has_allow_invalid_dates_mode(),
         };
         let session_state = tidb_executor::StmtContextSessionState {
+            mpp_query_info: Arc::clone(&self.mpp_query_info),
+            mpp_server_id: (self.server_id_getter)(),
             advisory_locks: self.advisory_locks.clone(),
             before_executor_first_run: Arc::clone(&self.executor_first_run_breakpoint),
             breakpoint_notify_func: self.breakpoint_notify_func(),

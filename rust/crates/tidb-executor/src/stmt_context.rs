@@ -317,12 +317,16 @@ impl std::ops::DerefMut for StmtContext {
     }
 }
 
-/// Existing session inputs moved directly into a newly constructed context.
+/// Existing session inputs and statement owners supplied to a new context.
 ///
-/// These are the same owners installed by the `with_*` assignment methods;
-/// supplying them here only avoids constructing and discarding defaults.
-/// Statement-local effects are still initialized separately for every context.
+/// Passing owners directly avoids constructing and discarding defaults. State
+/// such as MPP identity is shared across contexts for the same statement;
+/// effects not supplied here are initialized by the context constructor.
 pub struct StmtContextSessionState {
+    /// The current statement's MPP owner, also retained across execution retries.
+    pub mpp_query_info: Arc<crate::MppQueryInfo>,
+    /// Current domain/server-info identity used when building MPP executors.
+    pub mpp_server_id: u64,
     /// Session advisory-lock ownership.
     pub advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Statement-attempt executor-first-run latch.
@@ -361,6 +365,8 @@ pub struct StmtContextSessionState {
 impl Default for StmtContextSessionState {
     fn default() -> Self {
         Self {
+            mpp_query_info: Arc::default(),
+            mpp_server_id: 0,
             advisory_locks: Default::default(),
             before_executor_first_run: Arc::default(),
             breakpoint_notify_func: None,
@@ -387,6 +393,8 @@ impl Default for StmtContextSessionState {
 #[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct StmtContextData {
+    mpp_query_info: Arc<crate::MppQueryInfo>,
+    mpp_server_id: u64,
     /// Go `StatementContext.CtxID`, unique for each newly created statement.
     context_id: u64,
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -1821,6 +1829,18 @@ impl Default for ExecutorChunkSizes {
 pub use crate::driver::SequenceSnapshot;
 
 impl StmtContext {
+    /// Statement-owned MPP state, retained by every reader and retry.
+    #[must_use]
+    pub fn mpp_query_info(&self) -> Arc<crate::MppQueryInfo> {
+        Arc::clone(&self.mpp_query_info)
+    }
+
+    /// The domain/server-info ID captured by the session for this executor.
+    #[must_use]
+    pub fn mpp_server_id(&self) -> u64 {
+        self.mpp_server_id
+    }
+
     /// Applies one setup batch, detaching shared configuration at most once.
     /// Statement effects keep their existing shared owners, as for with_* calls.
     #[must_use]
@@ -1840,6 +1860,8 @@ impl StmtContext {
         session: StmtContextSessionState,
     ) -> Self {
         Self(Arc::new(StmtContextData {
+            mpp_query_info: session.mpp_query_info,
+            mpp_server_id: session.mpp_server_id,
             client_error_count: 0,
             client_warning_count: 0,
             context_id: NEXT_STATEMENT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
