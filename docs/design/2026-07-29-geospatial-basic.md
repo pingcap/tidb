@@ -287,9 +287,9 @@ lever is the operand type rather than the surface;
 | --- | --- | --- | --- |
 | `ST_Distance` between point operands, `ST_Length` | metric only | ellipsoid (Andoyer) | ellipsoid (Andoyer) |
 | `ST_Distance_Sphere` | metric only, spherical by definition | sphere, great circle | sphere, great circle |
-| `ST_Distance` from a point operand to a line or polygon | edge model, then metric | Andoyer edges, Andoyer metric | ellipsoid, Andoyer edges |
+| `ST_Distance` to a line or polygon | edge model, then the nearest point on an edge, which iterates | deferred, see [Future extensions](#future-extensions) | ellipsoid, Andoyer edges |
 | the eight DE-9IM predicates, with a point operand | edge model | Andoyer edges | ellipsoid, Andoyer edges |
-| either of those between two extended geometries | edge model, and segment intersection on top | deferred, see [Future extensions](#future-extensions) | ellipsoid, Andoyer edges |
+| the predicates between two extended geometries | edge model, and segment intersection on top | deferred, see [Future extensions](#future-extensions) | ellipsoid, Andoyer edges |
 
 Everything on SRID 0 is planar throughout, with no operand restriction: the plane needs no
 edge model. Every MySQL cell above is measured against a running engine rather than taken
@@ -385,8 +385,8 @@ function until a later milestone adds it.
   exposes no geodesic envelope at all, though its own R-tree computes one internally.
   On 4326, `ST_IsValid` raises `ERROR 3618` for polygonal input, which needs the segment
   intersection v1 defers ([Future extensions](#future-extensions)).
-- **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes the same
-  point-operand rule as the predicates below, and
+- **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes only point
+  operands and raises `ERROR 3618` otherwise, and
   `ST_Distance_Sphere(g1, g2 [, radius])`, whose `radius` must be positive and whose
   operands MySQL restricts to points and multipoints, raising `ERROR 3618` otherwise. The
   default radius is derived from the SRS, and is 6,370,986.0 m on SRID 0, which has none.
@@ -547,7 +547,7 @@ The v1 surface lands in dependency order, each step reviewable on its own:
 | 2. I/O | `ST_GeomFrom*`, `ST_As*`, their option arguments, and the SRID validation on every ingest path | byte-identical to MySQL on the round-trip suite |
 | 3. Catalog | `information_schema.st_spatial_reference_systems`, and DDL validating `SRID n` against it rather than against a hardcoded pair | the two rows match MySQL column for column |
 | 4. Inspection | the constructors and the accessors | matches MySQL, including the constructor axis order |
-| 5. Measurement | `ST_Length`, `ST_Distance`, `ST_Distance_Sphere`, and the Andoyer metric behind them | matches MySQL to the tolerances in [Functional Tests](#functional-tests) |
+| 5. Measurement | `ST_Length`, `ST_Distance` (point operands on 4326), `ST_Distance_Sphere`, and the Andoyer metric behind them | matches MySQL |
 | 6. Predicates | the eight DE-9IM predicates, over Andoyer edges, with a point operand on 4326 | matches MySQL exactly on the pairs it takes, and rejects the rest rather than approximating them |
 
 Steps 1 to 3 are what the spatial index codes against, so they are the ones whose surface
@@ -626,9 +626,9 @@ decision were quietly undone.
   engine answers the other way, so the test fails if the edge model ever reverts.
 - **The operand restriction holds.** The eight DE-9IM predicates on curated pairs, matched
   to MySQL byte for byte on 4326 since the edge model is MySQL's, boundary cases explicit,
-  and pairs without a point operand asserted to raise `ERROR 3618` rather than answer. A
-  mixed `GEOMETRY` column fails at its first polygon row and succeeds once that row is
-  filtered out.
+  and pairs without a point operand asserted to raise `ERROR 3618` rather than answer, as
+  `ST_Distance` must for any non-point operand. A mixed `GEOMETRY` column fails at its
+  first polygon row and succeeds once that row is filtered out.
 - **The bare binary boundary is symmetric.** Bytes from a bare `SELECT` of a
   MySQL-expressible value insert back unchanged as a bare literal, and a `mysqldump` literal
   loads as the same geometry. Byte-compared against MySQL for both SRIDs, which is what
@@ -797,7 +797,7 @@ Reaching Andoyer edges is not one cost but three, and they are very unequal:
 - **Point-in-polygon** needs the inverse problem with azimuths and a crossing test over it.
   Closed form and small, and it is what v1 builds.
 - **`ST_Distance` from a point to an edge** needs the nearest point on a geodesic segment,
-  which brings in the direct problem and iteration.
+  which brings in the direct problem and iteration. v1 defers it.
 - **Geodesic segment intersection feeding a 9-intersection matrix** is the expensive one,
   and it is what the extended-geometry pairs wait on. It is an algorithm rather than a
   formula, so a cheaper surface would not have avoided it: only a smaller operand set does.
@@ -852,9 +852,11 @@ way.
 4326 only for pairs with a point operand ([Reference surface](#srid-model)). Widening that
 to line and polygon pairs needs geodesic segment intersection over Andoyer edges,
 assembled into a 9-intersection matrix, which replaces the planar evaluator rather than
-extending it. `ST_IsValid` on 4326 polygons waits on it too. Both are additive for users,
-since they only make queries that were rejected start answering, and neither needs a
-format change. Karney's intersection and point-to-line work supplies the algorithms.
+extending it. `ST_IsValid` on 4326 polygons waits on it too, and `ST_Distance` to a line
+or polygon lands in the same step, since it needs the nearest point on an Andoyer edge.
+All are additive for users, since they only make queries that were rejected start
+answering, and none needs a format change. Karney's intersection and point-to-line work
+supplies the algorithms.
 
 `ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth adding
 once the spatial index lands: they are index-eligible region predicates
@@ -965,7 +967,7 @@ becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the 
 | --- | --- | --- |
 | Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [Function set](#function-set)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
 | Edge model | Great circle on a sphere for all `geography` topology, so both the predicates and the edges `ST_Distance` measures to are spherical | Andoyer, matching MySQL, which puts TiDB further from PostGIS: measured at 945 m of boundary position on a continental polygon, enough to flip `ST_Intersects` on the same point. This is the larger of the two deltas, against centimetres for the metric |
-| Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#srid-model)). SRID 0 is unrestricted |
+| Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#srid-model)). `ST_Distance` takes only point operands. SRID 0 is unrestricted |
 | Axis order | Longitude first everywhere | Stored longitude first, as PostGIS; WKT, WKB and `ST_X`/`ST_Y` latitude first on a geographic SRS, as MySQL |
 | SRID / CRS | Full EPSG catalog in `spatial_ref_sys`, on-the-fly `ST_Transform` | SRID 0 and 4326 only; other codes rejected by DDL but storable in an unrestricted column; no `ST_Transform`. Both are in [Future extensions](#future-extensions) |
 | Function breadth | 300+ `ST_*` | The v1 allowlist, then MySQL's ~70. Absent families include buffer/convex-hull/simplify, overlay set operations, spatial clustering and aggregates, linear referencing, `ST_MakeValid`, and the `ST_AsMVT`/KML/GML/SVG output formats |
