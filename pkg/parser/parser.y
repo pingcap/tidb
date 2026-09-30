@@ -3440,6 +3440,10 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
 	}
+|	"DEFAULT" "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
