@@ -2283,10 +2283,28 @@ impl Session {
             // lands a warning row, while the window executor's own build-time
             // refusal does (oracle g-window2: `NTILE(0)` errors 1210 WITH its
             // error row).
+            // The completion error's own variant decides: a record-set
+            // execution failure that IS the evaluation's fatal error (the
+            // aggregate raised it mid-scan) takes the empty-buffer arm even
+            // though `to_mysql_error` on the DRIVER error carries no
+            // evaluation-origin marker.
+            let eval_fatal = matches!(error, DriverError::JsonDocumentNullKey)
+                || (reported.is_from_evaluation()
+                    && matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105 | 1210 | 3158));
+            if eval_fatal {
+                // Go's warning buffer stays EMPTY for these: the evaluation
+                // raised the error through `HandleError` at Error level, so
+                // the context never filed a row. The eval-side drain here
+                // did, though (the context's own sink fires before the
+                // level check) — drop the row that duplicates the fatal
+                // error (oracle g-group: `JSON_OBJECTAGG(NULL, 1)` answers
+                // 3158 with an EMPTY SHOW WARNINGS).
+                self.warnings
+                    .retain(|w| !(w.code == reported.code && w.message == reported.message));
+            }
             if reported.code != 1148
                 && reported.code != 3057
-                && (!reported.is_from_evaluation()
-                    || !matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105 | 1210))
+                && !eval_fatal
             {
                 // The inner execution may have already filed this exact
                 // error row (the SET arm's `handleErr` append through the

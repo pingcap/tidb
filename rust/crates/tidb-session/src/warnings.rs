@@ -217,7 +217,17 @@ impl Session {
         // fold-time warnings for the NEXT statement's drain to mis-attribute.
         ctx.drain_fold_warnings();
         for (level, code, message) in ctx.take_warnings() {
-            self.append_warning(WarningLevel::from_executor(level), code, message);
+            let level = WarningLevel::from_executor(level);
+            // Go's `errctx` at Error level reports the condition as the
+            // statement's own failure — `HandleError` never files a warning
+            // row for it (oracle g-group: `JSON_OBJECTAGG(NULL, 1)` answers
+            // 3158 with an EMPTY SHOW WARNINGS). The statement's error row
+            // reaches this buffer through the error door instead; keeping
+            // the eval-drained copy would show the error twice.
+            if level == WarningLevel::Error {
+                continue;
+            }
+            self.append_warning(level, code, message);
         }
     }
 

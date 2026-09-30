@@ -571,10 +571,15 @@ impl Parser {
             && self.keyword_or_ident_is_at(1, "STATUS")
         {
             (ShowInspectionKind::ReplicaStatus, 2, false, false)
-        } else if self.is_kw("BINARY")
-            && self.token_literal_is_at(1, "LOG")
-            && self.keyword_or_ident_is_at(2, "STATUS")
-        {
+        } else if self.is_kw("BINARY") {
+            // go's grammar accepts `SHOW BINARY LOG STATUS`; any other
+            // follower fails AT that follower -- `SHOW BINARY LOGS` answers
+            // `line 1 column 16 near "LOGS" ` (oracle m22), not the
+            // BINARY-rooted error a miss here would otherwise raise.
+            if !(self.token_literal_is_at(1, "LOG") && self.keyword_or_ident_is_at(2, "STATUS")) {
+                self.bump();
+                return Err(self.err_here("expected LOG STATUS after BINARY"));
+            }
             (ShowInspectionKind::BinaryLogStatus, 3, false, false)
         } else if self.is_kw("PROFILES") {
             (ShowInspectionKind::Profiles, 1, false, false)
