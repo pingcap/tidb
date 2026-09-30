@@ -1,23 +1,30 @@
 # Structural parity audit: current evidence
 
-Baseline: TiDB Go master `6b2781326b722f217a61852ab403350858549bd0`, client-go
+Current inventory baseline: TiDB Go master `e953a09d9d5e29e60c62f42d3aacebb819af49a5`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
 `b2b3783` (published shared-buffer repair). The integration started at
 `5503f8860883c6cd80bdd0d487d34c53787daf24`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
-The coverage inventories enumerate every tracked artifact in 856 TiDB, 41 client-go and 41 kvproto
-package directories, with 83 Rust crates awaiting current-master
-acceptance. Original tests, generated/build/platform inputs, fixtures and
-unassigned root artifacts are retained. The 2,051 candidate lines are search
-evidence, not 2,051 defects. Some are errors Go intentionally returns.
+The coverage inventories enumerate every tracked artifact in 856 TiDB, 41 client-go,
+41 kvproto, 24 PD-client and 7 etcd-API package directories, with 83 Rust crates
+awaiting current-master acceptance. Original tests, generated/build/platform inputs, fixtures and
+unassigned root artifacts are retained. The 2,050 candidate lines are search
+evidence, not 2,050 defects. Some are errors Go intentionally returns.
 
 Reproduce the inventory from the repository root with
 `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`.
 Receipts and reviewed findings live separately so regeneration cannot certify
-unreviewed packages. External dependencies beyond client-go, kvproto and TiPB still
-require their own complete inventories before acceptance.
+unreviewed packages. Other external dependencies still require complete inventories
+before acceptance.
+
+The expanded [remaining structural finding register](structural-findings.md)
+consolidates 29 open ownership/contract findings, review candidates and the
+limits of the review. The [complete remaining protocol comparison](protocol-projections.json)
+lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
+representations separately. It includes the keyspace-zero wire reproduction.
+Neither document claims that every repository semantic mismatch is known.
 
 | Finding | Evidence and Go ownership | Status |
 | --- | --- | --- |
@@ -36,7 +43,7 @@ require their own complete inventories before acceptance.
 | Region/cache/RPC algorithms have competing owners | `tidb-txnkv/src/driver/client_bridge.rs::ClientPd` delegates to TiDB routing/recovery/transport while client-rust also implements these algorithms. DistSQL still needs TiDB capabilities. | Open architecture migration. Duplication alone is not proof of a runtime failure; native RetryBackoffer already owns RegionBackoffBudget. |
 | Background lifetime still has request-type inference | The bridge retains a TxnHeartBeatRequest exception; additional pipelined/transaction-file cleanup paths need explicit operation scopes like Go's owners. | Open; the concrete native patch was rejected by automatic approval review and remains unapplied pending its separately requested approval. Foreground ResolveLock must remain cancellable. |
 | Alternate storage session dispatch remains incomplete | The lightweight path's supported SET assignments now use the normal parser, but its transaction mode/autocommit lifecycle is not fully unified with the ordinary session owner. | Review required at session package scope; do not delete a dispatcher before migrating all its callers. |
-| Other locally projected protocol packages | PD, the local TiKV service, etcd and BR inputs remain local projections. | Unreviewed completeness. The TiPB gate does not certify these packages. |
+| Other locally projected protocol packages | PD, the local TiKV service, etcd and BR inputs remain local projections. | Declaration audit now records 400 omissions and one PD presence mismatch; 71 opaque representations are separate. See P01–P03 in structural-findings.md. Runtime/package acceptance remains open; mvccpb has no compared declaration differences. |
 
 The earlier five diff comments (explicit lock retry limits, secondary retry
 budget, locked snapshot commit timestamps, mock wake-up semantics and detached
@@ -48,7 +55,10 @@ because the broader routing/lifetime migration remains unfinished.
 
 The previous embedded suite reproduced these ten failures both before and
 after the transaction activation repair. These are failed validations, not yet
-ten proven structural root causes. They remain open:
+ten proven structural root causes. They remain open. The expanded audit reran
+`system_table_ddl_does_not_publish_statistics_events_like_go`: it fails at
+`p1 exists` after ADD PARTITION. Current DDL already filters system-schema
+notifications, so this failure does not establish a missing event filter:
 
 - `add_partition_statistics_follow_global_prune_mode_like_go`
 - `cluster_info_reports_this_node`

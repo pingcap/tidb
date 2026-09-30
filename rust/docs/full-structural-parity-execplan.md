@@ -18,7 +18,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Remove duplicate TiFlash poller startup, detached lifetime and private DDL publisher; validate the shared owner and HTTP consumers.
 - [x] Publish shared persisted DDL worker synchronization and completion (d54903d0b2).
 - [x] Remove five materialized-view seed history writers; preserve durable errors and reuse the shared barrier/finalizer without enabling seed dispatch. Published as 6ed271503c after targeted tests, lint and both locked build gates.
-- [x] Remove all 17 action-stage queue writers; share fresh cancellation/error handling and preserve historical retry diagnostics. Targeted tests, compilation and lint pass; publication gates follow.
+- [x] Remove all 17 action-stage queue writers; share fresh cancellation/error handling and preserve historical retry diagnostics. Published as 9f0a41b5db after targeted tests, compilation, lint and both locked server build gates.
+- [x] (2026-09-30) Expand the current-source register to 29 known structural findings; compare all five remaining local protobuf projections; reproduce PD keyspace-zero presence loss; inventory PD-client and etcd-API packages. This is an audit checkpoint, not exhaustive semantic or package acceptance.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -42,6 +43,13 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 ## Surprises & Discoveries
 
 
+The expanded audit found a PD oneof projected as a plain scalar: explicit
+keyspace zero encodes as empty locally versus 08 00 upstream. Matching fields
+by wire tag avoids falsely counting the 70 renamed opaque command fields as
+missing. The system-table event regression currently fails on an absent p1
+partition; source already filters system schemas. Its name alone would have
+led to the wrong fix.
+
 The action-state follow-up found that four successful action paths used a
 historical Job.Error as a current cancellation decision. The multi-action
 fixture reproduces CANCELLED history for an otherwise successful create after
@@ -51,6 +59,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+For the expanded audit, preserve production behavior and consolidate current
+source evidence, prior open findings and reproduced failures in a stable-ID
+register. Enumerate omitted protocol declarations separately from intentional
+opaque transport representations. Record all package artifacts without
+automatically accepting them; an audit of selected owners cannot certify all
+856 upstream package directories.
 
 For the action-state follow-up, move queue writes to the shared worker instead
 of routing each existing writer through another thin wrapper. Borrowing the
@@ -69,6 +84,13 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The expanded review records 29 known structural findings across DDL,
+transactions, domain services, TiFlash/MPP, protocols and PD discovery. The
+remaining-projection audit records 400 omissions, one PD presence mismatch
+and 71 opaque representations, with a reproducible compiler-produced wire
+example. No production fix is claimed in this checkpoint. The full semantic
+review and benchmark goals remain unfinished.
 
 The action-state maintenance follow-up removes 17 action-owned queue writes
 and the stale-error cancellation predicates. All targeted planner and embedded
@@ -703,3 +725,69 @@ MDL-disabled operation and TiFlash placement gaps remain open. Full upstream
 package variants/original tests, real multi-node interoperability, prior ten
 embedded baseline failures and sysbench/TPC-C/TPC-H/YCSB were not verified.
 No complete package or repository parity is claimed.
+
+
+## Expanded structural audit receipt (2026-09-30)
+
+
+Refreshed integration 9f0a41b5db and Go master e953a09d9d; pull was already
+current and dependency pins unchanged. The current-audit/structural-findings.md
+register consolidates all currently recorded open structural findings with
+source owners, affected live/seed scope and dependencies before removal.
+Newly traced responsibilities include versioned bootstrap, TTL and GC workers,
+resource-control installation and RU history, MPP graph/range/stream/security
+ownership and PD service-mode discovery. These are source findings; no live
+cluster or workload behavior has been measured in this checkpoint.
+
+The new audit-protocol-projections.py compiles five local projections plus
+complete pinned upstream inputs with protoc, compares descriptor declarations
+and field tags, and writes protocol-projections.json. It records 400 omitted
+items, one KeyspaceScope oneof mismatch and 71 explicit message-to-bytes
+representations. Explicit keyspace 0 encodes to empty bytes locally and 0800
+upstream. mvccpb has no differences in the compared descriptor contracts;
+generator options/reserved ranges/runtime parity remain outside this check.
+The inventory tool now includes all 24 PD-client and 7 etcd-API package
+directories and their original/support/build/root artifacts, with unreviewed
+acceptance status. It still enumerates all 856 TiDB, 41 client-go and 41 kvproto
+directories, 83 Rust manifests and 2,050 keyword candidates.
+
+Exact evidence commands from the repository root:
+
+    git pull --ff-only origin hparser-integration
+    git fetch origin master
+    python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master
+    python3 rust/scripts/audit-protocol-projections.py --go-ref origin/master
+
+Existing regression rerun from rust/:
+
+    cargo test --locked -p tidb-server --lib system_table_ddl_does_not_publish_statistics_events_like_go
+
+It fails at unistore_cop.rs:4049, `p1 exists`, after ADD PARTITION; no new
+production change was made. The current source already excludes system-schema
+notifier events. The other nine previously recorded embedded failures were
+not rerun. This audit does not assign all ten failures to distinct root causes.
+Local test log: /private/tmp/tidb-all-audit-system-ddl.log. Protocol output:
+/private/tmp/tidb-all-audit-protocol.log.
+
+The inventory and protocol generators reproduce byte-identical output when
+rerun at the same HEAD. Script syntax, all inventory acceptance statuses and
+the protocol omission/presence counts were checked. The opaque classifier
+rejects changed tag/cardinality/real-oneof membership while recognizing the
+optional-bytes equivalent of singular-message presence. Root make lint passed
+after retrying its tool bootstrap with network access; the first sandboxed
+invocation could not resolve proxy.golang.org. Publication commands are:
+
+    make lint
+    git diff --check
+    TERM=xterm git -c core.hooksPath=hooks commit -m "audit: inventory remaining Go Rust structural mismatches"
+    cd rust && cargo build --locked -p tidb-server
+    git push origin HEAD:hparser-integration
+
+The commit hook must itself run the locked server build, and the separate
+locked build must succeed immediately before push. Logs use
+/private/tmp/tidb-all-audit-{lint-final,commit,prepush-build}.log. The final
+response records whether these publication gates succeeded.
+
+No real TiKV/TiFlash, concurrent
+DDL/owner-loss, upgrade/GC/TTL deployment, cluster TLS or sysbench/TPCC/TPCH/YCSB
+benchmark was run. No package or repository-wide completion is claimed.

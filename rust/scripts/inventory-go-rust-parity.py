@@ -13,7 +13,12 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "rust/docs/parity/current-audit"
-EXTERNAL_MODULES = {"client-go": "github.com/tikv/client-go/v2", "kvproto": "github.com/pingcap/kvproto"}
+EXTERNAL_MODULES = {
+    "client-go": "github.com/tikv/client-go/v2",
+    "kvproto": "github.com/pingcap/kvproto",
+    "pd-client": "github.com/tikv/pd/client",
+    "etcd-api": "go.etcd.io/etcd/api/v3",
+}
 
 
 def run(*command):

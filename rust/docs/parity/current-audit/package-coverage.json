@@ -1,5 +1,5 @@
 {
- "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+ "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
  "digest": "git blob object id",
  "scope": "All tracked artifacts grouped by nearest Go package directory, including build variants, generated inputs, tests and fixtures. Unassigned artifacts are retained. This is inventory, not semantic acceptance.",
  "packages": [
@@ -15323,7 +15323,7 @@
     ],
     [
      "pkg/planner/core/plan_cache_instance.go",
-     "59273083b3a630cf0059fc6cfa8b304a1c32c8a0"
+     "c51cca9d308b05d54d2304547c6b5e0c751a6350"
     ],
     [
      "pkg/planner/core/plan_cache_instance_test.go",
@@ -15331,11 +15331,11 @@
     ],
     [
      "pkg/planner/core/plan_cache_lru.go",
-     "6e18298d73228d52db1b4fd2b9ffaf9b791726e4"
+     "0928dbd1fb0fc554fc20188f61b229b599b6ad55"
     ],
     [
      "pkg/planner/core/plan_cache_lru_test.go",
-     "8771e86b5a25c6e022dd0f7805d6ea76e0a05112"
+     "c78dc923229fd6642eb993c4f74af652d5a6a181"
     ],
     [
      "pkg/planner/core/plan_cache_param.go",
@@ -15347,11 +15347,11 @@
     ],
     [
      "pkg/planner/core/plan_cache_utils.go",
-     "381fb7ce3054a9d04055c4e6973f5e6cc0b81a05"
+     "ec3dab5fc3bca107c11ca7f17c18915ecd802ec1"
     ],
     [
      "pkg/planner/core/plan_cacheable_checker.go",
-     "34c92c1fac0e433b5593d7c1af2f0d5beac96d71"
+     "5bc19a20ad2e20097dad9532baf2577594962b36"
     ],
     [
      "pkg/planner/core/plan_clone_utils.go",
@@ -16377,7 +16377,7 @@
    "artifacts": [
     [
      "pkg/planner/core/casetest/plancache/BUILD.bazel",
-     "86ef42e2e896d1d7f749a05a253379915beaa5ca"
+     "66fbe1e57768c5737fcf47c186918734849d6b29"
     ],
     [
      "pkg/planner/core/casetest/plancache/main_test.go",
@@ -16401,7 +16401,7 @@
     ],
     [
      "pkg/planner/core/casetest/plancache/plan_cache_suite_test.go",
-     "8c73bf13a87c7c134355ed0a1315594457e417fa"
+     "53a3590876d64ddbc829cbb9f1330100d1e12d00"
     ],
     [
      "pkg/planner/core/casetest/plancache/plan_cache_test.go",
@@ -16409,7 +16409,7 @@
     ],
     [
      "pkg/planner/core/casetest/plancache/plan_cacheable_checker_test.go",
-     "51a459bd1af9ff20fcc4f8948a7acb0cd935b780"
+     "0d37d96ee5828489407b9a5d2bbdf2ffb53ae002"
     ],
     [
      "pkg/planner/core/casetest/plancache/testdata/plan_cache_suite_in.json",

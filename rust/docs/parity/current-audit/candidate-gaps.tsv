@@ -680,9 +680,8 @@ rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	34
 rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	351	#[ignore = "go-parity-gap: GROUPING-with-rollup resolution error + expand operator goldens need the optimize pipeline"]
 rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	393	#[ignore = "go-parity-gap: unique-key agg elimination goldens need cascade-template data + join optimizer"]
 rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	407	#[ignore = "go-parity-gap: limit-pushdown cost decisions need injected stats cache + optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	420	#[ignore = "go-parity-gap: AllocatedMPPTaskID atomic counter on StmtCtx.MPPQueryInfo is outside the ported surface"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	433	#[ignore = "go-parity-gap: semi-join rewrite with implicit double casts needs type inference over plans"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	446	#[ignore = "go-parity-gap: last_sql_use_alloc accounting belongs to the executor's chunk allocator"]
+rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	424	#[ignore = "go-parity-gap: semi-join rewrite with implicit double casts needs type inference over plans"]
+rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	437	#[ignore = "go-parity-gap: last_sql_use_alloc accounting belongs to the executor's chunk allocator"]
 rust/crates/tidb-planner/tests/casetest_plan_normalized_digest_source.rs	43	#[ignore = "go-parity-gap: NormalizePlan/NormalizeFlatPlan + DecodeNormalizedPlan over executed statements need the session stack"]
 rust/crates/tidb-planner/tests/casetest_plan_normalized_digest_source.rs	57	#[ignore = "go-parity-gap: DNF access-path preference under pseudo stats needs the range-builder cost path"]
 rust/crates/tidb-planner/tests/casetest_plan_normalized_digest_source.rs	70	#[ignore = "go-parity-gap: full normalized-plan decode pipeline needs executed plans from a live session"]
@@ -1558,7 +1557,7 @@ rust/crates/tidb-proto/src/lib.rs	105	/// TikvServer are not implemented. Constr
 rust/crates/tidb-proto/src/lib.rs	112	/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
 rust/crates/tidb-proto/src/lib.rs	129	tonic::Status::unimplemented(format!("method {rpc} not implemented"))
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
-rust/crates/tidb-server/src/cluster_session_node/mod.rs	6848	"{feature} is not supported yet"
+rust/crates/tidb-server/src/cluster_session_node/mod.rs	6850	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
 rust/crates/tidb-server/tests/auth_exchange_source.rs	95	// and is intentionally not implemented by this transport leaf.
 rust/crates/tidb-server/tests/auth_token_source.rs	78	// claims owner are deliberately not implemented here.

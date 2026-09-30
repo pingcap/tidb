@@ -1,5 +1,5 @@
 {
- "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+ "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
  "module": "github.com/tikv/client-go/v2",
  "version": "v2.0.8-0.20260928031501-8edb23f6c7ee",
  "digest": "sha256",

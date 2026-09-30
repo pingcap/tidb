@@ -1,0 +1,525 @@
+{
+ "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+ "module": "github.com/tikv/pd/client",
+ "version": "v0.0.0-20260805103528-afa43111d149",
+ "digest": "sha256",
+ "packages": [
+  {
+   "package": ".",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "LICENSE",
+     "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    ],
+    [
+     "Makefile",
+     "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85"
+    ],
+    [
+     "client.go",
+     "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8"
+    ],
+    [
+     "client_test.go",
+     "fd91d8c5dceaaaa2d3316dcb1972a11db695be00c605b6e7ebad4d5cfdb4210a"
+    ],
+    [
+     "gc_client.go",
+     "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647"
+    ],
+    [
+     "go.mod",
+     "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841"
+    ],
+    [
+     "go.sum",
+     "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb"
+    ],
+    [
+     "inner_client.go",
+     "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c"
+    ],
+    [
+     "keyspace_client.go",
+     "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e"
+    ],
+    [
+     "keyspace_client_test.go",
+     "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544"
+    ],
+    [
+     "meta_storage_client.go",
+     "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a"
+    ],
+    [
+     "resource_manager_client.go",
+     "13a8dd3ddfdc589effa83889b95a4539da283998f2dcb33bcda6fab25a062aad"
+    ],
+    [
+     "resource_manager_client_test.go",
+     "a255b8f94daddb5ac20a5a619d1786ee9f42a820e2bd60de7d38f4a0a12067e8"
+    ]
+   ]
+  },
+  {
+   "package": "clients/gc",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "clients/gc/client.go",
+     "6c84200b4ec7e579b39e08b2b7274d8cd1c52ef4fc1a568ceddd0ba816baf3f4"
+    ],
+    [
+     "clients/gc/client_test.go",
+     "c3231afe29410ab9562520dcd5c2cdf3535f556e9eda073f6c85efc9d2529111"
+    ]
+   ]
+  },
+  {
+   "package": "clients/metastorage",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "clients/metastorage/client.go",
+     "4143723d6ca950aa0e86beded2502fff663a74e2986b364da34c47c676099373"
+    ]
+   ]
+  },
+  {
+   "package": "clients/router",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "clients/router/client.go",
+     "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2"
+    ],
+    [
+     "clients/router/client_test.go",
+     "ec2a3bd95e24703e21ac9eb8127bb0c41d563fe769a3e9e2e15f1a58769ed1bb"
+    ],
+    [
+     "clients/router/request.go",
+     "22954c3a2823575efea58e0b09b6b4fa38646469db4e3b6fae86000ac19eea80"
+    ]
+   ]
+  },
+  {
+   "package": "clients/tso",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "clients/tso/client.go",
+     "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1"
+    ],
+    [
+     "clients/tso/dispatcher.go",
+     "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820"
+    ],
+    [
+     "clients/tso/dispatcher_test.go",
+     "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb"
+    ],
+    [
+     "clients/tso/request.go",
+     "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b"
+    ],
+    [
+     "clients/tso/request_test.go",
+     "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9"
+    ],
+    [
+     "clients/tso/stream.go",
+     "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36"
+    ],
+    [
+     "clients/tso/stream_test.go",
+     "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96"
+    ]
+   ]
+  },
+  {
+   "package": "constants",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "constants/constants.go",
+     "53f1d693eaf029eacdc6908a61908bb50b186cdc5108190836289324d862e26f"
+    ]
+   ]
+  },
+  {
+   "package": "errs",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "errs/errno.go",
+     "32fc4ed013f6d810b7d19d3de4634a83faff48359b7e3fcb25ff76633e84fbe2"
+    ],
+    [
+     "errs/errs.go",
+     "e3af949b6f5db4c8751ed914d77c54d9665babe8b56efe288e83d72e3a64352a"
+    ]
+   ]
+  },
+  {
+   "package": "http",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "http/api.go",
+     "cd1b350a84f233100d57f57107061e873634a437ab55a73228cc6aadef39eb84"
+    ],
+    [
+     "http/client.go",
+     "0384ace37a36ffc3565f78bb0699797c655f26d6f368eab50887e92bf07c69b7"
+    ],
+    [
+     "http/client_test.go",
+     "0d2d022614e0e0eea4c9d991d8e05734eb42113d4ffb464cd19da71b74e7b40c"
+    ],
+    [
+     "http/codec.go",
+     "d10a4a74dc1919e23f7ac220448e8756a7ce7a88a389311cd268a541b0474771"
+    ],
+    [
+     "http/codec_test.go",
+     "8fd85660a606c877c15d794a4c16b584b84629e1da970fabf58fa7e23b1cbb0b"
+    ],
+    [
+     "http/interface.go",
+     "d69729c79133e07d9d161fea2e8011a6c335fb5061d1fdc525fcc735f84e14d5"
+    ],
+    [
+     "http/request_info.go",
+     "ebc30eb8d1e2824d5a563ce4bc39373324028e7a375fd4a0e3ec1e7a4f170a14"
+    ],
+    [
+     "http/testutil.go",
+     "1796bf104b20b333956b009642bd805a9d9452b1c8fe7987b68c3ec312bd7cd1"
+    ],
+    [
+     "http/types.go",
+     "3f105ab198488add95d7eebfd3046f9c008bf4517585c987c1e5c33858a97147"
+    ],
+    [
+     "http/types_test.go",
+     "d7a6658b130992c994e0bebc2e466e3c1c53ce8df3614a4b327d6c33614bd7a7"
+    ]
+   ]
+  },
+  {
+   "package": "metrics",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "metrics/metrics.go",
+     "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b"
+    ]
+   ]
+  },
+  {
+   "package": "opt",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "opt/option.go",
+     "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1"
+    ],
+    [
+     "opt/option_test.go",
+     "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/batch",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/batch/batch_controller.go",
+     "a2b42def060b2b01c6bb07059252a1106e8a72600db6f95fcbabe9da44c1d627"
+    ],
+    [
+     "pkg/batch/batch_controller_test.go",
+     "ba3177c53e8624dd76ba91712cbb440a46f4d8814e597aeacd742992a4583939"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/caller",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/caller/caller.go",
+     "2a2c5e4ff41308fde0cca63e39b30ed20625bdc87c860ed2efeb183fa67f6660"
+    ],
+    [
+     "pkg/caller/caller_test.go",
+     "d256d5b16dd09b5a83d9aac07c158ede77400d80a1d26a52e12b995b216eafa7"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/circuitbreaker",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/circuitbreaker/circuit_breaker.go",
+     "f5364cc36beec2eb3921520ba33d430642d011316fad598b080b011ba63dbb92"
+    ],
+    [
+     "pkg/circuitbreaker/circuit_breaker_test.go",
+     "7cc3d6082f522f32886e43085d658b583a8f4e4ca4214d01e3194262671eddac"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/connectionctx",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/connectionctx/manager.go",
+     "92778a87fb3af520cb4c5fd1161a2438f02ee8151ab52c242af0e7ad011c72c4"
+    ],
+    [
+     "pkg/connectionctx/manager_test.go",
+     "b2473aa7e3705eeaddb7c1d3c6ba7aa7ecb62bc66f6fe2ec698b4b77bc685b15"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/deadline",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/deadline/watcher.go",
+     "949508a4a92b190d31c744cf02ff6786a8e5278ef0883b62b58a5cb5f7c4bfbe"
+    ],
+    [
+     "pkg/deadline/watcher_test.go",
+     "ebb9dafd819eedaa11538736e787f81cb571178d67be41abca4b86c0cb7e41d2"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/retry",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/retry/backoff.go",
+     "7e8933434ddf483e6a8777c22aebfdb2aa619e690e9bc49c8603ff0dfcc02c80"
+    ],
+    [
+     "pkg/retry/backoff_test.go",
+     "0c40ec1d5bbd6acd4f577d2e6e35c6cc3c7f7b0972bbf4419f2c643b876ba1c6"
+    ],
+    [
+     "pkg/retry/interval_retry.go",
+     "4df997fea114ee60cfabd333c04f7bc58913c6c5fb05449de554643bb456bf86"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/utils/grpcutil",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/utils/grpcutil/grpcutil.go",
+     "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+    ],
+    [
+     "pkg/utils/grpcutil/grpcutil_test.go",
+     "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/utils/testutil",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/utils/testutil/check_env_dummy.go",
+     "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2"
+    ],
+    [
+     "pkg/utils/testutil/check_env_linux.go",
+     "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade"
+    ],
+    [
+     "pkg/utils/testutil/leak.go",
+     "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201"
+    ],
+    [
+     "pkg/utils/testutil/tempurl.go",
+     "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2"
+    ],
+    [
+     "pkg/utils/testutil/testutil.go",
+     "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/utils/timerutil",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/utils/timerutil/pool.go",
+     "cc052c9e58336eb3073beafd65e7fd74e355f717bc05feabba91189a1a52c7b6"
+    ],
+    [
+     "pkg/utils/timerutil/pool_test.go",
+     "6e14c6b7b3fe9d49a141b32ea4f7e117004136a3473a539a1d61254115fcd7cd"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/utils/tlsutil",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/utils/tlsutil/OWNERS",
+     "e47f53005bbfb0c154640e16ad3a873314ccb16adae109d3462935a471830309"
+    ],
+    [
+     "pkg/utils/tlsutil/tlsconfig.go",
+     "507b668defc5ae363d6491cc15cd7463958f1ebc8f965317597ab2a19bf13bc3"
+    ],
+    [
+     "pkg/utils/tlsutil/tlsutil.go",
+     "a836a7c3d66afcb069aaacab01c3684cbfefbadbcbd84aaa5a8167c9d6f7ebe1"
+    ],
+    [
+     "pkg/utils/tlsutil/url.go",
+     "dc3f37931e4a36074615b4f64fcc901c058cc39b89d6ad0eece8caa51a951078"
+    ]
+   ]
+  },
+  {
+   "package": "pkg/utils/tsoutil",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "pkg/utils/tsoutil/tsoutil.go",
+     "67c5b0d93c59d77c573b4837aaf4a98c1fa97f00cd126828147840152c985a0a"
+    ]
+   ]
+  },
+  {
+   "package": "resource_group/controller",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "resource_group/controller/OWNERS",
+     "0e5bc2ebeac2e7cfb624c6995a3b878f4172de43203000f8098db005d65a2243"
+    ],
+    [
+     "resource_group/controller/config.go",
+     "3f339a7c178e25137103338c0dcc4d38df9c8699d88629d4fec1e81d8cf4f608"
+    ],
+    [
+     "resource_group/controller/global_controller.go",
+     "7ef0c95b4f8a23dc2691e7ee869975a9ea03c79040bf793918741eb148747330"
+    ],
+    [
+     "resource_group/controller/global_controller_test.go",
+     "c910d88418c6a809a9636f1710c389325c4dd5ceedaef5de9581db75110d5827"
+    ],
+    [
+     "resource_group/controller/group_controller.go",
+     "dba05d0269f179a1b5c47184787f076532d4b764c9de83dc3d017ad0bdb403fc"
+    ],
+    [
+     "resource_group/controller/group_controller_test.go",
+     "5c3539a37029e9782ee8d04b485476393ae2daf76a03dd013aca3c5577e6a4f8"
+    ],
+    [
+     "resource_group/controller/limiter.go",
+     "3e08e99b23b8070e14b21f6c6117701f3604fdea1da66144269452137e24bc0e"
+    ],
+    [
+     "resource_group/controller/limiter_test.go",
+     "5973bd36a45daf67efc2f52f264f00004185de370c40061f11407d01406bd25e"
+    ],
+    [
+     "resource_group/controller/model.go",
+     "f8b00d542c9c886cf46f83439c21885cb8a37b49e29c1d3a18aca6f779c1d2ef"
+    ],
+    [
+     "resource_group/controller/model_test.go",
+     "96654f42f8408957d528f2976cd60a972608da0d1f3d9c19d38b6b5e0f67359d"
+    ],
+    [
+     "resource_group/controller/request_source_metrics_test.go",
+     "d6f221a6468c107635e8bbcf848f3ef7b360b9492c8ca77d535788602945290f"
+    ],
+    [
+     "resource_group/controller/testutil.go",
+     "ec6229e1dcb1b593d1c64584d871579665329bd1eff66a68dc4896893d59666c"
+    ],
+    [
+     "resource_group/controller/util.go",
+     "75514dae232a750e35f66da4c05ba4431395fc1f587c4ec545a4074433c83844"
+    ],
+    [
+     "resource_group/controller/util_test.go",
+     "c8f15acc826f0988c7b53179b5c046a22b80ec525ed83629150586991879895a"
+    ]
+   ]
+  },
+  {
+   "package": "resource_group/controller/metrics",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "resource_group/controller/metrics/metrics.go",
+     "f45e77d16ca904ac6dd34eb5e91cdf7d966f57d6d6c0efe141441b2e6e7053dd"
+    ]
+   ]
+  },
+  {
+   "package": "servicediscovery",
+   "review": "unreviewed-at-current-master",
+   "artifacts": [
+    [
+     "servicediscovery/callbacks.go",
+     "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25"
+    ],
+    [
+     "servicediscovery/mock_service_discovery.go",
+     "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1"
+    ],
+    [
+     "servicediscovery/resource_manager_service_discovery.go",
+     "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e"
+    ],
+    [
+     "servicediscovery/resource_manager_service_discovery_test.go",
+     "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094"
+    ],
+    [
+     "servicediscovery/router_service_discovery.go",
+     "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e"
+    ],
+    [
+     "servicediscovery/service_discovery.go",
+     "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+    ],
+    [
+     "servicediscovery/service_discovery_test.go",
+     "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf"
+    ],
+    [
+     "servicediscovery/tso_service_discovery.go",
+     "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+    ],
+    [
+     "servicediscovery/tso_service_discovery_test.go",
+     "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9"
+    ]
+   ]
+  }
+ ],
+ "unassigned_artifacts": []
+}

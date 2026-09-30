@@ -1,0 +1,4321 @@
+{
+  "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+  "integration": "9f0a41b5db1c3ceaa9b7f2babe5ddf195a93e363",
+  "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+  "etcd_api": "v3.5.15",
+  "protoc": "libprotoc 35.1",
+  "scope": "Descriptor declarations, fields matched by wire tag, oneofs, defaults, enums and RPCs of five remaining local projections. Field spelling/JSON names are not compared. Generator options, reserved ranges, runtime behavior and dependency-package acceptance are not certified. Message-to-bytes changes are representations, not automatically wire defects.",
+  "keyspace_zero_wire_hex": {
+    "local": "",
+    "upstream": "0800"
+  },
+  "inputs": {
+    "local": [
+      {
+        "path": "pdpb.proto",
+        "sha256": "fe8f4fb1774a7cd0263c26a123d93487df9ee4d9040b9e8362b0522c34753d72"
+      },
+      {
+        "path": "tikvpb.proto",
+        "sha256": "41adc1cd5b3d3f6539cbc3b01613adbb444fb0e96f33dca0c1678ac38bc91cd7"
+      },
+      {
+        "path": "brpb.proto",
+        "sha256": "2e59552444f16a9124cb775ce884229ae86109e584542fe5d4d96d3120ab90d9"
+      },
+      {
+        "path": "etcdserverpb.proto",
+        "sha256": "2df2b9a6626c9738e0b6a62d6915bf7cddf04c2d10b7dae0008d9ee4c592cb7a"
+      },
+      {
+        "path": "mvccpb.proto",
+        "sha256": "455e9ae1ec205ef0714e38fe1eb13115dd339f23e53ca83663fac2155485a966"
+      }
+    ],
+    "kvproto": [
+      {
+        "path": "pdpb.proto",
+        "sha256": "5c839bbead427a88cbb46eecd8f53fee9b6c66d7764cd53b898f0eef51213c6e"
+      },
+      {
+        "path": "tikvpb.proto",
+        "sha256": "4549bc2657d6ecb67407f4aa6f18a6cce41e9485cca975a6ee6dbbbd7efe2615"
+      },
+      {
+        "path": "brpb.proto",
+        "sha256": "799b592e4c4c3b049adc955ac40ee19e295212f6709158559879e7fbafcd3918"
+      }
+    ],
+    "etcd": [
+      {
+        "path": "etcdserverpb/rpc.proto",
+        "sha256": "7cf0d098aae57522a574bf591145e55539a15212885d43709536553833cd6f40"
+      },
+      {
+        "path": "mvccpb/kv.proto",
+        "sha256": "76b0d596ecc8dd1b535be683777910a5b4fe0705fb57baccacfcc7d98d11821e"
+      }
+    ]
+  },
+  "counts": {
+    "backup": {
+      "missing service": 2,
+      "missing message": 48,
+      "missing enum": 6
+    },
+    "etcdserverpb": {
+      "missing message": 78,
+      "missing enum": 5,
+      "missing service": 3,
+      "missing method": 4,
+      "missing field": 1
+    },
+    "mvccpb": {},
+    "pdpb": {
+      "missing message": 127,
+      "missing enum": 7,
+      "missing field": 4,
+      "contract differs": 1,
+      "missing method": 45
+    },
+    "tikvpb": {
+      "missing message": 3,
+      "opaque message representation": 71,
+      "missing method": 66,
+      "missing service": 1
+    }
+  },
+  "differences": [
+    {
+      "name": ".backup.Backup",
+      "difference": "missing service"
+    },
+    {
+      "name": ".backup.BackupMeta",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.BackupMode",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.BackupRange",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.BackupRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.BackupResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.CheckAdminRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.CheckAdminResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.CleanupRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.CleanupResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.ClusterIDError",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.DataFileGroup",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.DataFileInfo",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.DeleteSpansOfFile",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.Error",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.ExternalStorage",
+      "difference": "missing service"
+    },
+    {
+      "name": ".backup.ExternalStorageRestoreRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.ExternalStorageRestoreResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.ExternalStorageSaveRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.ExternalStorageSaveResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.File",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.FileType",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.IDMap",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.IngestedSSTs",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.LogFileCompaction",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.LogFileSubcompaction",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.LogFileSubcompactionMeta",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.LogFileSubcompactions",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.MetaEdit",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.MetaFile",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.MetaVersion",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.Metadata",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.Migration",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.MigrationVersion",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.PitrDBMap",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PitrTableMap",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PlacementPolicy",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PrepareRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PrepareResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PrepareSnapshotBackupEventType",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.PrepareSnapshotBackupRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.PrepareSnapshotBackupRequestType",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".backup.PrepareSnapshotBackupResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.RawRange",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.RegionMetaHint",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.RewrittenTableID",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.Schema",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.Schema.PartitionMergeOptionAllowedEntry",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.SortedSubRanges",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.Span",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.SpansOfFile",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.StatsBlock",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.StatsFile",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.StatsFileIndex",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.StreamBackupError",
+      "difference": "missing message"
+    },
+    {
+      "name": ".backup.TableMeta",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AlarmMember",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AlarmRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AlarmRequest.AlarmAction",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".etcdserverpb.AlarmResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AlarmType",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".etcdserverpb.Auth",
+      "difference": "missing service"
+    },
+    {
+      "name": ".etcdserverpb.AuthDisableRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthDisableResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthEnableRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthEnableResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleAddRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleAddResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleDeleteRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleDeleteResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleGetRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleGetResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleGrantPermissionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleGrantPermissionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleListRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleListResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleRevokePermissionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthRoleRevokePermissionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthStatusRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthStatusResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserAddRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserAddResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserChangePasswordRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserChangePasswordResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserDeleteRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserDeleteResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserGetRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserGetResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserGrantRoleRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserGrantRoleResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserListRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserListResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserRevokeRoleRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthUserRevokeRoleResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthenticateRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.AuthenticateResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.Cluster",
+      "difference": "missing service"
+    },
+    {
+      "name": ".etcdserverpb.CompactionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.CompactionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.Compare",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.Compare.CompareResult",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".etcdserverpb.Compare.CompareTarget",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".etcdserverpb.DefragmentRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.DefragmentResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.DowngradeRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.DowngradeRequest.DowngradeAction",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".etcdserverpb.DowngradeResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.HashKVRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.HashKVResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.HashRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.HashResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.KV.Txn",
+      "difference": "missing method",
+      "local_name": "Txn",
+      "upstream": {
+        "input": ".etcdserverpb.TxnRequest",
+        "output": ".etcdserverpb.TxnResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".etcdserverpb.KV.Compact",
+      "difference": "missing method",
+      "local_name": "Compact",
+      "upstream": {
+        "input": ".etcdserverpb.CompactionRequest",
+        "output": ".etcdserverpb.CompactionResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".etcdserverpb.Lease.LeaseTimeToLive",
+      "difference": "missing method",
+      "local_name": "LeaseTimeToLive",
+      "upstream": {
+        "input": ".etcdserverpb.LeaseTimeToLiveRequest",
+        "output": ".etcdserverpb.LeaseTimeToLiveResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".etcdserverpb.Lease.LeaseLeases",
+      "difference": "missing method",
+      "local_name": "LeaseLeases",
+      "upstream": {
+        "input": ".etcdserverpb.LeaseLeasesRequest",
+        "output": ".etcdserverpb.LeaseLeasesResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".etcdserverpb.LeaseCheckpoint",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseCheckpointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseCheckpointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseLeasesRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseLeasesResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseStatus",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseTimeToLiveRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.LeaseTimeToLiveResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.Maintenance",
+      "difference": "missing service"
+    },
+    {
+      "name": ".etcdserverpb.Member",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberAddRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberAddResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberListRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberListResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberPromoteRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberPromoteResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberRemoveRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberRemoveResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberUpdateRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MemberUpdateResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MoveLeaderRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.MoveLeaderResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.RequestOp",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.ResponseOp",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.SnapshotRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.SnapshotResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.StatusRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.StatusResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.TxnRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.TxnResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.WatchProgressRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".etcdserverpb.WatchRequest.progress_request",
+      "difference": "missing field",
+      "local_name": null,
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".etcdserverpb.WatchProgressRequest",
+        "oneof": "request_union",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.AdvanceGCSafePointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AdvanceGCSafePointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AdvanceTxnSafePointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AdvanceTxnSafePointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AllocIDRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AllocIDResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AskBatchSplitRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AskBatchSplitResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AskSplitRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AskSplitResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.AwakenRegions",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.BatchSwitchWitness",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.BootstrapRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.BootstrapResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.CPUStats",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ChangePeer",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ChangePeerV2",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ChangeSplit",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.CheckPolicy",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.ControlGrpc",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ControlGrpcEvent",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.DeleteGCBarrierRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DeleteGCBarrierResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DeleteGlobalGCBarrierRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DeleteGlobalGCBarrierResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DemoteFailedVoters",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DfsStatItem",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.DfsStatScope",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.EventType",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.ForceLeader",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GCSafePointV2",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetAllGCSafePointV2Request",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetAllGCSafePointV2Response",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetAllKeyspacesGCStatesRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetAllKeyspacesGCStatesResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetClusterConfigRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetClusterConfigResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetClusterInfoRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetClusterInfoResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetDCLocationInfoRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetDCLocationInfoResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetExternalTimestampRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetExternalTimestampResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetGCSafePointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetGCSafePointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetGCSafePointV2Request",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetGCSafePointV2Response",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetGCStateRequest.include_global_gc_barriers",
+      "difference": "missing field",
+      "local_name": null,
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 8,
+        "type_name": "",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.GetGCStateResponse.global_gc_barriers",
+      "difference": "missing field",
+      "local_name": null,
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".pdpb.GlobalGCBarriersInfo",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.GetMinTSRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetMinTSResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetOperatorRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetOperatorResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GetStoreResponse.stats",
+      "difference": "missing field",
+      "local_name": null,
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".pdpb.StoreStats",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.GlobalConfigItem",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GlobalGCBarrierInfo",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.GlobalGCBarriersInfo",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.IsBootstrappedRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.IsBootstrappedResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.IsSnapshotRecoveringRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.IsSnapshotRecoveringResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.KeyspaceScope.keyspace_id",
+      "difference": "contract differs",
+      "local_name": "keyspace_id",
+      "upstream": {
+        "number": 1,
+        "label": 1,
+        "type": 13,
+        "type_name": "",
+        "oneof": "keyspace",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 1,
+        "label": 1,
+        "type": 13,
+        "type_name": "",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".pdpb.KeyspaceScope.keyspace_identity",
+      "difference": "missing field",
+      "local_name": null,
+      "upstream": {
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".apipb.KeyspaceIdentity",
+        "oneof": "keyspace",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.LoadGlobalConfigRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.LoadGlobalConfigResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.Merge",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.OperatorStatus",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.PD.GetClusterInfo",
+      "difference": "missing method",
+      "local_name": "GetClusterInfo",
+      "upstream": {
+        "input": ".pdpb.GetClusterInfoRequest",
+        "output": ".pdpb.GetClusterInfoResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.Bootstrap",
+      "difference": "missing method",
+      "local_name": "Bootstrap",
+      "upstream": {
+        "input": ".pdpb.BootstrapRequest",
+        "output": ".pdpb.BootstrapResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.IsBootstrapped",
+      "difference": "missing method",
+      "local_name": "IsBootstrapped",
+      "upstream": {
+        "input": ".pdpb.IsBootstrappedRequest",
+        "output": ".pdpb.IsBootstrappedResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.AllocID",
+      "difference": "missing method",
+      "local_name": "AllocID",
+      "upstream": {
+        "input": ".pdpb.AllocIDRequest",
+        "output": ".pdpb.AllocIDResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.IsSnapshotRecovering",
+      "difference": "missing method",
+      "local_name": "IsSnapshotRecovering",
+      "upstream": {
+        "input": ".pdpb.IsSnapshotRecoveringRequest",
+        "output": ".pdpb.IsSnapshotRecoveringResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.PutStore",
+      "difference": "missing method",
+      "local_name": "PutStore",
+      "upstream": {
+        "input": ".pdpb.PutStoreRequest",
+        "output": ".pdpb.PutStoreResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.StoreHeartbeat",
+      "difference": "missing method",
+      "local_name": "StoreHeartbeat",
+      "upstream": {
+        "input": ".pdpb.StoreHeartbeatRequest",
+        "output": ".pdpb.StoreHeartbeatResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.RegionHeartbeat",
+      "difference": "missing method",
+      "local_name": "RegionHeartbeat",
+      "upstream": {
+        "input": ".pdpb.RegionHeartbeatRequest",
+        "output": ".pdpb.RegionHeartbeatResponse",
+        "client_streaming": true,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.QueryRegion",
+      "difference": "missing method",
+      "local_name": "QueryRegion",
+      "upstream": {
+        "input": ".pdpb.QueryRegionRequest",
+        "output": ".pdpb.QueryRegionResponse",
+        "client_streaming": true,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.AskSplit",
+      "difference": "missing method",
+      "local_name": "AskSplit",
+      "upstream": {
+        "input": ".pdpb.AskSplitRequest",
+        "output": ".pdpb.AskSplitResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.ReportSplit",
+      "difference": "missing method",
+      "local_name": "ReportSplit",
+      "upstream": {
+        "input": ".pdpb.ReportSplitRequest",
+        "output": ".pdpb.ReportSplitResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.AskBatchSplit",
+      "difference": "missing method",
+      "local_name": "AskBatchSplit",
+      "upstream": {
+        "input": ".pdpb.AskBatchSplitRequest",
+        "output": ".pdpb.AskBatchSplitResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.ReportBatchSplit",
+      "difference": "missing method",
+      "local_name": "ReportBatchSplit",
+      "upstream": {
+        "input": ".pdpb.ReportBatchSplitRequest",
+        "output": ".pdpb.ReportBatchSplitResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetClusterConfig",
+      "difference": "missing method",
+      "local_name": "GetClusterConfig",
+      "upstream": {
+        "input": ".pdpb.GetClusterConfigRequest",
+        "output": ".pdpb.GetClusterConfigResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.PutClusterConfig",
+      "difference": "missing method",
+      "local_name": "PutClusterConfig",
+      "upstream": {
+        "input": ".pdpb.PutClusterConfigRequest",
+        "output": ".pdpb.PutClusterConfigResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.ScatterRegion",
+      "difference": "missing method",
+      "local_name": "ScatterRegion",
+      "upstream": {
+        "input": ".pdpb.ScatterRegionRequest",
+        "output": ".pdpb.ScatterRegionResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetGCSafePoint",
+      "difference": "missing method",
+      "local_name": "GetGCSafePoint",
+      "upstream": {
+        "input": ".pdpb.GetGCSafePointRequest",
+        "output": ".pdpb.GetGCSafePointResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.UpdateGCSafePoint",
+      "difference": "missing method",
+      "local_name": "UpdateGCSafePoint",
+      "upstream": {
+        "input": ".pdpb.UpdateGCSafePointRequest",
+        "output": ".pdpb.UpdateGCSafePointResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.UpdateServiceGCSafePoint",
+      "difference": "missing method",
+      "local_name": "UpdateServiceGCSafePoint",
+      "upstream": {
+        "input": ".pdpb.UpdateServiceGCSafePointRequest",
+        "output": ".pdpb.UpdateServiceGCSafePointResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetGCSafePointV2",
+      "difference": "missing method",
+      "local_name": "GetGCSafePointV2",
+      "upstream": {
+        "input": ".pdpb.GetGCSafePointV2Request",
+        "output": ".pdpb.GetGCSafePointV2Response",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.WatchGCSafePointV2",
+      "difference": "missing method",
+      "local_name": "WatchGCSafePointV2",
+      "upstream": {
+        "input": ".pdpb.WatchGCSafePointV2Request",
+        "output": ".pdpb.WatchGCSafePointV2Response",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.UpdateGCSafePointV2",
+      "difference": "missing method",
+      "local_name": "UpdateGCSafePointV2",
+      "upstream": {
+        "input": ".pdpb.UpdateGCSafePointV2Request",
+        "output": ".pdpb.UpdateGCSafePointV2Response",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.UpdateServiceSafePointV2",
+      "difference": "missing method",
+      "local_name": "UpdateServiceSafePointV2",
+      "upstream": {
+        "input": ".pdpb.UpdateServiceSafePointV2Request",
+        "output": ".pdpb.UpdateServiceSafePointV2Response",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetAllGCSafePointV2",
+      "difference": "missing method",
+      "local_name": "GetAllGCSafePointV2",
+      "upstream": {
+        "input": ".pdpb.GetAllGCSafePointV2Request",
+        "output": ".pdpb.GetAllGCSafePointV2Response",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.AdvanceGCSafePoint",
+      "difference": "missing method",
+      "local_name": "AdvanceGCSafePoint",
+      "upstream": {
+        "input": ".pdpb.AdvanceGCSafePointRequest",
+        "output": ".pdpb.AdvanceGCSafePointResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.AdvanceTxnSafePoint",
+      "difference": "missing method",
+      "local_name": "AdvanceTxnSafePoint",
+      "upstream": {
+        "input": ".pdpb.AdvanceTxnSafePointRequest",
+        "output": ".pdpb.AdvanceTxnSafePointResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SetGCBarrier",
+      "difference": "missing method",
+      "local_name": "SetGCBarrier",
+      "upstream": {
+        "input": ".pdpb.SetGCBarrierRequest",
+        "output": ".pdpb.SetGCBarrierResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.DeleteGCBarrier",
+      "difference": "missing method",
+      "local_name": "DeleteGCBarrier",
+      "upstream": {
+        "input": ".pdpb.DeleteGCBarrierRequest",
+        "output": ".pdpb.DeleteGCBarrierResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SetGlobalGCBarrier",
+      "difference": "missing method",
+      "local_name": "SetGlobalGCBarrier",
+      "upstream": {
+        "input": ".pdpb.SetGlobalGCBarrierRequest",
+        "output": ".pdpb.SetGlobalGCBarrierResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.DeleteGlobalGCBarrier",
+      "difference": "missing method",
+      "local_name": "DeleteGlobalGCBarrier",
+      "upstream": {
+        "input": ".pdpb.DeleteGlobalGCBarrierRequest",
+        "output": ".pdpb.DeleteGlobalGCBarrierResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetAllKeyspacesGCStates",
+      "difference": "missing method",
+      "local_name": "GetAllKeyspacesGCStates",
+      "upstream": {
+        "input": ".pdpb.GetAllKeyspacesGCStatesRequest",
+        "output": ".pdpb.GetAllKeyspacesGCStatesResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SyncRegions",
+      "difference": "missing method",
+      "local_name": "SyncRegions",
+      "upstream": {
+        "input": ".pdpb.SyncRegionRequest",
+        "output": ".pdpb.SyncRegionResponse",
+        "client_streaming": true,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetOperator",
+      "difference": "missing method",
+      "local_name": "GetOperator",
+      "upstream": {
+        "input": ".pdpb.GetOperatorRequest",
+        "output": ".pdpb.GetOperatorResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SyncMaxTS",
+      "difference": "missing method",
+      "local_name": "SyncMaxTS",
+      "upstream": {
+        "input": ".pdpb.SyncMaxTSRequest",
+        "output": ".pdpb.SyncMaxTSResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SplitRegions",
+      "difference": "missing method",
+      "local_name": "SplitRegions",
+      "upstream": {
+        "input": ".pdpb.SplitRegionsRequest",
+        "output": ".pdpb.SplitRegionsResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SplitAndScatterRegions",
+      "difference": "missing method",
+      "local_name": "SplitAndScatterRegions",
+      "upstream": {
+        "input": ".pdpb.SplitAndScatterRegionsRequest",
+        "output": ".pdpb.SplitAndScatterRegionsResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetDCLocationInfo",
+      "difference": "missing method",
+      "local_name": "GetDCLocationInfo",
+      "upstream": {
+        "input": ".pdpb.GetDCLocationInfoRequest",
+        "output": ".pdpb.GetDCLocationInfoResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.StoreGlobalConfig",
+      "difference": "missing method",
+      "local_name": "StoreGlobalConfig",
+      "upstream": {
+        "input": ".pdpb.StoreGlobalConfigRequest",
+        "output": ".pdpb.StoreGlobalConfigResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.LoadGlobalConfig",
+      "difference": "missing method",
+      "local_name": "LoadGlobalConfig",
+      "upstream": {
+        "input": ".pdpb.LoadGlobalConfigRequest",
+        "output": ".pdpb.LoadGlobalConfigResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.WatchGlobalConfig",
+      "difference": "missing method",
+      "local_name": "WatchGlobalConfig",
+      "upstream": {
+        "input": ".pdpb.WatchGlobalConfigRequest",
+        "output": ".pdpb.WatchGlobalConfigResponse",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.ReportBuckets",
+      "difference": "missing method",
+      "local_name": "ReportBuckets",
+      "upstream": {
+        "input": ".pdpb.ReportBucketsRequest",
+        "output": ".pdpb.ReportBucketsResponse",
+        "client_streaming": true,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.ReportMinResolvedTS",
+      "difference": "missing method",
+      "local_name": "ReportMinResolvedTS",
+      "upstream": {
+        "input": ".pdpb.ReportMinResolvedTsRequest",
+        "output": ".pdpb.ReportMinResolvedTsResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.SetExternalTimestamp",
+      "difference": "missing method",
+      "local_name": "SetExternalTimestamp",
+      "upstream": {
+        "input": ".pdpb.SetExternalTimestampRequest",
+        "output": ".pdpb.SetExternalTimestampResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetExternalTimestamp",
+      "difference": "missing method",
+      "local_name": "GetExternalTimestamp",
+      "upstream": {
+        "input": ".pdpb.GetExternalTimestampRequest",
+        "output": ".pdpb.GetExternalTimestampResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PD.GetMinTS",
+      "difference": "missing method",
+      "local_name": "GetMinTS",
+      "upstream": {
+        "input": ".pdpb.GetMinTSRequest",
+        "output": ".pdpb.GetMinTSResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".pdpb.PeerReport",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PeerStat",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.Peers",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PeersStats",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PutClusterConfigRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PutClusterConfigResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PutStoreRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.PutStoreResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.QueryKind",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.QueryRegionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.QueryRegionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.QueryRegionResponse.RegionsByIdEntry",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.QueryStats",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RecordPair",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RecoveryPlan",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RegionHeartbeatRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RegionHeartbeatResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RegionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.RegionStat",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportBatchSplitRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportBatchSplitResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportBucketsRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportBucketsResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportMinResolvedTsRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportMinResolvedTsResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportSplitRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ReportSplitResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SafePointEvent",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ScatterRegionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ScatterRegionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.ServiceMode",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.SetExternalTimestampRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SetExternalTimestampResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SetGCBarrierRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SetGCBarrierResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SetGlobalGCBarrierRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SetGlobalGCBarrierResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SlowTrend",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SnapshotStat",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitAndScatterRegionsRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitAndScatterRegionsResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitID",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitReason",
+      "difference": "missing enum"
+    },
+    {
+      "name": ".pdpb.SplitRegion",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitRegionsRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SplitRegionsResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreGlobalConfigRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreGlobalConfigResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreHeartbeatRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreHeartbeatResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreReport",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreStats",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.StoreStats.NetworkSlowScoresEntry",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SwitchWitness",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SyncMaxTSRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SyncMaxTSResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SyncRegionRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.SyncRegionResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.TimeInterval",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.TransferLeader",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateGCSafePointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateGCSafePointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateGCSafePointV2Request",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateGCSafePointV2Response",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateServiceGCSafePointRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateServiceGCSafePointResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateServiceSafePointV2Request",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.UpdateServiceSafePointV2Response",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.WatchGCSafePointV2Request",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.WatchGCSafePointV2Response",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.WatchGlobalConfigRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".pdpb.WatchGlobalConfigResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".tikvpb.BatchCommandsEmptyRequest",
+      "difference": "missing message"
+    },
+    {
+      "name": ".tikvpb.BatchCommandsEmptyResponse",
+      "difference": "missing message"
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Get",
+      "difference": "opaque message representation",
+      "local_name": "get",
+      "upstream": {
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 1,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Scan",
+      "difference": "opaque message representation",
+      "local_name": "scan",
+      "upstream": {
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 2,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Prewrite",
+      "difference": "opaque message representation",
+      "local_name": "prewrite",
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrewriteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 3,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Commit",
+      "difference": "opaque message representation",
+      "local_name": "commit",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CommitRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Import",
+      "difference": "opaque message representation",
+      "local_name": "import",
+      "upstream": {
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ImportRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 5,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Cleanup",
+      "difference": "opaque message representation",
+      "local_name": "cleanup",
+      "upstream": {
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CleanupRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 6,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BatchGet",
+      "difference": "opaque message representation",
+      "local_name": "batch_get",
+      "upstream": {
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 7,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BatchRollback",
+      "difference": "opaque message representation",
+      "local_name": "batch_rollback",
+      "upstream": {
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchRollbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 8,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.ScanLock",
+      "difference": "opaque message representation",
+      "local_name": "scan_lock",
+      "upstream": {
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 9,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.ResolveLock",
+      "difference": "opaque message representation",
+      "local_name": "resolve_lock",
+      "upstream": {
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ResolveLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 10,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.GC",
+      "difference": "opaque message representation",
+      "local_name": "gc",
+      "upstream": {
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GCRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 11,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.DeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "delete_range",
+      "upstream": {
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.DeleteRangeRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 12,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawGet",
+      "difference": "opaque message representation",
+      "local_name": "raw_get",
+      "upstream": {
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 13,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_get",
+      "upstream": {
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 14,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawPut",
+      "difference": "opaque message representation",
+      "local_name": "raw_put",
+      "upstream": {
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawPutRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 15,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchPut",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_put",
+      "upstream": {
+        "number": 16,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchPutRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 16,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawDelete",
+      "difference": "opaque message representation",
+      "local_name": "raw_delete",
+      "upstream": {
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 17,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchDelete",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_delete",
+      "upstream": {
+        "number": 18,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchDeleteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 18,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawScan",
+      "difference": "opaque message representation",
+      "local_name": "raw_scan",
+      "upstream": {
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 19,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawDeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "raw_delete_range",
+      "upstream": {
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRangeRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 20,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchScan",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_scan",
+      "upstream": {
+        "number": 21,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 21,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Coprocessor",
+      "difference": "opaque message representation",
+      "local_name": "coprocessor",
+      "upstream": {
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".coprocessor.Request",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 22,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PessimisticLock",
+      "difference": "opaque message representation",
+      "local_name": "pessimistic_lock",
+      "upstream": {
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 23,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PessimisticRollback",
+      "difference": "opaque message representation",
+      "local_name": "pessimistic_rollback",
+      "upstream": {
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticRollbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 24,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.CheckTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "check_txn_status",
+      "upstream": {
+        "number": 25,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckTxnStatusRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 25,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.TxnHeartBeat",
+      "difference": "opaque message representation",
+      "local_name": "txn_heart_beat",
+      "upstream": {
+        "number": 26,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.TxnHeartBeatRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 26,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.CheckSecondaryLocks",
+      "difference": "opaque message representation",
+      "local_name": "check_secondary_locks",
+      "upstream": {
+        "number": 33,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckSecondaryLocksRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 33,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawCoprocessor",
+      "difference": "opaque message representation",
+      "local_name": "raw_coprocessor",
+      "upstream": {
+        "number": 34,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawCoprocessorRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 34,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.FlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "flashback_to_version",
+      "upstream": {
+        "number": 35,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlashbackToVersionRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 35,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PrepareFlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "prepare_flashback_to_version",
+      "upstream": {
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrepareFlashbackToVersionRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 36,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Flush",
+      "difference": "opaque message representation",
+      "local_name": "flush",
+      "upstream": {
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlushRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 37,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BufferBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "buffer_batch_get",
+      "upstream": {
+        "number": 38,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BufferBatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 38,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.GetHealthFeedback",
+      "difference": "opaque message representation",
+      "local_name": "get_health_feedback",
+      "upstream": {
+        "number": 39,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetHealthFeedbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 39,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BroadcastTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "broadcast_txn_status",
+      "upstream": {
+        "number": 40,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BroadcastTxnStatusRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 40,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Empty",
+      "difference": "opaque message representation",
+      "local_name": "empty",
+      "upstream": {
+        "number": 255,
+        "label": 1,
+        "type": 11,
+        "type_name": ".tikvpb.BatchCommandsEmptyRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 255,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.health_feedback",
+      "difference": "opaque message representation",
+      "local_name": "health_feedback",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.HealthFeedback",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "_health_feedback",
+        "proto3_optional": true,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Get",
+      "difference": "opaque message representation",
+      "local_name": "get",
+      "upstream": {
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 1,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Scan",
+      "difference": "opaque message representation",
+      "local_name": "scan",
+      "upstream": {
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 2,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Prewrite",
+      "difference": "opaque message representation",
+      "local_name": "prewrite",
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrewriteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 3,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Commit",
+      "difference": "opaque message representation",
+      "local_name": "commit",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CommitResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Import",
+      "difference": "opaque message representation",
+      "local_name": "import",
+      "upstream": {
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ImportResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 5,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Cleanup",
+      "difference": "opaque message representation",
+      "local_name": "cleanup",
+      "upstream": {
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CleanupResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 6,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BatchGet",
+      "difference": "opaque message representation",
+      "local_name": "batch_get",
+      "upstream": {
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 7,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BatchRollback",
+      "difference": "opaque message representation",
+      "local_name": "batch_rollback",
+      "upstream": {
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchRollbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 8,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.ScanLock",
+      "difference": "opaque message representation",
+      "local_name": "scan_lock",
+      "upstream": {
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 9,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.ResolveLock",
+      "difference": "opaque message representation",
+      "local_name": "resolve_lock",
+      "upstream": {
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ResolveLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 10,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.GC",
+      "difference": "opaque message representation",
+      "local_name": "gc",
+      "upstream": {
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GCResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 11,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.DeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "delete_range",
+      "upstream": {
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.DeleteRangeResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 12,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawGet",
+      "difference": "opaque message representation",
+      "local_name": "raw_get",
+      "upstream": {
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 13,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_get",
+      "upstream": {
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 14,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawPut",
+      "difference": "opaque message representation",
+      "local_name": "raw_put",
+      "upstream": {
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawPutResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 15,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchPut",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_put",
+      "upstream": {
+        "number": 16,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchPutResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 16,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawDelete",
+      "difference": "opaque message representation",
+      "local_name": "raw_delete",
+      "upstream": {
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 17,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchDelete",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_delete",
+      "upstream": {
+        "number": 18,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchDeleteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 18,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawScan",
+      "difference": "opaque message representation",
+      "local_name": "raw_scan",
+      "upstream": {
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 19,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawDeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "raw_delete_range",
+      "upstream": {
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRangeResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 20,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchScan",
+      "difference": "opaque message representation",
+      "local_name": "raw_batch_scan",
+      "upstream": {
+        "number": 21,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 21,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Coprocessor",
+      "difference": "opaque message representation",
+      "local_name": "coprocessor",
+      "upstream": {
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".coprocessor.Response",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 22,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PessimisticLock",
+      "difference": "opaque message representation",
+      "local_name": "pessimistic_lock",
+      "upstream": {
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 23,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PessimisticRollback",
+      "difference": "opaque message representation",
+      "local_name": "pessimistic_rollback",
+      "upstream": {
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticRollbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 24,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.CheckTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "check_txn_status",
+      "upstream": {
+        "number": 25,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckTxnStatusResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 25,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.TxnHeartBeat",
+      "difference": "opaque message representation",
+      "local_name": "txn_heart_beat",
+      "upstream": {
+        "number": 26,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.TxnHeartBeatResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 26,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.CheckSecondaryLocks",
+      "difference": "opaque message representation",
+      "local_name": "check_secondary_locks",
+      "upstream": {
+        "number": 33,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckSecondaryLocksResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 33,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawCoprocessor",
+      "difference": "opaque message representation",
+      "local_name": "raw_coprocessor",
+      "upstream": {
+        "number": 34,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawCoprocessorResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 34,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.FlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "flashback_to_version",
+      "upstream": {
+        "number": 35,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlashbackToVersionResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 35,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PrepareFlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "prepare_flashback_to_version",
+      "upstream": {
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrepareFlashbackToVersionResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 36,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Flush",
+      "difference": "opaque message representation",
+      "local_name": "flush",
+      "upstream": {
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlushResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 37,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BufferBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "buffer_batch_get",
+      "upstream": {
+        "number": 38,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BufferBatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 38,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.GetHealthFeedback",
+      "difference": "opaque message representation",
+      "local_name": "get_health_feedback",
+      "upstream": {
+        "number": 39,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetHealthFeedbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 39,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BroadcastTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "broadcast_txn_status",
+      "upstream": {
+        "number": 40,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BroadcastTxnStatusResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 40,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Empty",
+      "difference": "opaque message representation",
+      "local_name": "empty",
+      "upstream": {
+        "number": 255,
+        "label": 1,
+        "type": 11,
+        "type_name": ".tikvpb.BatchCommandsEmptyResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 255,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchRaftMessage",
+      "difference": "missing message"
+    },
+    {
+      "name": ".tikvpb.Tikv.KvGet",
+      "difference": "missing method",
+      "local_name": "KvGet",
+      "upstream": {
+        "input": ".kvrpcpb.GetRequest",
+        "output": ".kvrpcpb.GetResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvScan",
+      "difference": "missing method",
+      "local_name": "KvScan",
+      "upstream": {
+        "input": ".kvrpcpb.ScanRequest",
+        "output": ".kvrpcpb.ScanResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvPrewrite",
+      "difference": "missing method",
+      "local_name": "KvPrewrite",
+      "upstream": {
+        "input": ".kvrpcpb.PrewriteRequest",
+        "output": ".kvrpcpb.PrewriteResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvPessimisticLock",
+      "difference": "missing method",
+      "local_name": "KvPessimisticLock",
+      "upstream": {
+        "input": ".kvrpcpb.PessimisticLockRequest",
+        "output": ".kvrpcpb.PessimisticLockResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KVPessimisticRollback",
+      "difference": "missing method",
+      "local_name": "KVPessimisticRollback",
+      "upstream": {
+        "input": ".kvrpcpb.PessimisticRollbackRequest",
+        "output": ".kvrpcpb.PessimisticRollbackResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvTxnHeartBeat",
+      "difference": "missing method",
+      "local_name": "KvTxnHeartBeat",
+      "upstream": {
+        "input": ".kvrpcpb.TxnHeartBeatRequest",
+        "output": ".kvrpcpb.TxnHeartBeatResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvCheckTxnStatus",
+      "difference": "missing method",
+      "local_name": "KvCheckTxnStatus",
+      "upstream": {
+        "input": ".kvrpcpb.CheckTxnStatusRequest",
+        "output": ".kvrpcpb.CheckTxnStatusResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvCheckSecondaryLocks",
+      "difference": "missing method",
+      "local_name": "KvCheckSecondaryLocks",
+      "upstream": {
+        "input": ".kvrpcpb.CheckSecondaryLocksRequest",
+        "output": ".kvrpcpb.CheckSecondaryLocksResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvCommit",
+      "difference": "missing method",
+      "local_name": "KvCommit",
+      "upstream": {
+        "input": ".kvrpcpb.CommitRequest",
+        "output": ".kvrpcpb.CommitResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvImport",
+      "difference": "missing method",
+      "local_name": "KvImport",
+      "upstream": {
+        "input": ".kvrpcpb.ImportRequest",
+        "output": ".kvrpcpb.ImportResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvCleanup",
+      "difference": "missing method",
+      "local_name": "KvCleanup",
+      "upstream": {
+        "input": ".kvrpcpb.CleanupRequest",
+        "output": ".kvrpcpb.CleanupResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvBatchGet",
+      "difference": "missing method",
+      "local_name": "KvBatchGet",
+      "upstream": {
+        "input": ".kvrpcpb.BatchGetRequest",
+        "output": ".kvrpcpb.BatchGetResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvBatchRollback",
+      "difference": "missing method",
+      "local_name": "KvBatchRollback",
+      "upstream": {
+        "input": ".kvrpcpb.BatchRollbackRequest",
+        "output": ".kvrpcpb.BatchRollbackResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvScanLock",
+      "difference": "missing method",
+      "local_name": "KvScanLock",
+      "upstream": {
+        "input": ".kvrpcpb.ScanLockRequest",
+        "output": ".kvrpcpb.ScanLockResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvResolveLock",
+      "difference": "missing method",
+      "local_name": "KvResolveLock",
+      "upstream": {
+        "input": ".kvrpcpb.ResolveLockRequest",
+        "output": ".kvrpcpb.ResolveLockResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvGC",
+      "difference": "missing method",
+      "local_name": "KvGC",
+      "upstream": {
+        "input": ".kvrpcpb.GCRequest",
+        "output": ".kvrpcpb.GCResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvDeleteRange",
+      "difference": "missing method",
+      "local_name": "KvDeleteRange",
+      "upstream": {
+        "input": ".kvrpcpb.DeleteRangeRequest",
+        "output": ".kvrpcpb.DeleteRangeResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvPrepareFlashbackToVersion",
+      "difference": "missing method",
+      "local_name": "KvPrepareFlashbackToVersion",
+      "upstream": {
+        "input": ".kvrpcpb.PrepareFlashbackToVersionRequest",
+        "output": ".kvrpcpb.PrepareFlashbackToVersionResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvFlashbackToVersion",
+      "difference": "missing method",
+      "local_name": "KvFlashbackToVersion",
+      "upstream": {
+        "input": ".kvrpcpb.FlashbackToVersionRequest",
+        "output": ".kvrpcpb.FlashbackToVersionResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvFlush",
+      "difference": "missing method",
+      "local_name": "KvFlush",
+      "upstream": {
+        "input": ".kvrpcpb.FlushRequest",
+        "output": ".kvrpcpb.FlushResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.KvBufferBatchGet",
+      "difference": "missing method",
+      "local_name": "KvBufferBatchGet",
+      "upstream": {
+        "input": ".kvrpcpb.BufferBatchGetRequest",
+        "output": ".kvrpcpb.BufferBatchGetResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawGet",
+      "difference": "missing method",
+      "local_name": "RawGet",
+      "upstream": {
+        "input": ".kvrpcpb.RawGetRequest",
+        "output": ".kvrpcpb.RawGetResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawBatchGet",
+      "difference": "missing method",
+      "local_name": "RawBatchGet",
+      "upstream": {
+        "input": ".kvrpcpb.RawBatchGetRequest",
+        "output": ".kvrpcpb.RawBatchGetResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawPut",
+      "difference": "missing method",
+      "local_name": "RawPut",
+      "upstream": {
+        "input": ".kvrpcpb.RawPutRequest",
+        "output": ".kvrpcpb.RawPutResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawBatchPut",
+      "difference": "missing method",
+      "local_name": "RawBatchPut",
+      "upstream": {
+        "input": ".kvrpcpb.RawBatchPutRequest",
+        "output": ".kvrpcpb.RawBatchPutResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawDelete",
+      "difference": "missing method",
+      "local_name": "RawDelete",
+      "upstream": {
+        "input": ".kvrpcpb.RawDeleteRequest",
+        "output": ".kvrpcpb.RawDeleteResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawBatchDelete",
+      "difference": "missing method",
+      "local_name": "RawBatchDelete",
+      "upstream": {
+        "input": ".kvrpcpb.RawBatchDeleteRequest",
+        "output": ".kvrpcpb.RawBatchDeleteResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawScan",
+      "difference": "missing method",
+      "local_name": "RawScan",
+      "upstream": {
+        "input": ".kvrpcpb.RawScanRequest",
+        "output": ".kvrpcpb.RawScanResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawDeleteRange",
+      "difference": "missing method",
+      "local_name": "RawDeleteRange",
+      "upstream": {
+        "input": ".kvrpcpb.RawDeleteRangeRequest",
+        "output": ".kvrpcpb.RawDeleteRangeResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawBatchScan",
+      "difference": "missing method",
+      "local_name": "RawBatchScan",
+      "upstream": {
+        "input": ".kvrpcpb.RawBatchScanRequest",
+        "output": ".kvrpcpb.RawBatchScanResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawGetKeyTTL",
+      "difference": "missing method",
+      "local_name": "RawGetKeyTTL",
+      "upstream": {
+        "input": ".kvrpcpb.RawGetKeyTTLRequest",
+        "output": ".kvrpcpb.RawGetKeyTTLResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawCompareAndSwap",
+      "difference": "missing method",
+      "local_name": "RawCompareAndSwap",
+      "upstream": {
+        "input": ".kvrpcpb.RawCASRequest",
+        "output": ".kvrpcpb.RawCASResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawChecksum",
+      "difference": "missing method",
+      "local_name": "RawChecksum",
+      "upstream": {
+        "input": ".kvrpcpb.RawChecksumRequest",
+        "output": ".kvrpcpb.RawChecksumResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.UnsafeDestroyRange",
+      "difference": "missing method",
+      "local_name": "UnsafeDestroyRange",
+      "upstream": {
+        "input": ".kvrpcpb.UnsafeDestroyRangeRequest",
+        "output": ".kvrpcpb.UnsafeDestroyRangeResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RegisterLockObserver",
+      "difference": "missing method",
+      "local_name": "RegisterLockObserver",
+      "upstream": {
+        "input": ".kvrpcpb.RegisterLockObserverRequest",
+        "output": ".kvrpcpb.RegisterLockObserverResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.CheckLockObserver",
+      "difference": "missing method",
+      "local_name": "CheckLockObserver",
+      "upstream": {
+        "input": ".kvrpcpb.CheckLockObserverRequest",
+        "output": ".kvrpcpb.CheckLockObserverResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RemoveLockObserver",
+      "difference": "missing method",
+      "local_name": "RemoveLockObserver",
+      "upstream": {
+        "input": ".kvrpcpb.RemoveLockObserverRequest",
+        "output": ".kvrpcpb.RemoveLockObserverResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.PhysicalScanLock",
+      "difference": "missing method",
+      "local_name": "PhysicalScanLock",
+      "upstream": {
+        "input": ".kvrpcpb.PhysicalScanLockRequest",
+        "output": ".kvrpcpb.PhysicalScanLockResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.CoprocessorStream",
+      "difference": "missing method",
+      "local_name": "CoprocessorStream",
+      "upstream": {
+        "input": ".coprocessor.Request",
+        "output": ".coprocessor.Response",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.BatchCoprocessor",
+      "difference": "missing method",
+      "local_name": "BatchCoprocessor",
+      "upstream": {
+        "input": ".coprocessor.BatchRequest",
+        "output": ".coprocessor.BatchResponse",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.DelegateCoprocessor",
+      "difference": "missing method",
+      "local_name": "DelegateCoprocessor",
+      "upstream": {
+        "input": ".coprocessor.DelegateRequest",
+        "output": ".coprocessor.DelegateResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.RawCoprocessor",
+      "difference": "missing method",
+      "local_name": "RawCoprocessor",
+      "upstream": {
+        "input": ".kvrpcpb.RawCoprocessorRequest",
+        "output": ".kvrpcpb.RawCoprocessorResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.Raft",
+      "difference": "missing method",
+      "local_name": "Raft",
+      "upstream": {
+        "input": ".raft_serverpb.RaftMessage",
+        "output": ".raft_serverpb.Done",
+        "client_streaming": true,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.BatchRaft",
+      "difference": "missing method",
+      "local_name": "BatchRaft",
+      "upstream": {
+        "input": ".tikvpb.BatchRaftMessage",
+        "output": ".raft_serverpb.Done",
+        "client_streaming": true,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.Snapshot",
+      "difference": "missing method",
+      "local_name": "Snapshot",
+      "upstream": {
+        "input": ".raft_serverpb.SnapshotChunk",
+        "output": ".raft_serverpb.Done",
+        "client_streaming": true,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.TabletSnapshot",
+      "difference": "missing method",
+      "local_name": "TabletSnapshot",
+      "upstream": {
+        "input": ".raft_serverpb.TabletSnapshotRequest",
+        "output": ".raft_serverpb.TabletSnapshotResponse",
+        "client_streaming": true,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.SplitRegion",
+      "difference": "missing method",
+      "local_name": "SplitRegion",
+      "upstream": {
+        "input": ".kvrpcpb.SplitRegionRequest",
+        "output": ".kvrpcpb.SplitRegionResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.ReadIndex",
+      "difference": "missing method",
+      "local_name": "ReadIndex",
+      "upstream": {
+        "input": ".kvrpcpb.ReadIndexRequest",
+        "output": ".kvrpcpb.ReadIndexResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.MvccGetByKey",
+      "difference": "missing method",
+      "local_name": "MvccGetByKey",
+      "upstream": {
+        "input": ".kvrpcpb.MvccGetByKeyRequest",
+        "output": ".kvrpcpb.MvccGetByKeyResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.MvccGetByStartTs",
+      "difference": "missing method",
+      "local_name": "MvccGetByStartTs",
+      "upstream": {
+        "input": ".kvrpcpb.MvccGetByStartTsRequest",
+        "output": ".kvrpcpb.MvccGetByStartTsResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.IsAlive",
+      "difference": "missing method",
+      "local_name": "IsAlive",
+      "upstream": {
+        "input": ".mpp.IsAliveRequest",
+        "output": ".mpp.IsAliveResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.CheckLeader",
+      "difference": "missing method",
+      "local_name": "CheckLeader",
+      "upstream": {
+        "input": ".kvrpcpb.CheckLeaderRequest",
+        "output": ".kvrpcpb.CheckLeaderResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetStoreSafeTS",
+      "difference": "missing method",
+      "local_name": "GetStoreSafeTS",
+      "upstream": {
+        "input": ".kvrpcpb.StoreSafeTSRequest",
+        "output": ".kvrpcpb.StoreSafeTSResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetLockWaitInfo",
+      "difference": "missing method",
+      "local_name": "GetLockWaitInfo",
+      "upstream": {
+        "input": ".kvrpcpb.GetLockWaitInfoRequest",
+        "output": ".kvrpcpb.GetLockWaitInfoResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.Compact",
+      "difference": "missing method",
+      "local_name": "Compact",
+      "upstream": {
+        "input": ".kvrpcpb.CompactRequest",
+        "output": ".kvrpcpb.CompactResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetLockWaitHistory",
+      "difference": "missing method",
+      "local_name": "GetLockWaitHistory",
+      "upstream": {
+        "input": ".kvrpcpb.GetLockWaitHistoryRequest",
+        "output": ".kvrpcpb.GetLockWaitHistoryResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetTiFlashSystemTable",
+      "difference": "missing method",
+      "local_name": "GetTiFlashSystemTable",
+      "upstream": {
+        "input": ".kvrpcpb.TiFlashSystemTableRequest",
+        "output": ".kvrpcpb.TiFlashSystemTableResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetEstimateTiCICount",
+      "difference": "missing method",
+      "local_name": "GetEstimateTiCICount",
+      "upstream": {
+        "input": ".coprocessor.TiCIEstimateCountRequest",
+        "output": ".coprocessor.TiCIEstimateCountResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.tryAddLock",
+      "difference": "missing method",
+      "local_name": "tryAddLock",
+      "upstream": {
+        "input": ".disaggregated.TryAddLockRequest",
+        "output": ".disaggregated.TryAddLockResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.tryMarkDelete",
+      "difference": "missing method",
+      "local_name": "tryMarkDelete",
+      "upstream": {
+        "input": ".disaggregated.TryMarkDeleteRequest",
+        "output": ".disaggregated.TryMarkDeleteResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.EstablishDisaggTask",
+      "difference": "missing method",
+      "local_name": "EstablishDisaggTask",
+      "upstream": {
+        "input": ".disaggregated.EstablishDisaggTaskRequest",
+        "output": ".disaggregated.EstablishDisaggTaskResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.CancelDisaggTask",
+      "difference": "missing method",
+      "local_name": "CancelDisaggTask",
+      "upstream": {
+        "input": ".disaggregated.CancelDisaggTaskRequest",
+        "output": ".disaggregated.CancelDisaggTaskResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.FetchDisaggPages",
+      "difference": "missing method",
+      "local_name": "FetchDisaggPages",
+      "upstream": {
+        "input": ".disaggregated.FetchDisaggPagesRequest",
+        "output": ".disaggregated.PagesPacket",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetDisaggConfig",
+      "difference": "missing method",
+      "local_name": "GetDisaggConfig",
+      "upstream": {
+        "input": ".disaggregated.GetDisaggConfigRequest",
+        "output": ".disaggregated.GetDisaggConfigResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.GetHealthFeedback",
+      "difference": "missing method",
+      "local_name": "GetHealthFeedback",
+      "upstream": {
+        "input": ".kvrpcpb.GetHealthFeedbackRequest",
+        "output": ".kvrpcpb.GetHealthFeedbackResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.Tikv.BroadcastTxnStatus",
+      "difference": "missing method",
+      "local_name": "BroadcastTxnStatus",
+      "upstream": {
+        "input": ".kvrpcpb.BroadcastTxnStatusRequest",
+        "output": ".kvrpcpb.BroadcastTxnStatusResponse",
+        "client_streaming": false,
+        "server_streaming": false
+      },
+      "local": null
+    },
+    {
+      "name": ".tikvpb.VersionedKv",
+      "difference": "missing service"
+    }
+  ]
+}
