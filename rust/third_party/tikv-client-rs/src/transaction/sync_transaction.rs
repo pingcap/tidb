@@ -26,11 +26,6 @@ impl<PdC: PdClient> SyncTransaction<PdC> {
         Self { inner, runtime }
     }
 
-    /// Borrows the underlying transaction for immutable buffer inspection.
-    pub fn inner(&self) -> &Transaction<PdC> {
-        &self.inner
-    }
-
     /// Borrows the wrapped asynchronous transaction.
     pub fn inner_mut(&mut self) -> &mut Transaction<PdC> {
         &mut self.inner

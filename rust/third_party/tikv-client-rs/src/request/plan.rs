@@ -707,9 +707,6 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// per-shard behavior.
     fn update_using_forked(&mut self, forked: &Self);
 
-    /// Publish the completed operation's selected retry history.
-    async fn record_stats(&self) {}
-
     /// Multi-region source owners regroup their remaining keys after
     /// `RegionRequestSender` returns a terminal region error. A one-region
     /// sender still returns the error; [`RetryableMultiRegion`] consumes this
@@ -811,32 +808,39 @@ impl RegionRetryState for SnapshotRegionBackoff {
         if self.disabled {
             return Ok(false);
         }
-        self.backoff
-            .lock()
-            .await
-            .backoff(config, _reason)
-            .await
-            .map(|_| true)
-            .map_err(Error::from)
-    }
-
-    async fn record_stats(&self) {
-        if let Some(stats) = &self.stats {
-            // Go records the caller's Backoffer after concurrent workers have
-            // selected the final child's history, including nested status RPCs.
-            let backoff = self.backoff.lock().await;
-            if backoff.total_sleep_ms() == 0 {
-                return;
-            }
-            for (&name, &count) in backoff.times_by_type() {
-                let millis = backoff
-                    .sleep_by_type()
-                    .get(name)
-                    .copied()
-                    .unwrap_or_default();
-                stats.record_backoff_totals(name, count, Duration::from_millis(millis));
+        let mut backoff = self.backoff.lock().await;
+        let before_count = backoff
+            .times_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let before_sleep = backoff
+            .sleep_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let result = backoff.backoff(config, _reason).await;
+        let after_count = backoff
+            .times_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        let after_sleep = backoff
+            .sleep_by_type()
+            .get(config.name)
+            .copied()
+            .unwrap_or_default();
+        if after_count > before_count {
+            if let Some(stats) = &self.stats {
+                stats.record_backoff(
+                    config.name,
+                    Duration::from_millis(after_sleep.saturating_sub(before_sleep)),
+                );
             }
         }
+        result
+            .map(|_| true)
+            .map_err(|error| Error::StringError(error.to_string()))
     }
 
     fn fork(&self) -> (Self, Cancellation) {
@@ -960,7 +964,7 @@ impl SnapshotLockBackoff {
                 );
             }
         }
-        result.map_err(Error::from)
+        result.map_err(|error| Error::StringError(error.to_string()))
     }
 
     async fn backoff_on_reported_lock_hint(&mut self, reason: String) -> Result<()> {
@@ -994,7 +998,7 @@ impl SnapshotLockBackoff {
                 );
             }
         }
-        result.map_err(Error::from)
+        result.map_err(|error| Error::StringError(error.to_string()))
     }
 }
 
@@ -1004,7 +1008,7 @@ impl RegionRetryState for RetryBackoffer {
         RetryBackoffer::backoff(self, config, reason)
             .await
             .map(|_| true)
-            .map_err(Error::from)
+            .map_err(|error| Error::StringError(error.to_string()))
     }
 
     fn fork(&self) -> (Self, Cancellation) {
@@ -2361,7 +2365,7 @@ where
             self.concurrency.max(1)
         };
         let concurrency_permits = Arc::new(Semaphore::new(concurrency));
-        let (result, backoff) = Self::single_plan_handler(
+        Self::single_plan_handler(
             self.pd_client.clone(),
             self.inner.clone(),
             self.backoff.clone(),
@@ -2371,9 +2375,8 @@ where
             self.snapshot_region_scope,
             self.snapshot_async_batch_get,
         )
-        .await;
-        backoff.record_stats().await;
-        result
+        .await
+        .0
     }
 }
 
@@ -2640,8 +2643,6 @@ pub struct ResolveLock<P: Plan, PdC: PdClient> {
     /// Count the first response of a native concurrent BatchGet shard using
     /// client-go's async callback result labels.
     pub(crate) record_async_batch_get_metric: bool,
-    /// Source LockCtx wait/deadline check after a pessimistic conflict.
-    pub(crate) pessimistic_lock_wait: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2678,7 +2679,6 @@ impl<P: Plan, PdC: PdClient> Clone for ResolveLock<P, PdC> {
             prewrite_lock_conflict: self.prewrite_lock_conflict,
             max_timestamp_point_get: self.max_timestamp_point_get,
             record_async_batch_get_metric: self.record_async_batch_get_metric,
-            pessimistic_lock_wait: self.pessimistic_lock_wait.clone(),
         }
     }
 }
@@ -2838,8 +2838,8 @@ where
 
             // client-go's pessimistic-lock response handler deliberately does
             // not resolve a lock that TiKV reports as recently updated. Such
-            // a response needs another wait-budget check and lock attempt,
-            // not an orphan-cleanup RPC. Shared-lock wrappers have already
+            // a response is the terminal result of TiKV's lock wait, not an
+            // orphan-cleanup opportunity. Shared-lock wrappers have already
             // been expanded by `HasLocks`, so apply the source threshold to
             // every holder independently.
             if clone.resolve_locks_context.pessimistic_region_resolve {
@@ -2850,15 +2850,11 @@ where
                         || lock.duration_to_last_update_ms >= SKIP_RESOLVE_THRESHOLD_MS
                 });
                 if locks.is_empty() && before != 0 {
-                    clone
-                        .wait_for_lock_retry(None, crate::error::ERR_LOCK_WAIT_TIMEOUT.into())
-                        .await?;
-                    (result, request_lock_hints) = clone.execute_inner_retry().await?;
-                    continue;
+                    return Err(crate::error::ERR_LOCK_WAIT_TIMEOUT.into());
                 }
             }
 
-            if self.backoff.is_none() && clone.pessimistic_lock_wait.is_none() {
+            if self.backoff.is_none() {
                 return Err(Error::ResolveLockError(locks));
             }
 
@@ -2894,8 +2890,6 @@ where
                 }
             }
 
-            // Only resolve holders retained by the source filters above.
-            let resolver_locks = locks.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
             let pd_client = self.pd_client.clone();
             let started = self.snapshot_runtime_stats.as_ref().map(|_| Instant::now());
             let lock_result = match &self.read_lock_context {
@@ -2914,11 +2908,7 @@ where
                 None => {
                     resolve_locks_with_context_result(
                         resolver_locks,
-                        if clone.pessimistic_lock_wait.is_some() {
-                            Timestamp::from_version(0)
-                        } else {
-                            self.timestamp.clone()
-                        },
+                        self.timestamp.clone(),
                         pd_client.clone(),
                         self.keyspace,
                         self.keyspace_name.as_deref(),
@@ -2932,51 +2922,45 @@ where
             }
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
-            if clone.pessimistic_lock_wait.is_some() || !live_locks.is_empty() {
-                clone
-                    .wait_for_lock_retry(
-                        Some(lock_result.ms_before_expired),
-                        Error::ResolveLockError(live_locks),
-                    )
-                    .await?;
+            if live_locks.is_empty() {
+                (result, request_lock_hints) = clone.execute_inner_retry().await?;
+            } else if let Some(snapshot_lock_backoff) = clone.snapshot_lock_backoff.as_mut() {
+                // client-go only waits when the resolver reports a positive
+                // remaining TTL. A zero TTL is retried immediately.
+                if lock_result.ms_before_expired > 0 {
+                    crate::stats::increment_lock_resolver_action("wait_expired");
+                    snapshot_lock_backoff
+                        .backoff_with_max_sleep_txn_lock_fast(
+                            lock_result.ms_before_expired as u64,
+                            "key is locked during snapshot read".to_owned(),
+                        )
+                        .await?;
+                }
+                (result, request_lock_hints) = clone.execute_inner_retry().await?;
+            } else {
+                match clone.backoff.next_delay_duration() {
+                    None => return Err(Error::ResolveLockError(live_locks)),
+                    Some(delay_duration) => {
+                        let delay_duration = u64::try_from(lock_result.ms_before_expired)
+                            .ok()
+                            .map(Duration::from_millis)
+                            .map_or(delay_duration, |ttl| delay_duration.min(ttl));
+                        if lock_result.ms_before_expired > 0 {
+                            crate::stats::increment_lock_resolver_action("wait_expired");
+                        }
+                        sleep(delay_duration).await;
+                        if let Some(stats) = &self.snapshot_runtime_stats {
+                            stats.record_backoff("txnLockFast", delay_duration);
+                        }
+                        (result, request_lock_hints) = clone.execute_inner_retry().await?;
+                    }
+                }
             }
-            (result, request_lock_hints) = clone.execute_inner_retry().await?;
         }
     }
 }
 
 impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
-    // Both recently updated locks and resolved live locks consume the same
-    // retry policy. The Go wait callback is installed only for default options;
-    // explicit Rust backoffs must retain their attempt limit on every path.
-    async fn wait_for_lock_retry(&mut self, ttl_ms: Option<i64>, exhausted: Error) -> Result<()> {
-        if let Some(wait) = &self.pessimistic_lock_wait {
-            if ttl_ms.is_none_or(|ttl| ttl > 0) {
-                wait()?;
-            }
-        } else if let Some(backoff) = self.snapshot_lock_backoff.as_mut() {
-            if let Some(ttl) = ttl_ms.filter(|ttl| *ttl > 0) {
-                backoff
-                    .backoff_with_max_sleep_txn_lock_fast(
-                        ttl as u64,
-                        "key is locked during snapshot read".to_owned(),
-                    )
-                    .await?;
-            }
-        } else {
-            let delay = self.backoff.next_delay_duration().ok_or(exhausted)?;
-            let delay = ttl_ms
-                .and_then(|ttl| u64::try_from(ttl).ok())
-                .map(Duration::from_millis)
-                .map_or(delay, |ttl| delay.min(ttl));
-            sleep(delay).await;
-            if let Some(stats) = &self.snapshot_runtime_stats {
-                stats.record_backoff("txnLockFast", delay);
-            }
-        }
-        Ok(())
-    }
-
     async fn execute_inner(&self) -> Result<(P::Result, Option<ReadLockHintsInRequest>)> {
         let mut inner = self.inner.clone();
         let request_lock_hints = if let Some(read_lock_context) = &self.read_lock_context {
@@ -5670,57 +5654,6 @@ mod test {
         ));
     }
 
-    #[tokio::test]
-    async fn snapshot_retry_exhaustion_retains_the_source_error_identity() {
-        for (config, terminal) in [
-            (BO_TIKV_RPC, crate::error::ERR_TIKV_SERVER_TIMEOUT),
-            (BO_REGION_MISS, crate::error::ERR_REGION_UNAVAILABLE),
-            (BO_TXN_LOCK_FAST, crate::error::ERR_RESOLVE_LOCK_TIMEOUT),
-        ] {
-            let owner = Arc::new(Mutex::new(RetryBackoffer::new(Cancellation::default(), 1)));
-            let mut region =
-                SnapshotRegionBackoff::with_owner(Backoff::no_jitter_backoff(1, 1, 1), owner);
-            region
-                .backoff(config, "injected retry".into())
-                .await
-                .unwrap();
-            let error = region
-                .backoff(config, "injected retry".into())
-                .await
-                .unwrap_err();
-            assert!(
-                matches!(error, Error::Static(value) if value == terminal),
-                "{error:?}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn snapshot_stats_record_only_the_completed_worker_history() {
-        let stats = Arc::new(SnapshotRuntimeStats::new());
-        let mut parent = SnapshotRegionBackoff::new(
-            crate::backoff::DEFAULT_REGION_BACKOFF,
-            Some(Arc::clone(&stats)),
-            Arc::new(Variables::default()),
-        );
-        let (mut first, _) = parent.fork();
-        let mut last = first.clone_for_snapshot_sibling();
-        first
-            .backoff(BO_REGION_MISS, "first worker".into())
-            .await
-            .unwrap();
-        last.backoff(BO_REGION_MISS, "last worker".into())
-            .await
-            .unwrap();
-        parent.update_using_forked(&last);
-        parent.record_stats().await;
-        assert_eq!(stats.backoff_count("regionMiss"), 1);
-        assert_eq!(
-            stats.backoff_duration("regionMiss"),
-            Duration::from_millis(last.backoff.lock().await.sleep_by_type()["regionMiss"])
-        );
-    }
-
     #[test]
     fn snapshot_retry_owners_use_the_supplied_variables() {
         let mut variables = crate::Variables::default();
@@ -5851,7 +5784,6 @@ mod test {
                 prewrite_lock_conflict: None,
                 max_timestamp_point_get: false,
                 record_async_batch_get_metric: false,
-                pessimistic_lock_wait: None,
             },
             pd_client: Arc::new(MockPdClient::default()),
             backoff: Backoff::no_backoff(),

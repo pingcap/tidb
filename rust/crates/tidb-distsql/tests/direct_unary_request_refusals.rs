@@ -22,20 +22,20 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispatch() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let missing_cluster = DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
-            calls: Arc::clone(&calls),
+            calls: Rc::clone(&calls),
             responses: VecDeque::new(),
-            events: Arc::new(RwLock::new(Vec::new())),
-            liveness: RwLock::new(VecDeque::new()),
-            batch_errors: RwLock::new(VecDeque::new()),
-            batch_ready_immediately: RwLock::new(VecDeque::new()),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 0,
-            calls: Arc::new(RwLock::new(Vec::new())),
+            calls: Rc::new(RefCell::new(Vec::new())),
             regions: VecDeque::new(),
         }),
         DirectUnaryRuntimeConfig::default(),
@@ -51,14 +51,14 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
     let mut empty = location(2, "a", "z", "ignored");
     empty.stores[0].address.clear();
     let mut runtime =
-        InjectedQueryRuntime::new(transport(Arc::clone(&calls), std::iter::empty(), [empty]));
+        InjectedQueryRuntime::new(transport(Rc::clone(&calls), std::iter::empty(), [empty]));
     let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("MissingAddress(202)"), "{error}");
-    assert!(calls.read().unwrap().is_empty());
+    assert!(calls.borrow().is_empty());
 
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         std::iter::empty(),
         std::iter::empty(),
     ));
@@ -75,19 +75,19 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
         .unwrap()
         .to_string();
     assert!(error.contains("scripted-pd-empty"), "{error}");
-    assert!(calls.read().unwrap().is_empty());
+    assert!(calls.borrow().is_empty());
 }
 
 #[test]
 fn unsupported_operation_fails_before_preparing_or_sending() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
-    let loader_calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         std::iter::empty(),
         [location(1, "a", "z", "one")],
         9001,
-        Arc::clone(&loader_calls),
+        Rc::clone(&loader_calls),
     ));
     let error = runtime
         .analyze(&transport_request(metadata("a", "z")), false)
@@ -95,8 +95,8 @@ fn unsupported_operation_fails_before_preparing_or_sending() {
         .unwrap()
         .to_string();
     assert!(error.contains("unsupported direct unary operation Analyze"));
-    assert!(calls.read().unwrap().is_empty());
-    assert!(loader_calls.read().unwrap().is_empty());
+    assert!(calls.borrow().is_empty());
+    assert!(loader_calls.borrow().is_empty());
 }
 
 #[test]
@@ -109,14 +109,14 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
     batched.batch_cop = true;
 
     for invalid in [tiflash, analyze, batched] {
-        let calls = Arc::new(RwLock::new(Vec::new()));
-        let loader_calls = Arc::new(RwLock::new(Vec::new()));
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let loader_calls = Rc::new(RefCell::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(
-            Arc::clone(&calls),
+            Rc::clone(&calls),
             std::iter::empty(),
             [location(1, "a", "z", "one")],
             9001,
-            Arc::clone(&loader_calls),
+            Rc::clone(&loader_calls),
         ));
 
         assert!(runtime
@@ -129,16 +129,16 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
                 false,
             )
             .is_err());
-        assert!(calls.read().unwrap().is_empty());
-        assert!(loader_calls.read().unwrap().is_empty());
+        assert!(calls.borrow().is_empty());
+        assert!(loader_calls.borrow().is_empty());
     }
 }
 
 #[test]
 fn analyze_operation_sends_raw_collector_response() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(response(b"collector"))],
         [location(1, "a", "z", "one")],
     ));
@@ -148,5 +148,5 @@ fn analyze_operation_sends_raw_collector_response() {
     let mut result = runtime.analyze(&transport_request(request), false).unwrap();
     assert_eq!(result.next_raw().unwrap(), Some(b"collector".to_vec()));
     assert!(result.next_raw().unwrap().is_none());
-    assert_eq!(calls.read().unwrap().len(), 1);
+    assert_eq!(calls.borrow().len(), 1);
 }

@@ -794,7 +794,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         server_is_busy: Some(errorpb::ServerIsBusy::default()),
         ..Default::default()
     };
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
     let first = terminal_cache
         .on_region_error(&busy, attempt(region), &mut budget)
         .unwrap();
@@ -804,7 +804,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
     assert!((Duration::from_millis(1_000)..Duration::from_millis(2_000)).contains(&delay));
     assert_eq!(budget.remaining(), Duration::from_secs(20));
 
-    let mut tiny = RegionBackoffBudget::new(Duration::from_millis(1));
+    let mut tiny = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
     let no_leader = errorpb::Error {
         not_leader: Some(errorpb::NotLeader {
             region_id: 7,
@@ -838,7 +838,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
 
 #[test]
 fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusion() {
-    let mut strict = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut strict = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
     assert_eq!(
         (0..4)
             .map(|_| strict.next_delay(RegionBackoffKind::RegionMiss).unwrap())
@@ -846,7 +846,7 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
         [2, 4, 8, 16].map(Duration::from_millis)
     );
 
-    let mut busy = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut busy = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
     let mut sleeps = Vec::new();
     loop {
         match busy.next_delay(RegionBackoffKind::TikvServerBusy) {
@@ -876,7 +876,7 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
 
 #[test]
 fn excluded_busy_cap_prefers_a_prior_effective_backoff_identity() {
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
     assert_eq!(
         budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
         Duration::from_millis(2)
@@ -896,14 +896,14 @@ fn excluded_busy_cap_prefers_a_prior_effective_backoff_identity() {
 
 #[test]
 fn tikv_rpc_backoff_uses_equal_jitter_and_the_shared_effective_budget() {
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
     let first = budget.next_delay(RegionBackoffKind::TikvRpc).unwrap();
     let second = budget.next_delay(RegionBackoffKind::TikvRpc).unwrap();
     assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&first));
     assert!((Duration::from_millis(100)..Duration::from_millis(200)).contains(&second));
     assert_eq!(budget.remaining(), Duration::from_secs(20) - first - second);
 
-    let mut capped = RegionBackoffBudget::new(Duration::from_secs(60));
+    let mut capped = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(60), 11);
     for _ in 0..20 {
         assert!(capped.next_delay(RegionBackoffKind::TikvRpc).unwrap() < Duration::from_secs(2));
     }
@@ -917,7 +917,7 @@ fn exhausted_disk_full_returns_to_the_outer_region_miss_owner() {
     };
     let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut cache);
-    let mut budget = RegionBackoffBudget::new(Duration::from_millis(1));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
 
     let RegionErrorDisposition::RetryRoute { delay, .. } = cache
         .on_region_error(&disk_full, attempt(region), &mut budget)
@@ -1186,7 +1186,7 @@ fn every_outer_region_error_branch_has_a_typed_source_action() {
             .on_region_error(
                 &error,
                 attempt(region),
-                &mut RegionBackoffBudget::new(Duration::from_secs(20)),
+                &mut RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 3),
             )
             .unwrap();
         let actual = match disposition {
@@ -1259,7 +1259,7 @@ fn adjacent_multi_populated_fields_preserve_pinned_handler_precedence() {
             .on_region_error(
                 &error,
                 attempt(region),
-                &mut RegionBackoffBudget::new(Duration::from_secs(20)),
+                &mut RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 5),
             )
             .unwrap();
         match index {
@@ -1287,7 +1287,7 @@ fn adjacent_multi_populated_fields_preserve_pinned_handler_precedence() {
 /// counter still advances on the unclamped schedule.
 #[test]
 fn capped_delay_charges_what_it_sleeps() {
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
     for _ in 0..10 {
         let delay = budget
             .next_delay_capped(RegionBackoffKind::TxnLockFast, Duration::from_millis(10))
@@ -1386,7 +1386,7 @@ fn server_busy_on_a_superseded_route_hands_over_to_range_rebuild() {
         }),
         ..Default::default()
     };
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 9);
     assert_eq!(
         cache
             .on_region_error(&busy, attempt(region), &mut budget)
@@ -1422,7 +1422,7 @@ fn disk_full_without_a_cached_route_reserves_its_budget_then_rebuilds() {
         }),
         ..Default::default()
     };
-    let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 11);
     // TikvDiskFull paces plain exponential backoff: first reservation 500ms.
     assert_eq!(
         cache

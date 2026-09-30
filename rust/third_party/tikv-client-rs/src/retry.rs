@@ -358,23 +358,6 @@ struct BackoffFnState {
     last_sleep_ms: u64,
 }
 
-/// A delay selected by a retry owner for an externally driven wait.
-/// Complete it on the same owner after the wait, including interruption.
-#[derive(Debug)]
-#[must_use = "finish the wait on its retry owner to record its outcome"]
-pub struct BackoffWait {
-    owner_id: u64,
-    config: RetryConfig,
-    selected_delay_ms: u64,
-    delay_ms: u64,
-}
-
-impl BackoffWait {
-    pub fn duration(&self) -> Duration {
-        Duration::from_millis(self.delay_ms)
-    }
-}
-
 /// A cumulative retry budget. A zero max sleep is unlimited, matching Go.
 pub struct RetryBackoffer {
     id: u64,
@@ -437,7 +420,8 @@ impl RetryBackoffer {
         self.total_sleep_ms
     }
 
-    pub fn max_sleep_ms(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn max_sleep_ms(&self) -> u64 {
         self.max_sleep_ms
     }
 
@@ -522,27 +506,6 @@ impl RetryBackoffer {
         max_single_sleep_ms: Option<u64>,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
-        let wait = self.prepare_backoff(config, max_single_sleep_ms, reason)?;
-        let completed = if fail::eval("fastBackoffBySkipSleep", |_| ()).is_some() {
-            true
-        } else {
-            tokio::select! {
-                _ = tokio::time::sleep(wait.duration()) => true,
-                _ = self.cancellation.cancelled() => false,
-            }
-        };
-        self.finish_backoff(wait, completed)
-    }
-
-    /// Selects a delay without sleeping, for an embedding synchronous transport.
-    /// The same owner must remain exclusive until `finish_backoff`; scheduling,
-    /// limits and history are identical to the native asynchronous wait.
-    pub fn prepare_backoff(
-        &mut self,
-        config: RetryConfig,
-        max_single_sleep_ms: Option<u64>,
-        reason: impl Into<String>,
-    ) -> Result<BackoffWait, RetryError> {
         let reason = reason.into();
         if reason.contains(MISMATCH_CLUSTER_ID) {
             log::error!("critical error: {reason}");
@@ -571,25 +534,24 @@ impl RetryBackoffer {
         let selected_delay_ms = self.next_delay_ms(config);
         let delay_ms =
             max_single_sleep_ms.map_or(selected_delay_ms, |limit| selected_delay_ms.min(limit));
-        Ok(BackoffWait {
-            owner_id: self.id,
-            config,
-            selected_delay_ms,
-            delay_ms,
-        })
-    }
-
-    /// Records an externally driven wait. Go counts an interrupted wait, but
-    /// charges zero sleep and leaves the per-class exponential state unchanged.
-    pub fn finish_backoff(&mut self, wait: BackoffWait, completed: bool) -> Result<(), RetryError> {
-        assert_eq!(
-            self.id, wait.owner_id,
-            "backoff wait belongs to another owner"
-        );
-        let config = wait.config;
-        let real_sleep_ms = if completed { wait.delay_ms } else { 0 };
-        if completed {
-            self.complete_delay(config, wait.selected_delay_ms);
+        // Go checks its context before constructing the backoff function. If
+        // the context is cancelled while `time.After` is already pending, the
+        // function returns a zero sleep and this call still records that
+        // retry; the following Backoff call observes cancellation. Preserve
+        // that transition rather than returning early from this wait.
+        let interrupted = if fail::eval("fastBackoffBySkipSleep", |_| ()).is_some() {
+            false
+        } else {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => false,
+                _ = self.cancellation.cancelled() => true,
+            }
+        };
+        let real_sleep_ms = (!interrupted).then_some(delay_ms).unwrap_or(0);
+        if !interrupted {
+            // The source keeps the uncapped jitter result as `lastSleep`; the
+            // one-call cap changes only wall-clock/accounting duration.
+            self.complete_delay(config, selected_delay_ms);
         }
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(real_sleep_ms);
         if config.excluded_budget_limit_ms.is_some() {
@@ -602,7 +564,7 @@ impl RetryBackoffer {
         }
         self.check_killed()?;
         log::debug!(
-            "retry later: totalSleep={}; excludedSleep={}; maxSleep={}; type={config}",
+            "retry later: reason={reason}; totalSleep={}; excludedSleep={}; maxSleep={}; type={config}",
             self.total_sleep_ms,
             self.excluded_sleep_ms,
             self.max_sleep_ms
@@ -721,9 +683,9 @@ impl RetryBackoffer {
         }
     }
 
-    /// The non-excluded class responsible for the terminal budget error.
-    pub fn longest_sleep_config(&self) -> Option<RetryConfig> {
-        self.configs
+    fn exhausted(&self, reason: String) -> RetryError {
+        let terminal = self
+            .configs
             .iter()
             .copied()
             .filter(|config| config.excluded_budget_limit_ms.is_none())
@@ -733,11 +695,6 @@ impl RetryBackoffer {
                     .copied()
                     .unwrap_or_default()
             })
-    }
-
-    fn exhausted(&self, reason: String) -> RetryError {
-        let terminal = self
-            .longest_sleep_config()
             .map(|config| config.terminal_error);
         RetryError::Exhausted {
             max_sleep_ms: self.max_sleep_ms,

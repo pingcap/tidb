@@ -23,11 +23,11 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn fresh_queries_advance_the_transport_seed_once_each() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [
             Ok(response(b"second-dispatched-first")),
             Ok(response(b"first-dispatched-second")),
@@ -49,8 +49,7 @@ fn fresh_queries_advance_the_transport_seed_once_each() {
     assert_eq!(first.next_raw().unwrap(), None);
 
     let addresses: Vec<_> = calls
-        .read()
-        .unwrap()
+        .borrow()
         .iter()
         .map(|call| call.address.clone())
         .collect();
@@ -63,11 +62,11 @@ fn fresh_queries_advance_the_transport_seed_once_each() {
 
 #[test]
 fn logical_tasks_in_one_query_share_the_bound_seed() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(response(b"left")), Ok(response(b"right"))],
         [
             location_with_three_peers(1, "a", "m", "left"),
@@ -80,8 +79,7 @@ fn logical_tasks_in_one_query_share_the_bound_seed() {
     assert_eq!(result.next_raw().unwrap(), None);
 
     let addresses: Vec<_> = calls
-        .read()
-        .unwrap()
+        .borrow()
         .iter()
         .map(|call| call.address.clone())
         .collect();
@@ -94,11 +92,11 @@ fn logical_tasks_in_one_query_share_the_bound_seed() {
 
 #[test]
 fn region_reload_reuses_the_bound_query_seed() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(region_not_found(1)), Ok(response(b"fresh"))],
         [
             location_with_three_peers(1, "a", "z", "old"),
@@ -110,8 +108,7 @@ fn region_reload_reuses_the_bound_query_seed() {
     assert_eq!(result.next_raw().unwrap(), None);
 
     let addresses: Vec<_> = calls
-        .read()
-        .unwrap()
+        .borrow()
         .iter()
         .map(|call| call.address.clone())
         .collect();
@@ -126,7 +123,7 @@ fn region_reload_reuses_the_bound_query_seed() {
 fn first_real_unary_response_replaces_the_seed_before_continuation() {
     // pkg/store/copr/ema.go:33-36 newRUEMA leaves lastObsAt at zero so the
     // first time.Now observation has unit alpha and replaces the byte seed.
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let first = CoprocessorResponse {
         data: b"page-one".to_vec().into(),
         range: Some(CoprocessorKeyRange {
@@ -149,7 +146,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
     metadata.paging.min_size = 2;
     metadata.paging.max_size = 8;
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(first), Ok(response(b"page-two"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
@@ -158,14 +155,14 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
-    let calls = calls.read().unwrap();
+    let calls = calls.borrow();
     assert_eq!(calls[0].predicted_read_bytes, 4096);
     assert_eq!(calls[1].predicted_read_bytes, 1_000_000);
 }
 
 #[test]
 fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
-    let calls = Arc::new(RwLock::new(Vec::new()));
+    let calls = Rc::new(RefCell::new(Vec::new()));
     let miss = CoprocessorResponse {
         data: b"cached-result".to_vec().into(),
         cache_last_version: 9,
@@ -194,11 +191,11 @@ fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
     .unwrap()
     .unwrap();
     let transport = transport_with_loader_calls_and_config(
-        Arc::clone(&calls),
+        Rc::clone(&calls),
         [Ok(miss), Ok(hit)],
         [location(1, "a", "z", "tikv-1:20160")],
         9001,
-        Arc::new(RwLock::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             shared_cache: Some(shared_cache),
@@ -218,7 +215,7 @@ fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
     assert_eq!(second.next_raw().unwrap(), Some(b"cached-result".to_vec()));
     assert_eq!(second.next_raw().unwrap(), None);
 
-    let calls = calls.read().unwrap();
+    let calls = calls.borrow();
     assert!(calls[0].is_cache_enabled);
     assert_eq!(calls[0].cache_if_match_version, 0);
     assert!(calls[1].is_cache_enabled);

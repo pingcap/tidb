@@ -1,4 +1,4 @@
-//! In-process RPC adapter for client-go `internal/mockstore/mocktikv`.
+//! Complete in-process counterpart of client-go `internal/mockstore/mocktikv`.
 //!
 //! The reusable state engine lives in the standalone `unistore` crate. This
 //! module owns the package's kvproto, cluster, PD, session, and RPC adaptation.

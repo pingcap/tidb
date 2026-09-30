@@ -93,7 +93,7 @@ pub use lock::ResolveLocksContext;
 pub use lock::ResolveLocksOptions;
 pub(crate) use lock::ResolveLocksResult;
 pub use lock::ResolvingLock;
-pub use lock::ResolvingLocksGuard;
+pub(crate) use lock::ResolvingLocksGuard;
 pub use lock::ASYNC_RESOLVE_LOCK_SEMAPHORE_LIMIT;
 pub use lock::RESOLVED_CACHE_SIZE;
 pub use requests::{TransactionStatus, TransactionStatusKind};

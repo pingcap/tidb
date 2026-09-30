@@ -1370,8 +1370,6 @@ impl Process<kvrpcpb::CheckTxnStatusResponse> for DefaultProcessor {
 pub struct TransactionStatus {
     pub kind: TransactionStatusKind,
     pub action: kvrpcpb::Action,
-    /// Primary metadata is retained independently of TTL and final status, like Go.
-    pub primary_lock: Option<kvrpcpb::LockInfo>,
     pub is_expired: bool, // Available only when kind is Locked.
 }
 
@@ -1379,8 +1377,7 @@ impl From<kvrpcpb::CheckTxnStatusResponse> for TransactionStatus {
     fn from(mut resp: kvrpcpb::CheckTxnStatusResponse) -> TransactionStatus {
         TransactionStatus {
             action: Action::try_from(resp.action).unwrap(),
-            kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.clone()).into(),
-            primary_lock: resp.lock_info.take(),
+            kind: (resp.commit_version, resp.lock_ttl, resp.lock_info.take()).into(),
             is_expired: false,
         }
     }
@@ -1399,14 +1396,7 @@ impl TransactionStatus {
     }
 
     pub fn is_rolled_back(&self) -> bool {
-        self.ttl() == 0
-            && self.commit_ts() == 0
-            && matches!(
-                self.action,
-                kvrpcpb::Action::NoAction
-                    | kvrpcpb::Action::LockNotExistRollback
-                    | kvrpcpb::Action::TtlExpireRollback
-            )
+        matches!(&self.kind, TransactionStatusKind::RolledBack)
     }
 
     pub fn is_status_determined(&self) -> bool {
@@ -1445,7 +1435,10 @@ impl TransactionStatus {
     /// lock-resolver caching. A locked response remains mutable even if its
     /// TTL looks expired locally, so client-go never retains it.
     pub fn is_cacheable(&self) -> bool {
-        self.is_status_determined()
+        matches!(
+            &self.kind,
+            TransactionStatusKind::RolledBack | TransactionStatusKind::Committed(..)
+        )
     }
 
     pub fn status_cacheable(&self) -> bool {
@@ -1472,14 +1465,17 @@ impl std::fmt::Display for TransactionStatus {
 
 impl From<(u64, u64, Option<kvrpcpb::LockInfo>)> for TransactionStatusKind {
     fn from((ts, ttl, info): (u64, u64, Option<kvrpcpb::LockInfo>)) -> TransactionStatusKind {
-        // CheckTxnStatus gives a nonzero TTL precedence over CommitVersion.
-        // Primary metadata is retained separately by TransactionStatus.
-        if ttl != 0 {
-            TransactionStatusKind::Locked(ttl, info.unwrap_or_default())
-        } else if ts != 0 {
-            TransactionStatusKind::Committed(Timestamp::from_version(ts))
-        } else {
-            TransactionStatusKind::RolledBack
+        match (ts, ttl, info) {
+            (0, 0, None) => TransactionStatusKind::RolledBack,
+            (ts, 0, None) => TransactionStatusKind::Committed(Timestamp::from_version(ts)),
+            (0, ttl, Some(info)) => TransactionStatusKind::Locked(ttl, info),
+            // `LockInfo` is optional in the CheckTxnStatus protocol. In
+            // particular, client-go's mock TiKV reports a live transaction
+            // with only `lock_ttl`. Keep accepting that source-compatible
+            // response; LockResolver fills the request-known identity fields
+            // before using the lock.
+            (0, ttl, None) => TransactionStatusKind::Locked(ttl, Default::default()),
+            _ => unreachable!(),
         }
     }
 }
@@ -2421,34 +2417,6 @@ mod tests {
     }
 
     #[test]
-    fn source_nonfinal_rollback_actions_are_not_cached_as_rolled_back() {
-        for action in [
-            kvrpcpb::Action::MinCommitTsPushed,
-            kvrpcpb::Action::TtlExpirePessimisticRollback,
-            kvrpcpb::Action::LockNotExistDoNothing,
-        ] {
-            let status = TransactionStatus::from(kvrpcpb::CheckTxnStatusResponse {
-                action: action as i32,
-                ..Default::default()
-            });
-            assert!(!status.is_rolled_back(), "{action:?}");
-            assert!(!status.is_cacheable(), "{action:?}");
-        }
-    }
-
-    #[test]
-    fn source_status_response_prioritizes_live_ttl_over_commit_version() {
-        let status = TransactionStatus::from(kvrpcpb::CheckTxnStatusResponse {
-            lock_ttl: 1,
-            commit_version: 42,
-            ..Default::default()
-        });
-        assert_eq!(status.ttl(), 1);
-        assert_eq!(status.commit_ts(), 0);
-        assert!(!status.is_cacheable());
-    }
-
-    #[test]
     fn source_lock_resolver_caches_only_determined_statuses() {
         let locked = TransactionStatus {
             kind: TransactionStatusKind::Locked(
@@ -2459,7 +2427,6 @@ mod tests {
                 },
             ),
             action: kvrpcpb::Action::TtlExpireRollback,
-            primary_lock: None,
             is_expired: true,
         };
         assert!(!locked.is_cacheable());
@@ -2471,7 +2438,6 @@ mod tests {
             assert!(TransactionStatus {
                 kind,
                 action: kvrpcpb::Action::NoAction,
-                primary_lock: None,
                 is_expired: false,
             }
             .is_cacheable());

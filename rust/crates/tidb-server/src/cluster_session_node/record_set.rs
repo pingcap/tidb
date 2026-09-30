@@ -129,7 +129,6 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
-        self.buffer.release(statement.savepoint);
         self.session.end_external_executor_breakpoint_scope();
         // go's `TxnCtx.StartTS` PERSISTS after an autocommit statement ends:
         // `SHOW MASTER STATUS` reports it (oracle m22: a nonzero position

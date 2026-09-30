@@ -35,7 +35,6 @@ fn prepared_range_endpoints_use_current_typed_parameters() {
     ] {
         let ctx = crate::StmtContext::for_query().with_prepared_params(parameters.into());
         let resolver = crate::driver::TableResolver {
-            clause_message: "where clause",
             table_name: "t",
             columns: &fields,
             zone: ctx.session_zone(),
@@ -140,7 +139,6 @@ fn prepared_range_shapes_preserve_current_values_and_residuals() {
             .collect::<Vec<_>>();
         let ctx = crate::StmtContext::for_query().with_prepared_params(parameters.into());
         let resolver = crate::driver::TableResolver {
-            clause_message: "where clause",
             table_name: "t",
             columns: &fields,
             zone: ctx.session_zone(),
@@ -203,7 +201,6 @@ fn range_constant_evaluation_preserves_context_and_rejects_row_values() {
                 offset_secs,
             });
         let resolver = crate::driver::TableResolver {
-            clause_message: "where clause",
             table_name: "t",
             columns: &fields,
             zone: ctx.session_zone(),
@@ -254,7 +251,6 @@ fn statistics_ranges_use_current_prepared_parameters() {
     ] {
         let ctx = crate::StmtContext::for_query().with_prepared_params(parameters.into());
         let resolver = crate::driver::TableResolver {
-            clause_message: "where clause",
             table_name: "t",
             columns: &fields,
             zone: ctx.session_zone(),
@@ -301,7 +297,6 @@ fn column_statistics_ranges_preserve_conversion_errors() {
     let ctx = crate::StmtContext::for_query()
         .with_prepared_params(vec![Datum::new_raw(b"unsupported")].into());
     let resolver = crate::driver::TableResolver {
-        clause_message: "where clause",
         table_name: "t",
         columns: &fields,
         zone: ctx.session_zone(),
@@ -339,7 +334,6 @@ fn column_statistics_like_ranges_use_go_collation_keys() {
     let fields = vec![(column.name.clone(), field_type)];
     let ctx = crate::StmtContext::for_query();
     let resolver = crate::driver::TableResolver {
-        clause_message: "where clause",
         table_name: "t",
         columns: &fields,
         zone: ctx.session_zone(),
@@ -391,7 +385,6 @@ fn column_statistics_range_preserves_go_in_evaluation_error_policy() {
         let predicate = select.where_clause.as_ref().unwrap();
         let ctx = crate::StmtContext::for_query();
         let resolver = crate::driver::TableResolver {
-            clause_message: "where clause",
             table_name: "t",
             columns: &fields,
             zone: ctx.session_zone(),

@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 
-use tikv_client::PdClient;
+use tikv_client::pd::PdClient;
 use tikv_client::transaction::{MutationAssertion, MutationOptions, SyncTransaction, Transaction};
 use tikv_client::TimestampExt;
 
@@ -383,35 +383,16 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             let value = mutation.value().to_vec();
             match mutation.kind() {
                 Kind::Insert | Kind::UniqueIndexInsert => {
-                    // AddRecord's local tombstone/overwrite path keeps the
-                    // first assertion and does not introduce a lazy check.
-                    if self.staged_value(&key).is_none() {
-                        self.set_with_flags(
-                            key.clone(),
-                            value,
-                            &[FlagsOp::SetPresumeKeyNotExists],
-                        )?;
-                    } else {
-                        self.set(key.clone(), value)?;
-                    }
-                    // Go table assertions preserve the first assertion in the transaction.
-                    if !self.get_flags(&key)?.has_assertion_flags() {
-                        self.update_assertion_flags(&key, AssertionOp::AssertNotExist);
-                    }
+                    self.set_with_flags(key.clone(), value, &[FlagsOp::SetPresumeKeyNotExists])?;
+                    self.update_assertion_flags(&key, AssertionOp::AssertNotExist);
                 }
                 Kind::PutExisting => {
                     self.set(key.clone(), value)?;
-                    // Go table assertions preserve the first assertion in the transaction.
-                    if !self.get_flags(&key)?.has_assertion_flags() {
-                        self.update_assertion_flags(&key, AssertionOp::AssertExist);
-                    }
+                    self.update_assertion_flags(&key, AssertionOp::AssertExist);
                 }
                 Kind::Delete => {
                     self.delete(key.clone())?;
-                    // Go table assertions preserve the first assertion in the transaction.
-                    if !self.get_flags(&key)?.has_assertion_flags() {
-                        self.update_assertion_flags(&key, AssertionOp::AssertExist);
-                    }
+                    self.update_assertion_flags(&key, AssertionOp::AssertExist);
                 }
                 Kind::IndexPut | Kind::MetaPut | Kind::SystemRowPut => self.set(key, value)?,
                 Kind::IndexDelete | Kind::MetaDelete | Kind::SystemRowDelete => {
@@ -441,7 +422,13 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     pub fn commit_staged(
         &mut self,
     ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
-        let (mutation_count, primary_key) = self.staged_stats_with_primary();
+        let staged = self.staged_entries();
+        let mutation_count = staged.len();
+        let primary_key = staged
+            .into_iter()
+            .map(|(key, _)| key.as_bytes().to_vec())
+            .min()
+            .unwrap_or_default();
         Ok(self.finish_commit(primary_key, mutation_count))
     }
 
@@ -482,8 +469,8 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
                         },
                     });
                 }
-                // Every other failure is definitive. The client schedules its
-                // own cleanup on the store context, as Go does.
+                // Every other failure is definitive: the engine rolled its own
+                // prewrites back before returning.
                 OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
                     receipt,
                     cause: classify_cause(&error),
@@ -502,39 +489,16 @@ fn is_undetermined(error: &TikvTransactionError) -> bool {
 }
 
 /// Maps one engine failure onto the facade's cause vocabulary.
-pub(crate) fn classify_cause(error: &TikvTransactionError) -> crate::transaction::TransactionCause {
+fn classify_cause(error: &TikvTransactionError) -> crate::transaction::TransactionCause {
     use crate::transaction::TransactionCause;
+    use tikv_client::Error as ClientError;
 
     let TikvTransactionError::Client(client_error) = error else {
         return TransactionCause::Transport {
             detail: error.to_string(),
         };
     };
-    classify_client_cause(client_error)
-}
-
-pub(crate) fn classify_client_cause(
-    client_error: &tikv_client::Error,
-) -> crate::transaction::TransactionCause {
-    use crate::transaction::TransactionCause;
-    use tikv_client::Error as ClientError;
-    if let Some(kind) = client_backoff_kind(client_error) {
-        return TransactionCause::BackoffExhausted {
-            kind,
-            detail: client_error.to_string(),
-        };
-    }
     match client_error {
-        ClientError::PessimisticLockError { inner, .. } => classify_client_cause(inner),
-        ClientError::ExtractedErrors(errors) | ClientError::MultipleKeyErrors(errors)
-            if !errors.is_empty() =>
-        {
-            classify_client_cause(&errors[0])
-        }
-        ClientError::SharedLockLost(lost) => TransactionCause::SharedLockLost {
-            start_ts: lost.shared_lock_lost.start_ts,
-            key: tikv_client::redact::key(&lost.shared_lock_lost.key),
-        },
         ClientError::KeyExists(exists) => TransactionCause::AlreadyExists {
             key: exists.already_exist.key.clone(),
             detail: client_error.to_string(),
@@ -589,40 +553,10 @@ pub(crate) fn classify_client_cause(
                 detail: retry_error.to_string(),
             },
         },
-        ClientError::RegionError(error) => TransactionCause::Region {
-            detail: format!("{error:?}"),
-        },
-        ClientError::StringError(detail) => TransactionCause::InvalidResponse {
-            detail: detail.clone(),
-        },
         _ => TransactionCause::Transport {
             detail: client_error.to_string(),
         },
     }
-}
-
-/// Maps the client's source sentinels to the existing TiDB error conversion.
-fn client_backoff_kind(error: &tikv_client::Error) -> Option<crate::retry::RegionBackoffKind> {
-    use crate::retry::RegionBackoffKind as Kind;
-    use tikv_client::error::StaticError;
-    let terminal = match error {
-        tikv_client::Error::Static(error) => *error,
-        tikv_client::Error::PdServerTimeout(_) => return Some(Kind::PdRpc),
-        _ => return None,
-    };
-    Some(match terminal {
-        StaticError::TiKvServerTimeout => Kind::TikvRpc,
-        StaticError::RegionUnavailable => Kind::RegionMiss,
-        StaticError::TiKvStaleCommand => Kind::StaleCommand,
-        StaticError::TiKvMaxTimestampNotSynced => Kind::MaxTimestampNotSynced,
-        StaticError::ResolveLockTimeout => Kind::TxnLock,
-        StaticError::TiKvServerBusy => Kind::TikvServerBusy,
-        StaticError::TiKvDiskFull => Kind::TikvDiskFull,
-        StaticError::RegionRecoveryInProgress => Kind::RegionRecoveryInProgress,
-        StaticError::RegionNotInitialized => Kind::RegionNotInitialized,
-        StaticError::IsWitness => Kind::IsWitness,
-        _ => return None,
-    })
 }
 
 /// Pessimistic-path surface, as Go `KVTxn`'s statement-time locking.
@@ -743,46 +677,14 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// This transaction's own staged value for one key, without consulting the
     /// snapshot. `None` means the transaction has not written the key; an
     /// empty value is its deletion tombstone.
-    pub fn staged_value(&self, key: &Key) -> Option<Vec<u8>> {
-        self.transaction
-            .inner()
-            .get_mem_buffer_readonly()
-            .get_readonly(key.as_bytes())
-            .ok()
-    }
-
-    /// Returns staged mutation count and encoded bytes without cloning values.
-    pub fn staged_stats(&self) -> (usize, usize) {
-        let memdb = self.transaction.inner().get_mem_buffer_readonly();
-        let mut count = 0usize;
-        let mut bytes = 0usize;
-        let mut iterator = memdb.iter(None, None);
-        while iterator.valid() {
-            count += 1;
-            bytes = bytes.saturating_add(iterator.key().len().saturating_add(iterator.value().len()));
-            if iterator.next().is_err() { break; }
-        }
-        (count, bytes)
-    }
-
-    /// Returns staged count and smallest key without cloning row values.
-    pub fn staged_stats_with_primary(&self) -> (usize, Vec<u8>) {
-        let memdb = self.transaction.inner().get_mem_buffer_readonly();
-        let mut count = 0usize;
-        let mut primary = Vec::new();
-        let mut iterator = memdb.iter(None, None);
-        while iterator.valid() {
-            if count == 0 { primary = iterator.key().to_vec(); }
-            count += 1;
-            if iterator.next().is_err() { break; }
-        }
-        (count, primary)
+    pub fn staged_value(&mut self, key: &Key) -> Option<Vec<u8>> {
+        self.transaction.get_mem_buffer().get(key.as_bytes()).ok()
     }
 
     /// Every key this transaction has staged, with its value, in key order.
     /// An empty value is a deletion tombstone.
-    pub fn staged_entries(&self) -> Vec<(Key, Vec<u8>)> {
-        let memdb = self.transaction.inner().get_mem_buffer_readonly();
+    pub fn staged_entries(&mut self) -> Vec<(Key, Vec<u8>)> {
+        let memdb = self.transaction.get_mem_buffer();
         let mut entries = Vec::new();
         let mut iterator = memdb.iter(None, None);
         while iterator.valid() {
@@ -814,11 +716,7 @@ pub struct AcquiredStatementLocks {
 }
 
 impl<PdC: PdClient> TikvTransactionDriver<PdC> {
-    /// Acquires this statement's pessimistic locks at its read timestamp.
-    ///
-    /// Go passes `TxnCtx.GetForUpdateTS()` through `LockCtx.ForUpdateTS`. Zero
-    /// means optimistic lock bookkeeping in client-go; it must not be used as
-    /// a placeholder for a pessimistic statement timestamp.
+    /// Acquires this statement's pessimistic locks.
     ///
     /// `lock_expired` is TiDB's own flag, shared with the engine exactly as Go
     /// shares `&sessionVars.TxnCtx.LockExpire` through `lockCtx.LockExpired`:
@@ -828,15 +726,11 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         &mut self,
         keys: &[Key],
         return_values: bool,
-        for_update_ts: u64,
         lock_wait_time_ms: i64,
         lock_expired: Option<Arc<std::sync::atomic::AtomicU32>>,
     ) -> Result<AcquiredStatementLocks, TikvTransactionError> {
-        let mut context = tikv_client::kv::LockContext::new(
-            for_update_ts,
-            lock_wait_time_ms,
-            std::time::SystemTime::now(),
-        );
+        let mut context =
+            tikv_client::kv::LockContext::new(0, lock_wait_time_ms, std::time::SystemTime::now());
         if return_values {
             context.init_return_values(keys.len());
         }

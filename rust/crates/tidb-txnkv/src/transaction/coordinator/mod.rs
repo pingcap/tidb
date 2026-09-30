@@ -12,20 +12,108 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TiDB store driver over the single client-rust transaction engine.
+//! The transaction coordinator: one optimistic two-phase commit over real PD
+//! timestamps and real TiKV transport.
+//!
+//! This mirrors client-go's `txnkv/transaction` package, whose 2PC driver is
+//! also split by phase. The subject of each module here is the phase it owns:
+//!
+//! | module | subject | Go boundary |
+//! | --- | --- | --- |
+//! | [`opener`] | deriving transactions from process authorities, lock keep-alive | `txn.go` (`KVStore.Begin`), `txn_lock_keepalive` |
+//! | [`snapshot_read`] | reads pinned to `start_ts` (Get, Scan) | `snapshot.go` |
+//! | [`prewrite`] | Prewrite, and the async-commit/1PC decision it narrows | `prewrite.go` |
+//! | [`commit`] | commit timestamp, primary commit, secondary commit | `commit.go`, `2pc.go` |
+//! | [`cleanup`] | the two ways a transaction ends without committing | `cleanup.go` |
+//!
+//! This file keeps what all five phases share: the transaction struct itself,
+//! the caller-visible error, the tuning constants, region-error recovery, and
+//! the per-attempt receipt evidence.
+
+mod cleanup;
+mod commit;
 mod opener;
-pub use super::client::{
-    ClientTransaction as RealOptimisticTransaction, SnapshotGetResult, SnapshotScanRegion,
+mod prewrite;
+mod snapshot_batch_get;
+mod snapshot_read;
+
+use std::fmt;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use tidb_proto::{KvrpcAssertion, KvrpcContext, KvrpcKeyError};
+
+use crate::gc_state::{GcStateCache, VisibilityError};
+use crate::lock::{LockRecoveryClient, TimestampSource};
+use crate::region::{
+    RegionBackoffBudget, RegionErrorDisposition, RegionRebuildAction, RegionRecoveryError,
+    RegionRecoveryLoader, RegionTerminalError,
 };
-use super::mutation::MutationSetError;
-use crate::gc_state::VisibilityError;
-use crate::rpc::TonicCoprocessorClient;
-use crate::PdRegionLoader;
+use crate::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
+use crate::{PdRegionLoader, SharedReadRuntime};
+
+use super::command_client::TransactionCommandClient;
+use super::mutation::{validate_plan, MutationSetError};
+use super::region_batches::{RegionKeyBatch, RegionMutationBatch};
+use super::schema_lease::{SchemaLease, SchemaLeaseError};
+use super::state::{
+    CoordinatorState, OptimisticTransactionReceipt, TransactionAttemptPhase,
+    TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
+};
+
 pub use opener::{
     PdLockTimestampSource, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
     StoreWriteLoader,
 };
-use std::fmt;
+pub use snapshot_read::{SnapshotGetResult, SnapshotScanRegion};
+
+const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.KeysLimit`.
+const ASYNC_COMMIT_KEYS_LIMIT: usize = 256;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.TotalKeySizeLimit` (4 KiB).
+const ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT: u64 = 4 * 1024;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.SafeWindow` (2s).
+const ASYNC_COMMIT_SAFE_WINDOW_MS: u64 = 2_000;
+pub(super) const MAX_COMMIT_TIMESTAMP_ATTEMPTS: usize = 4;
+
+/// Go `client.ReadTimeoutShort` (`internal/client/client.go:79`), the per-RPC
+/// deadline every cleanup and commit batch is sent under.
+const RPC_READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
+
+/// Go `client.ReadTimeoutMedium` (`internal/client/client.go:82`), the per-RPC
+/// deadline every coprocessor and scan request is sent under: each region page
+/// of one logical Scan opens its own budget rather than spending one shared
+/// absolute deadline across the whole range.
+const RPC_READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
+/// Go `cleanupMaxBackoff` (`2pc.go:1638`).
+const CLEANUP_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
+/// Go `CommitSecondaryMaxBackoff` (`2pc.go:967`).
+pub(super) const COMMIT_SECONDARY_MAX_BACKOFF: Duration = Duration::from_millis(41_000);
+
+/// The deadline a detached cleanup runs under.
+///
+/// Go builds the cleanup backoffer on `c.store.Ctx()` (`2pc.go:1660`) — the
+/// *store* context, not the statement's — and spawns it detached
+/// (`2pc.go:1651`), precisely so a statement that has already spent its own
+/// deadline still gets a full 20-second budget to unstick the locks it left
+/// behind. Binding cleanup to the statement timeout instead makes
+/// [`wait_with_call`] reject the very first backoff delay, so the rollback
+/// cannot retry at all and the locks are abandoned to the lock resolver.
+///
+/// One backoff budget plus one full-length RPC: the budget is sleep-only in Go,
+/// and a batch that consumed `ReadTimeoutShort` must still be able to spend it.
+pub(super) const fn cleanup_call_budget() -> Duration {
+    CLEANUP_MAX_BACKOFF.saturating_add(RPC_READ_TIMEOUT_SHORT)
+}
+
+/// The deadline secondary commit runs under, same store-lifetime reasoning as
+/// [`cleanup_call_budget`]; Go uses `c.store.Ctx()` at `2pc.go:1054` and
+/// `2pc.go:2036` with `CommitSecondaryMaxBackoff`.
+pub(super) const fn secondary_commit_call_budget() -> Duration {
+    COMMIT_SECONDARY_MAX_BACKOFF.saturating_add(RPC_READ_TIMEOUT_SHORT)
+}
+const TSO_LOGICAL_BITS: u32 = 18;
+const MAX_COMMIT_TS_DRIFT_MS: u64 = 60 * 60 * 1_000;
 
 /// Concrete process/session authority errors rejected before a transaction opens.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,6 +203,97 @@ impl CommitProtocol {
     }
 }
 
+/// One concrete normal optimistic transaction fixed to a real PD `start_ts`.
+///
+/// The type parameters name the capabilities this coordinator consumes — the
+/// shared TiKV client, the region topology authority, and the timestamp
+/// authority. They do not admit a second transaction implementation: the only
+/// production instantiation is [`ProductionOptimisticTransaction`], built by
+/// [`RealOptimisticTransactionOpener::begin`].
+pub struct RealOptimisticTransaction<C, L, T> {
+    runtime: SharedReadRuntime<C, L>,
+    timestamps: T,
+    timeout: Duration,
+    start_ts: u64,
+    planned_mutation_count: usize,
+    planned_aggregate_bytes: usize,
+    state: CoordinatorState,
+    opened_at: Instant,
+    authority_id: u64,
+    forward_backoff: RegionBackoffBudget,
+    secondary_backoff: RegionBackoffBudget,
+    cleanup_backoff: RegionBackoffBudget,
+    pessimistic: Option<PessimisticPrewritePlan>,
+    /// The primary key this transaction pinned at its first locking statement,
+    /// which every pessimistic lock it holds already names as `primary_lock`
+    /// and which its TTL heartbeat refreshes.
+    ///
+    /// Go `twoPhaseCommitter.primary()` (`2pc.go:779-787`) returns the pinned
+    /// `c.primaryKey` whenever it is set and only falls back to
+    /// `mutations.GetKey(0)` when it is empty; `initKeysAndMutations`
+    /// (`2pc.go:697-698`) sets it *only if still empty*, so mutation order can
+    /// never override a pessimistically chosen primary. One transaction, one
+    /// primary, for its whole life — that invariant is the entire basis of
+    /// lock recovery.
+    pinned_primary_key: Option<Vec<u8>>,
+    /// The session's schema lease check, asked at client-go's three
+    /// `checkSchemaValid` sites. `None` commits unchecked ("Schema check is
+    /// not mandatory since MDL is introduced", `2pc.go:2155-2165`).
+    schema_lease: Option<SchemaLease>,
+    /// The store-wide txn safe point every read from this transaction is
+    /// validated against once TiKV has answered.
+    gc_state: Arc<GcStateCache>,
+    protocol: CommitProtocol,
+    detached_commit_observer: Option<std::sync::mpsc::Sender<super::DetachedCommitCompletion>>,
+    /// Resource group inherited by Prewrite and Commit request contexts.
+    resource_group_name: Option<String>,
+    /// Go `SnapshotRuntimeStats` command RPC totals for point readers.
+    snapshot_get_rpc_count: u64,
+    snapshot_batch_get_rpc_count: u64,
+    snapshot_cache: snapshot_read::SnapshotCache,
+    snapshot_runtime_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
+    /// Transactions whose locks every later read from this snapshot may step
+    /// over, and transactions whose committed value every later read must see
+    /// through their lock.
+    ///
+    /// Go `KVSnapshot.resolvedLocks` / `KVSnapshot.committedLocks`
+    /// (`snapshot.go:124-125`), the two `util.TSSet`s that `ClientHelper`
+    /// fills from `ResolveLockResult` and replays into `Context` on every
+    /// subsequent send. Without them a reader that meets a lock whose
+    /// min-commit-ts TiKV pushed meets the very same lock on its retry, which
+    /// is the deadloop `client_helper.go`'s own comment warns about.
+    resolved_locks: crate::lock::SnapshotLockSet,
+}
+
+impl<C, L, T> crate::new_txn::TxnResourceGroup for RealOptimisticTransaction<C, L, T> {
+    fn set_resource_group_name(&mut self, name: &str) {
+        self.resource_group_name = Some(name.to_owned());
+    }
+}
+
+/// What a pessimistic transaction already proved before it reached Prewrite.
+///
+/// Prewrite of a pessimistic transaction is not a second conflict check: for
+/// every key whose pessimistic lock this transaction still holds, TiKV must
+/// verify the lock instead of re-checking for write conflicts, which is what
+/// makes the statement-level `for_update_ts` retry safe. A key that was never
+/// locked — a pure insert of a new row, for instance — keeps the optimistic
+/// check.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PessimisticPrewritePlan {
+    /// Latest statement timestamp under which locks were acquired.
+    pub(super) for_update_ts: u64,
+    /// Exact encoded keys this transaction holds a pessimistic lock on.
+    pub(super) locked_keys: std::collections::BTreeSet<Vec<u8>>,
+    /// Keys whose lock fair locking granted at a timestamp higher than the
+    /// transaction's `for_update_ts`, and that exact timestamp.
+    ///
+    /// Go `twoPhaseCommitter.forUpdateTSConstraints`: Prewrite carries one
+    /// `for_update_ts` for the whole request, so a lock taken with conflict
+    /// must name its own, or TiKV would verify a lock that is not there.
+    pub(super) for_update_ts_constraints: std::collections::BTreeMap<Vec<u8>, u64>,
+}
+
 /// The one production pessimistic transaction.
 pub type ProductionPessimisticTransaction = super::RealPessimisticTransaction<
     TonicCoprocessorClient,
@@ -129,3 +308,693 @@ pub type ProductionOptimisticTransaction = RealOptimisticTransaction<
     PdRegionLoader,
     crate::pd_capability::CapabilityTimestampSource<tidb_pd_client::PdClient>,
 >;
+
+impl<C, L, T> RealOptimisticTransaction<C, L, T>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    /// Builds one transaction over already-owned authorities and an already
+    /// allocated `start_ts`.
+    ///
+    /// This is the single construction path;
+    /// [`RealOptimisticTransactionOpener::begin`] is the production caller and
+    /// supplies the real PD timestamp plus the instant it began opening, so
+    /// the lock TTL keeps charging for session-open and TSO time. Focused
+    /// tests use it to reach decoded-response branches that a live cluster
+    /// cannot produce on demand; it creates no PD, RegionCache, or transport
+    /// worker of its own.
+    pub fn new_injected(
+        runtime: SharedReadRuntime<C, L>,
+        timestamps: T,
+        timeout: Duration,
+        start_ts: u64,
+        opened_at: Instant,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        validate_plan(planned_mutation_count, planned_aggregate_bytes)
+            .map_err(OptimisticCoordinatorError::Mutations)?;
+        Self::new_opened(
+            runtime,
+            timestamps,
+            timeout,
+            start_ts,
+            opened_at,
+            planned_mutation_count,
+            planned_aggregate_bytes,
+            // A transaction built without a store has no GC authority to share.
+            // A zero txn safe point is not a bypass — it is what PD reports on
+            // a cluster where GC has never advanced, so the same comparison
+            // runs and simply admits every timestamp.
+            Arc::new(GcStateCache::seeded(0, Instant::now())),
+        )
+    }
+
+    /// Builds one already-opened transaction whose plan the caller validated.
+    ///
+    /// A read-only transaction legitimately has a zero mutation plan, which
+    /// [`validate_plan`] rejects, so the plan check stays with the callers that
+    /// intend to write.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new_opened(
+        runtime: SharedReadRuntime<C, L>,
+        timestamps: T,
+        timeout: Duration,
+        start_ts: u64,
+        opened_at: Instant,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+        gc_state: Arc<GcStateCache>,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        if start_ts == 0 {
+            return Err(OptimisticCoordinatorError::Timestamp(
+                "a transaction requires a real nonzero start timestamp".to_owned(),
+            ));
+        }
+        let authority_id = runtime.authority_id();
+        Ok(Self {
+            runtime,
+            timestamps,
+            timeout,
+            start_ts,
+            planned_mutation_count,
+            planned_aggregate_bytes,
+            state: CoordinatorState::New,
+            opened_at,
+            authority_id,
+            forward_backoff: RegionBackoffBudget::campaign_default(),
+            secondary_backoff: RegionBackoffBudget::new(COMMIT_SECONDARY_MAX_BACKOFF),
+            cleanup_backoff: RegionBackoffBudget::new(CLEANUP_MAX_BACKOFF),
+            pessimistic: None,
+            pinned_primary_key: None,
+            schema_lease: None,
+            gc_state,
+            protocol: CommitProtocol::two_phase_only(),
+            detached_commit_observer: None,
+            resource_group_name: None,
+            snapshot_get_rpc_count: 0,
+            snapshot_batch_get_rpc_count: 0,
+            snapshot_cache: snapshot_read::SnapshotCache::default(),
+            snapshot_runtime_stats: None,
+            resolved_locks: crate::lock::SnapshotLockSet::default(),
+        })
+    }
+
+    /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for `CmdGet` and
+    /// `CmdBatchGet` on this transaction snapshot.
+    #[must_use]
+    pub const fn snapshot_point_rpc_counts(&self) -> (u64, u64) {
+        (
+            self.snapshot_get_rpc_count,
+            self.snapshot_batch_get_rpc_count,
+        )
+    }
+
+    /// Go `KVSnapshot.SetRuntimeStats`; `None` disables response collection.
+    pub fn set_snapshot_runtime_stats(
+        &mut self,
+        stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
+    ) {
+        self.snapshot_runtime_stats = stats;
+    }
+
+    /// Go point-response data and coverage. An absent collector is invalid;
+    /// an installed collector with no responses is valid without coverage.
+    pub fn snapshot_point_response_stats(&self) -> tikv_client::PointResponseStats {
+        self.snapshot_runtime_stats.as_ref().map_or_else(
+            || {
+                let mut stats = tikv_client::PointResponseStats::default();
+                stats.invalidate();
+                stats
+            },
+            |stats| stats.point_response_stats(),
+        )
+    }
+
+    /// Permits this transaction to attempt async commit and/or 1PC.
+    pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
+        self.protocol = protocol;
+    }
+
+    /// Subscribe to actual detached commit completions for this transaction.
+    /// This does not wait for secondaries or change the foreground receipt.
+    /// Only detached batches report here; awaited fallback uses the receipt.
+    pub fn observe_detached_commits(
+        &mut self,
+    ) -> std::sync::mpsc::Receiver<super::DetachedCommitCompletion> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.detached_commit_observer = Some(sender);
+        receiver
+    }
+
+    /// Rejects a completed read whose timestamp GC has already passed.
+    ///
+    /// Called only after TiKV has answered, mirroring client-go's placement of
+    /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
+    /// pre-read check would be worthless: GC can advance while the RPC is in
+    /// flight, so only a post-read check covers the data actually returned.
+    fn check_visibility_at(&self, read_ts: u64) -> Result<(), OptimisticCoordinatorError> {
+        self.gc_state
+            .check_visibility(read_ts)
+            .map_err(OptimisticCoordinatorError::Visibility)
+    }
+
+    /// Binds the pessimistic locks a caller already acquired at `start_ts`.
+    pub(super) fn set_pessimistic_prewrite(&mut self, plan: PessimisticPrewritePlan) {
+        self.pessimistic = Some(plan);
+    }
+
+    /// Pins this transaction's primary key for the rest of its life.
+    ///
+    /// The parameter is a plain `Vec<u8>`, not an `Option`: "pin nothing" is
+    /// not a thing a caller can express here, because a default primary is
+    /// exactly what used to silently override the pinned one. A transaction
+    /// that never locked anything simply never calls this, and prewrite falls
+    /// back to mutation order — Go's `len(c.primaryKey) == 0` branch.
+    pub(super) fn pin_primary_key(&mut self, key: Vec<u8>) {
+        self.pinned_primary_key = Some(key);
+    }
+
+    pub(super) const fn runtime(&self) -> &SharedReadRuntime<C, L> {
+        &self.runtime
+    }
+
+    pub(super) const fn timestamps(&self) -> &T {
+        &self.timestamps
+    }
+
+    pub(super) const fn call_timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Clones a routed request context and attaches this transaction's resource
+    /// group without disturbing route, priority, penalty, or tracing fields.
+    /// Snapshot reads and writes must both use this: TiKV's resource control is
+    /// request-scoped, not mutation-scoped.
+    pub(super) fn write_context(&self, context: &KvrpcContext) -> KvrpcContext {
+        let mut context = context.clone();
+        if let Some(resource_group_name) = self.resource_group_name.as_ref() {
+            resource_group_name.clone_into(
+                &mut context
+                    .resource_control_context
+                    .get_or_insert_with(Default::default)
+                    .resource_group_name,
+            );
+        }
+        context
+    }
+
+    /// Snapshot timestamp allocated before any read or write.
+    #[must_use]
+    pub const fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
+    /// Carries the session's schema lease check into this commit (Go
+    /// `txn.SetOption(kv.SchemaChecker, ...)`, `base.go:606-615`).
+    pub fn set_schema_lease(&mut self, lease: SchemaLease) {
+        self.schema_lease = Some(lease);
+    }
+
+    /// client-go `checkSchemaValid` (`2pc.go:2149-2168`): a transaction
+    /// without a checker passes.
+    pub(super) fn check_schema_valid(&self, check_ts: u64) -> Result<(), SchemaLeaseError> {
+        match &self.schema_lease {
+            Some(lease) => lease.check(check_ts),
+            None => Ok(()),
+        }
+    }
+
+    /// client-go `calculateMaxCommitTS`'s synthetic "now": the elapsed wall
+    /// time since the transaction opened, on top of `start_ts`.
+    pub(super) fn current_ts(&self) -> u64 {
+        let elapsed_ms = u64::try_from(self.opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        (elapsed_ms << TSO_LOGICAL_BITS).saturating_add(self.start_ts)
+    }
+
+    /// Shared process authority identity used by reads and writes.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
+    }
+
+    pub(super) fn recover_region_error(
+        &mut self,
+        phase: RecoveryPhase,
+        error: &tidb_proto::RegionError,
+        attempt: &crate::region::RegionAttempt,
+        call: &UnaryCallContext,
+    ) -> Result<(), TransactionCause> {
+        let backoff = match phase {
+            RecoveryPhase::Forward => &mut self.forward_backoff,
+            RecoveryPhase::Secondary => &mut self.secondary_backoff,
+            RecoveryPhase::Cleanup => &mut self.cleanup_backoff,
+        };
+        recover_region_error_with(&self.runtime, backoff, error, attempt, call)
+    }
+}
+
+/// Applies one region error to the shared cache and one caller-owned backoff
+/// budget. Snapshot reads use this both inside a transaction and from the
+/// transaction-free MaxTS point path, so recovery semantics cannot drift.
+pub(super) fn recover_region_error_with<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    backoff: &mut RegionBackoffBudget,
+    error: &tidb_proto::RegionError,
+    attempt: &crate::region::RegionAttempt,
+    call: &UnaryCallContext,
+) -> Result<(), TransactionCause>
+where
+    L: RegionRecoveryLoader,
+{
+    // Older non-snapshot owners already slept their prior reservation. Only
+    // a reservation made by this recovery may be refunded on cancellation.
+    backoff.finish_wait(true);
+    wait_with_call(call, Duration::ZERO)?;
+    let outcome = runtime
+        .region_cache_handle()
+        .on_region_error(error, attempt.clone(), backoff)
+        .map_err(|error| TransactionCause::Region {
+            detail: format!("RegionCache recovery lifecycle failed: {error}"),
+        })?;
+    let disposition = disposition_for_recovery_outcome(outcome, backoff)?;
+    let delay = match disposition {
+        RegionErrorDisposition::RetryRoute { delay, .. }
+        | RegionErrorDisposition::RetrySelector { delay, .. }
+        | RegionErrorDisposition::RebuildRanges { delay, .. } => delay,
+        RegionErrorDisposition::ReturnRegionError => {
+            return Err(TransactionCause::Region {
+                detail: format!("TiKV returned non-retryable region error: {error:?}"),
+            });
+        }
+        RegionErrorDisposition::Terminal(terminal) => {
+            return Err(terminal_region_cause(terminal));
+        }
+    };
+    let result = wait_with_call(call, delay);
+    backoff.finish_wait(result.is_ok());
+    result
+}
+
+/// Turns one cache recovery answer into the disposition the caller acts on.
+///
+/// Split out from [`recover_region_error_with`] so the staleness rule below
+/// is testable without a runtime, a loader, or a live region.
+pub(super) fn disposition_for_recovery_outcome(
+    outcome: Result<RegionErrorDisposition, RegionRecoveryError>,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<RegionErrorDisposition, TransactionCause> {
+    match outcome {
+        Ok(disposition) => Ok(disposition),
+        // The cache has already moved past the route this response describes
+        // -- a CONCURRENT caller met the same split and refreshed it first.
+        // That is the ordinary shape under a multi-threaded workload, and in
+        // client-go it aborts nothing: the region is simply no longer cached
+        // for this caller, so it re-resolves through the outer `BoRegionMiss`
+        // loop and re-splits its keys against the new regions
+        // (`RegionErrorDisposition::ReturnRegionError`'s own doc says stale
+        // topology takes this path). Failing the transaction here killed
+        // sysbench's INSERT the moment TiKV split a region under eight
+        // threads. The budget still bounds it: a stale observation that never
+        // resolves exhausts `RegionMiss` and fails.
+        Err(RegionRecoveryError::StaleObservation(_)) => {
+            Ok(RegionErrorDisposition::RebuildRanges {
+                delay: backoff
+                    .next_delay(crate::region::RegionBackoffKind::RegionMiss)
+                    .map_err(|exhausted| {
+                        terminal_region_cause(RegionTerminalError::BackoffExhausted {
+                            kind: exhausted.kind,
+                            max_sleep: exhausted.max_sleep,
+                        })
+                    })?,
+                action: RegionRebuildAction::CacheReady,
+            })
+        }
+        // Every other recovery failure is a malformed payload or a loader
+        // fault, which no retry fixes.
+        Err(error) => Err(TransactionCause::Region {
+            detail: format!("RegionCache rejected region error: {error}"),
+        }),
+    }
+}
+
+fn terminal_region_cause(terminal: RegionTerminalError) -> TransactionCause {
+    match terminal {
+        RegionTerminalError::BackoffExhausted { kind, max_sleep } => {
+            TransactionCause::BackoffExhausted {
+                kind,
+                detail: if kind == crate::region::RegionBackoffKind::TikvServerBusy {
+                    // client-go excludes Busy sleep from longestSleepCfg. If
+                    // the excluded-only cap fires, Backoff returns the current
+                    // ordinary error rather than BoTiKVServerBusy's sentinel.
+                    "server is busy".to_owned()
+                } else {
+                    format!("TiKV region backoff exhausted: kind={kind:?}, max_sleep={max_sleep:?}")
+                },
+            }
+        }
+        terminal => TransactionCause::Region {
+            detail: format!("TiKV returned terminal region error: {terminal:?}"),
+        },
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum RecoveryPhase {
+    Forward,
+    Secondary,
+    Cleanup,
+}
+
+pub(super) fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
+    if let Some(shared_lock_lost) = error.shared_lock_lost.as_ref() {
+        return TransactionCause::SharedLockLost {
+            start_ts: shared_lock_lost.start_ts,
+            key: tikv_client::redact::key(&shared_lock_lost.key),
+        };
+    }
+    if let Some(already_exists) = error.already_exist.as_ref() {
+        return TransactionCause::AlreadyExists {
+            key: already_exists.key.clone(),
+            detail: format!("key already exists: {already_exists:?}"),
+        };
+    }
+    if let Some(assertion) = error.assertion_failed.as_ref() {
+        return TransactionCause::AssertionFailed {
+            key: assertion.key.clone(),
+            not_exist: assertion.assertion == KvrpcAssertion::NotExist as i32,
+            detail: format!("mutation assertion failed: {assertion:?}"),
+        };
+    }
+    if let Some(conflict) = error.conflict.as_ref() {
+        return TransactionCause::WriteConflict {
+            detail: format!("optimistic write conflict: {conflict:?}"),
+        };
+    }
+    if let Some(lock) = error.locked.as_ref() {
+        return TransactionCause::Lock {
+            key: lock.key.clone(),
+            detail: format!("key is locked: {lock:?}"),
+        };
+    }
+    TransactionCause::InvalidResponse {
+        detail: format!("unclassified TiKV key error: {error:?}"),
+    }
+}
+
+pub(super) fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usize) -> u64 {
+    const BYTES_PER_MIB: f64 = (1024 * 1024) as f64;
+    const TTL_FACTOR_MS: f64 = 6_000.0;
+    const MANAGED_LOCK_TTL_MS: u64 = 20_000;
+    const SIZE_THRESHOLD_BYTES: usize = 16 * 1024;
+
+    let sized_ttl = if transaction_bytes >= SIZE_THRESHOLD_BYTES {
+        let size_mib = transaction_bytes as f64 / BYTES_PER_MIB;
+        (TTL_FACTOR_MS * size_mib.sqrt()) as u64
+    } else {
+        DEFAULT_LOCK_TTL_MS
+    };
+    let base = sized_ttl.clamp(DEFAULT_LOCK_TTL_MS, MANAGED_LOCK_TTL_MS);
+    let elapsed_ms = u64::try_from(opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+    base.saturating_add(elapsed_ms)
+}
+
+pub(super) fn wait_with_call(
+    call: &UnaryCallContext,
+    delay: Duration,
+) -> Result<(), TransactionCause> {
+    let remaining = call.timeout();
+    if call.cancellation().is_cancelled() || remaining.is_zero() {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait exceeded its deadline or was cancelled".to_owned(),
+        });
+    }
+    // A retry's delay is interrupted by its deadline, not rejected merely
+    // because that deadline will arrive first. Clamp here so callers cannot
+    // race two reads of the diminishing remaining time.
+    let delay = delay.min(remaining);
+    if call.cancellation().wait_timeout(delay) {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait was cancelled".to_owned(),
+        });
+    }
+    if call.timeout().is_zero() && !delay.is_zero() {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait reached its absolute deadline".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+trait AttemptRoute {
+    fn evidence_region(&self) -> crate::region::RegionVerId;
+    fn evidence_address(&self) -> &str;
+}
+
+impl AttemptRoute for RegionMutationBatch {
+    fn evidence_region(&self) -> crate::region::RegionVerId {
+        self.region()
+    }
+
+    fn evidence_address(&self) -> &str {
+        self.address()
+    }
+}
+
+impl AttemptRoute for RegionKeyBatch {
+    fn evidence_region(&self) -> crate::region::RegionVerId {
+        self.region()
+    }
+
+    fn evidence_address(&self) -> &str {
+        self.address()
+    }
+}
+
+fn record_attempt(
+    receipt: &mut OptimisticTransactionReceipt,
+    phase: TransactionAttemptPhase,
+    keys: &[Vec<u8>],
+    route: &impl AttemptRoute,
+    publication: Option<TransactionBatchPublication>,
+    result: TransactionAttemptResult,
+) {
+    receipt.attempt_history.push(TransactionAttemptReceipt {
+        phase,
+        keys: keys.to_vec(),
+        region: route.evidence_region(),
+        address: route.evidence_address().to_owned(),
+        publication,
+        result,
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::region::{RegionBackoffKind, RegionTerminalError};
+    use tidb_proto::{
+        kvrpcpb::SharedLockLost, KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed,
+        KvrpcLockInfo, KvrpcWriteConflict,
+    };
+
+    #[test]
+    fn lock_ttl_adds_read_time_and_scales_large_transactions() {
+        let recent = Instant::now();
+        assert!(transaction_lock_ttl_ms(recent, 1) >= DEFAULT_LOCK_TTL_MS);
+        let old = Instant::now() - Duration::from_millis(25);
+        assert!(transaction_lock_ttl_ms(old, 1) >= DEFAULT_LOCK_TTL_MS + 25);
+        assert!(transaction_lock_ttl_ms(recent, 4 * 1024 * 1024) >= 12_000);
+    }
+
+    #[test]
+    fn commit_key_errors_keep_executor_visible_identity() {
+        let already_exists = KvrpcKeyError {
+            already_exist: Some(KvrpcAlreadyExist { key: b"e".to_vec() }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&already_exists),
+            TransactionCause::AlreadyExists { key, .. } if key == b"e"
+        ));
+
+        let assertion = KvrpcKeyError {
+            assertion_failed: Some(KvrpcAssertionFailed {
+                start_ts: 7,
+                key: b"a".to_vec(),
+                assertion: KvrpcAssertion::Exist as i32,
+                ..KvrpcAssertionFailed::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&assertion),
+            TransactionCause::AssertionFailed { key, .. } if key == b"a"
+        ));
+
+        let conflict = KvrpcKeyError {
+            conflict: Some(KvrpcWriteConflict {
+                start_ts: 7,
+                conflict_ts: 9,
+                key: b"c".to_vec(),
+                ..KvrpcWriteConflict::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&conflict),
+            TransactionCause::WriteConflict { .. }
+        ));
+
+        let lock = KvrpcKeyError {
+            locked: Some(KvrpcLockInfo {
+                key: b"l".to_vec(),
+                ..KvrpcLockInfo::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&lock),
+            TransactionCause::Lock { key, .. } if key == b"l"
+        ));
+
+        let shared_lock_lost = KvrpcKeyError {
+            shared_lock_lost: Some(SharedLockLost {
+                start_ts: 101,
+                key: b"key".to_vec(),
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&shared_lock_lost),
+            TransactionCause::SharedLockLost { start_ts, key }
+                if start_ts == 101 && key == "6B6579"
+        ));
+        assert!(matches!(
+            classify_key_error(&KvrpcKeyError::default()),
+            TransactionCause::InvalidResponse { .. }
+        ));
+    }
+
+    #[test]
+    fn a_retry_delay_past_the_deadline_waits_until_the_deadline() {
+        let call = UnaryCallContext::with_timeout(Duration::from_millis(30));
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            wait_with_call(&call, Duration::from_secs(1)),
+            Err(TransactionCause::Transport { .. })
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        assert!(call.timeout().is_zero());
+    }
+
+    #[test]
+    fn waits_use_the_absolute_call_deadline_and_cancellation() {
+        let expired = UnaryCallContext::with_timeout(Duration::ZERO);
+        assert!(matches!(
+            wait_with_call(&expired, Duration::from_millis(1)),
+            Err(TransactionCause::Transport { .. })
+        ));
+        let cancellation = crate::rpc::UnaryCancellation::new();
+        cancellation.cancel();
+        let cancelled = UnaryCallContext::new(Duration::from_secs(1), cancellation);
+        assert!(matches!(
+            wait_with_call(&cancelled, Duration::ZERO),
+            Err(TransactionCause::Transport { .. })
+        ));
+    }
+
+    #[test]
+    fn terminal_backoff_retains_its_kind_without_typing_structural_region_errors() {
+        let unavailable = terminal_region_cause(RegionTerminalError::BackoffExhausted {
+            kind: RegionBackoffKind::RegionScheduling,
+            max_sleep: Duration::from_secs(20),
+        });
+        assert!(matches!(
+            unavailable,
+            TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionScheduling,
+                ..
+            }
+        ));
+
+        let busy = terminal_region_cause(RegionTerminalError::BackoffExhausted {
+            kind: RegionBackoffKind::TikvServerBusy,
+            max_sleep: Duration::from_secs(20),
+        });
+        assert!(matches!(
+            busy,
+            TransactionCause::BackoffExhausted { kind: RegionBackoffKind::TikvServerBusy, detail }
+                if detail == "server is busy"
+        ));
+
+        let flashback = terminal_region_cause(RegionTerminalError::FlashbackInProgress {
+            region_id: 42,
+            flashback_start_ts: 99,
+        });
+        assert!(matches!(
+            flashback,
+            TransactionCause::Region { detail }
+                if detail.contains("FlashbackInProgress") && detail.contains("42")
+        ));
+    }
+
+    /// A response whose route a CONCURRENT caller already refreshed is the
+    /// ordinary shape under a multi-threaded workload -- TiKV splits a region
+    /// and several in-flight requests meet it at once. client-go aborts
+    /// nothing there: the region is no longer cached for this caller, so it
+    /// re-resolves and re-splits its keys through the outer `BoRegionMiss`
+    /// loop. Sysbench's INSERT died with 1105 under eight threads while this
+    /// was fatal.
+    #[test]
+    fn a_stale_observation_rebuilds_ranges_instead_of_killing_the_transaction() {
+        let stale = |region: u64| {
+            Err(RegionRecoveryError::StaleObservation(
+                crate::region::RegionAttempt {
+                    region: crate::region::RegionVerId::new(region, 1, 71),
+                    peer_id: 11,
+                    store_id: 101,
+                    address: "store-101".to_owned(),
+                    store_epoch: 7,
+                },
+            ))
+        };
+        let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        let disposition = disposition_for_recovery_outcome(stale(152), &mut budget)
+            .expect("a stale observation is retried, not fatal");
+        assert!(matches!(
+            disposition,
+            RegionErrorDisposition::RebuildRanges {
+                action: RegionRebuildAction::CacheReady,
+                ..
+            }
+        ));
+        assert!(
+            budget.total_sleep() > Duration::ZERO,
+            "the retry pays backoff"
+        );
+
+        // The budget still bounds it: a staleness that never resolves stops.
+        let mut spent = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
+        let mut exhausted = None;
+        for _ in 0..64 {
+            if let Err(cause) = disposition_for_recovery_outcome(stale(152), &mut spent) {
+                exhausted = Some(cause);
+                break;
+            }
+        }
+        assert!(
+            matches!(exhausted, Some(TransactionCause::BackoffExhausted { .. })),
+            "an unresolving staleness must exhaust its budget, not spin"
+        );
+
+        // A malformed payload is NOT a staleness and stays fatal.
+        let malformed = disposition_for_recovery_outcome(
+            Err(RegionRecoveryError::MissingRegionEpoch { region_id: 152 }),
+            &mut RegionBackoffBudget::campaign_default(),
+        );
+        assert!(matches!(malformed, Err(TransactionCause::Region { .. })));
+    }
+}

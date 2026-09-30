@@ -33,9 +33,9 @@ use tidb_pd_client::{
     PdBucketStats, PdBuckets, PdClient as TidbPdClient, PdClientError, PdNodeState, PdPeer,
     PdRegion, PdStore, PdStoreState,
 };
-use tikv_client::{RegionScanOptions, RetryClientTrait};
+use tikv_client::pd::{RegionScanOptions, RetryClientTrait};
 use tikv_client::proto::{keyspacepb, metapb, pdpb};
-use tikv_client::{RegionId, RegionWithLeader, StoreId};
+use tikv_client::region::{RegionId, RegionWithLeader, StoreId};
 use tikv_client::{Error, Result, Timestamp};
 
 /// Number of low bits a PD timestamp reserves for the logical counter.

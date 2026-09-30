@@ -693,7 +693,7 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{mpsc, Arc, Barrier};
+    use std::sync::{Arc, Barrier, mpsc};
 
     struct BlockingBatchLoader {
         batch_started: Arc<Barrier>,
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn batch_scan_backoff_retries_transient_gaps() {
         let mut backoff = RetryingBatchBackoff {
-            budget: RegionBackoffBudget::new(Duration::from_millis(1)),
+            budget: RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1),
             retries: 0,
         };
         assert!(backoff.backoff(BatchScanRetryReason::CoverageGap).is_ok());
@@ -787,34 +787,6 @@ mod tests {
 }
 
 impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
-    /// Hydrate native-client epoch replacements without blocking cached lookups.
-    pub(crate) fn update_client_regions(
-        &self,
-        regions: Vec<(super::RegionMetadata, u64)>,
-    ) -> Result<Result<(), RegionRecoveryError>, BackgroundRegionCacheError> {
-        let mut stores = BTreeMap::new();
-        let mut replacements = Vec::with_capacity(regions.len());
-        for (metadata, leader_store) in regions {
-            match self.shared.loader.hydrate_regions(
-                std::slice::from_ref(&metadata),
-                leader_store,
-                &mut stores,
-            ) {
-                Ok(loaded) => replacements.extend(loaded),
-                Err(error) => return Ok(Err(error)),
-            }
-        }
-        let Some((first, _)) = replacements.first() else {
-            return Ok(Ok(()));
-        };
-        let original = first.region;
-        self.with_cache(|cache| {
-            cache
-                .replace_regions_atomically(original, replacements)
-                .map_err(RegionRecoveryError::Route)
-        })
-    }
-
     /// Applies one region error while keeping EpochNotMatch store hydration
     /// outside the canonical cache lock.
     pub fn on_region_error(
