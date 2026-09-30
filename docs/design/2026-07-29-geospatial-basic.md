@@ -382,6 +382,9 @@ function until a later milestone adds it.
   `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`. `ST_Centroid` and `ST_Envelope`
   are Cartesian-only, as in MySQL, which raises `ERROR 3618` for both on 4326. So MySQL
   exposes no geodesic envelope at all, though its own R-tree computes one internally.
+  On 4326, `ST_IsValid` takes points and lines and rejects polygonal input as unsupported:
+  MySQL judges polygon validity over Andoyer edges, which needs the geodesic segment
+  intersection v1 defers ([Future extensions](#future-extensions)).
 - **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes the same
   one-operand-a-`POINT` rule as the predicates below, and
   `ST_Distance_Sphere(g1, g2 [, radius])`, whose `radius` must be positive and whose
@@ -845,9 +848,11 @@ way.
 **Predicates between two extended geometries.** v1 answers the eight DE-9IM predicates on
 4326 only where one operand is a `POINT` ([Reference surface](#srid-model)). Widening that to
 line and polygon pairs needs geodesic segment intersection over Andoyer edges, assembled into
-a 9-intersection matrix, which replaces the planar evaluator rather than extending it. It is
-additive for users, since it only makes queries that were rejected start answering, and it
-needs no format change. Karney's intersection and point-to-line work supplies the algorithms.
+a 9-intersection matrix, which replaces the planar evaluator rather than extending it.
+`ST_IsValid` on 4326 polygons needs the same intersection and widens with it. Both are
+additive for users, since they only make queries that were rejected start answering, and
+neither needs a format change. Karney's intersection and point-to-line work supplies the
+algorithms.
 
 `ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth adding
 once the spatial index lands: they are index-eligible region predicates
