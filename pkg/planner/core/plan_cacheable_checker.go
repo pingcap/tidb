@@ -312,9 +312,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
 	for _, assignment := range updateAssignments {
-		if checker.isSupportedCoalesceAssignment(assignment) {
-			checker.coalesceAssignments = append(checker.coalesceAssignments, assignment.Expr.(*ast.FuncCallExpr))
-		}
+		checker.coalesceAssignments = append(checker.coalesceAssignments, checker.supportedCoalesceAssignment(assignment)...)
 	}
 
 	ast.Walk(node, checker)
@@ -737,50 +735,79 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	return true, ""
 }
 
-// isSupportedCoalesceAssignment checks the AST shape and column types for the
-// narrow non-prepared UPDATE exception. This is not a check of the inferred
-// COALESCE return type: cached plans separately require exact parameter precision.
+// supportedCoalesceAssignment returns every COALESCE node in an eligible
+// non-prepared UPDATE assignment, or nil if any part of the assignment fails.
+// Each node accepts a numeric literal (or nested COALESCE) followed by a column
+// (or nested COALESCE). All fallback columns must match the target column type.
+// This checks AST shape and column types, not inferred expression types; cached
+// plans separately require exact DECIMAL precision for all COALESCE parameters.
 // TODO: Rebuild dependent expression types and implicit casts before allowing
 // cross-precision reuse. Never mutate expression types in a shared cached plan.
 // TODO: Extend MySQL compatibility coverage (metadata, NULL transitions, rounding,
 // warnings and scalar/vectorized evaluation) before broadening this exception.
-func (checker *nonPreparedPlanCacheableChecker) isSupportedCoalesceAssignment(assignment *ast.Assignment) bool {
+func (checker *nonPreparedPlanCacheableChecker) supportedCoalesceAssignment(assignment *ast.Assignment) []*ast.FuncCallExpr {
 	fn, ok := assignment.Expr.(*ast.FuncCallExpr)
-	if !ok || fn.FnName.L != ast.Coalesce || len(fn.Args) != 2 {
-		return false
-	}
-	value, ok := fn.Args[0].(*driver.ValueExpr)
-	if !ok || (value.Kind() != types.KindInt64 && value.Kind() != types.KindUint64 && value.Kind() != types.KindMysqlDecimal) {
-		return false
-	}
-	col, ok := fn.Args[1].(*ast.ColumnNameExpr)
-	if !ok || len(checker.tableNodes) != 1 || checker.schema == nil {
-		return false
+	if !ok || fn.FnName.L != ast.Coalesce || len(checker.tableNodes) != 1 || checker.schema == nil {
+		return nil
 	}
 	table := checker.tableNodes[0]
 	tb, err := checker.schema.TableByName(context.Background(), table.Schema, table.Name)
 	if err != nil {
-		return false
+		return nil
 	}
-	var target, fallback *types.FieldType
+	var target *types.FieldType
 	for _, c := range tb.Cols() {
 		if c.Name.L == assignment.Column.Name.L {
 			target = &c.FieldType
-		}
-		if c.Name.L == col.Name.Name.L {
-			fallback = &c.FieldType
+			break
 		}
 	}
-	if target == nil || fallback == nil {
-		return false
+	if target == nil {
+		return nil
 	}
 	switch target.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		// Equal covers precision, signedness, charset and collation. Also keep
-		// scale and value-related flags identical rather than relying on casts.
-		const flags = mysql.NotNullFlag | mysql.UnsignedFlag | mysql.ZerofillFlag
-		return target.Equal(fallback) && target.GetDecimal() == fallback.GetDecimal() &&
-			target.GetFlag()&flags == fallback.GetFlag()&flags
+	default:
+		return nil
 	}
-	return false
+
+	var nodes []*ast.FuncCallExpr
+	var check func(ast.ExprNode) bool
+	check = func(expr ast.ExprNode) bool {
+		fn, ok := expr.(*ast.FuncCallExpr)
+		if !ok || fn.FnName.L != ast.Coalesce || len(fn.Args) != 2 {
+			return false
+		}
+		if value, ok := fn.Args[0].(*driver.ValueExpr); ok {
+			if value.Kind() != types.KindInt64 && value.Kind() != types.KindUint64 && value.Kind() != types.KindMysqlDecimal {
+				return false
+			}
+		} else if !check(fn.Args[0]) {
+			return false
+		}
+		if col, ok := fn.Args[1].(*ast.ColumnNameExpr); ok {
+			var fallback *types.FieldType
+			for _, c := range tb.Cols() {
+				if c.Name.L == col.Name.Name.L {
+					fallback = &c.FieldType
+					break
+				}
+			}
+			// Equal covers precision, signedness, charset and collation. Keep
+			// scale and value-related flags identical at every fallback leaf.
+			const flags = mysql.NotNullFlag | mysql.UnsignedFlag | mysql.ZerofillFlag
+			if fallback == nil || !target.Equal(fallback) || target.GetDecimal() != fallback.GetDecimal() ||
+				target.GetFlag()&flags != fallback.GetFlag()&flags {
+				return false
+			}
+		} else if !check(fn.Args[1]) {
+			return false
+		}
+		nodes = append(nodes, fn)
+		return true
+	}
+	if !check(fn) {
+		return nil // Never admit a valid subtree of an unsupported assignment.
+	}
+	return nodes
 }

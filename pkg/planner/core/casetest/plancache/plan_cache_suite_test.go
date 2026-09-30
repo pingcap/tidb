@@ -2410,6 +2410,7 @@ func TestNonPreparedCoalescePrecision(t *testing.T) {
 
 func TestNonPreparedCoalesceScope(t *testing.T) {
 	t.Run("CrossColumnTypes", testNonPreparedCoalesceCrossColumnTypes)
+	t.Run("Nested", testNonPreparedCoalesceNested)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2425,7 +2426,11 @@ func TestNonPreparedCoalesceScope(t *testing.T) {
 		"update coalesce_scope set s=concat(coalesce(1,d),'x') where id=1",
 		"update coalesce_scope set d=2 where id=coalesce(1,id)",
 		"update coalesce_scope set d=coalesce(null,d) where id=1",
-		"update coalesce_scope set d=coalesce(1,coalesce(2,d)) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(2,s)) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(null,d)) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(2,d)+1) where id=1",
+		"update coalesce_scope set d=coalesce(coalesce(1,d),s) where id=1",
+		"update coalesce_scope set d=coalesce(1,d) where id=coalesce(1,coalesce(2,id))",
 	} {
 		for range 2 {
 			tk.MustExec(sql)
@@ -2486,24 +2491,77 @@ func testNonPreparedCoalesceCrossColumnTypes(t *testing.T) {
 				fresh.MustExec("insert into fresh_cross values(1,0,7)")
 				// Include rounding into integer targets, precision changes, and
 				// NULL fallback. Compare evaluation warnings as well as rows.
-				for _, literal := range []string{"1.23456789", "2.34567891", "3.14159", "1", "NULL"} {
-					for run := range 2 {
-						results := make([][][]any, 2)
-						warnings := make([][][]any, 2)
-						for i, tk := range []*testkit.TestKit{cached, fresh} {
-							table := "cached_cross"
-							if i == 1 {
-								table = "fresh_cross"
+				for _, shape := range []string{"coalesce(%s,x.src)", "coalesce(%s,coalesce(0,x.src))"} {
+					for _, literal := range []string{"1.23456789", "2.34567891", "3.14159", "1", "NULL"} {
+						for run := range 2 {
+							results := make([][][]any, 2)
+							warnings := make([][][]any, 2)
+							for i, tk := range []*testkit.TestKit{cached, fresh} {
+								table := "cached_cross"
+								if i == 1 {
+									table = "fresh_cross"
+								}
+								tk.MustExec("update " + table + " as x set x.dst=" + fmt.Sprintf(shape, literal) + " where x.id=1")
+								if i == 0 && run == 1 {
+									require.Equal(t, tc.cacheable && literal != "NULL", tk.Session().GetSessionVars().FoundInPlanCache, literal)
+								}
+								warnings[i] = tk.MustQuery("show warnings").Rows()
+								results[i] = tk.MustQuery("select dst,src from " + table).Rows()
 							}
-							tk.MustExec("update " + table + " as x set x.dst=coalesce(" + literal + ",x.src) where x.id=1")
-							if i == 0 && run == 1 {
-								require.Equal(t, tc.cacheable && literal != "NULL", tk.Session().GetSessionVars().FoundInPlanCache, literal)
-							}
-							warnings[i] = tk.MustQuery("show warnings").Rows()
-							results[i] = tk.MustQuery("select dst,src from " + table).Rows()
+							require.Equal(t, results[1], results[0], literal)
+							require.Equal(t, warnings[1], warnings[0], literal)
 						}
-						require.Equal(t, results[1], results[0], literal)
-						require.Equal(t, warnings[1], warnings[0], literal)
+					}
+				}
+			})
+		}
+	}
+}
+
+func testNonPreparedCoalesceNested(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, columnType := range []string{"decimal(20,8)", "decimal(36,18)", "bigint", "bigint unsigned"} {
+			t.Run(fmt.Sprintf("instance=%v/%s", instance, columnType), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				cached, fresh := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+				cached.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				for i, tk := range []*testkit.TestKit{cached, fresh} {
+					tk.MustExec("use test")
+					tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", i == 0))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				}
+				cached.MustExec("create table nested_cached(id int primary key, a " + columnType + ", b " + columnType + ", c " + columnType + ", v decimal(20,8))")
+				fresh.MustExec("create table nested_fresh like nested_cached")
+				cached.MustExec("insert into nested_cached values(1,0,null,7,0)")
+				fresh.MustExec("insert into nested_fresh values(1,0,null,7,0)")
+				for _, shape := range []string{
+					"coalesce(%s,coalesce(%s,b))",
+					"coalesce(coalesce(%s,b),coalesce(%s,c))",
+					"coalesce(%s,coalesce(%s,coalesce(0,b)))",
+				} {
+					for _, tc := range []struct {
+						outer, inner, outside string
+						hit                   bool
+					}{
+						{"1.23456789", "2.34567891", "1.23456789", false},
+						{"2.34567891", "3.45678912", "2.34567", true}, // Outside precision shrinks.
+						{"3.45678912", "4.14159", "3.34567", false},   // Inner precision shrinks.
+						{"4.56789123", "5.14159", "4.34567", true},
+						{"5.14159", "6.14159", "5.34567", false}, // Outer precision shrinks.
+						{"6.14159", "7.14159", "6.34567", true},
+						{"7.12345678", "8.12345678", "7.34567", true}, // Revisit both wide precisions.
+						{"1", "2", "1.34567", false},
+						{"12345", "23456", "2.34567", true}, // Integer widths retain compatibility.
+						{"1.123456789012345678", "2.123456789012345678", "1.34567", false},
+						{"2.123456789012345678", "3.123456789012345678", "2.34567", true},
+					} {
+						query := " set v=" + tc.outside + ",a=" + fmt.Sprintf(shape, tc.outer, tc.inner) + " where id=1"
+						cached.MustExec("update nested_cached" + query)
+						require.Equal(t, tc.hit, cached.Session().GetSessionVars().FoundInPlanCache, query)
+						warnings := cached.MustQuery("show warnings").Rows()
+						fresh.MustExec("update nested_fresh" + query)
+						require.Equal(t, fresh.MustQuery("show warnings").Rows(), warnings, query)
+						cached.MustQuery("select a,b,c,v from nested_cached").Check(fresh.MustQuery("select a,b,c,v from nested_fresh").Rows())
 					}
 				}
 			})
