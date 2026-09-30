@@ -61,9 +61,6 @@ This replaces the earlier geospatial design
 The main goal of the design is basic MySQL compatibility. It should also be extensible
 later, both towards better MySQL compatibility and beyond MySQL.
 
-MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
-against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
-
 ## Motivation or Background
 
 TiDB is often used as unified storage because of the scalable storage,
@@ -123,6 +120,9 @@ deliberately asymmetric:
 
 So a stored value can exist that no `ST_As*` can express. It reads back as the raw column
 value, and no v1 function computes on it.
+
+MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
+against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
 
 ### Types and storage
 
