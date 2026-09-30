@@ -38,6 +38,22 @@ class SourceContract(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "fetched Go master changed TiPB"):
                 sync.check_master_pin({"version": "v1.2.2"})
 
+    def test_etcd_includes_all_packages_and_new_schema_files(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(sync, "MODULE", "go.etcd.io/etcd/api/v3"):
+            root = pathlib.Path(directory)
+            (root / "LICENSE").write_bytes(b"upstream license")
+            for package in ("authpb", "membershippb", "etcdserverpb", "mvccpb", "futurepb"):
+                (root / package).mkdir()
+                (root / package / "api.proto").write_bytes(package.encode())
+            expected = {"etcd/api/" + name + "/api.proto": name.encode()
+                        for name in ("authpb", "membershippb", "etcdserverpb", "mvccpb", "futurepb")}
+            expected["LICENSE"] = b"upstream license"
+            self.assertEqual(sync.schema_inputs(root), expected)
+            self.assertEqual(sync.version_from_go_mod("require go.etcd.io/etcd/api/v3 v3.5.15"), "v3.5.15")
+            with mock.patch.object(sync, "LABEL", "etcd API"), mock.patch.object(sync, "run", return_value="require go.etcd.io/etcd/api/v3 v3.5.16"):
+                with self.assertRaisesRegex(ValueError, "fetched Go master changed etcd API"):
+                    sync.check_master_pin({"version": "v3.5.15"})
+
     def test_recorded_pin_must_match_its_immutable_go_revision(self):
         source = {"module": sync.MODULE, "go_master": "revision", "version": "v1.2.3", "go_mod_sha256": "hash"}
         with mock.patch.object(sync, "selected_source", return_value=source):

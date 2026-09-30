@@ -122,16 +122,16 @@ copying that old list into this report.
 | M03 | `open_mpp` drains the complete network stream into VecDeque before returning a row stream. Close only clears local packets. There is no coordinator memory accounting, statement cancellation while draining or remote cancel owner. | `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:378`, `:423`, `:495`, `:568` | Go local coordinator `sendToRespCh`, `receiveResults`, `Close`, `cancelMppTasks`: incremental delivery, tracker charging, finish signal, joined cancellation and remote task cancellation. First-row latency and memory scale with the entire Rust response. |
 | M04 | MPP constructs a new plaintext client directly and handles RPC errors outside the shared client recovery policy; retry_regions are logged without cache invalidation. | `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:386`, `:405` | `pkg/store/copr/mpp.go::DispatchMPPTask`/`EstablishMPPConns` use the TiKV client security/context/backoff and invalidate stale regions. Reuse the storage transport/security owner; do not add another MPP-only retry/cache implementation. |
 
-## Remaining protocol and PD owners
+## Protocol and PD owners
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
-| P01 | PD KeyspaceScope projects a oneof into a plain u32. Explicit keyspace zero loses its presence. It also omits keyspace_identity; GetGCState lacks newer global-barrier fields and GetStoreResponse lacks stats. | `rust/crates/tidb-proto/proto/pdpb.proto:19`, `rust/crates/tidb-pd-client/src/client/requests.rs:317` | Master's complete `kvproto/proto/pdpb.proto`. **Wire reproduction:** `keyspace_id: 0` encodes to empty local bytes versus upstream `08 00`. Replace the package owner and migrate consumers, rather than patching another enum/field by hand. |
-| P02 | Four remaining projected protobuf packages omit 400 declarations/fields/RPCs in total; generation/checking only the selected surface cannot establish package completeness. The fifth inspected package, mvccpb, has no declaration/field differences in this comparison. | `rust/crates/tidb-proto/build.rs:37`, five local non-TiPB inputs; complete list in `protocol-projections.json` | Complete pinned PD, TiKV, BR and etcd inputs and generated owners. This is a declaration inventory; omitted unused RPCs are not automatically runtime failures. TiKV's 71 opaque message representations are deliberately listed separately and must retain their transport optimization or demonstrate an equivalent replacement. |
-| P03 | The local PD client only follows PD member leadership and its PD Tso stream. It has no service-mode discovery/switching or independent TSO-service owner. | `rust/crates/tidb-pd-client/src/client/topology.rs:36`, `rust/crates/tidb-pd-client/src/tso.rs:207`, local PD service projection | Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode. |
+| P01 | **Repaired:** PD scope now shares the complete native oneof. Explicit zero, keyspace identity, global-barrier fields and store stats survive encoding. | `rust/crates/tidb-proto/src/lib.rs`, `rust/crates/tidb-pd-client/src/client/requests.rs` | Master's complete native `pdpb` owner; raw-wire regressions failed before removal. The PD mock-RPC test also distinguishes no scope from scope zero. See `complete-protocol-owner-repair.md`. |
+| P02 | **Schema ownership repaired:** all five handwritten projections are removed; the compared 400 omissions are gone. | Native PD/BR re-exports; complete descriptor-derived TiKV service; all pinned etcd API inputs and source gate. | `protocol-contracts-after.json` compares seven protobuf packages with zero omissions/contract differences. All 71 opaque TiKV fields remain separate intentional representations, with presence and zero-copy tests. This does not accept external Go helpers or runtime behavior as complete packages. |
+| P03 | The local PD client only follows PD member leadership and its PD Tso stream. It has no service-mode discovery/switching or independent TSO-service owner. | `rust/crates/tidb-pd-client/src/client/topology.rs:36`, `rust/crates/tidb-pd-client/src/tso.rs:207`, complete PD contract does not supply discovery | Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode. |
 
-P01's oneof mismatch is additional to the 400 omissions. The declaration audit
-covers all messages, nested messages, enums, fields and service methods in the
+The historical P01 oneof mismatch was additional to the 400 omissions. The historical declaration audit
+covered all messages, nested messages, enums, fields and service methods in the
 five compared packages, matching message fields by wire tag rather than by
 case-sensitive spelling. Its 472 records comprise 400 omissions, one PD
 contract mismatch and 71 TiKV opaque representations. It does not compare all
@@ -180,10 +180,11 @@ Exact commands from the repository root:
     python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master
     python3 rust/scripts/audit-protocol-projections.py --go-ref origin/master
 
-The second Python command compiles the five local projections and complete
-upstream schemas with protoc, compares their descriptors, and records the
-keyspace-zero wire example. It requires protoc and Go module-cache access.
-It only writes `protocol-projections.json`, never generated Rust or schemas.
+At that checkpoint the second Python command compared the five local
+projections and wrote `protocol-projections.json`. It now builds the complete
+Rust owners and compares their generated descriptors with upstream, writing
+`protocol-contracts-after.json`. The before-image is retained. It requires
+Cargo, protoc and Go module-cache access.
 
 Existing regression rerun from rust/:
 

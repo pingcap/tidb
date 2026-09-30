@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-09-30) Remove all five remaining handwritten PD/BR/TiKV/etcd schema projections and the handwritten MPP fixture stub owner; migrate all callers to complete native/descriptor/upstream contracts. P01/P02 contract gaps are repaired; external helper/runtime package acceptance remains open.
+- [x] Confirm three fail-before wire/identity regressions; 55 protocol tests, 45 PD and 423 transaction tests (10 already ignored), original Go package tests, every direct consumer target and root lint pass. Details: `parity/current-audit/complete-protocol-owner-repair.md`.
 
 - [x] Migrate ordinary/joined UPDATE and ODKU record writes to a shared owner; remove executor undo logs and route remaining session DML callers through statement staging.
 - [x] Reproduce alias/FK/ODKU/EXPLAIN rollback failures before fixes; preserve distinct per-target update tracking and base-row merging.
@@ -72,6 +74,21 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+
+The protocol-owner continuation removes all five remaining local projection
+files, rather than copying missing fields into them. PD and BR re-export the
+complete native generated packages. TiKV's RPC/envelope view derives from the
+complete native input descriptor; only batch body representation changes to
+Bytes, preserving tags/presence and buffer sharing. Complete etcd API inputs
+are pinned and checked by the existing synchronization workflow. Generated
+default server stubs replace mock-maintained unsupported-method lists, as Go
+embeds Unimplemented servers. The three new wire/identity regressions failed
+on integration 1203ee4487 before implementation. Source membership, descriptor
+coverage, real client request construction, existing wire tests, affected RPC
+fixtures, all-target checks, lint and both publication builds are required.
+Native generated files remain unchanged; full Go helper/runtime package
+acceptance and non-protocol structural findings remain separate.
 
 
 The next production milestone repairs the existing executor UPDATE owner at
@@ -911,3 +928,17 @@ package variants/original tests, distributed failure injection, the ten prior
 embedded baseline failures, multi-node/TLS interoperability and
 sysbench/TPC-C/TPC-H/YCSB remain unverified. The exhaustive audit is unfinished;
 41 records are all currently established findings, not a proof of no others.
+
+## Complete protocol-owner removal outcome
+
+The continuation removes all five remaining local projections and their stale
+field lists, plus the handwritten MPP UNIMPLEMENTED helper and repeated fixture
+forwarders. Actual generated descriptor comparison now reports zero omissions
+or contract mismatches; all 71 intentional opaque TiKV fields remain. Keyspace
+zero presence, new global GC fields, store stats and watch progress are retained.
+Complete inventories and source-membership gates prevent selected-schema drift.
+
+See `parity/current-audit/complete-protocol-owner-repair.md` for the complete
+change boundary, red/green evidence, commands and risks. Generated contracts
+do not supply PD service discovery, BR helper constants, etcd logging/gateway
+behavior or whole-package acceptance. The other structural findings stay open.

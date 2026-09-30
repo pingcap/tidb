@@ -511,7 +511,7 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
 }
 
 /// Replaces every top-level context field while preserving every other wire
-/// byte, including fields outside the dependency-closed local proto.
+/// byte, including fields introduced by a newer server schema.
 fn replace_top_level_context(
     encoded_request: &[u8],
     context: &KvrpcContext,

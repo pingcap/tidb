@@ -37,13 +37,13 @@ use tidb_proto::tikvpb::batch_commands_response::response::Cmd as ResponseCmd;
 use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{
-    CoprocessorRequest, CoprocessorResponse, KvrpcCheckTxnStatusRequest,
-    KvrpcCheckTxnStatusResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcDeadlock,
-    KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcLockInfo, KvrpcOp,
-    KvrpcPessimisticAction, KvrpcPessimisticLockKeyResult, KvrpcPessimisticLockKeyResultType,
-    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode,
-    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
-    KvrpcPrewriteResponse, KvrpcWaitForEntry, KvrpcWriteConflict,
+    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcCommitRequest,
+    KvrpcCommitResponse, KvrpcDeadlock, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError,
+    KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction, KvrpcPessimisticLockKeyResult,
+    KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPessimisticLockWakeUpMode, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcWaitForEntry, KvrpcWriteConflict,
 };
 use tidb_txnkv::lock::TimestampSource;
 use tidb_txnkv::region::{
@@ -396,57 +396,11 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
 
 #[tonic::async_trait]
 impl Tikv for ScriptedTikv {
-    type BatchCommandsStream =
-        tokio_stream::wrappers::ReceiverStream<Result<BatchCommandsResponse, tonic::Status>>;
-
-    // Go parity: `pkg/store/mockstore/unistore/tikv/server.go`'s `Server`
-    // embeds `tikvpb.UnimplementedTikvServer` so a `tikvpb.proto` addition
-    // (like this MPP RPC group) never breaks compilation; Rust has no
-    // embedding equivalent for a required trait method, so each method
-    // delegates to the shared stub in `tidb_proto::unimplemented_tikv`.
-    type EstablishMPPConnectionStream = tidb_proto::unimplemented_tikv::NeverStream;
-
-    async fn dispatch_mpp_task(
-        &self,
-        request: tonic::Request<tidb_proto::mpp::DispatchTaskRequest>,
-    ) -> Result<tonic::Response<tidb_proto::mpp::DispatchTaskResponse>, tonic::Status> {
-        tidb_proto::unimplemented_tikv::dispatch_mpp_task(request).await
-    }
-
-    async fn cancel_mpp_task(
-        &self,
-        request: tonic::Request<tidb_proto::mpp::CancelTaskRequest>,
-    ) -> Result<tonic::Response<tidb_proto::mpp::CancelTaskResponse>, tonic::Status> {
-        tidb_proto::unimplemented_tikv::cancel_mpp_task(request).await
-    }
-
-    async fn establish_mpp_connection(
-        &self,
-        request: tonic::Request<tidb_proto::mpp::EstablishMppConnectionRequest>,
-    ) -> Result<tonic::Response<Self::EstablishMPPConnectionStream>, tonic::Status> {
-        tidb_proto::unimplemented_tikv::establish_mpp_connection(request).await
-    }
-
-    async fn report_mpp_task_status(
-        &self,
-        request: tonic::Request<tidb_proto::mpp::ReportTaskStatusRequest>,
-    ) -> Result<tonic::Response<tidb_proto::mpp::ReportTaskStatusResponse>, tonic::Status> {
-        tidb_proto::unimplemented_tikv::report_mpp_task_status(request).await
-    }
-
-    async fn coprocessor(
-        &self,
-        _request: tonic::Request<CoprocessorRequest>,
-    ) -> Result<tonic::Response<CoprocessorResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "these sequences publish transaction commands only",
-        ))
-    }
-
     async fn batch_commands(
         &self,
         request: tonic::Request<tonic::Streaming<BatchCommandsRequest>>,
-    ) -> Result<tonic::Response<Self::BatchCommandsStream>, tonic::Status> {
+    ) -> Result<tonic::Response<tonic::codegen::BoxStream<BatchCommandsResponse>>, tonic::Status>
+    {
         let service = self.clone();
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(8);
@@ -493,9 +447,9 @@ impl Tikv for ScriptedTikv {
                 }
             }
         });
-        Ok(tonic::Response::new(
+        Ok(tonic::Response::new(Box::pin(
             tokio_stream::wrappers::ReceiverStream::new(response_rx),
-        ))
+        )))
     }
 }
 

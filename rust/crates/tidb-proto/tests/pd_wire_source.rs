@@ -192,3 +192,128 @@ fn bucket_and_scan_projection_keeps_every_pinned_source_tag() {
         batch
     );
 }
+
+#[test]
+fn pd_complete_owner_preserves_keyspace_zero_and_new_response_fields() {
+    // Native kvproto's oneof distinguishes keyspace zero from an absent arm.
+    for wire in [&[0x08, 0x00][..], &[0x12, 0x02, 0x08, 0x07][..]] {
+        let scope = pdpb::KeyspaceScope::decode(wire).unwrap();
+        assert_eq!(scope.encode_to_vec(), wire);
+    }
+    let wire = &[0x20, 0x01][..]; // include_global_gc_barriers
+    assert_eq!(
+        pdpb::GetGcStateRequest::decode(wire)
+            .unwrap()
+            .encode_to_vec(),
+        wire
+    );
+    let wire = &[0x1a, 0x00][..]; // present, empty global_gc_barriers
+    assert_eq!(
+        pdpb::GetGcStateResponse::decode(wire)
+            .unwrap()
+            .encode_to_vec(),
+        wire
+    );
+    let wire = &[0x1a, 0x02, 0x08, 0x09][..]; // stats.store_id
+    assert_eq!(
+        pdpb::GetStoreResponse::decode(wire)
+            .unwrap()
+            .encode_to_vec(),
+        wire
+    );
+}
+
+#[test]
+fn pd_and_backup_use_the_native_complete_type_identity() {
+    use std::any::TypeId;
+    assert_eq!(
+        TypeId::of::<pdpb::GetGcStateRequest>(),
+        TypeId::of::<tikv_client_kvproto::pdpb::GetGcStateRequest>()
+    );
+    assert_eq!(
+        TypeId::of::<tidb_proto::backup::StreamBackupTaskInfo>(),
+        TypeId::of::<tikv_client_kvproto::backup::StreamBackupTaskInfo>()
+    );
+}
+
+#[test]
+fn etcd_watch_progress_request_is_not_discarded() {
+    let wire = &[0x1a, 0x00][..];
+    let request = tidb_proto::etcdserverpb::WatchRequest::decode(wire).unwrap();
+    assert_eq!(request.encode_to_vec(), wire);
+}
+
+#[test]
+fn gc_global_barriers_preserve_the_original_go_compatibility_cases() {
+    // pdpb/get_gc_state_global_barriers_compat_test.go models the old wire
+    // schema locally too: its unknown new fields must remain optional.
+    #[derive(Clone, PartialEq, Message)]
+    struct LegacyRequest {
+        #[prost(message, optional, tag = "2")]
+        keyspace_scope: Option<pdpb::KeyspaceScope>,
+        #[prost(bool, tag = "3")]
+        exclude_gc_barriers: bool,
+    }
+    #[derive(Clone, PartialEq, Message)]
+    struct LegacyResponse {
+        #[prost(message, optional, tag = "2")]
+        gc_state: Option<pdpb::GcState>,
+    }
+    let scope = |id| pdpb::KeyspaceScope {
+        keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(id)),
+    };
+    let new_request = pdpb::GetGcStateRequest {
+        keyspace_scope: Some(scope(42)),
+        exclude_gc_barriers: true,
+        include_global_gc_barriers: true,
+        ..Default::default()
+    };
+    let legacy = LegacyRequest::decode(new_request.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(legacy.keyspace_scope, Some(scope(42)));
+    assert!(legacy.exclude_gc_barriers);
+    let old_request = LegacyRequest {
+        keyspace_scope: Some(scope(43)),
+        exclude_gc_barriers: true,
+    };
+    let decoded = pdpb::GetGcStateRequest::decode(old_request.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.keyspace_scope, Some(scope(43)));
+    assert!(decoded.exclude_gc_barriers);
+    assert!(!decoded.include_global_gc_barriers);
+
+    let mut new_response = pdpb::GetGcStateResponse {
+        gc_state: Some(pdpb::GcState {
+            gc_safe_point: 100,
+            ..Default::default()
+        }),
+        global_gc_barriers: Some(pdpb::GlobalGcBarriersInfo::default()),
+        ..Default::default()
+    };
+    let legacy = LegacyResponse::decode(new_response.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(legacy.gc_state.unwrap().gc_safe_point, 100);
+    let old_response = LegacyResponse {
+        gc_state: Some(pdpb::GcState {
+            gc_safe_point: 101,
+            ..Default::default()
+        }),
+    };
+    let decoded =
+        pdpb::GetGcStateResponse::decode(old_response.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.gc_state.unwrap().gc_safe_point, 101);
+    assert!(decoded.global_gc_barriers.is_none());
+    let decoded =
+        pdpb::GetGcStateResponse::decode(new_response.encode_to_vec().as_slice()).unwrap();
+    assert!(decoded.global_gc_barriers.unwrap().barriers.is_empty());
+    new_response
+        .global_gc_barriers
+        .as_mut()
+        .unwrap()
+        .barriers
+        .push(pdpb::GlobalGcBarrierInfo {
+            barrier_id: "backup".into(),
+            barrier_ts: 102,
+            ttl_seconds: 60,
+        });
+    let decoded =
+        pdpb::GetGcStateResponse::decode(new_response.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.global_gc_barriers, new_response.global_gc_barriers);
+}

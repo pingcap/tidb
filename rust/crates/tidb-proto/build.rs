@@ -1,79 +1,157 @@
 #![allow(missing_docs)]
 
+use prost::Message;
+use prost_types::{field_descriptor_proto::Type, FileDescriptorSet, OneofDescriptorProto};
 use std::path::{Path, PathBuf};
 
-fn tipb_sources(directory: &Path, sources: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(directory).expect("read upstream TiPB inputs") {
-        let path = entry.expect("read TiPB input path").path();
+const NATIVE: &str = "../../third_party/tikv-client-rs/proto";
+
+fn sources(directory: &Path, result: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(directory).expect("read upstream protocol inputs") {
+        let path = entry.expect("read protocol input path").path();
         if path.is_dir() {
-            // Imported protobuf/compiler options are inputs, not TiPB packages.
             if path.file_name().unwrap() != "include" {
-                tipb_sources(&path, sources);
+                sources(&path, result);
             }
         } else if path
             .extension()
             .is_some_and(|extension| extension == "proto")
         {
-            sources.push(path);
+            result.push(path);
         }
     }
 }
 
+fn native_service(package: &str) -> FileDescriptorSet {
+    let data = std::fs::read(
+        "../../third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin",
+    )
+    .expect("read native protocol descriptor");
+    let mut descriptors = FileDescriptorSet::decode(data.as_slice())
+        .expect("decode complete native protocol descriptor");
+    descriptors
+        .file
+        .retain(|file| file.package.as_deref() == Some(package));
+    descriptors
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=proto/tipb");
-    println!("cargo:rerun-if-changed=proto/tikvpb.proto");
-    println!("cargo:rerun-if-changed=proto/pdpb.proto");
-    println!("cargo:rerun-if-changed=proto/mvccpb.proto");
-    println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
-    println!("cargo:rerun-if-changed=proto/brpb.proto");
-
-    let mut sources = Vec::new();
-    tipb_sources(Path::new("proto/tipb"), &mut sources);
-    sources.sort();
-    sources.extend(
-        [
-            "proto/tikvpb.proto",
-            "proto/pdpb.proto",
-            "proto/mvccpb.proto",
-            "proto/etcdserverpb.proto",
-            "proto/brpb.proto",
-        ]
-        .map(PathBuf::from),
-    );
-
-    println!("cargo:rerun-if-changed=../../third_party/tikv-client-rs/proto");
+    println!("cargo:rerun-if-changed=proto/etcd");
+    println!("cargo:rerun-if-changed={NATIVE}");
+    println!("cargo:rerun-if-changed=../../third_party/tikv-client-rs/kvproto/src/generated");
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"));
+    let mut inputs = Vec::new();
+    sources(Path::new("proto/tipb"), &mut inputs);
+    sources(Path::new("proto/etcd"), &mut inputs);
+    inputs.sort();
     tonic_prost_build::configure()
-        // Use the complete client protocol packages, including imported message
-        // identities. A local projection silently discards fields on decoding.
-        .extern_path(".kvrpcpb", "::tikv_client_kvproto::kvrpcpb")
-        .extern_path(".errorpb", "::tikv_client_kvproto::errorpb")
-        .extern_path(".metapb", "::tikv_client_kvproto::metapb")
-        .extern_path(".encryptionpb", "::tikv_client_kvproto::encryptionpb")
-        .extern_path(".coprocessor", "::tikv_client_kvproto::coprocessor")
-        .extern_path(".mpp", "::tikv_client_kvproto::mpp")
         .build_client(true)
         .build_server(true)
-        // A coprocessor chunk's rows are sliced out of the response buffer
-        // the way Go's chunk decoder points columns at the gRPC message
-        // (`decodeColumn`: `col.data = buffer[:numDataBytes]`), so the
-        // payload is shared rather than copied on decode.
+        // Like Go's embedded Unimplemented server, a fixture overrides only
+        // its supported RPCs; new upstream methods keep the standard status.
+        .generate_default_stubs(true)
         .bytes(".tipb.Chunk.rows_data")
-        // A BatchCommands envelope carries each command's encoded body as
-        // opaque bytes; a response body is sliced out of the stream frame
-        // (the coprocessor response above then slices its data out of it)
-        // and a request body is handed over without a copy.
-        .bytes(".tikvpb.BatchCommandsRequest.Request")
-        .bytes(".tikvpb.BatchCommandsResponse.Response")
+        .file_descriptor_set_path(output.join("upstream_descriptor.bin"))
         .compile_protos(
-            &sources,
+            &inputs,
             &[
                 "proto/tipb",
                 "proto/tipb/include",
-                "proto",
-                "../../third_party/tikv-client-rs/proto",
+                // raft_internal.proto imports rpc.proto by its basename. Prefer
+                // this include before the module root so protoc assigns one name.
+                "proto/etcd/etcd/api/etcdserverpb",
+                "proto/etcd",
+                NATIVE,
                 "../../third_party/tikv-client-rs/proto/include",
             ]
             .map(PathBuf::from),
         )
-        .expect("compile checked-in TiDB protocol inputs");
+        .expect("compile complete TiPB and etcd inputs");
+
+    // All message and enum identities belong to the native client. This
+    // generated test-server adapter adds default stubs, without maintaining
+    // another request schema or a hand-written list of missing RPC methods.
+    let pd_output = output.join("pd-test-server");
+    std::fs::create_dir_all(&pd_output).expect("create test server output");
+    tonic_prost_build::configure()
+        .build_client(false)
+        .build_server(true)
+        .generate_default_stubs(true)
+        .extern_path(".pdpb", "::tikv_client_kvproto::pdpb")
+        .out_dir(pd_output)
+        .compile_fds(native_service("pdpb"))
+        .expect("generate complete PD test server");
+
+    let mut tikv = native_service("tikvpb");
+    for file in &mut tikv.file {
+        for message in &mut file.message_type {
+            // The transport multiplexes already encoded RPC bodies. Derive
+            // every oneof arm from upstream so new tags cannot be omitted.
+            if matches!(
+                message.name.as_deref(),
+                Some("BatchCommandsRequest" | "BatchCommandsResponse")
+            ) {
+                for nested in &mut message.nested_type {
+                    for field in &mut nested.field {
+                        if field.oneof_index.is_some() {
+                            assert_eq!(field.r#type, Some(Type::Message as i32));
+                            field.r#type = Some(Type::Bytes as i32);
+                            field.type_name = None;
+                        }
+                    }
+                }
+            }
+            if message.name.as_deref() == Some("BatchCommandsResponse") {
+                let field = message
+                    .field
+                    .iter_mut()
+                    .find(|field| field.name.as_deref() == Some("health_feedback"))
+                    .expect("upstream batch health feedback");
+                assert_eq!(field.r#type, Some(Type::Message as i32));
+                field.r#type = Some(Type::Bytes as i32);
+                field.type_name = None;
+                // A message has presence even when empty. Preserve that with
+                // proto3 optional bytes, including the synthetic oneof.
+                field.proto3_optional = Some(true);
+                field.oneof_index = Some(message.oneof_decl.len() as i32);
+                message.oneof_decl.push(OneofDescriptorProto {
+                    name: Some("_health_feedback".to_owned()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    std::fs::write(
+        output.join("tikv_transport_descriptor.bin"),
+        tikv.encode_to_vec(),
+    )
+    .expect("write transport contract descriptor");
+    let mut builder = tonic_prost_build::configure()
+        .build_client(true)
+        .build_server(true)
+        .generate_default_stubs(true)
+        .bytes(".tikvpb.BatchCommandsRequest.Request")
+        .bytes(".tikvpb.BatchCommandsResponse.Response");
+    // Resolve every imported protocol through the same native type owner.
+    // Include all native modules, not a selected set of today's RPC inputs.
+    let modules =
+        std::fs::read_to_string("../../third_party/tikv-client-rs/kvproto/src/generated/mod.rs")
+            .expect("read native generated module index");
+    for line in modules.lines() {
+        if let Some(package) = line
+            .strip_prefix("pub mod ")
+            .and_then(|line| line.strip_suffix(" {"))
+        {
+            if package != "tikvpb" {
+                builder = builder.extern_path(
+                    format!(".{package}"),
+                    format!("::tikv_client_kvproto::{package}"),
+                );
+            }
+        }
+    }
+    builder
+        .compile_fds(tikv)
+        .expect("generate complete TiKV transport view");
 }

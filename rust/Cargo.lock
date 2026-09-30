@@ -3959,7 +3959,7 @@ name = "tidb-proto"
 version = "0.0.0"
 dependencies = [
  "prost 0.14.4",
- "prost-build",
+ "prost-types 0.14.4",
  "tikv-client-kvproto",
  "tonic",
  "tonic-prost",

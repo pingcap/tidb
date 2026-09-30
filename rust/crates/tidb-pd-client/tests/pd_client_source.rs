@@ -26,11 +26,8 @@ use tidb_pd_client::{
     SCAN_REGIONS_PATH,
 };
 use tidb_proto::metapb;
-use tidb_proto::pdpb::{
-    self,
-    pd_server::{Pd, PdServer},
-};
-use tokio_stream::wrappers::ReceiverStream;
+use tidb_proto::pdpb;
+use tidb_proto::test_pd_server::{Pd, PdServer};
 
 const CLUSTER_ID: u64 = 42;
 const SELF_URL: &str = "http://127.0.0.1:0";
@@ -108,17 +105,6 @@ struct MockPd {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
-    type TsoStream = ReceiverStream<Result<pdpb::TsoResponse, tonic::Status>>;
-
-    async fn tso(
-        &self,
-        _request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
-    ) -> Result<tonic::Response<Self::TsoStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "this membership fixture does not serve TSO",
-        ))
-    }
-
     async fn get_members(
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,
@@ -163,6 +149,7 @@ impl Pd for MockPd {
                     Reply::Value(pdpb::GetStoreResponse {
                         header: Some(header(CLUSTER_ID)),
                         store: None,
+                        ..Default::default()
                     })
                 })
         };
@@ -438,6 +425,7 @@ fn store_response(
             status_address: String::new(),
             ..Default::default()
         }),
+        ..Default::default()
     }
 }
 
@@ -538,6 +526,7 @@ fn valid_state() -> State {
                 gc_safe_point: 448_000_000_000,
                 gc_barriers: Vec::new(),
             }),
+            ..Default::default()
         }),
         gc_state_requests: Vec::new(),
     }
@@ -848,23 +837,34 @@ fn gc_state_round_trips_the_txn_safe_point_and_reports_an_unimplemented_pd() {
     assert_eq!(state.gc_safe_point, 448_000_000_000);
     assert!(!state.is_keyspace_level_gc);
 
-    let keyspace_state = client.get_gc_state(Some(3)).unwrap();
-    assert_eq!(keyspace_state.txn_safe_point, 449_000_000_000);
+    for keyspace in [3, 0] {
+        let keyspace_state = client.get_gc_state(Some(keyspace)).unwrap();
+        assert_eq!(keyspace_state.txn_safe_point, 449_000_000_000);
+    }
 
     {
         let observed = server.state.lock().unwrap();
-        assert_eq!(observed.gc_state_requests.len(), 2);
+        assert_eq!(observed.gc_state_requests.len(), 3);
         for request in &observed.gc_state_requests {
             assert_exact_header(request.header.as_ref().unwrap());
             // A reader needs the resulting safe point, not the barrier list
             // that explains which owner is holding GC back.
             assert!(request.exclude_gc_barriers);
+            assert!(!request.include_global_gc_barriers);
         }
         // The null keyspace must be an absent scope, not keyspace 0.
         assert_eq!(observed.gc_state_requests[0].keyspace_scope, None);
         assert_eq!(
             observed.gc_state_requests[1].keyspace_scope,
-            Some(pdpb::KeyspaceScope { keyspace_id: 3 })
+            Some(pdpb::KeyspaceScope {
+                keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(3))
+            })
+        );
+        assert_eq!(
+            observed.gc_state_requests[2].keyspace_scope,
+            Some(pdpb::KeyspaceScope {
+                keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(0))
+            })
         );
     }
 
@@ -1660,6 +1660,7 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
                     error: Some(error),
                 }),
                 store: None,
+                ..Default::default()
             }),
         );
         assert_eq!(client.get_store(201).unwrap(), None);
@@ -1670,6 +1671,7 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
                 header: None,
                 store: store_response(201, metapb::StoreState::Up, metapb::NodeState::Serving)
                     .store,
+                ..Default::default()
             },
             "missing_header",
         ),
@@ -1678,6 +1680,7 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
                 header: Some(header(CLUSTER_ID + 1)),
                 store: store_response(201, metapb::StoreState::Up, metapb::NodeState::Serving)
                     .store,
+                ..Default::default()
             },
             "cluster_mismatch",
         ),
@@ -1697,6 +1700,7 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
             pdpb::GetStoreResponse {
                 header: Some(header(CLUSTER_ID)),
                 store: None,
+                ..Default::default()
             },
             "missing_store",
         ),

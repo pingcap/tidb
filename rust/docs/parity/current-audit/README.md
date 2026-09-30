@@ -21,10 +21,14 @@ before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
 consolidates 41 tracked ownership/contract findings, review candidates and the
-limits of the review. The [complete remaining protocol comparison](protocol-projections.json)
+limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
-Neither document claims that every repository semantic mismatch is known.
+The [replacement-owner comparison](protocol-contracts-after.json) now reports
+zero omissions/contract differences and retains the 71 opaque representations.
+See [the removal receipt](complete-protocol-owner-repair.md) for caller and
+validation coverage. Neither document claims that every repository semantic
+mismatch is known.
 
 The [session/executor follow-up](session-ownership-review.md) adds 12 findings
 against integration `960fa95b48` and the same Go master. Its retained SQL probe
@@ -51,7 +55,7 @@ package acceptance is included in this follow-up.
 | Region/cache/RPC algorithms have competing owners | `tidb-txnkv/src/driver/client_bridge.rs::ClientPd` delegates to TiDB routing/recovery/transport while client-rust also implements these algorithms. DistSQL still needs TiDB capabilities. | Open architecture migration. Duplication alone is not proof of a runtime failure; native RetryBackoffer already owns RegionBackoffBudget. |
 | Background lifetime still has request-type inference | The bridge retains a TxnHeartBeatRequest exception; additional pipelined/transaction-file cleanup paths need explicit operation scopes like Go's owners. | Open; the concrete native patch was rejected by automatic approval review and remains unapplied pending its separately requested approval. Foreground ResolveLock must remain cancellable. |
 | Alternate storage session dispatch remains incomplete | The lightweight path's supported SET assignments now use the normal parser, but its transaction mode/autocommit lifecycle is not fully unified with the ordinary session owner. | Review required at session package scope; do not delete a dispatcher before migrating all its callers. |
-| Other locally projected protocol packages | PD, the local TiKV service, etcd and BR inputs remain local projections. | Declaration audit now records 400 omissions and one PD presence mismatch; 71 opaque representations are separate. See P01–P03 in structural-findings.md. Runtime/package acceptance remains open; mvccpb has no compared declaration differences. |
+| Other locally projected protocol packages | Five local PD/TiKV/BR/etcd projections caused 400 omissions and a PD presence mismatch. | Removed. Complete native ownership, descriptor-derived TiKV transport and full pinned etcd inputs eliminate the compared gaps; all 71 opaque representations retain presence. P01/P02 contract ownership repaired; P03 discovery and external package/runtime acceptance remain open. |
 
 The earlier five diff comments (explicit lock retry limits, secondary retry
 budget, locked snapshot commit timestamps, mock wake-up semantics and detached

@@ -21,10 +21,8 @@ use std::time::Duration;
 
 use tidb_codec::encode_bytes;
 use tidb_proto::metapb;
-use tidb_proto::pdpb::{
-    self,
-    pd_server::{Pd, PdServer},
-};
+use tidb_proto::pdpb;
+use tidb_proto::test_pd_server::{Pd, PdServer};
 use tidb_txnkv::driver::tikv_pd_bridge::TidbPdBridge;
 use tidb_txnkv::region::{
     BatchLoadOptions, BatchScanBackoff, BatchScanRetryReason, KeyRange, RegionCache, RegionLoader,
@@ -35,7 +33,6 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::PdRegionLoader;
 use tikv_client::RegionCache as EngineRegionCache;
-use tokio_stream::wrappers::ReceiverStream;
 
 const CLUSTER_ID: u64 = 84;
 
@@ -89,17 +86,6 @@ struct State {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
-    type TsoStream = ReceiverStream<Result<pdpb::TsoResponse, tonic::Status>>;
-
-    async fn tso(
-        &self,
-        _request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
-    ) -> Result<tonic::Response<Self::TsoStream>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "this region-loader fixture does not serve TSO",
-        ))
-    }
-
     async fn get_members(
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,
@@ -185,20 +171,6 @@ impl Pd for MockPd {
             return Err(tonic::Status::unimplemented("legacy PD"));
         }
         Ok(tonic::Response::new(state.batch_scan_regions.clone()))
-    }
-
-    async fn get_gc_state(
-        &self,
-        _request: tonic::Request<pdpb::GetGcStateRequest>,
-    ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetGCState"))
-    }
-
-    async fn get_all_stores(
-        &self,
-        _request: tonic::Request<pdpb::GetAllStoresRequest>,
-    ) -> Result<tonic::Response<pdpb::GetAllStoresResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetAllStores"))
     }
 
     async fn get_store(
@@ -647,6 +619,7 @@ fn removed_follower_is_filtered_without_hiding_a_healthy_leader() {
                 }),
             }),
             store: None,
+            ..Default::default()
         },
     );
     let server = Server::start(state);
@@ -1102,6 +1075,7 @@ fn store_response(
             status_address: String::new(),
             ..Default::default()
         }),
+        ..Default::default()
     }
 }
 

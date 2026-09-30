@@ -1,7 +1,7 @@
 {
-  "go_master": "6b2781326b722f217a61852ab403350858549bd0",
+  "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
   "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
-  "integration": "complete existing generated packages; one native type identity",
+  "integration": "complete native packages; shared types and descriptor-derived TiKV transport",
   "packages": {
     "kvrpcpb": {
       "go_artifacts": [
@@ -82,6 +82,53 @@
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/mpp.rs",
         "sha256": "ede302e01053d2254678840704cecf33e4c58d083daf7b3011291c416986dcfa"
+      },
+      "integration": "whole-package re-export and prost extern_path"
+    },
+    "pdpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/pdpb/get_gc_state_global_barriers_compat_test.go",
+          "sha256": "6784f3c728bbe8cad28ad1324a0eb67ccceab61cb197ae862abfca2a5217c4e6"
+        },
+        {
+          "path": "pkg/pdpb/pdpb.pb.go",
+          "sha256": "c69aefe0a670ddc58786db7604b64d9a4d74e5c07ff01910187b704c73366589"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/pdpb.rs",
+        "sha256": "f9e00de6add3d6f7148358d5618c8b2468abca1a7b4769ae481a83d75ddaff9a"
+      },
+      "integration": "whole-package re-export and prost extern_path"
+    },
+    "tikvpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/tikvpb/tikvpb.pb.go",
+          "sha256": "cfe29a2b9c0a58af4224972f4e8f327f1d49e92f7748a4a90a8345fbe891b944"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/tikvpb.rs",
+        "sha256": "2cae574a36cc46c6d996f67010cb8ecec6f6d9030993b937eed2880e1a944ba3"
+      },
+      "integration": "complete descriptor-derived transport with opaque batch bodies"
+    },
+    "brpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/brpb/backup_schema_version.go",
+          "sha256": "c5fc97ab47cf46abdf79db0a5eb4445e0744fc77a9a76fedeb481963d0694750"
+        },
+        {
+          "path": "pkg/brpb/brpb.pb.go",
+          "sha256": "5f2b3777779ce1e056da715381fa8a5701068ae6f23dd9eea583ba518dcb791f"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/backup.rs",
+        "sha256": "905e60ab406dd971be438a2be2b176752ade39642973972b686c4ccb7cde6250"
       },
       "integration": "whole-package re-export and prost extern_path"
     }

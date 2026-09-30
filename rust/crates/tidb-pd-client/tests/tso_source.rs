@@ -21,10 +21,8 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_pd_client::{PdClient, TSO_PATH};
-use tidb_proto::pdpb::{
-    self,
-    pd_server::{Pd, PdServer},
-};
+use tidb_proto::pdpb;
+use tidb_proto::test_pd_server::{Pd, PdServer};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 
 const CLUSTER_ID: u64 = 42;
@@ -84,12 +82,10 @@ struct MockPd {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
-    type TsoStream = ReceiverStream<Result<pdpb::TsoResponse, tonic::Status>>;
-
     async fn tso(
         &self,
         request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
-    ) -> Result<tonic::Response<Self::TsoStream>, tonic::Status> {
+    ) -> Result<tonic::Response<tonic::codegen::BoxStream<pdpb::TsoResponse>>, tonic::Status> {
         self.state.lock().unwrap().stream_opens += 1;
         let state = Arc::clone(&self.state);
         let mut requests = request.into_inner();
@@ -177,7 +173,9 @@ impl Pd for MockPd {
                 }
             }
         });
-        Ok(tonic::Response::new(ReceiverStream::new(response_rx)))
+        Ok(tonic::Response::new(Box::pin(ReceiverStream::new(
+            response_rx,
+        ))))
     }
 
     async fn get_members(
@@ -196,62 +194,6 @@ impl Pd for MockPd {
             leader: Some(member),
             ..pdpb::GetMembersResponse::default()
         }))
-    }
-
-    async fn get_gc_state(
-        &self,
-        _request: tonic::Request<pdpb::GetGcStateRequest>,
-    ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetGCState"))
-    }
-
-    async fn get_all_stores(
-        &self,
-        _request: tonic::Request<pdpb::GetAllStoresRequest>,
-    ) -> Result<tonic::Response<pdpb::GetAllStoresResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetAllStores"))
-    }
-
-    async fn get_store(
-        &self,
-        _request: tonic::Request<pdpb::GetStoreRequest>,
-    ) -> Result<tonic::Response<pdpb::GetStoreResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetStore"))
-    }
-
-    async fn get_region(
-        &self,
-        _request: tonic::Request<pdpb::GetRegionRequest>,
-    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetRegion"))
-    }
-
-    async fn get_prev_region(
-        &self,
-        _request: tonic::Request<pdpb::GetRegionRequest>,
-    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetPrevRegion"))
-    }
-
-    async fn get_region_by_id(
-        &self,
-        _request: tonic::Request<pdpb::GetRegionByIdRequest>,
-    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused GetRegionByID"))
-    }
-
-    async fn scan_regions(
-        &self,
-        _request: tonic::Request<pdpb::ScanRegionsRequest>,
-    ) -> Result<tonic::Response<pdpb::ScanRegionsResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused ScanRegions"))
-    }
-
-    async fn batch_scan_regions(
-        &self,
-        _request: tonic::Request<pdpb::BatchScanRegionsRequest>,
-    ) -> Result<tonic::Response<pdpb::BatchScanRegionsResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented("unused BatchScanRegions"))
     }
 }
 

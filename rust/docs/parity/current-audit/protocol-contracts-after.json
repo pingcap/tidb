@@ -1,0 +1,1663 @@
+{
+  "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+  "integration": "1203ee4487cb6095b0e7e73b0770743999fd6259",
+  "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+  "etcd_api": "v3.5.15",
+  "protoc": "libprotoc 35.1",
+  "scope": "Descriptor declarations, fields matched by wire tag, oneofs, defaults, enums and RPCs of all replacement protocol owners. Field spelling/JSON names are not compared. Generator options, reserved ranges, runtime behavior and dependency-package acceptance are not certified. Message-to-bytes changes are representations, not automatically wire defects.",
+  "keyspace_zero_wire_hex": {
+    "local": "0800",
+    "upstream": "0800"
+  },
+  "inputs": {
+    "native_descriptor": "dd2f2687d2f6dcb8d2209636da5234820ff705f287b719d73a0802fd6de9ee12",
+    "transport_descriptor": "9e4556aad4ae6748b3f345d4d752d356ac404d955faddae401901f089fdb8305",
+    "upstream_descriptor": "4476df8314bf0878d6973130bdf1fe78ffeb2942cc3fa6b1c20684cdca8922a0"
+  },
+  "counts": {
+    "authpb": {},
+    "backup": {},
+    "etcdserverpb": {},
+    "membershippb": {},
+    "mvccpb": {},
+    "pdpb": {},
+    "tikvpb": {
+      "opaque message representation": 71
+    }
+  },
+  "differences": [
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Get",
+      "difference": "opaque message representation",
+      "local_name": "Get",
+      "upstream": {
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 1,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Scan",
+      "difference": "opaque message representation",
+      "local_name": "Scan",
+      "upstream": {
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 2,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Prewrite",
+      "difference": "opaque message representation",
+      "local_name": "Prewrite",
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrewriteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 3,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Commit",
+      "difference": "opaque message representation",
+      "local_name": "Commit",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CommitRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Import",
+      "difference": "opaque message representation",
+      "local_name": "Import",
+      "upstream": {
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ImportRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 5,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Cleanup",
+      "difference": "opaque message representation",
+      "local_name": "Cleanup",
+      "upstream": {
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CleanupRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 6,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BatchGet",
+      "difference": "opaque message representation",
+      "local_name": "BatchGet",
+      "upstream": {
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 7,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BatchRollback",
+      "difference": "opaque message representation",
+      "local_name": "BatchRollback",
+      "upstream": {
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchRollbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 8,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.ScanLock",
+      "difference": "opaque message representation",
+      "local_name": "ScanLock",
+      "upstream": {
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 9,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.ResolveLock",
+      "difference": "opaque message representation",
+      "local_name": "ResolveLock",
+      "upstream": {
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ResolveLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 10,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.GC",
+      "difference": "opaque message representation",
+      "local_name": "GC",
+      "upstream": {
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GCRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 11,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.DeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "DeleteRange",
+      "upstream": {
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.DeleteRangeRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 12,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawGet",
+      "difference": "opaque message representation",
+      "local_name": "RawGet",
+      "upstream": {
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 13,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchGet",
+      "upstream": {
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 14,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawPut",
+      "difference": "opaque message representation",
+      "local_name": "RawPut",
+      "upstream": {
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawPutRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 15,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchPut",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchPut",
+      "upstream": {
+        "number": 16,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchPutRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 16,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawDelete",
+      "difference": "opaque message representation",
+      "local_name": "RawDelete",
+      "upstream": {
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 17,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchDelete",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchDelete",
+      "upstream": {
+        "number": 18,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchDeleteRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 18,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawScan",
+      "difference": "opaque message representation",
+      "local_name": "RawScan",
+      "upstream": {
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 19,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawDeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "RawDeleteRange",
+      "upstream": {
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRangeRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 20,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawBatchScan",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchScan",
+      "upstream": {
+        "number": 21,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchScanRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 21,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Coprocessor",
+      "difference": "opaque message representation",
+      "local_name": "Coprocessor",
+      "upstream": {
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".coprocessor.Request",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 22,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PessimisticLock",
+      "difference": "opaque message representation",
+      "local_name": "PessimisticLock",
+      "upstream": {
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticLockRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 23,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PessimisticRollback",
+      "difference": "opaque message representation",
+      "local_name": "PessimisticRollback",
+      "upstream": {
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticRollbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 24,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.CheckTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "CheckTxnStatus",
+      "upstream": {
+        "number": 25,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckTxnStatusRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 25,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.TxnHeartBeat",
+      "difference": "opaque message representation",
+      "local_name": "TxnHeartBeat",
+      "upstream": {
+        "number": 26,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.TxnHeartBeatRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 26,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.CheckSecondaryLocks",
+      "difference": "opaque message representation",
+      "local_name": "CheckSecondaryLocks",
+      "upstream": {
+        "number": 33,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckSecondaryLocksRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 33,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.RawCoprocessor",
+      "difference": "opaque message representation",
+      "local_name": "RawCoprocessor",
+      "upstream": {
+        "number": 34,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawCoprocessorRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 34,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.FlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "FlashbackToVersion",
+      "upstream": {
+        "number": 35,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlashbackToVersionRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 35,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.PrepareFlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "PrepareFlashbackToVersion",
+      "upstream": {
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrepareFlashbackToVersionRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 36,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Flush",
+      "difference": "opaque message representation",
+      "local_name": "Flush",
+      "upstream": {
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlushRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 37,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BufferBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "BufferBatchGet",
+      "upstream": {
+        "number": 38,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BufferBatchGetRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 38,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.GetHealthFeedback",
+      "difference": "opaque message representation",
+      "local_name": "GetHealthFeedback",
+      "upstream": {
+        "number": 39,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetHealthFeedbackRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 39,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.BroadcastTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "BroadcastTxnStatus",
+      "upstream": {
+        "number": 40,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BroadcastTxnStatusRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 40,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsRequest.Request.Empty",
+      "difference": "opaque message representation",
+      "local_name": "Empty",
+      "upstream": {
+        "number": 255,
+        "label": 1,
+        "type": 11,
+        "type_name": ".tikvpb.BatchCommandsEmptyRequest",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 255,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.health_feedback",
+      "difference": "opaque message representation",
+      "local_name": "health_feedback",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.HealthFeedback",
+        "oneof": null,
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "_health_feedback",
+        "proto3_optional": true,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Get",
+      "difference": "opaque message representation",
+      "local_name": "Get",
+      "upstream": {
+        "number": 1,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 1,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Scan",
+      "difference": "opaque message representation",
+      "local_name": "Scan",
+      "upstream": {
+        "number": 2,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 2,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Prewrite",
+      "difference": "opaque message representation",
+      "local_name": "Prewrite",
+      "upstream": {
+        "number": 3,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrewriteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 3,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Commit",
+      "difference": "opaque message representation",
+      "local_name": "Commit",
+      "upstream": {
+        "number": 4,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CommitResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 4,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Import",
+      "difference": "opaque message representation",
+      "local_name": "Import",
+      "upstream": {
+        "number": 5,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ImportResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 5,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Cleanup",
+      "difference": "opaque message representation",
+      "local_name": "Cleanup",
+      "upstream": {
+        "number": 6,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CleanupResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 6,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BatchGet",
+      "difference": "opaque message representation",
+      "local_name": "BatchGet",
+      "upstream": {
+        "number": 7,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 7,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BatchRollback",
+      "difference": "opaque message representation",
+      "local_name": "BatchRollback",
+      "upstream": {
+        "number": 8,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BatchRollbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 8,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.ScanLock",
+      "difference": "opaque message representation",
+      "local_name": "ScanLock",
+      "upstream": {
+        "number": 9,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ScanLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 9,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.ResolveLock",
+      "difference": "opaque message representation",
+      "local_name": "ResolveLock",
+      "upstream": {
+        "number": 10,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.ResolveLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 10,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.GC",
+      "difference": "opaque message representation",
+      "local_name": "GC",
+      "upstream": {
+        "number": 11,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GCResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 11,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.DeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "DeleteRange",
+      "upstream": {
+        "number": 12,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.DeleteRangeResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 12,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawGet",
+      "difference": "opaque message representation",
+      "local_name": "RawGet",
+      "upstream": {
+        "number": 13,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 13,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchGet",
+      "upstream": {
+        "number": 14,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 14,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawPut",
+      "difference": "opaque message representation",
+      "local_name": "RawPut",
+      "upstream": {
+        "number": 15,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawPutResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 15,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchPut",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchPut",
+      "upstream": {
+        "number": 16,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchPutResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 16,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawDelete",
+      "difference": "opaque message representation",
+      "local_name": "RawDelete",
+      "upstream": {
+        "number": 17,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 17,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchDelete",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchDelete",
+      "upstream": {
+        "number": 18,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchDeleteResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 18,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawScan",
+      "difference": "opaque message representation",
+      "local_name": "RawScan",
+      "upstream": {
+        "number": 19,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 19,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawDeleteRange",
+      "difference": "opaque message representation",
+      "local_name": "RawDeleteRange",
+      "upstream": {
+        "number": 20,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawDeleteRangeResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 20,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawBatchScan",
+      "difference": "opaque message representation",
+      "local_name": "RawBatchScan",
+      "upstream": {
+        "number": 21,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawBatchScanResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 21,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Coprocessor",
+      "difference": "opaque message representation",
+      "local_name": "Coprocessor",
+      "upstream": {
+        "number": 22,
+        "label": 1,
+        "type": 11,
+        "type_name": ".coprocessor.Response",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 22,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PessimisticLock",
+      "difference": "opaque message representation",
+      "local_name": "PessimisticLock",
+      "upstream": {
+        "number": 23,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticLockResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 23,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PessimisticRollback",
+      "difference": "opaque message representation",
+      "local_name": "PessimisticRollback",
+      "upstream": {
+        "number": 24,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PessimisticRollbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 24,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.CheckTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "CheckTxnStatus",
+      "upstream": {
+        "number": 25,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckTxnStatusResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 25,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.TxnHeartBeat",
+      "difference": "opaque message representation",
+      "local_name": "TxnHeartBeat",
+      "upstream": {
+        "number": 26,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.TxnHeartBeatResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 26,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.CheckSecondaryLocks",
+      "difference": "opaque message representation",
+      "local_name": "CheckSecondaryLocks",
+      "upstream": {
+        "number": 33,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.CheckSecondaryLocksResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 33,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.RawCoprocessor",
+      "difference": "opaque message representation",
+      "local_name": "RawCoprocessor",
+      "upstream": {
+        "number": 34,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.RawCoprocessorResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 34,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.FlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "FlashbackToVersion",
+      "upstream": {
+        "number": 35,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlashbackToVersionResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 35,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.PrepareFlashbackToVersion",
+      "difference": "opaque message representation",
+      "local_name": "PrepareFlashbackToVersion",
+      "upstream": {
+        "number": 36,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.PrepareFlashbackToVersionResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 36,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Flush",
+      "difference": "opaque message representation",
+      "local_name": "Flush",
+      "upstream": {
+        "number": 37,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.FlushResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 37,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BufferBatchGet",
+      "difference": "opaque message representation",
+      "local_name": "BufferBatchGet",
+      "upstream": {
+        "number": 38,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BufferBatchGetResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 38,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.GetHealthFeedback",
+      "difference": "opaque message representation",
+      "local_name": "GetHealthFeedback",
+      "upstream": {
+        "number": 39,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.GetHealthFeedbackResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 39,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.BroadcastTxnStatus",
+      "difference": "opaque message representation",
+      "local_name": "BroadcastTxnStatus",
+      "upstream": {
+        "number": 40,
+        "label": 1,
+        "type": 11,
+        "type_name": ".kvrpcpb.BroadcastTxnStatusResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 40,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    },
+    {
+      "name": ".tikvpb.BatchCommandsResponse.Response.Empty",
+      "difference": "opaque message representation",
+      "local_name": "Empty",
+      "upstream": {
+        "number": 255,
+        "label": 1,
+        "type": 11,
+        "type_name": ".tikvpb.BatchCommandsEmptyResponse",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      },
+      "local": {
+        "number": 255,
+        "label": 1,
+        "type": 12,
+        "type_name": "",
+        "oneof": "cmd",
+        "proto3_optional": false,
+        "default": ""
+      }
+    }
+  ]
+}

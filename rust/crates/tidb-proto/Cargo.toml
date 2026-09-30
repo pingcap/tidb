@@ -13,8 +13,12 @@ tonic-prost.workspace = true
 tikv-client-kvproto = { path = "../../third_party/tikv-client-rs/kvproto" }
 
 [build-dependencies]
-prost-build.workspace = true
+prost.workspace = true
+prost-types = "0.14.4"
 tonic-prost-build.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+prost-types = "0.14.4"

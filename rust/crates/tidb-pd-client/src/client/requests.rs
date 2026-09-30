@@ -316,10 +316,13 @@ pub(super) fn get_gc_state(
         PdOperation::GetGcState,
         client.get_gc_state(pdpb::GetGcStateRequest {
             header: Some(request_header(cluster_id)),
-            keyspace_scope: keyspace_id.map(|keyspace_id| pdpb::KeyspaceScope { keyspace_id }),
+            keyspace_scope: keyspace_id.map(|keyspace_id| pdpb::KeyspaceScope {
+                keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(keyspace_id)),
+            }),
             // The barriers describe which components still hold GC back. A
             // reading client only needs the resulting txn safe point.
             exclude_gc_barriers: true,
+            ..Default::default()
         }),
     );
     let response =

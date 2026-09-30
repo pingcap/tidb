@@ -16,7 +16,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 NATIVE = ROOT / "rust/third_party/tikv-client-rs"
 RECEIPT = ROOT / "rust/docs/shared-client-contracts-inventory.json"
 MODULE = "github.com/pingcap/kvproto"
-PACKAGES = ("kvrpcpb", "errorpb", "metapb", "encryptionpb", "coprocessor", "mpp")
+PACKAGES = {name: name for name in ("kvrpcpb", "errorpb", "metapb", "encryptionpb", "coprocessor", "mpp", "pdpb", "tikvpb")}
+PACKAGES["brpb"] = "backup"
 
 
 def run(*args):
@@ -72,12 +73,13 @@ def main():
             raise ValueError(f"stale or extra native kvproto inputs: {sorted(map(str, extra))}")
         receipt = {
             "go_master": revision, "kvproto": pin,
-            "integration": "complete existing generated packages; one native type identity",
+            "integration": "complete native packages; shared types and descriptor-derived TiKV transport",
             "packages": {name: {
                 "go_artifacts": [artifact(p, upstream) for p in sorted((upstream / "pkg" / name).rglob("*")) if p.is_file()],
-                "rust_output": artifact(NATIVE / f"kvproto/src/generated/{name}.rs", ROOT),
-                "integration": "whole-package re-export and prost extern_path",
-            } for name in PACKAGES},
+                "rust_output": artifact(NATIVE / f"kvproto/src/generated/{rust_name}.rs", ROOT),
+                "integration": ("complete descriptor-derived transport with opaque batch bodies" if name == "tikvpb"
+                                else "whole-package re-export and prost extern_path"),
+            } for name, rust_name in PACKAGES.items()},
             "module_artifacts": [artifact(p, upstream) for p in sorted(upstream.rglob("*")) if p.is_file()],
             "build_inputs": [artifact(NATIVE / name, ROOT) for name in (
                 "proto-build/src/main.rs", "proto-build/Cargo.toml", "kvproto/src/lib.rs",

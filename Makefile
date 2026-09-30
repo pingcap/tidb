@@ -95,6 +95,7 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: rust_proto_check
 rust_proto_check:
 	python3 rust/scripts/sync-tipb.py
+	python3 rust/scripts/sync-tipb.py --etcd-api
 	python3 rust/scripts/check-shared-client-proto.py
 	python3 -m unittest discover -s rust/scripts/tests -p test_tipb_sync.py
 

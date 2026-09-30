@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare complete upstream descriptors with the five local protocol projections.
+"""Compare complete upstream descriptors with the generated Rust protocol owners.
 
-Run from the repository root with --go-ref origin/master. Requires protoc and
-Go module-cache access; production sources and generated Rust are never edited.
+Run from the repository root with --go-ref origin/master. Requires Cargo, protoc and
+Go module-cache access; checked-in sources and generated Rust are never edited.
 The resulting JSON distinguishes omitted contracts from deliberate opaque wire
 representations, and records a reproducible keyspace-zero presence example.
 """
@@ -26,12 +26,12 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-OUT = ROOT / 'rust/docs/parity/current-audit/protocol-projections.json'
-LOCAL = ROOT / 'rust/crates/tidb-proto/proto'
+OUT = ROOT / 'rust/docs/parity/current-audit/protocol-contracts-after.json'
 
 def run(*args, **kwargs):
     return subprocess.check_output(args, cwd=ROOT, **kwargs)
@@ -142,7 +142,7 @@ def compile_proto(directory, names, includes, output):
     return output.read_bytes()
 
 def main():
-    parser = argparse.ArgumentParser(description='Audit the five remaining local protocol projections; no package acceptance is inferred.')
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--go-ref', required=True)
     args = parser.parse_args()
     revision = run('git', 'rev-parse', args.go_ref + '^{commit}').decode().strip()
@@ -156,15 +156,30 @@ def main():
     etcdpin = pin('go.etcd.io/etcd/api/v3')
     kv = module('github.com/pingcap/kvproto', kvpin)
     etcd = module('go.etcd.io/etcd/api/v3', etcdpin)
-    packages = {'pdpb', 'tikvpb', 'backup', 'etcdserverpb', 'mvccpb'}
+    packages = {'pdpb', 'tikvpb', 'backup', 'etcdserverpb', 'mvccpb', 'authpb', 'membershippb'}
+    build = run('cargo', 'check', '--locked', '--manifest-path', 'rust/Cargo.toml',
+                '-p', 'tidb-proto', '--message-format=json').decode()
+    outputs = {record['out_dir'] for line in build.splitlines()
+               if (record := json.loads(line)).get('reason') == 'build-script-executed'
+               and 'tidb-proto' in record['package_id']}
+    if len(outputs) != 1:
+        raise ValueError(f'expected one tidb-proto build output, found {outputs}')
+    generated = pathlib.Path(outputs.pop())
+    native = ROOT / 'rust/third_party/tikv-client-rs/kvproto/src/generated/file_descriptor_set.bin'
     with tempfile.TemporaryDirectory(prefix='tidb-proto-audit-') as tmp:
         tmp = pathlib.Path(tmp)
-        (tmp / 'etcd').mkdir()
-        (tmp / 'etcd/api').symlink_to(etcd, target_is_directory=True)
-        local_names = ['pdpb.proto', 'tikvpb.proto', 'brpb.proto', 'etcdserverpb.proto', 'mvccpb.proto']
-        local = declarations(compile_proto(LOCAL, local_names, [kv/'proto', kv/'include'], tmp/'local.bin'), packages)
+        for source in etcd.rglob('*.proto'):
+            target = tmp / 'etcd/api' / source.relative_to(etcd)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        local = declarations(native.read_bytes(), {'pdpb', 'backup'})
+        local.update(declarations((generated / 'tikv_transport_descriptor.bin').read_bytes(), {'tikvpb'}))
+        local.update(declarations((generated / 'upstream_descriptor.bin').read_bytes(), packages))
         upstream = declarations(compile_proto(kv/'proto', ['pdpb.proto', 'tikvpb.proto', 'brpb.proto'], [kv/'include'], tmp/'kv.bin'), packages)
-        upstream.update(declarations(compile_proto(tmp, ['etcd/api/etcdserverpb/rpc.proto', 'etcd/api/mvccpb/kv.proto'], [kv/'include'], tmp/'etcd.bin'), packages))
+        run('protoc', '-I' + str(tmp/'etcd/api/etcdserverpb'), '-I' + str(tmp), '-I' + str(kv/'include'),
+            '--include_imports', '--descriptor_set_out=' + str(tmp/'etcd.bin'),
+            *map(str, sorted((tmp/'etcd').rglob('*.proto'))))
+        upstream.update(declarations((tmp/'etcd.bin').read_bytes(), packages))
         differences = []
         for name, go in sorted(upstream.items()):
             rust = local.get(name)
@@ -194,20 +209,26 @@ def main():
         for name in sorted(local.keys() - upstream.keys()):
             differences.append({'name': name, 'difference': 'extra ' + local[name]['kind']})
         wire_examples = {}
-        for label, descriptor in [('local', tmp/'local.bin'), ('upstream', tmp/'kv.bin')]:
+        for label, descriptor in [('local', native), ('upstream', tmp/'kv.bin')]:
             wire_examples[label] = run('protoc', '--descriptor_set_in=' + str(descriptor),
                 '--encode=pdpb.KeyspaceScope', input=b'keyspace_id: 0').hex()
-        inputs = {}
-        for label, base, names in [('local',LOCAL,local_names),('kvproto',kv/'proto',['pdpb.proto','tikvpb.proto','brpb.proto']),('etcd',etcd,['etcdserverpb/rpc.proto','mvccpb/kv.proto'])]:
-            inputs[label] = [{'path': name, 'sha256': hashlib.sha256((base/name).read_bytes()).hexdigest()} for name in names]
+        inputs = {
+            'native_descriptor': hashlib.sha256(native.read_bytes()).hexdigest(),
+            'transport_descriptor': hashlib.sha256((generated/'tikv_transport_descriptor.bin').read_bytes()).hexdigest(),
+            'upstream_descriptor': hashlib.sha256((generated/'upstream_descriptor.bin').read_bytes()).hexdigest(),
+        }
         counts = {p: dict(collections.Counter(d['difference'] for d in differences if d['name'].split('.')[1] == p)) for p in sorted(packages)}
         report = {'go_master': revision, 'integration': run('git','rev-parse','HEAD').decode().strip(),
             'kvproto': kvpin, 'etcd_api': etcdpin, 'protoc': run('protoc','--version').decode().strip(),
-            'scope': 'Descriptor declarations, fields matched by wire tag, oneofs, defaults, enums and RPCs of five remaining local projections. Field spelling/JSON names are not compared. Generator options, reserved ranges, runtime behavior and dependency-package acceptance are not certified. Message-to-bytes changes are representations, not automatically wire defects.',
+            'scope': 'Descriptor declarations, fields matched by wire tag, oneofs, defaults, enums and RPCs of all replacement protocol owners. Field spelling/JSON names are not compared. Generator options, reserved ranges, runtime behavior and dependency-package acceptance are not certified. Message-to-bytes changes are representations, not automatically wire defects.',
             'keyspace_zero_wire_hex': wire_examples, 'inputs': inputs, 'counts': counts, 'differences': differences}
         OUT.write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(counts, indent=2))
         print('differences', len(differences))
+        if any(item['difference'] != 'opaque message representation' for item in differences):
+            raise ValueError('Rust protocol owners differ from upstream contracts')
+        if wire_examples['local'] != wire_examples['upstream']:
+            raise ValueError('keyspace zero loses presence')
 
 
 if __name__ == "__main__":

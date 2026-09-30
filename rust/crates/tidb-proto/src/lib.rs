@@ -37,7 +37,7 @@ pub mod kvrpcpb {
     pub use tikv_client_kvproto::metapb::{Peer, RegionEpoch};
 }
 
-/// The generated dependency-closed TiKV gRPC service package.
+/// Complete TiKV service derived from the native descriptor with opaque batch bodies.
 pub mod tikvpb {
     include!(concat!(env!("OUT_DIR"), "/tikvpb.rs"));
 }
@@ -45,20 +45,25 @@ pub mod tikvpb {
 /// Complete region metadata contract shared with the native client.
 pub use tikv_client_kvproto::metapb;
 
-/// The generated dependency-closed PD control-plane package.
-pub mod pdpb {
-    include!(concat!(env!("OUT_DIR"), "/pdpb.rs"));
+/// Complete PD control-plane contracts shared with the native client.
+pub use tikv_client_kvproto::pdpb;
+
+/// Complete PD test service with generated default UNIMPLEMENTED handlers.
+/// Requests, responses and the production client use the native package.
+pub mod test_pd_server {
+    include!(concat!(env!("OUT_DIR"), "/pd-test-server/pdpb.rs"));
+    pub use pd_server::*;
 }
 
 /// Complete TiFlash MPP contracts shared with the native client.
 pub use tikv_client_kvproto::mpp;
 
-/// The generated dependency-closed etcd MVCC key/value package.
+/// Complete etcd MVCC key/value protocol.
 pub mod mvccpb {
     include!(concat!(env!("OUT_DIR"), "/mvccpb.rs"));
 }
 
-/// The generated dependency-closed etcd v3 KV/Watch service package.
+/// Complete etcd API service and internal-request protocols.
 ///
 /// PD serves this on its own client port, which is how a node PUTs and
 /// watches `/tidb/ddl/global_schema_version`.
@@ -66,10 +71,25 @@ pub mod etcdserverpb {
     include!(concat!(env!("OUT_DIR"), "/etcdserverpb.rs"));
 }
 
-/// The generated dependency-closed BR stream-backup task package.
-pub mod backup {
-    include!(concat!(env!("OUT_DIR"), "/backup.rs"));
+/// Complete BR contracts shared with the native client.
+pub use tikv_client_kvproto::backup;
+
+/// Complete etcd authentication metadata.
+pub mod authpb {
+    include!(concat!(env!("OUT_DIR"), "/authpb.rs"));
 }
+
+/// Complete etcd membership metadata.
+pub mod membershippb {
+    include!(concat!(env!("OUT_DIR"), "/membershippb.rs"));
+}
+
+/// Complete upstream TiPB/etcd descriptors used for generation.
+pub const UPSTREAM_DESCRIPTOR_SET: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/upstream_descriptor.bin"));
+/// Complete TiKV transport descriptor; batch bodies retain encoded bytes.
+pub const TIKV_TRANSPORT_DESCRIPTOR_SET: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/tikv_transport_descriptor.bin"));
 
 /// Complete encryption metadata contract shared with region metadata and BR.
 pub use tikv_client_kvproto::encryptionpb;
@@ -93,70 +113,6 @@ pub use mpp::{
     MppDataPacket, ReportTaskStatusRequest as MppReportTaskStatusRequest,
     ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
 };
-
-/// Stub bodies for the `tikv_server::Tikv` RPCs that this crate's test
-/// doubles almost never need to implement for real (currently just the MPP
-/// group). Go's generated `tikvpb.pb.go` ships an `UnimplementedTikvServer`
-/// struct with the same bodies, letting `unistore`'s mock (and any other
-/// `TikvServer` implementer) embed it and pick up newly-added RPCs for free
-/// instead of failing to compile (see
-/// `pkg/store/mockstore/unistore/tikv/server.go`'s `Server`, which embeds it
-/// verbatim with the comment: "After updating the kvproto, some methods of
-/// TikvServer are not implemented. Construct `Server` based on
-/// `UnimplementedTikvServer`, in order to compile successfully").
-///
-/// Rust's trait system has no struct-embedding escape hatch for a required
-/// trait method, so a Rust `impl Tikv for X` can't inherit these for free the
-/// way Go's embedding does; each mock still has to declare the method and the
-/// `EstablishMPPConnectionStream` associated type, but the body it delegates
-/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
-/// message Go's own generated stub uses.
-pub mod unimplemented_tikv {
-    use crate::mpp::{
-        CancelTaskRequest, CancelTaskResponse, DispatchTaskRequest, DispatchTaskResponse,
-        EstablishMppConnectionRequest, MppDataPacket, ReportTaskStatusRequest,
-        ReportTaskStatusResponse,
-    };
-
-    /// A concrete `EstablishMPPConnectionStream` for mocks that error out
-    /// before ever producing a stream instance; the channel is never
-    /// constructed, only the type is needed to satisfy the associated type.
-    pub type NeverStream = tonic::codegen::tokio_stream::wrappers::ReceiverStream<
-        Result<MppDataPacket, tonic::Status>,
-    >;
-
-    fn unimplemented(rpc: &str) -> tonic::Status {
-        tonic::Status::unimplemented(format!("method {rpc} not implemented"))
-    }
-
-    /// Go: `UnimplementedTikvServer.DispatchMPPTask`.
-    pub async fn dispatch_mpp_task(
-        _request: tonic::Request<DispatchTaskRequest>,
-    ) -> Result<tonic::Response<DispatchTaskResponse>, tonic::Status> {
-        Err(unimplemented("DispatchMPPTask"))
-    }
-
-    /// Go: `UnimplementedTikvServer.CancelMPPTask`.
-    pub async fn cancel_mpp_task(
-        _request: tonic::Request<CancelTaskRequest>,
-    ) -> Result<tonic::Response<CancelTaskResponse>, tonic::Status> {
-        Err(unimplemented("CancelMPPTask"))
-    }
-
-    /// Go: `UnimplementedTikvServer.EstablishMPPConnection`.
-    pub async fn establish_mpp_connection(
-        _request: tonic::Request<EstablishMppConnectionRequest>,
-    ) -> Result<tonic::Response<NeverStream>, tonic::Status> {
-        Err(unimplemented("EstablishMPPConnection"))
-    }
-
-    /// Go: `UnimplementedTikvServer.ReportMPPTaskStatus`.
-    pub async fn report_mpp_task_status(
-        _request: tonic::Request<ReportTaskStatusRequest>,
-    ) -> Result<tonic::Response<ReportTaskStatusResponse>, tonic::Status> {
-        Err(unimplemented("ReportMPPTaskStatus"))
-    }
-}
 
 pub use kvrpcpb::prewrite_request::ForUpdateTsConstraint as KvrpcForUpdateTsConstraint;
 pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
