@@ -155,7 +155,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. |
 | Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are storable, covering GeoJSON positions (XY and XYZ) and measured geometry. Every v1 function is 2D, as in MySQL. |
-| SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. |
+| SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL, including on the bare path. No v1 function interprets their coordinates. |
 
 **Binary in and out.** A value that leaves TiDB as bytes has to be acceptable coming back
 as bytes, or an ordinary client round-trip breaks: read a column, hold the bytes, bind them
@@ -192,10 +192,15 @@ extending the catalog means taking it from the axis order in the SRS definition 
 from a special case (see [Scope and deferrals](#scope-and-deferrals) and
 [the appendix](#appendix-srs-catalog-and-axis-order)).
 
-Extended data (Z/M coordinates, unsupported SRIDs) has no MySQL form, so a bare `SELECT`
-of it errors, naming `ST_AsEWKB` as the way to read it. That is opt-in: such a value only
-exists if `ST_GeomFromEWKB` put it there. `ST_SRID` and `ST_GeometryType` still answer for
-it, and everything that interprets coordinates errors.
+Z/M coordinates have no MySQL form at all, MySQL being 2D only, so a bare `SELECT` of a
+value carrying them errors, naming `ST_AsEWKB` as the way to read it. A value whose only
+extension is an SRID outside 0 and 4326 is different: MySQL represents any SRID in its own
+binary format, so such a value is returned on the bare path unchanged, which is what keeps
+the DM and dump paths whole for a column MySQL itself accepts.
+
+A Z/M value is opt-in, since only `ST_GeomFromEWKB` can put one there. An SRID-extended one
+is not: it arrives by ordinary replication or reload. `ST_SRID` and `ST_GeometryType` answer
+for both, and everything that interprets coordinates errors on either.
 
 Both halves are v1 choices, not properties of the format. Later versions can widen either
 end without a migration: ingest could try to recognise the format it was handed rather than
@@ -264,11 +269,19 @@ or polygon does.
 is Andoyer throughout. This is a requirement rather than a preference, because mixing edge
 models makes the function set contradict itself:
 
-> `ST_Distance(g1, g2) = 0` if and only if the predicates report the two as meeting, for
-> every pair of geometry types.
+> `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every pair of
+> geometry types, and likewise for its negation `ST_Disjoint`.
 
-Without it a point can sit at distance zero from a polygon that `ST_Within` calls outside,
-because the two answers were decided on different surfaces.
+It is stated against `ST_Intersects` deliberately. The boundary-sensitive predicates keep
+their DE-9IM definitions and are *not* equivalent to zero distance: a point lying exactly on
+a polygon's boundary is at distance zero, intersects it and touches it, yet `ST_Within` is
+correctly false, because Within needs interior to meet interior. That is true under any one
+edge model, so it is not the contradiction this rule guards against.
+
+What mixing does produce is a disagreement no definition explains: the same point at the
+same place, measured to the same polygon, is distance zero under one surface and metres away
+under another, so `ST_Distance` and `ST_Intersects` disagree about whether the two meet at
+all.
 
 **That model is Andoyer, and v1 takes only point operands.** Every other part of v1 is a
 strict MySQL subset, so predicates would otherwise be the one surface shipping a *different
@@ -337,7 +350,10 @@ still hold values of any SRID (see [Types and storage](#types-and-storage)).
 ### Function set
 
 v1 is the minimal set needed to store, read, inspect, measure and filter geometry, all of it
-present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are identical. The list is
+present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are identical in
+*membership*; signatures are not, so **9.7 is the baseline** and version deltas are called
+out where they bite. `ST_GeomFromWKB` is the known one: 8.0 accepted a geometry argument,
+where 8.4 and 9.7 reject it with `ERROR 3037`. The list is
 an **allowlist**: only these are registered, and anything else spatial is an unknown
 function until a later milestone adds it.
 
@@ -377,7 +393,8 @@ function until a later milestone adds it.
 - **MySQL-specific constructors:** the full set of
   [functions that create geometry values](https://dev.mysql.com/doc/refman/8.0/en/gis-mysql-specific-functions.html):
   `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`, `MultiPolygon`,
-  `GeometryCollection`.
+  `GeometryCollection` and its synonym `GeomCollection`, which MySQL documents as the
+  preferred spelling.
   `Point(x, y)` returns SRID 0; `ST_SRID(g, srid)` then stamps the SRS, validating the
   coordinates (`ERROR 3731`, `ERROR 3732`) without transforming them. For a geographic SRS
   that makes `Point` **(longitude, latitude)**, the opposite of WKT at 4326:
@@ -392,8 +409,9 @@ function until a later milestone adds it.
   exposes no geodesic envelope at all, though its own R-tree computes one internally.
 - **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes the same
   one-operand-a-`POINT` rule as the predicates below, and
-  `ST_Distance_Sphere(g1, g2 [, radius])`, whose `radius` must be positive. The default
-  radius is derived from the SRS, and is 6,370,986.0 m on SRID 0, which has none.
+  `ST_Distance_Sphere(g1, g2 [, radius])`, whose `radius` must be positive and whose
+  operands MySQL restricts to points and multipoints, raising `ERROR 3618` otherwise. The
+  default radius is derived from the SRS, and is 6,370,986.0 m on SRID 0, which has none.
 - **Predicates (DE-9IM):** `ST_Within`, `ST_Contains`, `ST_Intersects`, `ST_Equals`,
   `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`. On SRID 0 they take any operand
   pair. On 4326 v1 takes only pairs where at least one operand is a `POINT`, and rejects the
@@ -809,7 +827,8 @@ a boolean MySQL would not.
 What the invariant rules out, concretely: an earlier draft paired spherical point-in-polygon
 with planar polygon/polygon, and that answers a point and an infinitesimal polygon at the
 same location differently. `ST_Within(POINT(30 70), ...)` against the polygon above is true
-while the same test on a tiny polygon there is false, where MySQL answers true for both.
+while the same test on a tiny polygon there is false, where MySQL answers true for both. No
+DE-9IM definition distinguishes those two operands; only the choice of surface does.
 
 This design owns the decision, since the type layer owns predicate semantics. No bytes are
 locked in either way, but the behavior is: widening the operand set later only makes queries
