@@ -222,7 +222,7 @@ func (ts *TiDBStatement) Reset() error {
 	ts.releaseBoundLongData()
 	ts.hasActiveCursor = false
 
-	resultset.ReportCursorRUV2Delta(ts.rs, 0)
+	resultset.ReportCursorRUV2Delta(ts.rs)
 	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
 		ts.rs.GetRowIterator().Close()
 	}
@@ -248,7 +248,7 @@ func (ts *TiDBStatement) Reset() error {
 func (ts *TiDBStatement) Close() error {
 	ts.releaseBoundLongData()
 
-	resultset.ReportCursorRUV2Delta(ts.rs, 0)
+	resultset.ReportCursorRUV2Delta(ts.rs)
 	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
 		ts.rs.GetRowIterator().Close()
 	}

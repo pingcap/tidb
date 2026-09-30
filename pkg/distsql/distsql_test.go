@@ -309,6 +309,11 @@ func TestAnalyze(t *testing.T) {
 	scanBytes, ok := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 	require.True(t, ok)
 	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
+	require.NoError(t, selectResponse.Close())
+	scanBytes, ok = dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+	require.True(t, ok)
+	require.InDelta(t, float64(19)/13*17, scanBytes, 1e-9)
+	require.Equal(t, 1, dctx.ExecDetails.GetExecDetails().RequestCount)
 
 	t.Run("sums estimates before independent requests are flattened", func(t *testing.T) {
 		dctx := newAnalyzeTestDistSQLContext()
@@ -396,6 +401,11 @@ func TestAnalyze(t *testing.T) {
 		scanBytes, found := dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
 		require.True(t, found)
 		require.InDelta(t, 20, scanBytes, 1e-9)
+		require.NoError(t, result.Close())
+		scanBytes, found = dctx.RuntimeStatsColl.GetAnalyzeScanBytes(planID)
+		require.True(t, found)
+		require.InDelta(t, 20, scanBytes, 1e-9)
+		require.Equal(t, 1, dctx.ExecDetails.GetExecDetails().RequestCount)
 	})
 }
 

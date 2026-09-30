@@ -105,7 +105,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 	e.kvRanges = e.mppExec.KVRanges
-	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx().GetDistSQLCtx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec)
+	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx().GetDistSQLCtx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec, e.mppExec.ReportsExecutionSummariesDirectly)
 	return nil
 }
 

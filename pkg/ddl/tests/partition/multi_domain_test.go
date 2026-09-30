@@ -1010,22 +1010,30 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
 		var job *model.Job
+		ddlDone := false
 		for {
 			select {
 			case job = <-hookChan:
 			case err := <-alterChan:
 				require.NoError(t, err)
 				releaseHook = false
+				ddlDone = true
 				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
-				break
 			}
 			domOwner.Reload()
 			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+				if ddlDone {
+					break
+				}
 				// looping over reorganize data/indexes
 				logutil.BgLogger().Info("XXXXXXXXXXX Schema Version has not changed")
 				hookChan <- nil
 				continue
 			}
+			break
+		}
+		if !releaseHook && domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+			// DDL finished after the non-owner domain caught up, so there is no held hook to release.
 			break
 		}
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))

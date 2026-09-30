@@ -260,7 +260,7 @@ type hintProcessor struct {
 	blockCounter int
 }
 
-func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
+func (hp *hintProcessor) Enter(in ast.Node) (skipChildren bool) {
 	switch v := in.(type) {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		if hp.bindHint2Ast {
@@ -277,7 +277,7 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.TableName:
 		// Insert cases.
 		if hp.blockCounter == 0 {
-			return in, false
+			return false
 		}
 		if hp.bindHint2Ast {
 			if hp.indexCounter < len(hp.indexHints) {
@@ -290,28 +290,28 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 			hp.indexHints = append(hp.indexHints, v.IndexHints)
 		}
 	}
-	return in, false
+	return false
 }
 
-func (hp *hintProcessor) Leave(in ast.Node) (ast.Node, bool) {
+func (hp *hintProcessor) Leave(in ast.Node) (proceed bool) {
 	switch in.(type) {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		hp.blockCounter--
 	}
-	return in, true
+	return true
 }
 
 // CollectHint collects hints for a statement.
 func CollectHint(in ast.StmtNode) *HintsSet {
 	hp := hintProcessor{HintsSet: &HintsSet{tableHints: make([][]*ast.TableOptimizerHint, 0, 4), indexHints: make([][]*ast.IndexHint, 0, 4)}}
-	in.Accept(&hp)
+	ast.Walk(in, &hp)
 	return hp.HintsSet
 }
 
 // BindHint will add hints for stmt according to the hints in `hintsSet`.
 func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 	hp := hintProcessor{HintsSet: hintsSet, bindHint2Ast: true}
-	stmt.Accept(&hp)
+	ast.Walk(stmt, &hp)
 	return stmt
 }
 
@@ -328,7 +328,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 	}
 	hs := CollectHint(stmtNodes[0])
 	processor := NewQBHintHandler(nil)
-	stmtNodes[0].Accept(processor)
+	ast.Walk(stmtNodes[0], processor)
 	topNodeType := nodeType4Stmt(stmtNodes[0])
 	for i, tblHints := range hs.tableHints {
 		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))

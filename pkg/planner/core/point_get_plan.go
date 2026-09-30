@@ -429,6 +429,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -539,6 +542,9 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
@@ -1171,6 +1177,19 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		return nil
 	}
 
+	tblName, tblAlias := getSingleTableNameAndAlias(updateStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "UPDATE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: updateStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1320,6 +1339,20 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	if delStmt.IsMultiTable {
 		return nil
 	}
+
+	tblName, tblAlias := getSingleTableNameAndAlias(delStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "DELETE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: delStmt.TableHints,
 		Fields:     &ast.FieldList{},

@@ -1,6 +1,6 @@
 ---
 name: tidb-issue-metadata-guard
-description: Use when creating or editing TiDB GitHub issues so issue templates, labels, issue titles, and issue descriptions stay consistent with repository workflow. Trigger on tasks involving issue creation, bug reports, enhancement tracking issues, label selection, or searching for existing issues and PRs before filing a new one.
+description: Create or edit TiDB issues, choose labels, or check for duplicates before filing.
 ---
 
 # TiDB Issue Metadata Guard

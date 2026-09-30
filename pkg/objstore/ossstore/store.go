@@ -54,6 +54,12 @@ type OSSStore struct {
 	credRefresher *credentialRefresher
 }
 
+// URI returns oss://<bucket>/<prefix>.
+func (s *OSSStore) URI() string {
+	bucketPrefix := s.GetBucketPrefix()
+	return "oss://" + bucketPrefix.Bucket + "/" + bucketPrefix.PrefixStr()
+}
+
 // Close implements storeapi.Storage.
 func (s *OSSStore) Close() {
 	s.Storage.Close()

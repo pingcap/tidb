@@ -347,12 +347,12 @@ func TestDumpServiceMetrics(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	owner := &Dumper{}
 	owner.serviceClient.Store(client)
-	newMetricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "dump_service_scanned_ranges_total 3\n")
 	owner.serviceClient.Store(nil)
 	recorder = httptest.NewRecorder()
-	newMetricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.NotContains(t, recorder.Body.String(), "dump_service_scanned_ranges_total")
 }

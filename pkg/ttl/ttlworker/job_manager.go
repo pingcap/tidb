@@ -135,6 +135,9 @@ type JobManager struct {
 	leaderFunc                 func() bool
 	ownerManager               owner.Manager
 	extWorkload                extworkload.Manager
+
+	// jobVersionChecker is only accessed by the job loop goroutine.
+	jobVersionChecker ttlJobVersionChecker
 }
 
 // JobManagerOption configures a JobManager.
@@ -156,7 +159,6 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
-
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
 	if intest.InTest {
@@ -387,7 +389,23 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
+	// The legacy PK scan task format is safe across TiDB builds. Use it directly
+	// when index scan is disabled or this table has no eligible TTL index, so a
+	// rolling upgrade does not unnecessarily block such jobs.
+	versionCheckResult := ttlJobVersionFallbackToPK
+	if vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil {
+		versionCheckResult = m.jobVersionChecker.check(m.ctx)
+	}
+	if versionCheckResult == ttlJobVersionBlockJob {
+		// Do not silently replace the selected index scan with a potentially much
+		// more expensive PK scan for a known mixed build. Returning an error keeps
+		// the timer event retrying; after the upgrade converges, a later attempt can
+		// create the job with index scan as intended.
+		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server build versions are inconsistent")
+		return
+	}
+	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false,
+		versionCheckResult == ttlJobVersionAllowIndexScan)
 	jobReq.RespCh <- err
 }
 
@@ -877,7 +895,8 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 }
 
 // lockNewJob locks a new job
-func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time,
+	jobID string, checkScheduleInterval, allowIndexScan bool) (*ttlJob, error) {
 	var expireTime time.Time
 	err := se.RunInTxn(ctx, func() error {
 		tableStatus, err := m.getTableStatusForUpdateNotWait(ctx, se, table.ID, table.TableInfo.ID, true)
@@ -909,12 +928,32 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
-		if err != nil {
-			return errors.Wrap(err, "split scan ranges")
+		var ranges []cache.ScanRange
+		var scanIndexID *int64
+		if allowIndexScan && vardef.TTLEnableIndexScan.Load() {
+			if idx := table.FindTTLIndex(); idx != nil {
+				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
+				if err != nil {
+					if ctx.Err() != nil {
+						return errors.Wrap(ctx.Err(), "split index scan ranges")
+					}
+					logutil.Logger(ctx).Warn("failed to split TTL index scan ranges, fall back to PK scan",
+						zap.String("table", table.FullName()), zap.String("index", idx.Name.O), zap.Error(err))
+					ranges = nil
+				} else {
+					scanIndexID = &idx.ID
+				}
+			}
+		}
+		if ranges == nil {
+			scanIndexID = nil
+			ranges, err = table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
+			if err != nil {
+				return errors.Wrap(err, "split scan ranges")
+			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			sql, args, err = cache.InsertIntoTTLTaskWithScanIndexID(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, scanIndexID)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}

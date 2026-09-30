@@ -538,6 +538,23 @@ type dummyWorker struct{}
 func (w *dummyWorker) Tune(int32, bool) {
 }
 
+type blockingReleaseAllocator struct {
+	firstFreeStarted chan struct{}
+	continueFree     chan struct{}
+	freeCount        atomic.Int32
+}
+
+func (a *blockingReleaseAllocator) Alloc(n int) []byte {
+	return make([]byte, n)
+}
+
+func (a *blockingReleaseAllocator) Free(_ []byte) {
+	if a.freeCount.Inc() == 1 {
+		close(a.firstFreeStarted)
+		<-a.continueFree
+	}
+}
+
 func TestChangeEngineConcurrency(t *testing.T) {
 	var (
 		outCh     chan engineapi.DataAndRanges
@@ -613,5 +630,103 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		}, 3*time.Second, 10*time.Millisecond)
 		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
 		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("wait for memory buffers to be released", func(t *testing.T) {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ingestor/globalsort/fastHandleConcurrencyChangeTicker",
+			"return(true)")
+
+		allocator := &blockingReleaseAllocator{
+			firstFreeStarted: make(chan struct{}),
+			continueFree:     make(chan struct{}),
+		}
+		bufPool := membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(1),
+			membuf.WithAllocator(allocator),
+		)
+		buf := bufPool.NewBuffer()
+		buf.AllocBytes(1)
+		buf.AllocBytes(1)
+
+		resizeEngine := &Engine{
+			smallBlockBufPool: bufPool,
+			workerConcurrency: *atomic.NewInt32(2),
+			readyCh:           make(chan struct{}, 1),
+			memLimit:          2,
+		}
+		t.Cleanup(func() {
+			require.NoError(t, resizeEngine.Close())
+		})
+
+		data := resizeEngine.buildIngestData(nil, []*membuf.Buffer{buf})
+		require.False(t, data.released.Load())
+		data.IncRef()
+		resizeEngine.activeIngestDataFlags = append(resizeEngine.activeIngestDataFlags, data.released)
+		onRelease := data.onRelease
+		releaseCallbackStartedCh := make(chan struct{})
+		continueReleaseCallbackCh := make(chan struct{})
+		var releaseCallbackCount atomic.Int32
+		data.onRelease = func() {
+			releaseCallbackCount.Inc()
+			close(releaseCallbackStartedCh)
+			<-continueReleaseCallbackCh
+			onRelease()
+		}
+
+		flagsCheckedCh := make(chan struct{})
+		continueAfterCheckCh := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/globalsort/afterUpdateActiveIngestDataFlags",
+			func() {
+				flagsCheckedCh <- struct{}{}
+				<-continueAfterCheckCh
+			})
+
+		releaseResultCh := make(chan any, 1)
+		go func() {
+			defer func() {
+				releaseResultCh <- recover()
+			}()
+			data.DecRef()
+		}()
+		<-allocator.firstFreeStarted
+		require.False(t, data.released.Load())
+
+		resizeDoneCh := make(chan int, 1)
+		resizeStartedAt := time.Now()
+		go func() {
+			resizeDoneCh <- resizeEngine.handleConcurrencyChange(context.Background(), 1)
+		}()
+
+		<-flagsCheckedCh
+		require.Len(t, resizeEngine.activeIngestDataFlags, 1,
+			"engine treated data as released before its buffers were returned")
+		close(allocator.continueFree)
+		<-releaseCallbackStartedCh
+
+		continueAfterCheckCh <- struct{}{}
+		<-flagsCheckedCh
+		require.Len(t, resizeEngine.activeIngestDataFlags, 1,
+			"engine treated data as released before its release callback completed")
+		close(continueReleaseCallbackCh)
+		releasePanic := <-releaseResultCh
+		require.True(t, data.released.Load())
+
+		continueAfterCheckCh <- struct{}{}
+		<-flagsCheckedCh
+		require.Empty(t, resizeEngine.activeIngestDataFlags,
+			"engine did not observe the completed release")
+		continueAfterCheckCh <- struct{}{}
+		newBatchSize := <-resizeDoneCh
+
+		require.Less(t, time.Since(resizeStartedAt), time.Second,
+			"test should not wait for the production resize ticker")
+		require.Equal(t, 2, newBatchSize)
+		require.Nil(t, releasePanic)
+		require.EqualValues(t, 2, allocator.freeCount.Load())
+		require.EqualValues(t, 1, releaseCallbackCount.Load())
+		require.Zero(t, resizeEngine.inFlightDataCount.Load())
 	})
 }

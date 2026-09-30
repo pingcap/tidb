@@ -21,6 +21,8 @@ import (
 	"net"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -120,11 +122,14 @@ func TestCheckRequirements(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
+	sourceFile := filepath.Join(t.TempDir(), "source.csv")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("1\n"), 0o600))
 
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
 			DBName:         "test",
 			DataSourceType: importer.DataSourceTypeFile,
+			Path:           sourceFile,
 			TableInfo:      tableObj.Meta(),
 		},
 		Table: tableObj,
@@ -148,6 +153,17 @@ func TestCheckRequirements(t *testing.T) {
 	// async-prepare submit path skips file-size check before InitDataFiles.
 	c.DisablePrecheck = true
 	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "*.csv")
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	// This probe checks access only; matching and empty-file validation remain
+	// part of asynchronous prepare.
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "not-matched-*.csv")
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "missing.csv")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "Please check the file location is correct")
+	c.Path = sourceFile
 	c.DisablePrecheck = false
 	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)

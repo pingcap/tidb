@@ -69,6 +69,11 @@ max-index-length = 3072
 # index-limit is used to deal with compatibility issues. It can only be in [64, 64*8].
 index-limit = 64
 
+# Allow storage-class DDL, including STANDARD and IA declarations, and transition status queries.
+# Disabled by default. Existing data and transition policies are unaffected when false.
+# This startup setting must be the same on all TiDB servers in the cluster.
+enable-storage-class = false
+
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
@@ -456,6 +461,27 @@ allow-enable-foreign-key-check-in-shared-lock = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# RU v2 statement weights convert raw work units to RU. Values must be finite and
+# non-negative; zero disables the corresponding charge. These defaults are
+# uncalibrated placeholders, not billing values.
+[ru-v2.stmt-weights]
+cpu-work = 1.0
+scan-byte = 1.0
+net-byte = 1.0
+frontend-compile-byte = 1.0
+hash-state-row = 1.0
+join-output-row = 1.0
+write-statement = 1.0
+operator-num = 1.0
+write-key = 1.0
+write-byte = 1.0
+
+# DDL RU v2 weights. Values must be finite and non-negative; zero disables the
+# corresponding charge. These defaults are uncalibrated placeholders, not billing values.
+[ru-v2.ddl-weights]
+txn-kv-bytes = 1.0
+ingest-kv-bytes = 1.0
 
 # error-msg-extension appends configured messages to SQL errors matching regexps. TiDB joins
 # the original error and suffix as "error, suffix.". When multiple regexps match the same

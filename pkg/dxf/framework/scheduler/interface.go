@@ -42,6 +42,7 @@ type TaskManager interface {
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
 	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
+	storage.TaskCleanupInfoGetter
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -71,8 +72,8 @@ type TaskManager interface {
 	// back to prev-state, if success, it will also update concurrency of all
 	// active subtasks.
 	ModifiedTask(ctx context.Context, task *proto.Task) error
-	// SucceedTask updates a task to success state.
-	SucceedTask(ctx context.Context, taskID int64) error
+	// SucceedTask updates a task to success state and persists its meta.
+	SucceedTask(ctx context.Context, task *proto.Task) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
 	// transaction. It will change task state too if we're switch from InitStep to
 	// next step.
@@ -142,6 +143,14 @@ type Extension interface {
 	// with error.
 	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
+	// OnDone MAY update task.Meta to record a summary collected from the
+	// finished subtasks, for example a workload summary used for resource
+	// accounting. When the task finishes successfully the framework persists the
+	// meta mutated here together with the state transition, so the update is not
+	// lost even after the subtasks are moved to the history tables. The
+	// implementation must not rely on the update being atomic with anything else
+	// it does, and should be idempotent because OnDone can be called again after
+	// a failed state transition.
 	OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
@@ -264,7 +273,20 @@ type BatchCleaner interface {
 	BatchClean(ctx context.Context, tasks []*proto.Task) error
 }
 
+// ExpiredFileCleaner optionally adds owner-side expired-file cleanup to
+// a Cleaner implementation. Implementations must honor ctx promptly;
+// Manager.Stop waits for an active callback to return after ownership is lost.
+type ExpiredFileCleaner interface {
+	Cleaner
+	CleanExpiredFiles(ctx context.Context, taskInfoGetter storage.TaskCleanupInfoGetter, cloudStorageURI string) error
+}
+
 type cleanerFactoryFn func() Cleaner
+
+type registeredCleanerFactory struct {
+	taskType proto.TaskType
+	ctor     cleanerFactoryFn
+}
 
 var cleanerFactoryMap = struct {
 	syncutil.RWMutex
@@ -285,6 +307,21 @@ func getCleanerFactory(taskType proto.TaskType) cleanerFactoryFn {
 	cleanerFactoryMap.RLock()
 	defer cleanerFactoryMap.RUnlock()
 	return cleanerFactoryMap.m[taskType]
+}
+
+// getCleanerFactories returns a snapshot of registered cleaner factories.
+func getCleanerFactories() []registeredCleanerFactory {
+	cleanerFactoryMap.RLock()
+	defer cleanerFactoryMap.RUnlock()
+
+	factories := make([]registeredCleanerFactory, 0, len(cleanerFactoryMap.m))
+	for taskType, ctor := range cleanerFactoryMap.m {
+		factories = append(factories, registeredCleanerFactory{
+			taskType: taskType,
+			ctor:     ctor,
+		})
+	}
+	return factories
 }
 
 // ClearCleanerFactory is only used in test.

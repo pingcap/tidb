@@ -408,7 +408,6 @@ func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 	mockScheduler := mock.NewMockScheduler(ctrl)
 
 	store := testkit.CreateMockStore(t)

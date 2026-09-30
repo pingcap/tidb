@@ -3399,6 +3399,7 @@ const (
 	TableOptionIetfQuotes
 	TableOptionSequence
 	TableOptionAffinity
+	TableOptionStartTransaction
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3837,6 +3838,8 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+	case TableOptionStartTransaction:
+		ctx.WriteKeyWord("START TRANSACTION")
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

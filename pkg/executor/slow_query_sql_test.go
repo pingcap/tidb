@@ -19,15 +19,21 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -38,8 +44,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	clientutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
@@ -185,6 +195,41 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk.MustExec("commit")
 	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
 		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
+
+	tk.MustExec("set tidb_mview_enable = on")
+	originalMLogLogSlowPurge := fmt.Sprint(tk.MustQuery("select @@global.tidb_mlog_log_slow_purge").Rows()[0][0])
+	defer tk.MustExec("set @@global.tidb_mlog_log_slow_purge = " + originalMLogLogSlowPurge)
+	tk.MustExec("set @@global.tidb_mlog_log_slow_purge = off")
+	tk.MustExec("create table test.t_internal_mv_purge_slow_log (id int primary key, v int)")
+	tk.MustExec("create materialized view log on test.t_internal_mv_purge_slow_log (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (1, 10)")
+
+	const purgeSQL = "purge materialized view log on test.t_internal_mv_purge_slow_log"
+	tk.MustExec(purgeSQL)
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (2, 20)")
+	func() {
+		vars := tk.Session().GetSessionVars()
+		origRestricted := vars.InRestrictedSQL
+		vars.InRestrictedSQL = true
+		defer func() {
+			vars.InRestrictedSQL = origRestricted
+		}()
+		rs, err := tk.ExecWithContext(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance), purgeSQL)
+		require.NoError(t, err)
+		require.Nil(t, rs)
+	}()
+
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_mlog_log_slow_purge = on")
+	tk.MustExec("insert into test.t_internal_mv_purge_slow_log values (3, 30)")
+	tk.MustExec(purgeSQL)
+	tk.MustQuery("select count(*) from information_schema.slow_query where query = '" + purgeSQL + ";'").
+		Check(testkit.Rows("1"))
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
@@ -209,6 +254,95 @@ func TestLogSlowLogIndex(t *testing.T) {
 	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
 		"where query like 'select%union%' limit 1").
 		Check(testkit.Rows("[t:idx]"))
+}
+
+func TestSlowLogRUVersion(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	defer config.RestoreFunc()()
+	originalSlowLogger := logutil.SlowQueryLogger
+	defer func() { logutil.SlowQueryLogger = originalSlowLogger }()
+	slowLogFile := filepath.Join(t.TempDir(), "slow.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = slowLogFile
+	})
+	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table slow_log_ru_version (id int primary key, v int)")
+	tk.MustExec("insert into slow_log_ru_version values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set tidb_enable_slow_log=1")
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec(fmt.Sprintf("set tidb_slow_query_file='%s'", slowLogFile))
+
+	for _, version := range []rmclient.RUVersion{rmclient.RUVersionV1, rmclient.RUVersionV2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+			require.True(t, ok)
+			provider := &slowLogRUVersionProvider{ResourceGroupProvider: baseProvider, version: version}
+			controller, err := rmclient.NewResourceGroupController(context.Background(), 1, provider, nil, 1)
+			require.NoError(t, err)
+			originalController := dom.ResourceGroupsController()
+			dom.SetResourceGroupsController(controller)
+			t.Cleanup(func() { dom.SetResourceGroupsController(originalController) })
+			require.Equal(t, version, dom.GetRUVersion())
+
+			for _, tc := range []struct {
+				name  string
+				sql   string
+				write bool
+			}{
+				{"read", "select * from slow_log_ru_version order by id", false},
+				{"write", "update slow_log_ru_version set v = v + 1 where id = 1", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					// Seed both v1 counters so selecting the wrong RU version cannot pass.
+					ruDetails := clientutil.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+					ctx := context.WithValue(context.Background(), clientutil.RUDetailsCtxKey, ruDetails)
+					tag := fmt.Sprintf(" /* slow_log_ru_v%d_%s */ ", version, tc.name)
+					sql := strings.Replace(tc.sql, " ", tag, 1)
+					if tc.write {
+						tk.MustExecWithContext(ctx, sql)
+					} else {
+						tk.MustQueryWithContext(ctx, sql)
+					}
+					// Compare against the same execution's finalized total, independently of the log output.
+					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
+					require.Positive(t, totalRUV2)
+					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
+					require.GreaterOrEqual(t, wantRead, float64(11))
+					require.GreaterOrEqual(t, wantWrite, float64(7))
+					require.NotEqual(t, wantRead, totalRUV2)
+					require.NotEqual(t, wantWrite, totalRUV2)
+					if version == rmclient.RUVersionV2 {
+						wantRead, wantWrite = totalRUV2, 0
+						if tc.write {
+							wantRead, wantWrite = 0, totalRUV2
+						}
+					}
+
+					rows := tk.MustQuery("select request_unit_read, request_unit_write, time_queued_by_rc "+
+						"from information_schema.slow_query where query = ?", sql+";").Rows()
+					require.Len(t, rows, 1)
+					for i, want := range []float64{wantRead, wantWrite, ruDetails.RUWaitDuration().Seconds()} {
+						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i]), 64)
+						require.NoError(t, err)
+						require.InDelta(t, want, got, 1e-9)
+					}
+				})
+			}
+		})
+	}
+}
+
+type slowLogRUVersionProvider struct {
+	rmclient.ResourceGroupProvider
+	version rmclient.RUVersion
+}
+
+func (p *slowLogRUVersionProvider) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	config := fmt.Sprintf(`{"ru-version-policy":{"default":%d}}`, p.version)
+	return &meta_storagepb.GetResponse{Kvs: []*meta_storagepb.KeyValue{{Value: []byte(config)}}}, nil
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {
@@ -252,8 +386,6 @@ func TestSlowQuery(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.WriteString(`
 # Time: 2019-01-01T00:00:00+08:00
-# Request_unit_v2: 123.45
-# Request_unit_v2_detail: total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45
 select /* issue:67199 */ 1;
 # Time: 2020-10-13T20:08:13.970563+08:00
 # Plan_digest: 0368dd12858f813df842c17bcb37ca0e8858b554479bebcd78da1f8c14ad12d0
@@ -325,12 +457,6 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
 	tk.MustExec("set @@time_zone='+10:00'")
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
-
-	// issues 58194
-	tk.MustQuery("select max(Mem_arbitration) from `information_schema`.`slow_query`").Check(testkit.Rows("215"))
-	tk.MustQuery("select Request_unit_v2, Request_unit_v2 + 1, Request_unit_v2_detail from `information_schema`.`slow_query` " +
-		"where query = 'select /* issue:67199 */ 1;'").
-		Check(testkit.Rows("123.45 124.45 total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45"))
 }
 
 func TestIssue37066(t *testing.T) {
@@ -800,4 +926,145 @@ select * from t_truncated;
 	tk.MustQuery("select JSON_UNQUOTE(JSON_EXTRACT(Session_connect_attrs, '$._truncated')), JSON_UNQUOTE(JSON_EXTRACT(Session_connect_attrs, '$.app_name')) from information_schema.slow_query " +
 		"where query = 'select * from t_truncated;' ").
 		Check(testkit.Rows("4 trunc_case"))
+}
+
+func TestPointReadScanDetailsInDiagnostics(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Instance.EnableCollectExecutionInfo.Store(true)
+	newCfg.Log.SlowQueryFile = filepath.Join(t.TempDir(), "slow.log")
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() { config.StoreGlobalConfig(originCfg) })
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("set tidb_slow_query_file='%s'", newCfg.Log.SlowQueryFile))
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec("set tidb_enable_paging=0")
+	previousSummaryEnabled := tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0]
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary=%v", previousSummaryEnabled)) })
+	tk.MustExec("create table t_point_scan_details (id int primary key, u int unique, v int)")
+	tk.MustExec("insert into t_point_scan_details values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+
+	var cold atomic.Bool
+	var responses atomic.Int64
+	responseHook := func(_ *tikvrpc.Request, resp *tikvrpc.Response) {
+		if !cold.Load() {
+			return
+		}
+		details := &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
+			ProcessedVersions: 1, TotalVersions: 2,
+			IaRemoteReadSegmentCount: 2, IaRemoteReadSegmentBytes: 4096,
+			IaRemoteReadSegmentNanos: uint64((6 * time.Millisecond).Nanoseconds()),
+		}}
+		switch r := resp.Resp.(type) {
+		case *kvrpcpb.GetResponse:
+			r.ExecDetailsV2 = details
+		case *kvrpcpb.BatchGetResponse:
+			r.ExecDetailsV2 = details
+		case *coprocessor.Response:
+			r.ExecDetailsV2 = details
+		default:
+			return
+		}
+		responses.Add(1)
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook", "return(true)"))
+	t.Cleanup(func() {
+		unistore.UnistoreRPCClientResponseHook.Store(nil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook"))
+	})
+
+	cases := []struct {
+		name, plan, sql string
+		requests        int64
+	}{
+		{"primary", "Point_Get", "select v from t_point_scan_details where id=1", 1},
+		{"unique", "Point_Get", "select v from t_point_scan_details where u=10", 2},
+		{"batch primary", "Batch_Point_Get", "select v from t_point_scan_details where id in (1,2)", 1},
+		{"batch unique", "Batch_Point_Get", "select v from t_point_scan_details where u in (10,20)", 2},
+		{"cop control", "TableReader", "select v from t_point_scan_details where v>=100", 1},
+	}
+	for _, tc := range cases {
+		for _, explain := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explain=%v", tc.name, explain), func(t *testing.T) {
+				tk.MustHavePlan(tc.sql, tc.plan)
+				stmtsummary.StmtSummaryByDigestMap.Clear()
+				sql := tc.sql
+				if explain {
+					sql = "explain analyze " + sql
+				}
+				responses.Store(0)
+				cold.Store(true)
+				rows := tk.MustQuery(sql).Rows()
+				cold.Store(false)
+				require.Equal(t, tc.requests, responses.Load())
+				details := tk.Session().GetSessionVars().StmtCtx.GetExecDetails()
+				require.NotNil(t, details.ScanDetail)
+				require.Equal(t, tc.requests, details.ScanDetail.ProcessedKeys)
+				require.Equal(t, tc.requests*2, details.ScanDetail.TotalKeys)
+				require.Equal(t, uint64(tc.requests*2), details.ScanDetail.IaRemoteReadSegmentCount)
+				require.Equal(t, uint64(tc.requests*4096), details.ScanDetail.IaRemoteReadSegmentBytes)
+				require.Equal(t, time.Duration(tc.requests)*6*time.Millisecond, details.ScanDetail.IaRemoteReadSegmentDuration)
+				if tc.plan != "TableReader" {
+					require.Zero(t, details.RequestCount, "point reads must not become cop tasks")
+				} else {
+					require.Equal(t, tc.requests, int64(details.RequestCount))
+				}
+				if explain {
+					require.Contains(t, fmt.Sprint(rows), "ia: {remote_read_segment_count:")
+				}
+				_, digest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+				tk.EventuallyMustQueryAndCheck(
+					"select ia_remote_read_segment_count,ia_remote_read_segment_size,ia_remote_read_segment_wait_time from information_schema.slow_query where query='"+sql+";' order by time desc limit 1",
+					nil, testkit.Rows(fmt.Sprintf("%d %d %s", tc.requests*2, tc.requests*4096, strconv.FormatFloat(float64(tc.requests)*0.006, 'f', -1, 64))),
+					2*time.Second, 50*time.Millisecond,
+				)
+				// The second execution has no remote reads; averages use both executions.
+				tk.MustQuery(sql)
+				tk.MustQuery("select exec_count,ia_exec_count,avg_ia_remote_read_segment_count,max_ia_remote_read_segment_count,avg_ia_remote_read_segment_size,max_ia_remote_read_segment_size,avg_ia_remote_read_segment_wait_time,max_ia_remote_read_segment_wait_time from information_schema.statements_summary where digest='" + digest.String() + "'").Check(
+					testkit.Rows(fmt.Sprintf("2 1 %d %d %d %d %d %d", tc.requests, tc.requests*2, tc.requests*2048, tc.requests*4096, tc.requests*3000000, tc.requests*6000000)))
+			})
+		}
+	}
+
+	// Cached point executors must start with fresh statistics on each execution.
+	tk.MustExec("prepare point_read from 'select v from t_point_scan_details where id=?'")
+	tk.MustExec("set @id=1")
+	for _, remote := range []bool{true, false, true} {
+		cold.Store(remote)
+		tk.MustQuery("execute point_read using @id").Check(testkit.Rows("100"))
+		cold.Store(false)
+		scan := tk.Session().GetSessionVars().StmtCtx.GetExecDetails().ScanDetail
+		if remote {
+			require.NotNil(t, scan)
+			require.Equal(t, uint64(2), scan.IaRemoteReadSegmentCount)
+		} else if scan != nil {
+			require.Zero(t, scan.IaRemoteReadSegmentCount)
+		}
+	}
+	tk.MustExec("deallocate prepare point_read")
+
+	// Respect the collection switch; EXPLAIN ANALYZE still requests runtime stats.
+	tk.MustExec("set tidb_enable_collect_execution_info=0")
+	for _, sql := range []string{cases[0].sql, cases[2].sql} {
+		cold.Store(true)
+		tk.MustQuery(sql)
+		cold.Store(false)
+		scan := tk.Session().GetSessionVars().StmtCtx.GetExecDetails().ScanDetail
+		if scan != nil {
+			require.Zero(t, scan.IaRemoteReadSegmentCount)
+		}
+		cold.Store(true)
+		tk.MustQuery("explain analyze " + sql)
+		cold.Store(false)
+		scan = tk.Session().GetSessionVars().StmtCtx.GetExecDetails().ScanDetail
+		require.NotNil(t, scan)
+		require.Equal(t, uint64(2), scan.IaRemoteReadSegmentCount)
+	}
 }

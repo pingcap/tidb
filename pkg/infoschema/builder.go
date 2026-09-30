@@ -96,8 +96,12 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyMaskingPolicyChange(b, m, diff)
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
-	case model.ActionDropTable, model.ActionDropTablePartition:
+	case model.ActionDropTable, model.ActionDropTablePartition,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		return applyDropTableOrPartition(b, m, diff)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		return applyMViewRefreshOutOfPlaceCutover(b, m, diff)
 	case model.ActionRecoverTable:
 		return applyRecoverTable(b, m, diff)
 	case model.ActionCreateTables:
@@ -118,6 +122,65 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 
 func (b *Builder) applyCreateTables(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
+}
+
+func applyMViewRefreshOutOfPlaceCutover(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		dbInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+		if !ok {
+			return nil, ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+		}
+		oldTableID, newTableID := diff.OldTableID, diff.TableID
+		b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+		tblIDs := make([]int64, 0, 2)
+		if tableIDIsValid(oldTableID) {
+			tblIDs = applyDropTable(b, diff, dbInfo, oldTableID, tblIDs)
+		}
+		// The shadow table already exists when the cutover diff is applied. Drop
+		// its old name/index before recreating it with the MV metadata written by
+		// the cutover worker; otherwise InfoSchema v2 retains the shadow name.
+		if tableIDIsValid(newTableID) && newTableID != oldTableID {
+			tblIDs = applyDropTable(b, diff, dbInfo, newTableID, tblIDs)
+		}
+		if tableIDIsValid(newTableID) {
+			allocs, _ := allocByID(b, newTableID)
+			var err error
+			tblIDs, err = applyCreateTable(b, m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
+	}
+
+	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+	}
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	oldTableID, newTableID := diff.OldTableID, diff.TableID
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+	b.copySortedTables(oldTableID, newTableID)
+	tblIDs := make([]int64, 0, 2)
+	if tableIDIsValid(oldTableID) {
+		tblIDs = applyDropTable(b, diff, dbInfo, oldTableID, tblIDs)
+	}
+	if tableIDIsValid(newTableID) && newTableID != oldTableID {
+		tblIDs = applyDropTable(b, diff, dbInfo, newTableID, tblIDs)
+	}
+	var allocs autoid.Allocators
+	if tableIDIsValid(newTableID) {
+		if oldAllocs, ok := allocByID(b, newTableID); ok {
+			allocs = oldAllocs
+		}
+		var err error
+		tblIDs, err = applyCreateTable(b, m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
 // equalPlacementPolicy compares two placement policy references for equality
@@ -290,8 +353,39 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 
 	// bundle ops
 	b.markTableBundleShouldUpdate(diff.TableID)
+	if diff.Type == model.ActionDropTable || diff.Type == model.ActionDropTablePartition {
+		for _, opt := range diff.AffectedOpts {
+			b.deleteBundle(b.infoSchema, opt.OldTableID)
+		}
+		return tblIDs, nil
+	}
+
+	// Materialized view drops update related table metadata in the same DDL
+	// transaction. These entries must be reloaded rather than treated as bundle
+	// IDs like the legacy DROP TABLE path does.
 	for _, opt := range diff.AffectedOpts {
-		b.deleteBundle(b.infoSchema, opt.OldTableID)
+		if opt.SchemaID == 0 && opt.OldSchemaID == 0 {
+			b.deleteBundle(b.infoSchema, opt.OldTableID)
+			continue
+		}
+		// Use a non-drop action type so that applyTableUpdate reloads the related
+		// table metadata from the same transaction instead of removing the table.
+		// ActionModifyTableComment is intentionally used here because this is a
+		// metadata reload.
+		reloadDiff := &model.SchemaDiff{
+			Type:        model.ActionModifyTableComment,
+			Version:     diff.Version,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := applyTableUpdate(b, m, reloadDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+		b.markTableBundleShouldUpdate(opt.TableID)
 	}
 	return tblIDs, nil
 }
@@ -481,7 +575,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionCreateMaterializedViewShadow:
 		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
 		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
 		// when the table's state changes from write-only to public, infoSchema need to drop the old table
@@ -493,7 +587,9 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		oldTableID = diff.TableID
 		// directly return if this action is initiated by refreshMeta DDL (only used by BR). In the BR case, we don't
 		// care about ON DELETE/UPDATE CASCADE so doesn't need to go through the below logic. The most important
@@ -515,7 +611,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 		}
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
-		model.ActionRemovePartitioning:
+		model.ActionRemovePartitioning, model.ActionMViewRefreshOutOfPlaceCutover:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -528,9 +624,21 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionAddTablePartition:
+	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog, model.ActionCreateMaterializedViewShadow, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionDropTable:
+	case model.ActionCreateMaterializedView:
+		if tableIDIsValid(newTableID) {
+			b.markTableBundleShouldUpdate(newTableID)
+		} else if tableIDIsValid(oldTableID) {
+			b.deleteBundle(b.infoSchema, oldTableID)
+		}
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		if tableIDIsValid(oldTableID) && oldTableID != newTableID {
+			b.deleteBundle(b.infoSchema, oldTableID)
+		}
+		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		b.deleteBundle(b.infoSchema, oldTableID)
 	case model.ActionTruncateTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -628,7 +736,7 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 	case model.ActionCreateMaskingPolicy,
 		model.ActionAlterMaskingPolicy,
 		model.ActionDropMaskingPolicy,
-		model.ActionDropTable,
+		model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,
@@ -1084,7 +1192,15 @@ func (b *Builder) initVirtualTables(schemaVersion int64) error {
 	}
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
+		dbInfo := driver.DBInfo
+		if dbInfo.ID == autoid.InformationSchemaDBID && !config.GetGlobalConfig().EnableStorageClass {
+			// Filter after startup configuration is loaded, without changing the shared driver.
+			dbInfo = dbInfo.Copy()
+			dbInfo.Deprecated.Tables = slices.DeleteFunc(dbInfo.Deprecated.Tables, func(tbl *model.TableInfo) bool {
+				return tbl.Name.O == TableStorageClassTransitions
+			})
+		}
+		err := b.createSchemaTablesForDB(dbInfo, driver.TableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}

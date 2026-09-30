@@ -304,6 +304,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	tk.MustExec("use test")
 
 	if !option.retainData {
+		tk.MustExec("delete from mysql.tidb_import_jobs;")
 		tk.MustExec("delete from mysql.tidb_global_task;")
 		tk.MustExec("delete from mysql.tidb_background_subtask;")
 		tk.MustExec("delete from mysql.tidb_ddl_job;")

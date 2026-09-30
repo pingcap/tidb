@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -150,6 +151,10 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 		return err
 	}
 
+	if err := checkTTLJobInterval(tblInfo.TTLInfo.JobInterval); err != nil {
+		return err
+	}
+
 	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
 		return err
 	}
@@ -167,6 +172,17 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 func checkTTLIntervalExpr(ttlInfo *model.TTLInfo) error {
 	_, err := cache.EvalExpireTime(time.Now(), ttlInfo.IntervalExprStr, ast.TimeUnitType(ttlInfo.IntervalTimeUnit))
 	return errors.Trace(err)
+}
+
+func checkTTLJobInterval(jobInterval string) error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+
+	if jobInterval != model.StarterDefaultTTLJobInterval {
+		return dbterror.ErrUnsupportedTTLJobIntervalInStarter.FastGenByArgs(model.StarterDefaultTTLJobInterval)
+	}
+	return nil
 }
 
 func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
@@ -221,6 +237,11 @@ func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
 // if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
 // if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
 func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string, err error) {
+	defaultJobInterval := model.DefaultTTLJobInterval
+	if deploymode.IsStarter() {
+		defaultJobInterval = model.StarterDefaultTTLJobInterval
+	}
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -238,7 +259,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      defaultJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
@@ -252,6 +273,9 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 			ttlInfo.Enable = *ttlEnable
 		}
 		if ttlCronJobSchedule != nil {
+			if err := checkTTLJobInterval(*ttlCronJobSchedule); err != nil {
+				return nil, nil, nil, err
+			}
 			ttlInfo.JobInterval = *ttlCronJobSchedule
 		}
 	}

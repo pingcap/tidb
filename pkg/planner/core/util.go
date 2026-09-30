@@ -19,15 +19,94 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
+
+// CheckMViewUpdatable checks whether a DML operation on a materialized view, materialized view log,
+// or materialized view shadow table should be rejected. It returns an error if the table is an
+// MV-related table and the current session is not in internal maintenance mode.
+func CheckMViewUpdatable(
+	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName, op string,
+) error {
+	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil && tableInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+
+	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
+}
+
+func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
+	if sv == nil || !sv.InMViewMaintenance {
+		return false, nil
+	}
+	// All MV maintenance work should use internal sessions (restricted SQL).
+	if !sv.InRestrictedSQL {
+		return false, plannererrors.ErrInternal.GenWithStack(
+			"materialized view maintenance should only run in restricted SQL mode",
+		)
+	}
+	return true, nil
+}
+
+// CheckMViewReadable checks whether a read on an MV-related table should be rejected.
+func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
+	if tableInfo == nil || (tableInfo.MaterializedView == nil && tableInfo.MaterializedViewShadow == nil) {
+		return nil
+	}
+
+	if tableInfo.MaterializedViewShadow != nil {
+		// check mv shadow table
+		allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+		if err != nil {
+			return err
+		}
+		if allowMaintenance || sv == nil || sv.User == nil {
+			return nil
+		}
+		if aliasName == "" {
+			aliasName = tableInfo.Name.O
+		}
+		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
+	}
+
+	// check mv table
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return nil
+	}
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+	return errors.New(initBuildState.AccessErrorMessage(aliasName))
+}
 
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {

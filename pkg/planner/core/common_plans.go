@@ -347,6 +347,13 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG" plan.
+type PurgeMaterializedViewLog struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.PurgeMaterializedViewLogStmt
+}
+
 // PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
@@ -382,6 +389,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ResetOpts   map[ast.AnalyzeOptionType]struct{}
 	ColChoice   ast.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool

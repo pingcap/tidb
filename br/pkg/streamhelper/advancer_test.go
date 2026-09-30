@@ -960,18 +960,73 @@ func TestOwnerDropped(t *testing.T) {
 	adv.OnStart(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	failpoint.Enable(fp, "pause")
-	ch := make(chan struct{})
-	go func() {
-		defer close(ch)
-		require.NoError(t, adv.OnTick(ctx))
+	require.True(t, adv.HasSubscriptions())
+
+	enterSubscribeTick := make(chan struct{})
+	releaseSubscribeTick := make(chan struct{})
+	var enterSubscribe sync.Once
+	var cleanup sync.Once
+	require.NoError(t, failpoint.EnableCall(fp, func() {
+		enterSubscribe.Do(func() {
+			close(enterSubscribeTick)
+		})
+		<-releaseSubscribeTick
+	}))
+	releaseHook := func() {
+		cleanup.Do(func() {
+			close(releaseSubscribeTick)
+			require.NoError(t, failpoint.Disable(fp))
+		})
+	}
+	defer func() {
+		releaseHook()
 	}()
-	adv.OnStop()
-	failpoint.Disable(fp)
+
+	tickDone := make(chan error, 1)
+	go func() {
+		tickDone <- adv.OnTick(ctx)
+	}()
+
+	select {
+	case <-enterSubscribeTick:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for in-flight OnTick to enter subscribeTick")
+	}
+
+	stopStarted := make(chan struct{})
+	stopDone := make(chan struct{})
+	go func() {
+		close(stopStarted)
+		adv.OnStop()
+		close(stopDone)
+	}()
+
+	<-stopStarted
+	select {
+	case <-stopDone:
+		t.Fatal("OnStop returned before subscribeTick was released")
+	default:
+	}
+
+	releaseHook()
+
+	select {
+	case err := <-tickDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for in-flight OnTick to finish")
+	}
+
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OnStop to finish")
+	}
+
+	require.False(t, adv.HasSubscriptions())
 
 	cp := c.advanceCheckpoints()
-	c.flushAll()
-	<-ch
+	require.NoError(t, adv.OnTick(ctx))
 	adv.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 		// Advancer will manually poll the checkpoint...
 		require.Equal(t, vsf.MinValue(), cp)

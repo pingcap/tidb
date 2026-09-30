@@ -199,6 +199,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
 			err = e.dataForTableTiFlashReplica(ctx, sctx)
+		case infoschema.TableStorageClassTransitions:
+			e.dataForStorageClassTransitions(sctx)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(ctx, sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,

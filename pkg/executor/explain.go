@@ -97,7 +97,12 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.explain.Analyze && e.analyzeExec != nil && !e.executed {
-		defer func() {
+		closed := false
+		closeAnalyzeExec := func() {
+			if closed {
+				return
+			}
+			closed = true
 			err1 := exec.Close(e.analyzeExec)
 			if err1 != nil {
 				if err != nil {
@@ -106,7 +111,8 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 					err = err1
 				}
 			}
-		}()
+		}
+		defer closeAnalyzeExec()
 		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
 			waitGroup := sync.WaitGroup{}
@@ -133,6 +139,11 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				break
 			}
 		}
+		if e.explain.Format == "ru" {
+			// Close waits for producers and collects unconsumed request statistics.
+			// The RU snapshot must include all work published during teardown.
+			closeAnalyzeExec()
+		}
 	}
 	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
 	if e.explain.Analyze && e.analyzeExec != nil && e.executed {
@@ -143,17 +154,14 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
 			}
 			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
-			if ruDetails != nil || ruv2Metrics != nil {
+			if ruDetails != nil {
 				ruVersion := rmclient.DefaultRUVersion
 				if do := domain.GetDomain(e.Ctx()); do != nil {
 					ruVersion = do.GetRUVersion()
 				}
-				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
-					RUDetails: ruDetails,
-					Metrics:   ruv2Metrics.Clone(),
-					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
-					RUVersion: ruVersion,
-				})
+				if ruVersion != rmclient.RUVersionV2 {
+					coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
+				}
 			}
 			e.registerExplainRUOperatorStats(coll, ruv2Metrics, err == nil)
 		}
@@ -175,6 +183,7 @@ func (e *ExplainExec) registerExplainRUOperatorStats(
 	if coll == nil {
 		return
 	}
+	writes := snapshotStatementRUWrites(e.Ctx().GetSessionVars().StmtCtx.GetExecDetails().CommitDetail)
 	flat := core.FlattenPhysicalPlan(e.explain.TargetPlan, true)
 	setup := statementRUCalculationSetup{}
 	if e.explain.ExecStmt != nil {
@@ -188,6 +197,7 @@ func (e *ExplainExec) registerExplainRUOperatorStats(
 		flat,
 		coll,
 		metrics,
+		writes,
 		setup,
 		rootEOF,
 	)
