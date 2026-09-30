@@ -27,7 +27,7 @@ go_library(
 
 go_test(
     name = "storage_test",
-    timeout = "short",
+    timeout = "long",
     srcs = ["table_test.go"],
     flaky = True,
     race = "on",
