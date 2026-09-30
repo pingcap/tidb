@@ -23,6 +23,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2008,6 +2009,34 @@ func TestMetadata(t *testing.T) {
 	err = proto.Unmarshal(expr.Val, metadata)
 	require.NoError(t, err)
 	require.Equal(t, true, metadata.InUnion)
+}
+
+func TestFTSBooleanQueryUsesStructuredPBField(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	searchType := types.NewFieldType(mysql.TypeVarchar)
+	searchType.SetCollate(mysql.DefaultCollationName)
+	search := &Constant{Value: types.NewStringDatum("+tidb -mysql"), RetType: searchType}
+	matchColumn := genColumn(mysql.TypeVarchar, 1)
+	matchColumn.RetType.SetCollate(mysql.DefaultCollationName)
+	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, matchColumn)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+	query, err := BuildFTSBooleanQuery("+tidb -mysql", model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.NoError(t, SetFTSMysqlMatchAgainstNativeEvalInfo(sf, &FTSNativeEvalInfo{BooleanQuery: query}))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
+	}()
+
+	pbExpr := (PbConverter{client: client, ctx: ctx}).ExprToPB(sf)
+	require.NotNil(t, pbExpr)
+	require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, pbExpr.GetSig())
+	require.Len(t, pbExpr.GetChildren(), 2, "query metadata must not be encoded as a synthetic string child")
+	require.Equal(t, query, pbExpr.GetFtsBooleanQuery())
 }
 
 func TestPushDownSwitcher(t *testing.T) {

@@ -265,6 +265,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Check whether all of its parameters can be pushed.
+	nativeFTSInfo, hasNativeFTSInfo := FTSMysqlMatchAgainstNativeEvalInfo(expr)
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -272,6 +273,11 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 			return nil
 		}
 		children = append(children, pbArg)
+	}
+	if hasNativeFTSInfo {
+		if nativeFTSInfo.BooleanQuery == nil {
+			return nil
+		}
 	}
 
 	var encoded []byte
@@ -290,15 +296,25 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		_, str1 := expr.CharsetAndCollation()
 		tp.SetCollate(str1)
 	}
+	if hasNativeFTSInfo && len(expr.GetArgs()) > 1 {
+		// The FTS return value is numeric, but matching uses the collation of
+		// the first MATCH column. TiFlash's native function reads it from the
+		// scalar expression result FieldType, just as it does for scan FTS.
+		tp.SetCollate(expr.GetArgs()[1].GetType(pc.ctx).GetCollate())
+	}
 
 	// Construct expression ProtoBuf.
-	return &tipb.Expr{
+	pbExpr := &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(&tp),
 	}
+	if hasNativeFTSInfo {
+		pbExpr.FtsBooleanQuery = proto.Clone(nativeFTSInfo.BooleanQuery).(*tipb.FTSBooleanQuery)
+	}
+	return pbExpr
 }
 
 // GroupByItemToPB converts group by items to pb.

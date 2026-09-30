@@ -2285,8 +2285,8 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.matchAgainstToLike(v, numCols, stackLen)
 		return
 	}
-	if er.ftsNativeViable(v.Modifier, numCols, stackLen) {
-		er.matchAgainstToBuiltin(v, numCols, stackLen)
+	if nativeInfo, ok := er.ftsNativeViable(v.Modifier, numCols, stackLen); ok {
+		er.matchAgainstToBuiltin(v, numCols, stackLen, nativeInfo)
 		return
 	}
 	if !sessVars.EnableLocalMatchAgainst {
@@ -2425,32 +2425,32 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 //
 // BOOLEAN MODE requires a parser and analyzer configuration represented by the
 // TiFlash protocol. Other MATCH modes remain outside this pushdown feature.
-func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
+func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) (*expression.FTSNativeEvalInfo, bool) {
 	if numCols <= 0 {
-		return false
+		return nil, false
 	}
 	if !ftsModifierAllowsNativePushdown(modifier) {
-		return false
+		return nil, false
 	}
 	builder := er.planCtx.builder
 	sessVars := builder.ctx.GetSessionVars()
 	nameStart := stackLen - numCols - 1
 	if nameStart < 0 || stackLen > len(er.ctxNameStk) || stackLen > len(er.ctxStack) {
-		return false
+		return nil, false
 	}
 	matchColumnNames := make([]pmodel.CIStr, 0, numCols)
 	var matchTable *model.TableInfo
 	for i := range numCols {
 		name := er.ctxNameStk[nameStart+i]
 		if name == nil {
-			return false
+			return nil, false
 		}
 		tblName := name.OrigTblName
 		if tblName.L == "" {
 			tblName = name.TblName
 		}
 		if tblName.L == "" {
-			return false
+			return nil, false
 		}
 		dbName := name.DBName
 		if dbName.L == "" {
@@ -2458,7 +2458,7 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 		}
 		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
 		if err != nil {
-			return false
+			return nil, false
 		}
 		if modifier.IsBooleanMode() {
 			if matchTable == nil {
@@ -2467,18 +2467,18 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 				// A Boolean MATCH must resolve to one composite FULLTEXT index
 				// on one table; independent indexes on different tables cannot
 				// represent one MATCH column list.
-				return false
+				return nil, false
 			}
 		}
 		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
-			return false
+			return nil, false
 		}
 		colName := name.OrigColName
 		if colName.L == "" {
 			colName = name.ColName
 		}
 		if !tableHasPublicFTSIndexOnColumnWithParser(tblInfo, colName.L, modifier.IsBooleanMode()) {
-			return false
+			return nil, false
 		}
 		if modifier.IsBooleanMode() {
 			matchColumnNames = append(matchColumnNames, colName)
@@ -2487,19 +2487,31 @@ func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifie
 	if modifier.IsBooleanMode() {
 		matchingIndex := publicFTSIndexOnColumns(matchTable, matchColumnNames, true)
 		if matchingIndex == nil {
-			return false
+			return nil, false
+		}
+		analyzerConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, matchingIndex.FullTextInfo.ParserType)
+		if err != nil || !ftsNativeAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
+			return nil, false
 		}
 		against := er.ctxStack[stackLen-1]
-		if constant, ok := against.(*expression.Constant); ok && !constant.Value.IsNull() {
-			if _, err := expression.BuildFTSBooleanQuery(constant.Value.GetString(), matchingIndex.FullTextInfo.ParserType); err != nil {
-				return false
-			}
-			if !ftsNativeAnalyzerConfigSupportedForParser(sessVars, matchingIndex.FullTextInfo.ParserType) {
-				return false
-			}
+		constant, ok := against.(*expression.Constant)
+		if !ok {
+			return nil, false
 		}
+		if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constant}) {
+			er.sctx.SetSkipPlanCache("native MATCH ... AGAINST serializes the Boolean query into the TiFlash expression")
+		}
+		queryText := ""
+		if !constant.Value.IsNull() {
+			queryText = constant.Value.GetString()
+		}
+		booleanQuery, err := expression.BuildFTSBooleanQueryWithAnalyzerConfig(queryText, analyzerConfig)
+		if err != nil {
+			return nil, false
+		}
+		return &expression.FTSNativeEvalInfo{BooleanQuery: booleanQuery}, true
 	}
-	return true
+	return nil, true
 }
 
 // ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
@@ -2552,7 +2564,7 @@ func ftsNativeAnalyzerConfigSupported(sessVars *variable.SessionVars) bool {
 // matchAgainstToBuiltin converts MATCH...AGAINST to the FTSMysqlMatchAgainst
 // builtin scalar function which can be pushed down to TiFlash for execution
 // against a fulltext index.
-func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int, nativeInfo *expression.FTSNativeEvalInfo) {
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 
@@ -2574,6 +2586,12 @@ func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols
 	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 		er.err = err
 		return
+	}
+	if nativeInfo != nil {
+		if err := expression.SetFTSMysqlMatchAgainstNativeEvalInfo(sf, nativeInfo); err != nil {
+			er.err = err
+			return
+		}
 	}
 	er.ctxStackAppend(fn, types.EmptyName)
 }

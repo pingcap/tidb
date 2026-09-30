@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -161,6 +162,38 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 
 	explainRows := tk.MustQuery("explain format='brief' " + sql).Rows()
 	require.Contains(t, fmt.Sprint(explainRows), "tiflash")
+}
+
+func TestMultipleMatchAgainstBooleanPredicatesUseTiFlashSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table multi_match_articles (
+		id int primary key,
+		title varchar(200),
+		fulltext index idx_title(title)
+	)`)
+
+	dom := domain.GetDomain(tk.Session())
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("multi_match_articles"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustExec("set @@session.tidb_enable_local_match_against=OFF")
+
+	sql := "select id from multi_match_articles where " +
+		"match(title) against('+tidb' in boolean mode) OR " +
+		"match(title) against('+mysql' in boolean mode)"
+	plan := compilePhysicalPlan(t, tk, sql)
+	scan := findFTSTableScan(t, plan)
+	// Multi-predicate Boolean expressions are represented by a TiFlash
+	// Selection containing scalar FTS calls, not by one scan-level query.
+	require.Nil(t, scan.FtsQueryInfo)
+	explain := strings.ToLower(fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows()))
+	require.Contains(t, explain, "mpp[tiflash]")
+	require.Contains(t, explain, "selection")
+	require.Contains(t, explain, "match_against")
 }
 
 func TestMatchAgainstStandardAnalyzerSettingsPushdownToTiFlash(t *testing.T) {

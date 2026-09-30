@@ -77,6 +77,9 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newFTSMatchAgainstForTest(t, ctx, "+PostgreSQL", 1, ast.FulltextSearchModifierBooleanMode)
 	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+	booleanQuery, err := BuildFTSBooleanQuery("+PostgreSQL", model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.NoError(t, SetFTSMysqlMatchAgainstNativeEvalInfo(sf, &FTSNativeEvalInfo{BooleanQuery: booleanQuery}))
 
 	t.Run("clone", func(t *testing.T) {
 		cloned := sf.Clone().(*ScalarFunction)
@@ -86,6 +89,14 @@ func TestFTSMysqlMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, originalInfo, clonedInfo)
 		require.NotSame(t, originalInfo, clonedInfo)
+		originalNativeInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(sf)
+		require.True(t, ok)
+		clonedNativeInfo, ok := FTSMysqlMatchAgainstNativeEvalInfo(cloned)
+		require.True(t, ok)
+		require.Equal(t, originalNativeInfo, clonedNativeInfo)
+		require.NotSame(t, originalNativeInfo.BooleanQuery, clonedNativeInfo.BooleanQuery)
+		clonedNativeInfo.BooleanQuery.Nodes[0].GetTerm().Text = "changed"
+		require.Equal(t, "PostgreSQL", originalNativeInfo.BooleanQuery.Nodes[0].GetTerm().GetText())
 
 		v, isNull, err := cloned.EvalReal(ctx, stringRow("MySQL vs. PostgreSQL"))
 		require.NoError(t, err)

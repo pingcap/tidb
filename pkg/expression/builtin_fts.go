@@ -17,6 +17,7 @@ package expression
 import (
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -34,8 +35,9 @@ type ftsMysqlMatchAgainstFunctionClass struct {
 
 type builtinFtsMysqlMatchAgainstSig struct {
 	baseBuiltinFunc
-	modifier      ast.FulltextSearchModifier
-	localEvalInfo *FTSLocalEvalInfo
+	modifier       ast.FulltextSearchModifier
+	localEvalInfo  *FTSLocalEvalInfo
+	nativeEvalInfo *FTSNativeEvalInfo
 
 	// A prepared statement can reuse this signature with different search
 	// strings. Key the compiled plan by the actual string and protect it when
@@ -51,6 +53,25 @@ type FTSLocalEvalInfo struct {
 	AnalyzerConfig  fulltext.AnalyzerConfig
 	SelectivityTerm string
 	MatchNothing    bool
+}
+
+// FTSNativeEvalInfo carries the Boolean query AST for a TiFlash scalar MATCH
+// expression. The query is serialized in Expr.fts_boolean_query, independently
+// of the scalar function's SQL arguments.
+type FTSNativeEvalInfo struct {
+	BooleanQuery *tipb.FTSBooleanQuery
+}
+
+// Clone returns an independent copy of the native evaluation metadata.
+func (info *FTSNativeEvalInfo) Clone() *FTSNativeEvalInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := &FTSNativeEvalInfo{}
+	if info.BooleanQuery != nil {
+		cloned.BooleanQuery = proto.Clone(info.BooleanQuery).(*tipb.FTSBooleanQuery)
+	}
+	return cloned
 }
 
 // Clone returns an independent copy of the local evaluation metadata.
@@ -73,6 +94,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.modifier = b.modifier
 	newSig.localEvalInfo = b.localEvalInfo.Clone()
+	newSig.nativeEvalInfo = b.nativeEvalInfo.Clone()
 	return newSig
 }
 
@@ -114,6 +136,26 @@ func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, b
 		return nil, false
 	}
 	return sig.localEvalInfo, true
+}
+
+// SetFTSMysqlMatchAgainstNativeEvalInfo attaches the planner-validated
+// Boolean query representation required by TiFlash's scalar FTS function.
+func SetFTSMysqlMatchAgainstNativeEvalInfo(sf *ScalarFunction, info *FTSNativeEvalInfo) error {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
+	}
+	sig.nativeEvalInfo = info.Clone()
+	return nil
+}
+
+// FTSMysqlMatchAgainstNativeEvalInfo returns attached native-evaluation metadata.
+func FTSMysqlMatchAgainstNativeEvalInfo(sf *ScalarFunction) (*FTSNativeEvalInfo, bool) {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok || sig.nativeEvalInfo == nil {
+		return nil, false
+	}
+	return sig.nativeEvalInfo, true
 }
 
 // FTSModifierSupportedByLocalNoScore reports whether local boolean matching can

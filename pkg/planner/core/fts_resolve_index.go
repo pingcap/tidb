@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -83,6 +84,12 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 	if !ok || len(selection.Conditions) == 0 {
 		return false, nil
 	}
+	if countFTSMysqlMatchAgainst(selection.Conditions) > 1 {
+		// A scan-level FTS pushdown can represent only one MATCH predicate.
+		// Keep compound Boolean SQL predicates intact so each native scalar
+		// MATCH carries its own analyzer/query metadata to TiFlash.
+		return false, nil
+	}
 
 	for i, condition := range selection.Conditions {
 		ftsInfo := expression.InterpretFullTextSearchExpr(condition)
@@ -143,6 +150,27 @@ func (*FullTextIndexResolverWhere) onEnterDataSource(v *FullTextIndexPlanVisitor
 		return true, nil
 	}
 	return false, nil
+}
+
+func countFTSMysqlMatchAgainst(expressions []expression.Expression) int {
+	count := 0
+	var visit func(expression.Expression)
+	visit = func(expr expression.Expression) {
+		sf, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return
+		}
+		if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+			count++
+		}
+		for _, arg := range sf.GetArgs() {
+			visit(arg)
+		}
+	}
+	for _, expr := range expressions {
+		visit(expr)
+	}
+	return count
 }
 
 func findMatchingFullTextIndex(ds *logicalop.DataSource, ftsInfo *expression.FTSInfo) *model.IndexInfo {
