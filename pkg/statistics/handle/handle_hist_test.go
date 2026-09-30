@@ -436,8 +436,21 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	// Sync load is asynchronous, so the flags below may not be set yet when the
+	// query returns. Wait for them instead of checking immediately.
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		if !ok {
+			return false
+		}
+		for _, col := range []*model.ColumnInfo{tblInfo.Columns[0], tblInfo.Columns[1], tblInfo.Columns[3]} {
+			colStats := statsTbl.Columns[col.ID]
+			if colStats == nil || !colStats.IsFullLoad() {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, statsTbl.Columns[tblInfo.Columns[0].ID].IsFullLoad())
 	require.True(t, statsTbl.Columns[tblInfo.Columns[1].ID].IsFullLoad())
 	require.True(t, statsTbl.Columns[tblInfo.Columns[3].ID].IsFullLoad())
@@ -447,8 +460,19 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("analyze table t columns a, b, c")
 	require.NoError(t, h.InitStatsLite(dom.InfoSchema()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		if !ok {
+			return false
+		}
+		for _, col := range []*model.ColumnInfo{tblInfo.Columns[0], tblInfo.Columns[1], tblInfo.Columns[2], tblInfo.Columns[3]} {
+			colStats := statsTbl.Columns[col.ID]
+			if colStats == nil || !colStats.IsFullLoad() {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
 	// a, b, d's status is not changed.
 	require.True(t, statsTbl.Columns[tblInfo.Columns[0].ID].IsFullLoad())
 	require.True(t, statsTbl.Columns[tblInfo.Columns[1].ID].IsFullLoad())
