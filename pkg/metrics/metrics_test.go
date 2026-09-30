@@ -45,11 +45,11 @@ func TestRegisterMetrics(t *testing.T) {
 	families, err := registry.Gather()
 	require.NoError(t, err)
 	for _, family := range families {
-		if family.GetName() == "tidb_global_sort_residual_data_size_bytes" {
+		if family.GetName() == "tidb_global_sort_orphan_data_size_bytes" {
 			return
 		}
 	}
-	require.Fail(t, "tidb_global_sort_residual_data_size_bytes is not registered")
+	require.Fail(t, "tidb_global_sort_orphan_data_size_bytes is not registered")
 }
 
 func TestExecuteErrorToLabel(t *testing.T) {

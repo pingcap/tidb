@@ -68,7 +68,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 50,
+    shard_count = 49,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

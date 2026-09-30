@@ -103,16 +103,21 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return slices.Clone(sm.mu.schedulers)
 }
 
-type residualMonitor interface {
-	Request()
-	Stop()
+type orphanDataMonitor interface {
+	Trigger()
 }
 
-type residualActiveTaskChecker struct {
+// noopOrphanDataMonitor is used when orphan data monitoring is not enabled, so
+// the cleanup loop can call the monitor unconditionally.
+type noopOrphanDataMonitor struct{}
+
+func (noopOrphanDataMonitor) Trigger() {}
+
+type orphanDataActiveProducerChecker struct {
 	taskMgr TaskManager
 }
 
-func (c residualActiveTaskChecker) HasActiveTasks(ctx context.Context) (bool, error) {
+func (c orphanDataActiveProducerChecker) HasActiveProducers(ctx context.Context) (bool, error) {
 	tasks, err := c.taskMgr.GetAllTasks(ctx)
 	return len(tasks) > 0, err
 }
@@ -134,7 +139,6 @@ type Manager struct {
 	// serverID, it's value is ip:port now.
 	serverID string
 	logger   *zap.Logger
-	residual residualMonitor
 
 	finishCh chan struct{}
 
@@ -156,11 +160,6 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		logger = logger.With(zap.String("server-id", serverID))
 	}
 	subCtx, cancel := context.WithCancel(ctx)
-	nextGen := kerneltype.IsNextGen()
-	storageURI := ""
-	if nextGen {
-		storageURI = handle.GetCloudStorageURI(subCtx, store)
-	}
 	slotMgr := newSlotManager()
 	nodeMgr := newNodeManager(serverID)
 	schedulerManager := &Manager{
@@ -178,12 +177,6 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			serverID: serverID,
 		}),
 		logger: logger,
-		residual: orphandata.NewMonitor(subCtx, orphandata.Config{
-			Enabled:           nextGen,
-			ActiveTaskChecker: residualActiveTaskChecker{taskMgr: taskMgr},
-			StorageURI:        storageURI,
-			Logger:            logger,
-		}),
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
 		// can make non-blocking sends drop signals until the cleanup ticker runs.
@@ -228,7 +221,6 @@ func (sm *Manager) Cancel() {
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
-	sm.residual.Stop()
 	sm.schedulerWG.Wait()
 	sm.wg.Wait()
 	sm.clearSchedulers()
@@ -438,8 +430,18 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
+	// Orphan global-sort data only exists in the NextGen kernel, where cloud
+	// storage is the shared spill area.
+	var monitor orphanDataMonitor = noopOrphanDataMonitor{}
+	if kerneltype.IsNextGen() {
+		monitor = orphandata.NewMonitor(sm.ctx, orphandata.Config{
+			ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
+			StorageURI:            handle.GetCloudStorageURI(sm.ctx, sm.store),
+			Logger:                sm.logger,
+		})
+	}
 	sm.drainCleanTaskBatches()
-	sm.residual.Request()
+	monitor.Trigger()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -451,7 +453,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
-			sm.residual.Request()
+			monitor.Trigger()
 		}
 	}
 }
