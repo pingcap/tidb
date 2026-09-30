@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -473,14 +472,6 @@ func TestMonitor(t *testing.T) {
 				"walk leaked fragments walk-account walk+sas walk-encryption",
 			),
 			secrets: []string{"walk-account", "walk+sas", "walk%2Bsas", "walk-encryption"},
-		},
-		{
-			name: "size overflow",
-			uri:  "memstore:///orphandata",
-			entries: []monitorWalkEntry{
-				{path: "candidate-a/file", size: math.MaxInt64},
-				{path: "candidate-b/file", size: 1},
-			},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

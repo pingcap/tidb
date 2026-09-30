@@ -17,7 +17,6 @@ package orphandata
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -82,21 +81,6 @@ func TestScan(t *testing.T) {
 			objectCount:   1,
 			sampleObjects: []string{"unknown/file"},
 		}, stats)
-		require.Equal(t, 1, store.walkCount)
-	})
-
-	t.Run("reject size overflow without partial result", func(t *testing.T) {
-		store := &walkStorage{
-			Storage: objstore.NewMemStorage(),
-			entries: []walkEntry{
-				{path: "123/first", size: math.MaxInt64},
-				{path: "456/second", size: 1},
-			},
-		}
-
-		stats, err := scanOrphanData(context.Background(), store)
-		require.ErrorContains(t, err, "overflow")
-		require.Equal(t, scanStats{}, stats)
 		require.Equal(t, 1, store.walkCount)
 	})
 

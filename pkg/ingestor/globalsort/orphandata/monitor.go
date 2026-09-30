@@ -16,7 +16,6 @@ package orphandata
 
 import (
 	"context"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -163,13 +162,6 @@ func scanOrphanData(ctx context.Context, storage storeapi.Storage) (scanStats, e
 		}
 		if size < 0 {
 			return nil
-		}
-		if stats.sizeBytes > math.MaxInt64-size {
-			return errors.Errorf(
-				"global sort orphan data size overflow: accumulated bytes %d, next object bytes %d",
-				stats.sizeBytes,
-				size,
-			)
 		}
 		stats.sizeBytes += size
 		return nil
