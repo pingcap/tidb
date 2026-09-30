@@ -352,10 +352,10 @@ func TestMonitor(t *testing.T) {
 		require.EqualValues(t, 66, fields["size-bytes"])
 		require.EqualValues(t, 11, fields["object-count"])
 		require.Equal(t, []any{
-			"prefix-00/", "prefix-01/", "prefix-02/", "prefix-03/", "prefix-04/",
-			"prefix-05/", "prefix-06/", "prefix-07/", "prefix-08/", "prefix-09/",
-		}, fields["sample-prefixes"])
-		require.Equal(t, true, fields["sample-prefixes-omitted"])
+			"prefix-10/file", "prefix-09/file", "prefix-08/file", "prefix-07/file", "prefix-06/file",
+			"prefix-05/file", "prefix-04/file", "prefix-03/file", "prefix-02/file", "prefix-01/file",
+		}, fields["sample-objects"])
+		require.Equal(t, true, fields["sample-truncated"])
 		requireNoCredentials(t, m.logs, accessKey, secretKey, sessionToken, "success%2Bsk")
 	})
 
@@ -422,8 +422,8 @@ func TestMonitor(t *testing.T) {
 			"task-count",
 			"size-bytes",
 			"object-count",
-			"sample-prefixes",
-			"sample-prefixes-omitted",
+			"sample-objects",
+			"sample-truncated",
 		} {
 			require.NotContains(t, fields, field)
 		}

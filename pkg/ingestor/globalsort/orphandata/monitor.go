@@ -16,7 +16,9 @@ package orphandata
 
 import (
 	"context"
+	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -110,7 +112,7 @@ func (m *Monitor) Trigger(ctx context.Context) {
 	}
 	defer storage.Close()
 
-	scan, err := Scan(ctx, storage)
+	stats, err := scanOrphanData(ctx, storage)
 	if err != nil {
 		if ctx.Err() == nil {
 			m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
@@ -130,10 +132,50 @@ func (m *Monitor) Trigger(ctx context.Context) {
 		return
 	}
 
-	metrics.GlobalSortOrphanDataSize.Set(float64(scan.SizeBytes))
+	metrics.GlobalSortOrphanDataSize.Set(float64(stats.sizeBytes))
 	m.cfg.Logger.Info("global sort orphan data monitor success",
-		zap.Int64("size-bytes", scan.SizeBytes),
-		zap.Int64("object-count", scan.ObjectCount),
-		zap.Strings("sample-prefixes", scan.SamplePrefixes),
-		zap.Bool("sample-prefixes-omitted", scan.SamplePrefixesOmitted))
+		zap.Int64("size-bytes", stats.sizeBytes),
+		zap.Int64("object-count", stats.objectCount),
+		zap.Strings("sample-objects", stats.sampleObjects),
+		zap.Bool("sample-truncated", stats.truncated))
+}
+
+// sampleObjectLimit bounds how many object names are kept for diagnostics.
+const sampleObjectLimit = 10
+
+// scanStats summarizes the global-sort orphan objects found by a scan.
+type scanStats struct {
+	sizeBytes     int64
+	objectCount   int64
+	sampleObjects []string
+	truncated     bool
+}
+
+// scanOrphanData walks storage and returns global-sort orphan object statistics.
+func scanOrphanData(ctx context.Context, storage storeapi.Storage) (scanStats, error) {
+	var stats scanStats
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		stats.objectCount++
+		if len(stats.sampleObjects) < sampleObjectLimit {
+			stats.sampleObjects = append(stats.sampleObjects, path)
+		} else {
+			stats.truncated = true
+		}
+		if size < 0 {
+			return nil
+		}
+		if stats.sizeBytes > math.MaxInt64-size {
+			return errors.Errorf(
+				"global sort orphan data size overflow: accumulated bytes %d, next object bytes %d",
+				stats.sizeBytes,
+				size,
+			)
+		}
+		stats.sizeBytes += size
+		return nil
+	})
+	if err != nil {
+		return scanStats{}, errors.Annotate(err, "scan global sort orphan objects")
+	}
+	return stats, nil
 }

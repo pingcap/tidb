@@ -2,14 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "orphandata",
-    srcs = [
-        "monitor.go",
-        "scan.go",
-    ],
+    srcs = ["monitor.go"],
     importpath = "github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ingestor/simplesst",
         "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
@@ -27,7 +23,7 @@ go_test(
     ],
     embed = [":orphandata"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 2,
     deps = [
         "//pkg/metrics",
         "//pkg/objstore",
