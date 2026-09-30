@@ -280,8 +280,24 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		}
 	}
 
+	functionMetadata := expr.Function.metadata()
+	if hasNativeFTSInfo && functionMetadata != nil {
+		// Expr.val is the generic scalar-function metadata slot. Do not silently
+		// overwrite another function's metadata with FTS metadata.
+		logutil.BgLogger().Error("FTS MATCH expression has unexpected function metadata", zap.Any("metadata", functionMetadata))
+		return nil
+	}
+	var metadata proto.Message
+	if hasNativeFTSInfo {
+		metadata = &tipb.FTSMatchExpressionMetadata{
+			Version:      ftsMatchExpressionMetadataVersion,
+			BooleanQuery: proto.Clone(nativeFTSInfo.BooleanQuery).(*tipb.FTSBooleanQuery),
+		}
+	} else {
+		metadata = functionMetadata
+	}
 	var encoded []byte
-	if metadata := expr.Function.metadata(); metadata != nil {
+	if metadata != nil {
 		var err error
 		encoded, err = proto.Marshal(metadata)
 		if err != nil {
@@ -310,9 +326,6 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(&tp),
-	}
-	if hasNativeFTSInfo {
-		pbExpr.FtsBooleanQuery = proto.Clone(nativeFTSInfo.BooleanQuery).(*tipb.FTSBooleanQuery)
 	}
 	return pbExpr
 }

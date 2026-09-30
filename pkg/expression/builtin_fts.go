@@ -56,11 +56,13 @@ type FTSLocalEvalInfo struct {
 }
 
 // FTSNativeEvalInfo carries the Boolean query AST for a TiFlash scalar MATCH
-// expression. The query is serialized in Expr.fts_boolean_query, independently
-// of the scalar function's SQL arguments.
+// expression. The query is serialized as versioned scalar-function metadata
+// in Expr.val, independently of the SQL arguments in Expr.children.
 type FTSNativeEvalInfo struct {
 	BooleanQuery *tipb.FTSBooleanQuery
 }
+
+const ftsMatchExpressionMetadataVersion uint32 = 1
 
 // Clone returns an independent copy of the native evaluation metadata.
 func (info *FTSNativeEvalInfo) Clone() *FTSNativeEvalInfo {

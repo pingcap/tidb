@@ -2011,7 +2011,7 @@ func TestMetadata(t *testing.T) {
 	require.Equal(t, true, metadata.InUnion)
 }
 
-func TestFTSBooleanQueryUsesStructuredPBField(t *testing.T) {
+func TestFTSBooleanQueryUsesVersionedFunctionMetadata(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
 	searchType := types.NewFieldType(mysql.TypeVarchar)
@@ -2036,7 +2036,11 @@ func TestFTSBooleanQueryUsesStructuredPBField(t *testing.T) {
 	require.NotNil(t, pbExpr)
 	require.Equal(t, tipb.ScalarFuncSig_FTSMatchExpression, pbExpr.GetSig())
 	require.Len(t, pbExpr.GetChildren(), 2, "query metadata must not be encoded as a synthetic string child")
-	require.Equal(t, query, pbExpr.GetFtsBooleanQuery())
+	require.NotEmpty(t, pbExpr.GetVal(), "FTS metadata must use the scalar-function metadata slot")
+	metadata := &tipb.FTSMatchExpressionMetadata{}
+	require.NoError(t, proto.Unmarshal(pbExpr.GetVal(), metadata))
+	require.Equal(t, ftsMatchExpressionMetadataVersion, metadata.GetVersion())
+	require.Equal(t, query, metadata.GetBooleanQuery())
 }
 
 func TestPushDownSwitcher(t *testing.T) {
