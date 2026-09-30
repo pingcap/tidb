@@ -592,6 +592,11 @@ func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...a
 }
 
 func (p *mockSession) GetSessionVars() *variable.SessionVars {
+	if p.Context == nil {
+		// For these tests we only care that it doesn't panic; the logging
+		// helper already handles nil vars.
+		return nil
+	}
 	return p.Context.GetSessionVars()
 }
 
