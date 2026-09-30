@@ -1209,47 +1209,6 @@ impl KvTable {
         )
     }
 
-    /// Builds the handle ranges used by `buildTableReaderFromHandles`.
-    ///
-    /// The input order belongs to the index lookup and must remain untouched;
-    /// Go sorts only the request-owned slice before calling
-    /// `TableHandlesToKVRanges`. Equal handles therefore remain separate point
-    /// ranges, while a strictly consecutive run is one range with its exact
-    /// cardinality hint.
-    fn table_reader_handle_ranges(
-        handles: &[TableHandle],
-    ) -> Result<(Vec<IndexRange>, Vec<usize>), KvTableError> {
-        let mut sorted: Vec<&TableHandle> = handles.iter().collect();
-        sorted.sort_unstable();
-        let mut ranges: Vec<IndexRange> = Vec::with_capacity(sorted.len());
-        let mut hints = Vec::with_capacity(sorted.len());
-        for handle in sorted {
-            let TableHandle::Int(value) = handle else {
-                return Err(KvTableError::Encode(
-                    "table reader handle ranges require integer handles".to_owned(),
-                ));
-            };
-            match (ranges.last_mut(), value.checked_sub(1)) {
-                (Some(range), Some(previous))
-                    if range.high.first() == Some(&Datum::Int(previous)) =>
-                {
-                    range.high = vec![Datum::Int(*value)];
-                    *hints.last_mut().expect("every range has a hint") += 1;
-                }
-                _ => {
-                    ranges.push(IndexRange {
-                        low: vec![Datum::Int(*value)],
-                        high: vec![Datum::Int(*value)],
-                        low_exclusive: false,
-                        high_exclusive: false,
-                    });
-                    hints.push(1);
-                }
-            }
-        }
-        Ok((ranges, hints))
-    }
-
     /// Converts integer handles using the direct KV range builder shared with
     /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
     fn table_reader_handle_key_ranges(
