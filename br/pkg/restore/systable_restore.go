@@ -12,8 +12,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -68,6 +70,32 @@ var sysPrivilegeTableMap = map[string]string{
 func isUnrecoverableTable(tableName string) bool {
 	_, ok := unRecoverableTable[tableName]
 	return ok
+}
+
+type checkPrivilegeTableRowsCollateCompatibilitySQLPair struct {
+	upstreamCollateSQL   string
+	downstreamCollateSQL string
+	columns              map[string]struct{}
+}
+
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatibilitySQLPair{
+	"mysql": {
+		"db": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User FROM __TiDB_BR_Temporary_mysql.db GROUP BY Host, DB COLLATE utf8mb4_general_ci, User) as a",
+			columns:              map[string]struct{}{"db": {}},
+		},
+		"tables_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.tables_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.tables_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}},
+		},
+		"columns_priv": {
+			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.columns_priv",
+			downstreamCollateSQL: "SELECT COUNT(1) FROM (SELECT Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci FROM __TiDB_BR_Temporary_mysql.columns_priv GROUP BY Host, DB COLLATE utf8mb4_general_ci, User, Table_name COLLATE utf8mb4_general_ci, Column_name COLLATE utf8mb4_general_ci) as a",
+			columns:              map[string]struct{}{"db": {}, "table_name": {}, "column_name": {}},
+		},
+	},
 }
 
 func isStatsTable(tableName string) bool {
@@ -148,7 +176,7 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) err
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
+func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) error {
 	sysDB := mysql.SystemDB
 
 	temporaryDB := utils.TemporaryDBName(sysDB)
@@ -156,18 +184,18 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
-		return
+		return nil
 	}
 	originDatabase, ok := rc.databases[temporaryDB.O]
 	if !ok {
 		log.Info("system database not backed up, skipping", zap.String("database", sysDB))
-		return
+		return nil
 	}
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
 		// Or should we create the database here?
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
-		return
+		return nil
 	}
 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
@@ -179,6 +207,10 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
 				)
+				if berrors.Is(err, berrors.ErrUnsupportedSystemTable) {
+					continue
+				}
+				return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
 			}
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
@@ -188,6 +220,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
 		}
 	}
+	return nil
 }
 
 // database is a record of a database.
@@ -239,6 +272,7 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
 func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
@@ -294,6 +328,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 
 	if db.ExistingTables[tableName] != nil {
 		whereNotClause := ""
+		if rc.privilegeTableRowsCollateCompatibility {
+			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+				return err
+			}
+		}
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
 			/* #nosec G202: SQL string concatenation */
@@ -340,4 +379,98 @@ func (rc *Client) cleanTemporaryDatabase(ctx context.Context, originDB string) {
 			logutil.ShortError(err),
 		)
 	}
+}
+
+func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, upstreamCollate, downstreamCollate string) bool {
+	if upstreamCollate != "utf8mb4_bin" || downstreamCollate != "utf8mb4_general_ci" {
+		return false
+	}
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return false
+	}
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
+	if !exists {
+		return false
+	}
+	_, exists = collateCompatibilityColumnMap.columns[columnNameL]
+	return exists
+}
+
+func (rc *Client) checkPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
+	if !exists {
+		return nil
+	}
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
+	if !exists {
+		return nil
+	}
+	colCount := 0
+	for _, col := range upstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin or utf8mb4_general_ci",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, upstream table %s.%s has only %d compatible columns",
+			dbNameL, tableNameL, colCount)
+	}
+	colCount = 0
+	for _, col := range downstreamTable.Columns {
+		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
+			if col.GetCollate() != "utf8mb4_general_ci" {
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
+					dbNameL, tableNameL, col.Name.L, col.GetCollate())
+			}
+			colCount += 1
+		}
+	}
+	if colCount != len(collateCompatibilityColumnMap.columns) {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"incompatible column collate, downstream table %s.%s has only %d compatible columns",
+			dbNameL, tableNameL, colCount)
+	}
+	ectx := rc.db.se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.upstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	upstreamCount := rows[0].GetInt64(0)
+	rows, _, err = ectx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		collateCompatibilityColumnMap.downstreamCollateSQL,
+	)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get the count of privilege rows")
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to get the count of privilege rows")
+	}
+	downstreamCount := rows[0].GetInt64(0)
+	if upstreamCount != downstreamCount {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"there are duplicated privilege rows with collate utf8mb4_general_ci [upstream count %d != downstream count %d]",
+			upstreamCount, downstreamCount)
+	}
+	return nil
 }

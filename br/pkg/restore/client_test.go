@@ -278,7 +278,44 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 
 	// other system tables in cluster have more columns(failed)
 	mockedDBTI := dbTI.Clone()
-	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	mockedDBTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// skip check collate
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.NoError(t, err)
+
+	// skip check collate but type mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
+	mockedDBTI.Columns[1].FieldType.SetFlen(2000) // Columns[1] is `DB` char(64)
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// another column collate mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[0].SetCollate("utf8mb4_general_ci")
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// another column collate mismatch
+	mockedDBTI = dbTI.Clone()
+	mockedDBTI.Columns[1].SetCollate("utf8mb4_unicode_ci")
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedDBTI,
