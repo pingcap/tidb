@@ -42,18 +42,21 @@
 
 This document proposes **basic geospatial support** for TiDB: a MySQL-compatible
 `GEOMETRY` type family, per-column [`SRID`](#terminology), versioned
-[EWKB](#terminology) storage, and the minimal `ST_*` function set that makes geometry
-storable, readable and queryable. It covers **SRID 0** (Cartesian plane) and **SRID 4326**
-([WGS 84](#terminology) geographic), including the [DE-9IM](#terminology) predicates. A
-geometry predicate has no index here, so it filters row by row over whatever the access
-path returns; other predicates choose their access path as usual.
+[EWKB](#terminology) storage, and the minimal `ST_*` function set, including the
+[DE-9IM](#terminology) predicates, that makes geometry storable, readable and queryable.
+It covers **SRID 0** (Cartesian plane) and **SRID 4326**
+([WGS 84](#terminology) geographic).
 
-It is **index-free**. The spatial index is specified in
-[`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)
-([PR #69473](https://github.com/pingcap/tidb/pull/69473)) and builds on this layer; later work
-(more SRIDs, the function tail, coprocessor pushdown, the index) extends this design
-rather than replacing it. This replaces the earlier geospatial design
+This basic design does not cover **indexing** on `GEOMETRY` types, which is designed in
+[PR #69473](https://github.com/pingcap/tidb/pull/69473) and which builds on this layer.
+Later work (more SRIDs, the function tail, coprocessor pushdown, the index) extends this
+design rather than replacing it.
+
+This replaces the earlier geospatial design
 ([PR #38916](https://github.com/pingcap/tidb/pull/38916)).
+
+The main goal of the design is basic MySQL compatibility. It should also be extensible
+later, both towards better MySQL compatibility and beyond MySQL.
 
 MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
 against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
