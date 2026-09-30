@@ -205,7 +205,7 @@ impl UnaryCancellation {
             });
     }
 
-    pub(super) async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         if self.is_cancelled() {
             return;
         }

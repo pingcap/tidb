@@ -91,17 +91,6 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
         held.for_update_ts
     );
 
-    // The primary is locked, so its TTL must now be refreshed for as long as
-    // the transaction lives. A short tick makes the proof finish in a test's
-    // lifetime; production uses half the managed TTL.
-    let keep_alive = opener
-        .start_lock_keep_alive_with_tick(
-            held.primary_key.clone(),
-            holder.start_ts(),
-            Duration::from_millis(200),
-        )
-        .expect("the keep-alive thread opens its own session");
-
     // A second transaction must not be able to take the same key. `NOWAIT`
     // makes TiKV answer rather than queue, so the proof needs no timing
     // assumption: the failure itself is the evidence the lock is real.
@@ -148,21 +137,18 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
         )
         .expect("an untouched key is unaffected by the contended one");
 
-    // Give the keep-alive time for several real TxnHeartBeat round trips
-    // before the lock is released.
-    std::thread::sleep(Duration::from_millis(900));
-    let keep_alive_report = futures::executor::block_on(keep_alive.close_and_wait());
-    assert!(
-        keep_alive_report.confirmed_heart_beats >= 2,
-        "TiKV must confirm repeated TxnHeartBeat on a real primary lock: {keep_alive_report:?}"
-    );
-    assert!(keep_alive_report.last_advised_ttl_ms >= 20_000);
-    println!(
-        "pessimistic_lock_realtikv phase=kept_alive heart_beats={} advised_ttl_ms={} stop={:?}",
-        keep_alive_report.confirmed_heart_beats,
-        keep_alive_report.last_advised_ttl_ms,
-        keep_alive_report.stop
-    );
+    // The client's own TTL manager must keep the primary alive past its
+    // initial twenty-second lease; no TiDB-side heartbeat task participates.
+    std::thread::sleep(Duration::from_secs(21));
+    assert!(matches!(
+        waiter.acquire_locks(
+            &[CONTENDED_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::NoWait,
+            &call()
+        ),
+        Err(PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. })
+    ));
 
     // The holder commits through the shared two-phase engine, which releases
     // the pessimistic lock by turning it into a committed version.
@@ -210,9 +196,8 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
 
     // Releasing without committing must leave nothing behind for the next run.
     waiter
-        .pessimistic_rollback(&waiter.locked_keys(), &call())
+        .rollback(&call())
         .expect("the waiter releases every lock it holds");
-    assert!(waiter.locked_keys().is_empty());
 
     println!(
         "pessimistic_lock_realtikv status=passed cluster_id={cluster_id} \
@@ -311,7 +296,7 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
     // requested `for_update_ts` would silently leave it behind, so a NOWAIT
     // attempt by a third transaction after the rollback is the proof it went.
     reader
-        .pessimistic_rollback(&[FAIR_LOCK_KEY.to_vec()], &call())
+        .rollback(&call())
         .expect("the fair lock is released at the timestamp it really carries");
     let mut prober = opener
         .begin_pessimistic(4, 4 * 1024)
@@ -325,7 +310,7 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
         )
         .expect("a released fair lock leaves the key immediately lockable");
     prober
-        .pessimistic_rollback(&prober.locked_keys(), &call())
+        .rollback(&call())
         .expect("the prober releases what it took");
     println!("fair_locking_realtikv phase=released_at_conflict_ts");
 

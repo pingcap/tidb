@@ -47,9 +47,8 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticMutation,
-    OptimisticTransactionState, RealOptimisticTransaction, TransactionAttemptPhase,
-    TransactionAttemptResult, TransactionCause,
+    OptimisticCommitOutcome, OptimisticMutation, OptimisticTransactionState,
+    RealOptimisticTransaction, TransactionAttemptPhase, TransactionCause,
 };
 use tidb_txnkv::SharedReadRuntime;
 
@@ -198,8 +197,10 @@ impl RegionRecoveryLoader for SplitTopology {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CommandOutcome {
     Ok,
-    /// Invalidates the region and yields a retryable rebuild disposition.
+    /// Source backs off and returns a terminal region response.
     RecoveryInProgress,
+    /// Retries the same request after source server-busy backoff.
+    ServerBusy,
     /// Source terminal region response which is not the client-go
     /// `ErrRegionUnavailable` sentinel.
     FlashbackInProgress,
@@ -212,6 +213,7 @@ struct Recorded {
     prewrites: Vec<KvrpcPrewriteRequest>,
     commits: Vec<KvrpcCommitRequest>,
     rollbacks: Vec<KvrpcBatchRollbackRequest>,
+    rejected_key: Vec<u8>,
 }
 
 /// Scripts one outcome per command occurrence, keyed by command kind.
@@ -221,6 +223,7 @@ struct ScriptedTikv {
     commits: Arc<Mutex<Vec<CommandOutcome>>>,
     rollbacks: Arc<Mutex<Vec<CommandOutcome>>>,
     recorded: Arc<Mutex<Recorded>>,
+    cancel_on_rollback: Option<tidb_txnkv::rpc::UnaryCancellation>,
 }
 
 impl ScriptedTikv {
@@ -234,6 +237,7 @@ impl ScriptedTikv {
             commits: Arc::new(Mutex::new(commits)),
             rollbacks: Arc::new(Mutex::new(rollbacks)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
+            cancel_on_rollback: None,
         }
     }
 
@@ -250,6 +254,10 @@ fn region_error(outcome: CommandOutcome) -> Option<errorpb::Error> {
     match outcome {
         CommandOutcome::RecoveryInProgress => Some(errorpb::Error {
             recovery_in_progress: Some(errorpb::RecoveryInProgress { region_id: 0 }),
+            ..errorpb::Error::default()
+        }),
+        CommandOutcome::ServerBusy => Some(errorpb::Error {
+            server_is_busy: Some(errorpb::ServerIsBusy::default()),
             ..errorpb::Error::default()
         }),
         CommandOutcome::FlashbackInProgress => Some(errorpb::Error {
@@ -377,10 +385,15 @@ impl ScriptedTikv {
                             .as_slice(),
                     )],
                     CommandOutcome::Ok
+                    | CommandOutcome::ServerBusy
                     | CommandOutcome::RecoveryInProgress
                     | CommandOutcome::FlashbackInProgress => Vec::new(),
                 };
-                self.recorded.lock().unwrap().prewrites.push(request);
+                let mut recorded = self.recorded.lock().unwrap();
+                if let Some(error) = errors.first() {
+                    recorded.rejected_key = error.already_exist.as_ref().unwrap().key.clone();
+                }
+                recorded.prewrites.push(request);
                 Ok(ResponseCmd::Prewrite(
                     KvrpcPrewriteResponse {
                         region_error: region_error(outcome),
@@ -406,6 +419,9 @@ impl ScriptedTikv {
             RequestCmd::BatchRollback(body) => {
                 let request = KvrpcBatchRollbackRequest::decode(body.as_ref())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
+                if let Some(cancellation) = &self.cancel_on_rollback {
+                    cancellation.cancel();
+                }
                 let outcome = Self::next(&self.rollbacks);
                 self.recorded.lock().unwrap().rollbacks.push(request);
                 Ok(ResponseCmd::BatchRollback(
@@ -539,7 +555,7 @@ fn primary_mutation() -> Vec<OptimisticMutation> {
 /// diagnostic. Flashback is not client-go's explicit region-unavailable
 /// sentinel, so the SQL boundary must not manufacture 9005 from this cause.
 #[test]
-fn flashback_prewrite_is_a_generic_region_cause_with_its_detail() {
+fn flashback_prewrite_keeps_the_clients_terminal_diagnostic() {
     let service = ScriptedTikv::new(
         vec![CommandOutcome::FlashbackInProgress],
         Vec::new(),
@@ -560,8 +576,8 @@ fn flashback_prewrite_is_a_generic_region_cause_with_its_detail() {
     };
     assert!(matches!(
         rolled_back.cause,
-        TransactionCause::Region { detail }
-            if detail.contains("FlashbackInProgress")
+        TransactionCause::InvalidResponse { detail }
+            if detail.contains("flashback progress")
                 && detail.contains(&LOW_REGION.to_string())
     ));
 }
@@ -662,180 +678,137 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
     assert_eq!(topology.loads_for(LOW_REGION), 1);
 }
 
-/// A rollback batch that cannot be regrouped after its region error reports
-/// `CleanupFailed`, keeping the original cause and the outstanding keys.
+/// Go cleanup is detached: its failure never replaces the prewrite error.
 #[test]
-fn rollback_regroup_failure_reports_cleanup_failed_with_outstanding_keys() {
+fn detached_cleanup_failure_preserves_the_original_prewrite_error() {
     let service = ScriptedTikv::new(
-        // The second prewrite is definitively rejected, so cleanup must run for
-        // every possibly-prewritten key.
         vec![CommandOutcome::Ok, CommandOutcome::AlreadyExists],
         Vec::new(),
-        // The primary region's rollback hits a region error; its regroup then
-        // finds no leader. The other batch is cleaned normally.
         vec![CommandOutcome::RecoveryInProgress, CommandOutcome::Ok],
     );
     let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
-    let topology = SplitTopology::new(server.store_address());
-    let transaction = transaction(&server, topology.clone());
-
+    let transaction = transaction(&server, SplitTopology::new(server.store_address()));
     let outcome = transaction
         .commit(
             two_region_mutations(),
             &UnaryCallContext::with_timeout(CALL_TIMEOUT),
         )
-        .expect("the coordinator must return a terminal outcome, not a caller error");
-
-    assert_eq!(outcome.state(), OptimisticTransactionState::CleanupFailed);
-    let OptimisticCommitOutcome::CleanupFailed(cleanup_failed) = outcome else {
-        panic!("incomplete cleanup must not be reported as a clean rollback");
-    };
-
-    // The original prewrite rejection survives cleanup.
-    assert!(
-        matches!(
-            &cleanup_failed.cause,
-            TransactionCause::AlreadyExists { key, .. } if key == SECONDARY_KEY
-        ),
-        "cleanup must not overwrite the original cause: {:?}",
-        cleanup_failed.cause
-    );
-
-    assert_eq!(cleanup_failed.cleanup_failures.len(), 1);
-    let failure = &cleanup_failed.cleanup_failures[0];
-    assert_eq!(failure.keys, vec![PRIMARY_KEY.to_vec()]);
-    assert_eq!(failure.region.map(|region| region.id), Some(LOW_REGION));
-    assert_eq!(
-        failure.address.as_deref(),
-        Some(server.store_address().as_str())
-    );
-    assert!(
-        failure.publication.is_some(),
-        "a decoded rollback response must retain its publication identity"
-    );
-    let TransactionCause::Region { detail } = &failure.cause else {
-        panic!(
-            "a failed regroup is a region cause, got {:?}",
-            failure.cause
-        );
+        .unwrap();
+    let OptimisticCommitOutcome::RolledBack(rolled_back) = outcome else {
+        panic!("a definitive prewrite error cannot become an ambiguous commit");
     };
     assert!(
-        detail.contains("BatchRollback regroup failed"),
-        "unexpected regroup detail: {detail}"
+        matches!(&rolled_back.cause, TransactionCause::AlreadyExists { key, .. } if *key == recorded.lock().unwrap().rejected_key),
+        "{:?}",
+        rolled_back.cause
     );
-
-    // The other batch was still cleaned, and no commit was ever published.
-    let receipt = &cleanup_failed.receipt;
-    assert_eq!(receipt.commit_ts, 0);
-    assert!(receipt.primary_publications.is_empty());
-    assert_eq!(receipt.rollback_publications.len(), 1);
-    assert_eq!(receipt.rollback_attempt_publications.len(), 2);
-
-    let rollback_results = receipt
-        .attempt_history
-        .iter()
-        .filter(|attempt| attempt.phase == TransactionAttemptPhase::BatchRollback)
-        .map(|attempt| attempt.result.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(rollback_results.len(), 2);
-    assert!(matches!(
-        rollback_results[0],
-        TransactionAttemptResult::DefinitiveFailure(TransactionCause::Region { .. })
-    ));
-    assert!(matches!(
-        rollback_results[1],
-        TransactionAttemptResult::Confirmed
-    ));
-
+    // Go cleans the primary first and stops this cleanup round on failure.
+    wait_for_rollbacks(&recorded, 1);
     let recorded = recorded.lock().unwrap();
-    assert!(recorded.commits.is_empty(), "cleanup must never commit");
-    assert_eq!(recorded.rollbacks.len(), 2);
+    assert!(recorded.commits.is_empty());
     assert!(recorded
         .rollbacks
         .iter()
-        .all(|rollback| rollback.start_version == START_TS));
-    assert_eq!(topology.loads_for(LOW_REGION), 2);
-    assert_eq!(topology.loads_for(HIGH_REGION), 1);
+        .all(|request| request.start_version == START_TS));
+    let keys: std::collections::BTreeSet<_> = recorded
+        .rollbacks
+        .iter()
+        .flat_map(|request| request.keys.clone())
+        .collect();
+    assert_eq!(keys, [PRIMARY_KEY.to_vec()].into());
 }
 
-/// Cleanup backs off and retries even when the statement's own call timeout is
-/// already gone.
-///
-/// Go builds the cleanup backoffer on `c.store.Ctx()` with `cleanupMaxBackoff`
-/// (`2pc.go:1638,1660`) and runs it detached (`2pc.go:1651`) — a statement that
-/// spent its deadline still gets a full 20-second budget to unstick the locks
-/// it left prewritten. Binding cleanup to the statement timeout instead makes
-/// the first backoff delay exceed the call deadline, so `wait_with_call`
-/// returns `Transport`, the rollback cannot retry at all, and the locks are
-/// abandoned to the lock resolver.
-///
-/// A 1ms transaction timeout is not a contrivance: it is what a statement that
-/// has nearly exhausted `max_execution_time` looks like at the moment prewrite
-/// fails, which is exactly when cleanup matters most.
+fn wait_for_rollbacks(recorded: &Mutex<Recorded>, count: usize) {
+    let deadline = Instant::now() + CALL_TIMEOUT;
+    while recorded.lock().unwrap().rollbacks.len() < count {
+        assert!(
+            Instant::now() < deadline,
+            "detached cleanup did not reach the fixture"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Go's cleanup backoffer uses the store context. Cancelling the statement
+/// during the first cleanup RPC must not cancel its backoff or retry.
 #[test]
 fn cleanup_backs_off_on_its_own_budget_not_the_statement_timeout() {
-    let service = ScriptedTikv::new(
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+    let mut service = ScriptedTikv::new(
         vec![CommandOutcome::Ok, CommandOutcome::AlreadyExists],
         Vec::new(),
-        // The primary region's rollback hits a retryable region error. With a
-        // routable regroup the retry can complete — provided the wait is
-        // allowed to happen at all.
-        vec![CommandOutcome::RecoveryInProgress],
+        vec![CommandOutcome::ServerBusy],
     );
+    service.cancel_on_rollback = Some(call.cancellation().clone());
     let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
-    let topology = SplitTopology::new_always_routable(server.store_address());
-    let transaction =
-        transaction_with_timeout(&server, topology.clone(), Duration::from_millis(1));
-
-    let outcome = transaction
-        .commit(
-            two_region_mutations(),
-            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
-        )
-        .expect("the coordinator must return a terminal outcome, not a caller error");
-
-    assert_eq!(
-        outcome.state(),
-        OptimisticTransactionState::RolledBack,
-        "a spent statement timeout must not turn a retryable region error into an \
-         abandoned lock"
+    let transaction = transaction(
+        &server,
+        SplitTopology::new_always_routable(server.store_address()),
     );
+    let outcome = transaction.commit(two_region_mutations(), &call).unwrap();
     let OptimisticCommitOutcome::RolledBack(rolled_back) = outcome else {
-        panic!("every key was rolled back, so the outcome is RolledBack");
+        panic!("prewrite failed definitively");
     };
     assert!(
-        matches!(
-            &rolled_back.cause,
-            TransactionCause::AlreadyExists { key, .. } if key == SECONDARY_KEY
-        ),
-        "cleanup must not overwrite the original cause: {:?}",
+        matches!(&rolled_back.cause, TransactionCause::AlreadyExists { key, .. } if *key == recorded.lock().unwrap().rejected_key),
+        "{:?}",
         rolled_back.cause
     );
-
-    // Three publications: the region-errored attempt, its retry, and the other
-    // region's single clean rollback.
-    let receipt = &rolled_back.receipt;
-    assert_eq!(receipt.rollback_publications.len(), 2);
-    assert_eq!(receipt.rollback_attempt_publications.len(), 3);
-    let rollback_results = receipt
-        .attempt_history
-        .iter()
-        .filter(|attempt| attempt.phase == TransactionAttemptPhase::BatchRollback)
-        .map(|attempt| attempt.result.clone())
-        .collect::<Vec<_>>();
-    assert!(
-        matches!(rollback_results[0], TransactionAttemptResult::Retry(_)),
-        "the region error must be retried, not reported: {:?}",
-        rollback_results[0]
-    );
-
+    wait_for_rollbacks(&recorded, 3);
+    assert!(call.cancellation().is_cancelled());
     let recorded = recorded.lock().unwrap();
     assert_eq!(
         recorded.rollbacks.len(),
         3,
-        "the region-errored batch must be published a second time"
+        "two regions and one server-busy retry"
     );
-    assert_eq!(topology.loads_for(LOW_REGION), 2);
+    assert!(recorded.commits.is_empty());
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for SplitTopology {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = if id == HIGH_REGION {
+                    SPLIT_KEY.to_vec()
+                } else {
+                    Vec::new()
+                };
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
 }

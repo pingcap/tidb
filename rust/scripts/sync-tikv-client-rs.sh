@@ -50,7 +50,7 @@ mkdir -p "$REPO_ROOT/third_party/.scratch"
 if [ -d "$SCRATCH_DIR/.git" ]; then
   git -C "$SCRATCH_DIR" fetch origin master
   git -C "$SCRATCH_DIR" reset --hard origin/master
-  git -C "$SCRATCH_DIR" clean -fdx
+  git -C "$SCRATCH_DIR" clean -fdx -e target/
 else
   rm -rf "$SCRATCH_DIR"
   git clone "$UPSTREAM_URL" "$SCRATCH_DIR"
@@ -88,9 +88,15 @@ fi
 echo "Regenerating src/generated/** (cargo run -p tikv-client-proto-build)"
 (cd "$SCRATCH_DIR" && cargo run -p tikv-client-proto-build)
 
-rm -rf "$VENDOR_DIR"
+# Stage only source files, including regenerated tracked outputs. Keep Cargo
+# caches out of the vendor copy and preserve its existing target directory.
+STAGING_DIR=$(mktemp -d "$REPO_ROOT/third_party/.scratch/tikv-client-rs-sync.XXXXXX")
+trap 'rm -rf "$STAGING_DIR"' EXIT
+git -C "$SCRATCH_DIR" ls-files -z --cached --others --exclude-standard > "$STAGING_DIR/files"
+mkdir "$STAGING_DIR/source"
+(cd "$SCRATCH_DIR" && tar --null -T "$STAGING_DIR/files" -cf -) | tar -xf - -C "$STAGING_DIR/source"
 mkdir -p "$VENDOR_DIR"
-(cd "$SCRATCH_DIR" && find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec cp -r {} "$VENDOR_DIR/" \;)
+rsync -a --delete --exclude='/target/' "$STAGING_DIR/source/" "$VENDOR_DIR/"
 
 {
   echo "- $(date -u +%Y-%m-%dT%H:%M:%SZ): synced to ngaut/client-rust@${SYNCED_COMMIT} (committed ${SYNCED_DATE}), patches: $(ls "$PATCH_DIR" 2>/dev/null | wc -l | tr -d ' ') applied"

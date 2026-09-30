@@ -13,6 +13,8 @@
 //! requirements on the region boundaries.
 
 mod common;
+#[path = "integration_tests/lock_wait_source.rs"]
+mod lock_wait_source;
 use common::*;
 use futures::prelude::*;
 use rand::seq::IteratorRandom;

@@ -24,8 +24,8 @@ use crate::direct_unary_client_fixture::*;
 
 #[test]
 fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returning_client() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let mut responses = Vec::new();
     for version in 1..=10 {
@@ -38,10 +38,10 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
     }
     responses.push(Ok(response(b"reloaded-after-exhaustion")));
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         responses,
         std::iter::repeat_n(Ok(StoreLiveness::Reachable), 10),
-        Rc::clone(&events),
+        Arc::clone(&events),
         [
             location(1, "a", "z", "tikv-stuck:20160"),
             location(1, "a", "z", "tikv-reloaded:20160"),
@@ -61,7 +61,7 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
         Some(b"reloaded-after-exhaustion".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    let calls = calls.borrow();
+    let calls = calls.read().unwrap();
     assert_eq!(calls.len(), 11);
     assert!(calls[..10]
         .iter()
@@ -69,7 +69,8 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
     assert_eq!(calls[10].address, "tikv-reloaded:20160");
     assert_eq!(
         events
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .filter(|event| matches!(event, ClientEvent::Liveness { .. }))
             .count(),
@@ -80,17 +81,17 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
 
 #[test]
 fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Err(DirectUnaryClientError::CallerCancelled),
             Ok(response(b"same-cached-route-next-query")),
         ],
         [],
-        Rc::clone(&events),
+        Arc::clone(&events),
         [location(1, "a", "z", "tikv-1:20160")],
         DirectUnaryRuntimeConfig {
             region_retry_waiter: retry_control.clone(),
@@ -109,13 +110,14 @@ fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation(
         Some(b"same-cached-route-next-query".to_vec())
     );
     assert_eq!(next.next_raw().unwrap(), None);
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.read().unwrap().len(), 2);
     assert!(calls
-        .borrow()
+        .read()
+        .unwrap()
         .iter()
         .all(|call| call.address == "tikv-1:20160"));
     assert_eq!(
-        events.borrow().as_slice(),
+        events.read().unwrap().as_slice(),
         [
             ClientEvent::Send("tikv-1:20160".to_owned()),
             ClientEvent::Send("tikv-1:20160".to_owned()),
@@ -136,9 +138,9 @@ fn return_region_error_and_non_connection_failures_close_without_future_dispatch
         (Ok(vec![0x0a, 0x02, 0x01]), "invalid unary response"),
     ];
     for (scripted, expected) in cases {
-        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls = Arc::new(RwLock::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport(
-            Rc::clone(&calls),
+            Arc::clone(&calls),
             [scripted, Ok(response(b"must remain unsent"))],
             [
                 location(1, "a", "m", "tikv-1:20160"),
@@ -151,6 +153,6 @@ fn return_region_error_and_non_connection_failures_close_without_future_dispatch
         assert_eq!(result.next_raw().unwrap(), None);
         // A terminal error on the first logical task must not probe the next
         // address or consume its scripted response.
-        assert_eq!(calls.borrow().len(), 1);
+        assert_eq!(calls.read().unwrap().len(), 1);
     }
 }

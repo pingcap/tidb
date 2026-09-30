@@ -514,6 +514,12 @@ fn a_commit_newer_than_the_start_ts_makes_the_prewrite_a_write_conflict() {
         "the conflicting commit timestamp must survive into the diagnostic: {detail}"
     );
 
+    // Go schedules cleanup on the store context after returning the error.
+    let deadline = Instant::now() + CALL_TIMEOUT;
+    while recorded.lock().unwrap().rollbacks.is_empty() {
+        assert!(Instant::now() < deadline, "detached cleanup did not arrive");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.prewrites[0].start_version, START_TS);
     assert!(
@@ -550,4 +556,46 @@ fn a_racing_commit_on_another_key_does_not_refuse_the_prewrite() {
         )
         .expect("terminal outcome");
     assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = Vec::new();
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
 }

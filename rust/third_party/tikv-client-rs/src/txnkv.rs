@@ -7,6 +7,8 @@
 //! close behavior while re-exporting the completed transaction, snapshot, and
 //! lock implementations from their native Rust modules.
 
+pub mod txnlock;
+
 use std::future::Future;
 use std::ops::Deref;
 

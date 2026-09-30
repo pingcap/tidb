@@ -2,26 +2,7 @@ diff --git a/Cargo.toml b/Cargo.toml
 index d391817..e236dda 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -11,6 +11,10 @@ rust-version = "1.93.0"
- 
- [features]
- default = ["prometheus"]
-+# Expose the in-process mock PD/TiKV backend outside test builds, for
-+# downstream crates (e.g. TiDB's tidb-unistore) that need a production-usable
-+# in-process backend, not just #[cfg(test)] support within this crate.
-+mock = ["dep:tokio-stream"]
- prometheus = ["prometheus/push", "prometheus/process"]
- # Enable integration tests with a running TiKV and PD instance.
- # Use $PD_ADDRS, comma separated, to set the addresses the tests use.
-@@ -34,6 +38,7 @@ members = [
- ]
- 
- [dependencies]
-+tokio-stream = { version = "0.1", features = ["net"], optional = true }
- async-recursion = "0.3"
- async-trait = "0.1"
- chrono = { version = "0.4", default-features = false, features = ["std"] }
-@@ -46,9 +51,9 @@ log = "0.4"
+@@ -46,9 +46,9 @@ log = "0.4"
  openssl = "0.10"
  pin-project = "1"
  prometheus = { version = "0.13", default-features = false }
@@ -33,7 +14,7 @@ index d391817..e236dda 100644
  rand = "0.8"
  regex = "1"
  crc32fast = "1"
-@@ -65,7 +70,8 @@ thiserror = "1"
+@@ -65,7 +65,8 @@ thiserror = "1"
  tikv-client-kvproto = { path = "kvproto" }
  unistore = { path = "unistore" }
  tokio = { version = "1.21", features = ["sync", "rt-multi-thread", "macros", "time", "net", "io-util"] }

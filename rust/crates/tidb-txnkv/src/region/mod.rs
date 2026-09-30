@@ -13,7 +13,7 @@ mod error;
 mod health_policy;
 mod id;
 mod location;
-mod recovery;
+pub(crate) mod recovery;
 mod replica_selector;
 mod request_selector;
 mod route;

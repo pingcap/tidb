@@ -29,7 +29,7 @@
 //! is the same overlay in the shape the write planner consumes — so an `UPDATE`
 //! of a row the transaction already wrote computes its new row from the value it
 //! is replacing, not from the stale snapshot. This is exactly what makes
-//! [`TransactionMutationBuffer`]'s repeated-update coalescing correct.
+//! the client's MemDB authoritative for repeated writes.
 //!
 //! **Statement scope versus transaction scope.** A pessimistic lock failure ends
 //! the *statement*: the transaction stays open and usable, matching
@@ -65,17 +65,16 @@ use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
-    OptimisticCoordinatorError, OptimisticMutationKind, PessimisticLockFailure,
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
-    StorePdCapability, StoreWriteClient, StoreWriteLoader, TransactionMutationBuffer,
+    CommitProtocol, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
+    PessimisticLockFailure, RealOptimisticTransaction, RealOptimisticTransactionOpener,
+    RealPessimisticTransaction, StorePdCapability, StoreWriteClient, StoreWriteLoader,
     MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
-    locked_with_conflict_error, transaction_cause_to_sql_error, LockSqlError,
+    locked_with_conflict_error, LockSqlError,
 };
 use crate::real_tikv_dml::{
     plan_configured_write, ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport,
@@ -200,6 +199,20 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn transaction(&self) -> &RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
+        match self {
+            Self::Optimistic(transaction) => transaction,
+            Self::Pessimistic(transaction) => transaction.snapshot_ref(),
+        }
+    }
+    fn transaction_mut(
+        &mut self,
+    ) -> &mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
+        match self {
+            Self::Optimistic(transaction) => transaction,
+            Self::Pessimistic(transaction) => transaction.snapshot(),
+        }
+    }
     fn start_ts(&self) -> u64 {
         match self {
             Self::Optimistic(transaction) => transaction.start_ts(),
@@ -225,7 +238,6 @@ where
     /// The one table this node serves, needed to turn a clustered handle into
     /// the record key the buffer is keyed by.
     table: ConfiguredTable,
-    buffer: TransactionMutationBuffer,
     /// Go statement scan detail accumulated while planning the current write.
     statement_processed_keys: i64,
     /// Per-statement RPC budget. Stored as a duration, never as an already
@@ -234,9 +246,6 @@ where
     /// — whatever was left of the first statement's budget, which for a
     /// transaction a client held open is nothing.
     timeout: Duration,
-    /// Refreshes the primary lock's TTL for as long as a pessimistic
-    /// transaction holds it; `None` until the first lock is taken.
-    keep_alive: Option<LockKeepAlive>,
     /// Row values TiKV returned WITH a pessimistic lock, keyed by encoded key.
     ///
     /// This is Go's `TxnCtx.SetPessimisticLockCache`
@@ -249,7 +258,6 @@ where
     /// buffer-then-cache-then-snapshot exactly like Go's `PointGetExecutor.get`
     /// (`pkg/executor/point_get.go:656`: memBuffer, lock cache, store).
     lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    opener: RealOptimisticTransactionOpener<C, L, P>,
 }
 
 impl<C, L, P> MultiStatementTransaction<C, L, P>
@@ -297,12 +305,9 @@ where
             open,
             mode,
             table,
-            buffer: TransactionMutationBuffer::new(),
             statement_processed_keys: 0,
             timeout,
-            keep_alive: None,
             lock_values: BTreeMap::new(),
-            opener: opener.clone(),
         })
     }
 
@@ -322,10 +327,7 @@ where
     /// The failure is statement-scoped, so the transaction stays open for
     /// exactly those two.
     pub fn check_lock_expired(&self) -> Result<(), TransactionStatementError> {
-        if self
-            .keep_alive
-            .as_ref()
-            .is_some_and(LockKeepAlive::lock_expired)
+        if matches!(&self.open, OpenTransaction::Pessimistic(transaction) if transaction.lock_expired())
         {
             return Err(TransactionStatementError::Statement(LockSqlError {
                 code: tidb_error::tidb::errcode::ErrLockExpire,
@@ -384,7 +386,7 @@ where
     /// Whether the transaction has buffered any write yet.
     #[must_use]
     pub fn has_staged_writes(&self) -> bool {
-        !self.buffer.is_empty()
+        !self.open.transaction().staged_entries().is_empty()
     }
 
     /// The row image this transaction has staged for `handle`.
@@ -395,26 +397,12 @@ where
     /// replacement row — the read-your-own-writes overlay a reader applies over
     /// the snapshot's rows.
     #[must_use]
-    pub fn staged_row(&self, handle: i64) -> Option<Option<&[u8]>> {
+    pub fn staged_row(&self, handle: i64) -> Option<Option<Vec<u8>>> {
         let key = encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(handle));
-        let staged = self.buffer.staged(&key)?;
-        match staged.kind() {
-            OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => Some(None),
-            OptimisticMutationKind::Insert
-            | OptimisticMutationKind::PutExisting
-            | OptimisticMutationKind::SystemRowPut => Some(Some(staged.value())),
-            // Index keys are never record keys, and a meta key lives in the `m`
-            // namespace, so neither can carry one.
-            OptimisticMutationKind::IndexPut
-            | OptimisticMutationKind::UniqueIndexInsert
-            | OptimisticMutationKind::IndexDelete
-            | OptimisticMutationKind::MetaPut
-            | OptimisticMutationKind::MetaDelete => None,
-            // An `Op_Lock` changes no value, so it overlays nothing. It also
-            // cannot reach this buffer: only the commit coordinator adds one,
-            // for a pinned primary the buffer never staged.
-            OptimisticMutationKind::LockOnly => None,
-        }
+        self.open
+            .transaction()
+            .staged_value(&key)
+            .map(|value| (!value.is_empty()).then_some(value))
     }
 
     /// The transaction's own uncommitted rows that fall inside `ranges`,
@@ -434,10 +422,11 @@ where
         ranges: &[SignedBigIntRange],
     ) -> Result<StagedRowOverlay, TransactionStatementError> {
         let mut overlay = Vec::new();
-        for staged in self.buffer.staged_entries() {
+        for (key, value) in self.open.transaction().staged_entries() {
             // Only record keys carry rows; a secondary-index entry changes no
             // row the projection can return.
-            let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {
+            let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(key.as_bytes())
+            else {
                 continue;
             };
             if table_id != self.table.table_id()
@@ -447,21 +436,13 @@ where
             {
                 continue;
             }
-            let row = match staged.kind() {
-                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
-                OptimisticMutationKind::Insert
-                | OptimisticMutationKind::PutExisting
-                | OptimisticMutationKind::SystemRowPut => Some(
-                    decode_staged_projection(projection, handle, staged.value())
+            let row = if value.is_empty() {
+                None
+            } else {
+                Some(
+                    decode_staged_projection(projection, handle, &value)
                         .map_err(|error| TransactionStatementError::write(&error))?,
-                ),
-                OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::MetaDelete
-                // An `Op_Lock` changes no value, so it contributes no row.
-                | OptimisticMutationKind::LockOnly => continue,
+                )
             };
             overlay.push((handle, row));
         }
@@ -486,8 +467,9 @@ where
             .expect("ReadOnlyScanPlan always owns executable TiKV scan fields")
             .columns;
         let mut overlay = Vec::new();
-        for staged in self.buffer.staged_entries() {
-            let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {
+        for (key, value) in self.open.transaction().staged_entries() {
+            let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(key.as_bytes())
+            else {
                 continue;
             };
             if table_id != self.table.table_id()
@@ -498,36 +480,23 @@ where
             {
                 continue;
             }
-            let row = match staged.kind() {
-                OptimisticMutationKind::Delete | OptimisticMutationKind::SystemRowDelete => None,
-                OptimisticMutationKind::Insert
-                | OptimisticMutationKind::PutExisting
-                | OptimisticMutationKind::SystemRowPut => {
-                    if let Some(selection) = selection {
-                        let scan_row = decode_staged_scan_columns(
-                            &self.table,
-                            scan_columns,
-                            handle,
-                            staged.value(),
-                        )
-                        .map_err(|error| TransactionStatementError::write(&error))?;
-                        if !selection_matches_staged_row(selection, &scan_row)
-                            .map_err(|error| TransactionStatementError::write(&error))?
-                        {
-                            continue;
-                        }
+            let row = if value.is_empty() {
+                None
+            } else {
+                if let Some(selection) = selection {
+                    let scan_row =
+                        decode_staged_scan_columns(&self.table, scan_columns, handle, &value)
+                            .map_err(|error| TransactionStatementError::write(&error))?;
+                    if !selection_matches_staged_row(selection, &scan_row)
+                        .map_err(|error| TransactionStatementError::write(&error))?
+                    {
+                        continue;
                     }
-                    Some(
-                        decode_staged_projection(plan.projected_columns(), handle, staged.value())
-                            .map_err(|error| TransactionStatementError::write(&error))?,
-                    )
                 }
-                OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::MetaDelete
-                | OptimisticMutationKind::LockOnly => continue,
+                Some(
+                    decode_staged_projection(plan.projected_columns(), handle, &value)
+                        .map_err(|error| TransactionStatementError::write(&error))?,
+                )
             };
             overlay.push((handle, row));
         }
@@ -577,13 +546,10 @@ where
                 affected_rows,
                 warnings,
             } => {
-                for mutation in mutations {
-                    self.buffer.stage(mutation).map_err(|error| {
-                        TransactionStatementError::refused(format!(
-                            "configured write staging: {error}"
-                        ))
-                    })?;
-                }
+                self.open
+                    .transaction_mut()
+                    .stage_mutations(mutations)
+                    .map_err(coordinator_error)?;
                 Ok(ConfiguredWriteReport {
                     affected_rows,
                     no_write: None,
@@ -609,13 +575,10 @@ where
                 affected_rows,
                 warnings,
             } => {
-                for mutation in mutations {
-                    self.buffer.stage(mutation).map_err(|error| {
-                        TransactionStatementError::refused(format!(
-                            "configured write staging: {error}"
-                        ))
-                    })?;
-                }
+                self.open
+                    .transaction_mut()
+                    .stage_mutations(mutations)
+                    .map_err(coordinator_error)?;
                 Ok(ConfiguredWriteReport {
                     affected_rows,
                     no_write: None,
@@ -631,13 +594,15 @@ where
     /// Go commit detail `WriteSize` and `WriteKeys` for the final coalesced
     /// transaction mutation set.
     pub fn write_details(&self) -> (isize, isize) {
-        self.buffer
-            .staged_entries()
-            .fold((0_isize, 0_isize), |(size, keys), mutation| {
-                let mutation_size =
-                    mutation.key().len().wrapping_add(mutation.value().len()) as isize;
-                (size.wrapping_add(mutation_size), keys.wrapping_add(1))
-            })
+        self.open.transaction().staged_entries().iter().fold(
+            (0_isize, 0_isize),
+            |(size, keys), (key, value)| {
+                (
+                    size.wrapping_add(key.as_bytes().len().wrapping_add(value.len()) as isize),
+                    keys.wrapping_add(1),
+                )
+            },
+        )
     }
 
     /// Plans a pessimistic conflict-resolving write until every key it might
@@ -658,7 +623,7 @@ where
         loop {
             let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
                 .map_err(|error| TransactionStatementError::write(&error))?;
-            let held = match &self.open {
+            let held = match &mut self.open {
                 OpenTransaction::Pessimistic(transaction) => transaction
                     .locked_keys()
                     .into_iter()
@@ -783,7 +748,7 @@ where
             return Ok(());
         }
         let mut attempt = 0;
-        let acquired = loop {
+        loop {
             // This shared lock path deliberately carries no absence
             // presumption. Locking reads target existing rows, while REPLACE
             // must be allowed to observe and delete a duplicate rather than
@@ -813,7 +778,7 @@ where
                             .map(|(key, value)| (key.clone(), value.clone())),
                     );
                     if acquired.locked_with_conflict.is_empty() {
-                        break acquired;
+                        break;
                     }
                     // Fair locking: TiKV granted the locks despite a newer
                     // committed version. The locks stay — that is the whole point,
@@ -834,19 +799,10 @@ where
                     record_lock_failure(&failure);
                     let terminal_error = (!is_retryable_statement_failure(&failure))
                         .then(|| TransactionStatementError::from_lock_failure(&failure));
-                    // Release only what this statement added; the transaction's
-                    // earlier locks must survive its own failed statement.
-                    let added = keys
-                        .iter()
-                        .filter(|key| !held.contains(*key))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if let Err(cause) = transaction.pessimistic_rollback(&added, &call) {
-                        return Err(TransactionStatementError::Transaction(
-                            transaction_cause_to_sql_error(&cause),
-                        ));
-                    }
                     if let Some(error) = terminal_error {
+                        transaction
+                            .finish_statement(false)
+                            .map_err(|e| TransactionStatementError::from_lock_failure(&e))?;
                         return Err(error);
                     }
                     if matches!(
@@ -859,34 +815,26 @@ where
                 }
             };
             if attempt >= MAX_LOCK_RETRIES {
+                transaction
+                    .finish_statement(false)
+                    .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
                 return Err(TransactionStatementError::Statement(retry_reason));
             }
             // A newer statement timestamp is what makes the retry see the
             // committed version that beat this one. Go takes it from PD rather
             // than adopting the conflicting commit timestamp, which would let a
             // later commit exceed PD's maximum allocated timestamp.
-            transaction
-                .advance_for_update_ts()
-                .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
+            if let Err(error) = transaction.advance_for_update_ts() {
+                transaction
+                    .finish_statement(false)
+                    .map_err(|cleanup| TransactionStatementError::from_lock_failure(&cleanup))?;
+                return Err(TransactionStatementError::from_lock_failure(&error));
+            }
             attempt += 1;
-        };
-        // The primary lock now has to survive every later statement, so its TTL
-        // is refreshed from the moment it exists.
-        if self.keep_alive.is_none() {
-            let keep_alive = self
-                .opener
-                .start_lock_keep_alive(acquired.primary_key.clone(), transaction.start_ts())
-                .map_err(|error| {
-                    TransactionStatementError::Transaction(LockSqlError {
-                        code: 1105,
-                        state: *b"HY000",
-                        message: format!(
-                            "cannot keep the transaction's primary lock alive: {error}"
-                        ),
-                    })
-                })?;
-            self.keep_alive = Some(keep_alive);
         }
+        transaction
+            .finish_statement(true)
+            .map_err(|e| TransactionStatementError::from_lock_failure(&e))?;
         Ok(())
     }
 
@@ -908,18 +856,9 @@ where
         self.finish(false)
     }
 
-    fn finish(mut self, publish: bool) -> Result<TransactionEnd, TransactionStatementError> {
+    fn finish(self, publish: bool) -> Result<TransactionEnd, TransactionStatementError> {
         let call = Self::transaction_end_call();
-        let mutations = if publish {
-            std::mem::take(&mut self.buffer).into_mutations()
-        } else {
-            Vec::new()
-        };
-        // Signal the TTL manager as the transaction ends. Like client-go,
-        // close does not wait for an already in-flight heartbeat.
-        if let Some(keep_alive) = self.keep_alive.take() {
-            keep_alive.close();
-        }
+        let has_writes = publish && self.has_staged_writes();
         let end = if publish {
             TransactionEnd::Committed
         } else {
@@ -927,35 +866,24 @@ where
         };
         match self.open {
             OpenTransaction::Optimistic(transaction) => {
-                if mutations.is_empty() {
+                if !has_writes {
                     transaction
                         .finish_without_writes()
                         .map_err(coordinator_error)?;
                     return Ok(end);
                 }
                 let outcome = transaction
-                    .commit(mutations, &call)
+                    .commit(Vec::new(), &call)
                     .map_err(coordinator_error)?;
                 classify_commit_outcome(&outcome).map(|()| end)
             }
-            OpenTransaction::Pessimistic(mut transaction) => {
-                if mutations.is_empty() {
-                    let held = transaction.locked_keys();
-                    transaction
-                        .pessimistic_rollback(&held, &call)
-                        .map_err(|cause| {
-                            TransactionStatementError::Transaction(transaction_cause_to_sql_error(
-                                &cause,
-                            ))
-                        })?;
-                    transaction
-                        .into_two_pc()
-                        .finish_without_writes()
-                        .map_err(coordinator_error)?;
+            OpenTransaction::Pessimistic(transaction) => {
+                if !has_writes {
+                    transaction.rollback(&call).map_err(coordinator_error)?;
                     return Ok(end);
                 }
                 let outcome = transaction
-                    .commit(mutations, &call)
+                    .commit(Vec::new(), &call)
                     .map_err(coordinator_error)?;
                 classify_commit_outcome(&outcome).map(|()| end)
             }
@@ -999,26 +927,8 @@ where
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
-        // An `Op_Lock` stages no value, so it must not shadow the snapshot;
-        // every other staged kind decides the read outright.
-        if let Some(staged) = self
-            .buffer
-            .staged(key)
-            .filter(|staged| staged.kind() != OptimisticMutationKind::LockOnly)
-        {
-            return Ok(match staged.kind() {
-                OptimisticMutationKind::Delete
-                | OptimisticMutationKind::IndexDelete
-                | OptimisticMutationKind::MetaDelete
-                | OptimisticMutationKind::SystemRowDelete => None,
-                OptimisticMutationKind::Insert
-                | OptimisticMutationKind::PutExisting
-                | OptimisticMutationKind::IndexPut
-                | OptimisticMutationKind::UniqueIndexInsert
-                | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::SystemRowPut => Some(staged.value().to_vec()),
-                OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
-            });
+        if let Some(value) = self.open.transaction().staged_value(key) {
+            return Ok((!value.is_empty()).then_some(value));
         }
         // Go `PointGetExecutor.get`'s order (`pkg/executor/point_get.go:656-680`):
         // the transaction's own staged write decides first; then a row TiKV
@@ -1399,7 +1309,9 @@ mod tests {
         assert_eq!(error.sql_error().code, 1213);
         let records = GLOBAL_DEADLOCK_HISTORY.get_all();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].id, 1);
+        // Go Clear keeps the process-wide ID allocator; another test may
+        // have inserted a record before this history was cleared.
+        assert!(records[0].id > 0);
         assert_eq!(records[0].wait_chain[0].try_lock_txn, 7);
         assert_eq!(records[0].wait_chain[0].txn_holding_lock, 8);
         assert_eq!(records[0].wait_chain[0].key, b"row-key");

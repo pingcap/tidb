@@ -26,10 +26,9 @@
 //!
 //! [`ClusterTableStorage`] is exactly those two halves:
 //!
-//! * [`MutationBuffer`] -- the session-owned staged writes, shared by every
-//!   table of the session (`Arc`), ordered by key (`BTreeMap`) so the merge
-//!   below is a linear walk and so the COMMIT mutation set is already sorted
-//!   the way `validate_and_sort` wants it. A staged delete is a tombstone
+//! * [`MutationBuffer`] -- a shared SQL handle to the client transaction's
+//!   MemDB. Its ordered iterator feeds the table overlay and the client's
+//!   committer consumes that same buffer. A staged delete is a tombstone
 //!   (`None`), not an erased entry, because a delete must *hide* a value the
 //!   snapshot still has.
 //! * [`ClusterSnapshot`] -- the read side at one timestamp. One implementation
@@ -171,19 +170,17 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
 /// the membuffer rather than a copy of it -- which a statement rollback or a
 /// savepoint returns to.
 ///
-/// The position indexes an undo log the buffer keeps alongside its staged
-/// map: taking a checkpoint copies NOTHING (Go's `Staging()` is equally
-/// O(1)), and rolling back replays only the log entries written after it,
-/// so a failed statement pays for its own writes and never for the bytes
-/// earlier statements of the transaction already staged.
+/// MemDB owns rollback. The SQL change position records only statement deltas
+/// and duplicate-key hints; it does not replay values or lock state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BufferCheckpoint {
-    undo_len: usize,
+    change_len: usize,
+    native: usize,
 }
 
-/// One recorded prior state in the buffer's undo log.
+/// SQL statement-delta metadata, separate from MemDB rollback.
 #[derive(Clone, Debug)]
-enum UndoEntry {
+enum StatementChange {
     /// A `set`/`delete` overwrote this key; `prior` is the entry the map held
     /// before (`None` = the key was not staged).
     Write {
@@ -252,136 +249,240 @@ impl StatementReadKeys {
     }
 }
 
-/// The session's staged writes: Go's `kv.MemBuffer`.
-///
-/// `None` is a tombstone -- a staged delete of a key the snapshot may still
-/// hold. Ordering is by key so the COMMIT mutation set and the scan merge both
-/// get a sorted walk for free.
-#[derive(Clone, Debug, Default)]
+/// Borrows the store transaction's authoritative MemDB under its own lock.
+/// Returns false after the transaction has ended.
+pub type NativeMemBufferAccess = Arc<
+    dyn Fn(&mut dyn FnMut(&mut tikv_client::transaction::unionstore::MemDb)) -> bool + Send + Sync,
+>;
+
+#[derive(Default)]
+struct NativeMemBuffer {
+    local: tikv_client::transaction::unionstore::MemDb,
+    bound: Option<(u64, NativeMemBufferAccess)>,
+}
+impl NativeMemBuffer {
+    fn read<T>(&self, f: impl FnOnce(&tikv_client::transaction::unionstore::MemDb) -> T) -> T {
+        let mut f = Some(f);
+        if let Some((_, access)) = &self.bound {
+            let mut answer = None;
+            if access(&mut |buffer| {
+                answer = Some(f.take().unwrap()(buffer));
+            }) {
+                return answer.unwrap();
+            }
+        }
+        f.take().unwrap()(&self.local)
+    }
+    fn write<T>(
+        &mut self,
+        f: impl FnOnce(&mut tikv_client::transaction::unionstore::MemDb) -> T,
+    ) -> T {
+        let mut f = Some(f);
+        if let Some((_, access)) = &self.bound {
+            let mut answer = None;
+            if access(&mut |buffer| {
+                answer = Some(f.take().unwrap()(buffer));
+            }) {
+                return answer.unwrap();
+            }
+        }
+        f.take().unwrap()(&mut self.local)
+    }
+    fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, tikv_client::error::StaticError> {
+        self.read(|b| b.get_readonly(key))
+    }
+    fn iter(
+        &self,
+        start: Option<&[u8]>,
+        end: Option<&[u8]>,
+    ) -> Box<dyn tikv_client::transaction::unionstore::KvIterator> {
+        self.read(|b| b.iter(start, end))
+    }
+    fn iter_with_flags(
+        &self,
+        start: Option<&[u8]>,
+        end: Option<&[u8]>,
+    ) -> Box<dyn tikv_client::transaction::unionstore::KvIterator> {
+        self.read(|b| b.iter_with_flags(start, end))
+    }
+    fn stages(&self) -> Vec<usize> {
+        self.read(|b| b.stages())
+    }
+    fn len(&self) -> usize {
+        self.read(|b| b.len())
+    }
+    fn size(&self) -> usize {
+        self.read(|b| b.size())
+    }
+    fn is_empty(&self) -> bool {
+        self.read(|b| b.is_empty())
+    }
+    fn memory_footprint(&self) -> u64 {
+        self.read(|b| b.memory_footprint())
+    }
+    fn update_flags(&mut self, key: &[u8], flags: &[tikv_client::kv::FlagsOp]) {
+        self.write(|b| b.update_flags(key, flags))
+    }
+    fn staging(&mut self) -> usize {
+        self.write(|b| b.staging())
+    }
+    fn cleanup(&mut self, handle: usize) {
+        self.write(|b| b.cleanup(handle))
+    }
+    fn release(&mut self, handle: usize) {
+        self.write(|b| b.release(handle))
+    }
+    fn reset(&mut self) {
+        self.write(|b| b.reset())
+    }
+}
+
+/// SQL access to the client's MemDB. SQL retains only duplicate-key text and
+/// statement deltas; values, flags, checkpoints and rollback belong to MemDB.
+#[derive(Clone, Default)]
 pub struct MutationBuffer {
-    /// One tree holds a key's staged write and its per-key marks, as Go's
-    /// `MemBuffer` keeps `SetPresumeKeyNotExists` and the row's duplicate
-    /// text on the memdb node: an INSERT stages a key with one lock and one
-    /// tree insert. The committer turns a presumed-absent key into
-    /// `Op_Insert`, so prewrite rejects it when a committed version turns out
-    /// to exist; the pessimistic lock step reads the same marks as Go's
-    /// `KeysNeedToLock` reads its flags. The duplicate text is the
-    /// client-visible 1062 for deferred record and unique-index checks: TiKV
-    /// reports only the encoded key at prewrite, while Go formats the error
-    /// from the table/index context held by `addRecord`; retaining that small
-    /// hint lets the commit boundary preserve the same error identity.
     state: Arc<Mutex<BufferState>>,
 }
 
-/// One staged key: Go's memdb node, the write and the per-key marks together.
-#[derive(Debug, Default)]
-struct StagedEntry {
-    /// `None`: no write is staged (a marks-only node); `Some(None)`: a
-    /// tombstone; `Some(Some(value))`: a put.
-    write: Option<Option<Vec<u8>>>,
-    /// Go's `PresumeKeyNotExists` flag.
-    presume_not_exists: bool,
-    /// The retained 1062 text, if the key was staged as a deferred INSERT.
-    hint: Option<DuplicateKeyHint>,
-}
-
-impl StagedEntry {
-    fn is_vacant(&self) -> bool {
-        self.write.is_none() && !self.presume_not_exists && self.hint.is_none()
-    }
-}
-
-/// Everything the buffer's one lock guards.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct BufferState {
-    entries: BTreeMap<Key, StagedEntry>,
-    /// How many entries hold a write, so `len` stays O(1).
-    writes: usize,
-    /// Prior states of every write since the last `reset`, oldest first:
-    /// what [`MutationBuffer::checkpoint`] positions and
-    /// [`MutationBuffer::restore`] unwinds.
-    undo: Vec<UndoEntry>,
+    memdb: NativeMemBuffer,
+    hints: BTreeMap<Key, DuplicateKeyHint>,
+    changes: Vec<StatementChange>,
 }
-
+impl std::fmt::Debug for MutationBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MutationBuffer")
+            .field("len", &self.len())
+            .finish()
+    }
+}
 impl BufferState {
-    fn stage(&mut self, key: Key, write: Option<Vec<u8>>) {
-        let entry = self.entries.entry(key.clone()).or_default();
-        let prior = entry.write.replace(write);
-        if prior.is_none() {
-            self.writes += 1;
-        }
-        self.undo.push(UndoEntry::Write { key, prior });
+    fn get(&self, key: &Key) -> Option<Option<Vec<u8>>> {
+        self.memdb
+            .get_readonly(key.as_bytes())
+            .ok()
+            .map(|value| (!value.is_empty()).then_some(value))
     }
-
-    fn mark_presume(&mut self, key: &Key) -> &mut StagedEntry {
-        let entry = self.entries.entry(key.clone()).or_default();
-        if !entry.presume_not_exists {
-            entry.presume_not_exists = true;
-            // Newly marked: a rollback past this point withdraws the mark
-            // with the insert that carried it.
-            self.undo.push(UndoEntry::Presume { key: key.clone() });
-        }
-        entry
+    fn stage(&mut self, key: Key, value: Option<Vec<u8>>) {
+        self.stage_batch(std::iter::once((key, value, false)));
     }
-
-    fn drop_if_vacant(&mut self, key: &Key) {
-        if self.entries.get(key).is_some_and(StagedEntry::is_vacant) {
-            self.entries.remove(key);
-        }
-    }
-
-    /// Every staged write with its presumption mark. With `consume_marks`
-    /// the marks are cleared: COMMIT consumes them to type its mutations,
-    /// and like Go's flags, which die with the membuffer, a consumed mark
-    /// does not survive the publication attempt. With `take`, the writes
-    /// leave the buffer too.
-    fn staged_writes(
-        &mut self,
-        take: bool,
-        consume_marks: bool,
-    ) -> Vec<(Key, Option<Vec<u8>>, bool)> {
-        let mut staged = Vec::with_capacity(self.writes);
-        for (key, entry) in &mut self.entries {
-            let presumed_absent = if consume_marks {
-                std::mem::take(&mut entry.presume_not_exists)
-            } else {
-                entry.presume_not_exists
-            };
-            let write = if take {
-                entry.write.take()
-            } else {
-                entry.write.clone()
-            };
-            if let Some(write) = write {
-                staged.push((key.clone(), write, presumed_absent));
+    fn stage_batch(&mut self, writes: impl IntoIterator<Item = (Key, Option<Vec<u8>>, bool)>) {
+        let Self { memdb, changes, .. } = self;
+        // One native transaction borrow covers the entire statement batch.
+        memdb.write(|buffer| {
+            for (key, value, presume_not_exists) in writes {
+                let prior = buffer
+                    .get_readonly(key.as_bytes())
+                    .ok()
+                    .map(|value| (!value.is_empty()).then_some(value));
+                match value {
+                    Some(value) => buffer.set(key.as_bytes(), &value),
+                    None => buffer.delete(key.as_bytes()),
+                }
+                .expect("SQL stages validated nonempty values or explicit tombstones");
+                changes.push(StatementChange::Write {
+                    key: key.clone(),
+                    prior,
+                });
+                if presume_not_exists {
+                    Self::mark_presume_in(buffer, changes, &key);
+                }
             }
+        });
+    }
+    fn mark_presume_in(
+        buffer: &mut tikv_client::transaction::unionstore::MemDb,
+        changes: &mut Vec<StatementChange>,
+        key: &Key,
+    ) {
+        use tikv_client::kv::FlagsOp;
+        if !buffer
+            .get_flags_readonly(key.as_bytes())
+            .is_ok_and(|flags| flags.has_presume_key_not_exists())
+        {
+            buffer.update_flags(key.as_bytes(), &[FlagsOp::SetPresumeKeyNotExists]);
+            changes.push(StatementChange::Presume { key: key.clone() });
         }
-        if take {
-            self.writes = 0;
+    }
+    fn mark_presume(&mut self, key: &Key) {
+        let Self { memdb, changes, .. } = self;
+        memdb.write(|buffer| Self::mark_presume_in(buffer, changes, key));
+    }
+    fn entries(
+        &self,
+        start: Option<&[u8]>,
+        end: Option<&[u8]>,
+    ) -> Vec<(Key, Option<Vec<u8>>, bool)> {
+        let mut iter = self.memdb.iter_with_flags(start, end);
+        let mut result = Vec::new();
+        while iter.valid() {
+            if iter.has_value() {
+                let key = Key::from_bytes(iter.key().to_vec());
+                let presumed = iter.flags().has_presume_key_not_exists();
+                let value = iter.value().to_vec();
+                result.push((key, (!value.is_empty()).then_some(value), presumed));
+            }
+            iter.next().expect("MemDB iteration is local");
         }
-        self.entries.retain(|_, entry| !entry.is_vacant());
-        staged
+        result
     }
 }
 
-/// The SQL text Go's `ErrDupEntry` carries when a deferred insert assertion
-/// discovers an existing key at prewrite.
+/// SQL identity retained by the table layer for a deferred duplicate error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DuplicateKeyHint {
-    /// The rejected key value, as MySQL prints it.
+    /// SQL rendering of the duplicated value.
     pub value: String,
-    /// The violated key name, usually `PRIMARY` for this path.
+    /// SQL index or constraint name.
     pub key: String,
 }
-
 impl MutationBuffer {
-    /// An empty buffer, as a session opens with.
-    #[must_use]
-    pub fn new() -> Self {
-        MutationBuffer::default()
+    /// Attach the SQL handle before the transaction starts locking. Pending
+    /// statement writes move into the same buffer the client will commit.
+    pub fn bind_native(&self, owner: u64, access: NativeMemBufferAccess) {
+        let mut state = self.state();
+        if state
+            .memdb
+            .bound
+            .as_ref()
+            .is_some_and(|(id, _)| *id == owner)
+        {
+            return;
+        }
+        let mut local = Some(std::mem::take(&mut state.memdb.local));
+        assert!(
+            access(&mut |buffer| {
+                assert!(
+                    buffer.is_empty(),
+                    "bind the SQL buffer before acquiring locks"
+                );
+                *buffer = local.take().unwrap();
+            }),
+            "cannot bind a finished transaction"
+        );
+        state.memdb.bound = Some((owner, access));
     }
-
-    /// Stages a write, replacing any earlier staged value or tombstone.
+    /// Transfer an unbound statement buffer to its newly opened transaction.
+    pub fn take_native_buffer(&self) -> tikv_client::transaction::unionstore::MemDb {
+        let mut state = self.state();
+        assert!(
+            state.memdb.bound.is_none(),
+            "the store transaction already owns this buffer"
+        );
+        state.changes.clear();
+        std::mem::take(&mut state.memdb.local)
+    }
+    /// The start timestamp of the bound native transaction, if any.
+    pub fn native_owner(&self) -> Option<u64> {
+        self.state().memdb.bound.as_ref().map(|(id, _)| *id)
+    }
+    #[must_use]
+    /// Creates an unbound SQL handle with a native MemDB.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Stages a nonempty SQL value.
     pub fn set(&self, key: Key, value: Vec<u8>) {
         self.state().stage(key, Some(value));
     }
@@ -393,13 +494,7 @@ impl MutationBuffer {
     where
         I: IntoIterator<Item = (Key, Option<Vec<u8>>, bool)>,
     {
-        let mut state = self.state();
-        for (key, write, presume_not_exists) in writes {
-            state.stage(key.clone(), write);
-            if presume_not_exists {
-                state.mark_presume(&key);
-            }
-        }
+        self.state().stage_batch(writes);
     }
 
     /// Stages a delete as a tombstone, so the read path stops seeing the
@@ -407,327 +502,249 @@ impl MutationBuffer {
     pub fn delete(&self, key: Key) {
         self.state().stage(key, None);
     }
-
-    /// The staged entry for `key`: `None` if the key was never touched,
-    /// `Some(None)` if it is a tombstone, `Some(Some(value))` if it was set.
-    #[must_use]
+    /// Returns the staged value or tombstone; a missing entry requires a snapshot read.
     pub fn get(&self, key: &Key) -> Option<Option<Vec<u8>>> {
-        self.state()
-            .entries
-            .get(key)
-            .and_then(|entry| entry.write.clone())
+        self.state().get(key)
     }
-
-    /// Marks one staged key presumed absent (`kv.SetPresumeKeyNotExists`).
-    /// Only a key this buffer just STAGED is marked: Go sets the flag when
-    /// `AddRecord`'s lazy check finds no local entry, and never on a tombstone
-    /// overwrite, whose plain `Set` must stay one.
+    /// Marks a lazy absence check in the authoritative buffer.
     pub fn mark_presume_key_not_exists(&self, key: &Key) {
         self.state().mark_presume(key);
     }
-
-    /// Marks a presumed-absent key and retains the Go duplicate error text in
-    /// case TiKV rejects the `Op_Insert` at commit.
+    /// Retains SQL duplicate-key text alongside a native absence check.
     pub fn mark_presume_key_not_exists_with_hint(
         &self,
         key: &Key,
         value: impl Into<String>,
         index: impl Into<String>,
     ) {
-        self.state().mark_presume(key).hint = Some(DuplicateKeyHint {
-            value: value.into(),
-            key: index.into(),
-        });
+        let mut state = self.state();
+        state.mark_presume(key);
+        state.hints.insert(
+            key.clone(),
+            DuplicateKeyHint {
+                value: value.into(),
+                key: index.into(),
+            },
+        );
     }
-
-    /// Returns the client-visible duplicate text for an encoded key, if the
-    /// current transaction staged it as a deferred normal INSERT.
-    #[must_use]
+    /// Looks up SQL error text retained for a deferred duplicate.
     pub fn duplicate_key_hint_for(&self, key: &[u8]) -> Option<DuplicateKeyHint> {
         self.state()
-            .entries
+            .hints
             .get(&Key::from_bytes(key.to_vec()))
-            .and_then(|entry| entry.hint.clone())
+            .cloned()
     }
-
-    /// Returns the current presumed-absent keys without consuming their
-    /// commit flags. Go's pessimistic `KeysNeedToLock` reads these flags at
-    /// statement end, while the later prewrite still needs the same flags if
-    /// the session selected `DupKeyCheckInPrewrite`.
-    #[must_use]
+    /// Lists current native absence checks.
     pub fn presume_not_exists_keys(&self) -> BTreeSet<Vec<u8>> {
-        self.state()
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.presume_not_exists)
-            .map(|(key, _)| key.as_bytes().to_vec())
-            .collect()
+        let state = self.state();
+        let mut iter = state.memdb.iter_with_flags(None, None);
+        let mut keys = BTreeSet::new();
+        while iter.valid() {
+            if iter.flags().has_presume_key_not_exists() {
+                keys.insert(iter.key().to_vec());
+            }
+            iter.next().expect("MemDB iteration is local");
+        }
+        keys
     }
-
-    /// New absence checks introduced by this statement, separately from the
-    /// commit flags retained by earlier statements. Go clears NeedCheckExists
-    /// after locking without discarding the mutation's PresumeKeyNotExists.
-    #[must_use]
+    /// Lists absence checks introduced after the SQL checkpoint.
     pub fn presume_not_exists_since(&self, checkpoint: BufferCheckpoint) -> BTreeSet<Vec<u8>> {
         self.state()
-            .undo
+            .changes
             .iter()
-            .skip(checkpoint.undo_len)
+            .skip(checkpoint.change_len)
             .filter_map(|entry| match entry {
-                UndoEntry::Presume { key } => Some(key.as_bytes().to_vec()),
-                UndoEntry::Write { .. } => None,
+                StatementChange::Presume { key } => Some(key.as_bytes().to_vec()),
+                _ => None,
             })
             .collect()
     }
-
-    /// Drains every presumption mark, in no particular order. COMMIT consumes
-    /// this set to type its mutations; like Go's flags, which die with the
-    /// membuffer, a drained mark does not survive the publication attempt.
+    /// Consumes current absence checks while preserving staged values.
     pub fn take_presume_not_exists(&self) -> BTreeSet<Key> {
-        let mut guard = self.state();
-        let state = &mut *guard;
-        let mut marks = BTreeSet::new();
-        for (key, entry) in &mut state.entries {
-            if std::mem::take(&mut entry.presume_not_exists) {
-                marks.insert(key.clone());
+        let mut state = self.state();
+        let keys: BTreeSet<Key> = {
+            let mut iter = state.memdb.iter_with_flags(None, None);
+            let mut keys = BTreeSet::new();
+            while iter.valid() {
+                if iter.flags().has_presume_key_not_exists() {
+                    keys.insert(Key::from_bytes(iter.key().to_vec()));
+                }
+                iter.next().expect("MemDB iteration is local");
             }
+            keys
+        };
+        for key in &keys {
+            state.memdb.update_flags(
+                key.as_bytes(),
+                &[tikv_client::kv::FlagsOp::DelPresumeKeyNotExists],
+            );
         }
-        state.entries.retain(|_, entry| !entry.is_vacant());
-        marks
+        keys
     }
-
-    /// Every staged entry in `[start, end)`, in key order.
-    #[must_use]
+    /// Copies staged values and tombstones in the encoded-key range.
     pub fn range(&self, start: &Key, end: &Key) -> Vec<(Key, Option<Vec<u8>>)> {
         self.state()
-            .entries
-            .range(start.clone()..end.clone())
-            .filter_map(|(key, entry)| Some((key.clone(), entry.write.clone()?)))
+            .entries(Some(start.as_bytes()), Some(end.as_bytes()))
+            .into_iter()
+            .map(|(k, v, _)| (k, v))
             .collect()
     }
-
-    /// Test a key interval without copying its entries or bound keys.
+    /// Whether the native buffer has values in the encoded-key range.
     pub fn has_keys_in_range(&self, start: &Key, end: &Key) -> bool {
         self.state()
-            .entries
-            .range((
-                std::ops::Bound::Included(start),
-                std::ops::Bound::Excluded(end),
-            ))
-            .any(|(_, entry)| entry.write.is_some())
+            .memdb
+            .iter(Some(start.as_bytes()), Some(end.as_bytes()))
+            .valid()
     }
-
-    /// A checkpoint of the current moment: O(1), no copying. Go's
-    /// `MemBuffer.Staging()`.
-    #[must_use]
+    /// Starts a native staging scope and records the SQL delta position.
     pub fn checkpoint(&self) -> BufferCheckpoint {
+        let mut state = self.state();
         BufferCheckpoint {
-            undo_len: self.state().undo.len(),
+            change_len: state.changes.len(),
+            native: state.memdb.staging(),
         }
     }
-
-    /// Every staged entry, in key order: the COMMIT mutation set.
-    #[must_use]
+    /// Ends a statement scope after its delta has been consumed. Outer SQL
+    /// savepoints remain active; completed transaction scopes are already gone.
+    pub fn release(&self, checkpoint: BufferCheckpoint) {
+        let mut state = self.state();
+        while checkpoint.native != 0 && state.memdb.stages().len() >= checkpoint.native {
+            let handle = state.memdb.stages().len();
+            state.memdb.release(handle);
+        }
+        if state.memdb.stages().is_empty() {
+            state.changes.clear();
+        }
+    }
+    /// Copies the staged value view without consuming native flags.
     pub fn snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
         self.state()
-            .entries
-            .iter()
-            .filter_map(|(key, entry)| Some((key.clone(), entry.write.clone()?)))
+            .entries(None, None)
+            .into_iter()
+            .map(|(k, v, _)| (k, v))
             .collect()
     }
+    /// Lists staged keys without copying their values. This is used by the
+    /// native transaction commit path for schema-lease table identification.
+    pub fn staged_keys(&self) -> Vec<Key> {
+        let state = self.state();
+        let mut iter = state.memdb.iter_with_flags(None, None);
+        let mut keys = Vec::with_capacity(state.memdb.len());
+        while iter.valid() {
+            if iter.has_value() {
+                keys.push(Key::from_bytes(iter.key().to_vec()));
+            }
+            iter.next().expect("MemDB iteration is local");
+        }
+        keys
+    }
 
-    /// Every staged entry with its presumption mark, in key order, consuming
-    /// the marks as [`Self::take_presume_not_exists`] does: the COMMIT
-    /// mutation set of a transaction the session keeps.
-    /// Returns logical write bytes and key counts without cloning staged values.
-    /// Go records transaction write metrics from MemDB metadata; this metrics
-    /// path must not materialize a second mutation vector.
+    /// Returns Go's transaction size and key count from native MemDB metadata.
+    /// Reading metrics must not clone or scan staged values.
     #[must_use]
     pub fn write_details(&self) -> (usize, usize) {
-        let state = self.state();
-        state
-            .entries
-            .iter()
-            .fold((0usize, 0usize), |(bytes, keys), (key, entry)| {
-                let Some(write) = entry.write.as_ref() else {
-                    return (bytes, keys);
-                };
-                (
-                    bytes
-                        .saturating_add(key.as_bytes().len())
-                        .saturating_add(write.as_ref().map_or(0, Vec::len)),
-                    keys.saturating_add(1),
-                )
-            })
-    }
-
-    #[must_use]
-    pub fn snapshot_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
-        self.state().staged_writes(false, true)
-    }
-
-    /// Takes every staged entry in key order, leaving the buffer empty.
-    ///
-    /// Go's autocommit committer consumes the `MemBuffer` entries when it
-    /// builds the mutation set.  The session buffer has no other owner once
-    /// an autocommit statement reaches publication, so moving the writes
-    /// avoids copying every row and index value a second time.  Callers that
-    /// may retain the buffer for a later statement must use
-    /// [`Self::snapshot`] instead.
-    pub fn take_snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
         self.state()
-            .staged_writes(true, false)
+            .memdb
+            .read(|buffer| (buffer.size(), buffer.len()))
+    }
+
+    /// Copies staged values, tombstones and current absence flags.
+    pub fn snapshot_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
+        // Client-go keeps flags on the authoritative buffer until transaction end.
+        self.state().entries(None, None)
+    }
+    /// Consumes staged values and tombstones.
+    pub fn take_snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
+        self.take_staged()
             .into_iter()
-            .map(|(key, write, _)| (key, write))
+            .map(|(k, v, _)| (k, v))
             .collect()
     }
-
-    /// [`Self::take_snapshot`] with each entry's presumption mark, consumed:
-    /// the autocommit COMMIT mutation set in one pass over the buffer.
+    /// Consumes staged values with their absence flags.
     pub fn take_staged(&self) -> Vec<(Key, Option<Vec<u8>>, bool)> {
-        self.state().staged_writes(true, true)
+        let mut state = self.state();
+        let entries = state.entries(None, None);
+        state.memdb.reset();
+        state.changes.clear();
+        entries
     }
-
-    /// What changed since `checkpoint`, as the `(before, after)` pair the
-    /// pessimistic lock diff consumes: each side holds one entry per touched
-    /// key -- the value the checkpoint would restore, and the value staged
-    /// now. Cost is O(writes since the checkpoint), never O(staged bytes).
-    #[must_use]
+    /// Returns before and after values for keys written by this statement.
     pub fn delta_since(
         &self,
         checkpoint: BufferCheckpoint,
     ) -> (Vec<(Key, Option<Vec<u8>>)>, Vec<(Key, Option<Vec<u8>>)>) {
         let state = self.state();
-        let mut keys: BTreeMap<Key, (Option<Option<Vec<u8>>>, ())> = BTreeMap::new();
-        for entry in state.undo.iter().skip(checkpoint.undo_len) {
-            match entry {
-                UndoEntry::Write { key, prior } => {
-                    keys.entry(key.clone())
-                        .or_insert_with(|| (prior.clone(), ()));
-                }
-                UndoEntry::Presume { .. } => {}
+        let mut keys = BTreeMap::new();
+        for entry in state.changes.iter().skip(checkpoint.change_len) {
+            if let StatementChange::Write { key, prior } = entry {
+                keys.entry(key.clone()).or_insert_with(|| prior.clone());
             }
         }
-        let before: Vec<(Key, Option<Vec<u8>>)> = keys
+        let before = keys
             .iter()
-            .map(|(key, (prior, _))| (key.clone(), prior.clone().unwrap_or(None)))
+            .map(|(k, v)| (k.clone(), v.clone().unwrap_or(None)))
             .collect();
-        let after: Vec<(Key, Option<Vec<u8>>)> = keys
+        let after = keys
             .keys()
-            .map(|key| {
-                let staged = state.entries.get(key).and_then(|entry| entry.write.clone());
-                (key.clone(), staged.unwrap_or(None))
-            })
+            .map(|k| (k.clone(), state.get(k).unwrap_or(None)))
             .collect();
         (before, after)
     }
-
-    /// How many keys the buffer stages, tombstones included.
-    #[must_use]
+    /// Number of native entries, including flags-only keys.
     pub fn len(&self) -> usize {
-        self.state().writes
+        self.state().memdb.len()
     }
-
-    /// Go `MemDB.Size()`, the transaction size `KVTxn.Size()` reports: the
-    /// staged key and value bytes, a tombstone counting its key only.
-    #[must_use]
-    pub fn staged_bytes(&self) -> usize {
-        self.state()
-            .entries
-            .iter()
-            .filter_map(|(key, entry)| {
-                let write = entry.write.as_ref()?;
-                Some(key.as_ref().len() + write.as_ref().map_or(0, Vec::len))
-            })
-            .sum()
-    }
-
-    /// Bytes retained by the transaction's staged key/value map.
-    ///
-    /// Go publishes the backing MemDB's allocation footprint rather than the
-    /// logical value-byte total. This buffer is a `BTreeMap`, so its native
-    /// footprint is the owned key/value capacities plus one map entry for
-    /// every staged key (including tombstones).
-    #[must_use]
-    pub fn memory_footprint(&self) -> u64 {
-        let bytes = self
-            .state()
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.write.is_some())
-            .fold(0usize, |bytes, (key, entry)| {
-                bytes
-                    .saturating_add(std::mem::size_of::<(Key, Option<Vec<u8>>)>())
-                    .saturating_add(key.as_bytes().len())
-                    .saturating_add(
-                        entry
-                            .write
-                            .as_ref()
-                            .and_then(|write| write.as_ref())
-                            .map_or(0, Vec::capacity),
-                    )
-            });
-        u64::try_from(bytes).unwrap_or(u64::MAX)
-    }
-
-    /// Whether the transaction has staged nothing, so COMMIT has no work.
-    #[must_use]
+    /// Whether the authoritative native buffer is empty.
     pub fn is_empty(&self) -> bool {
-        self.state().writes == 0
+        self.state().memdb.is_empty()
     }
-
-    /// Drops every staged entry: what COMMIT and ROLLBACK both do once the
-    /// transaction ends.
+    /// Current native key/value byte count.
+    pub fn staged_bytes(&self) -> usize {
+        self.state().memdb.size()
+    }
+    /// Native MemDB memory retained by values, flags and staging history.
+    pub fn memory_footprint(&self) -> u64 {
+        self.state().memdb.memory_footprint()
+    }
+    /// Clears the completed transaction buffer and SQL metadata.
     pub fn reset(&self) {
         let mut state = self.state();
-        state.entries.clear();
-        state.writes = 0;
-        state.undo.clear();
+        state.memdb.reset();
+        state.memdb.bound = None;
+        state.changes.clear();
+        state.hints.clear();
     }
-
-    /// Rewinds the buffer to `checkpoint`: entries the log recorded after it
-    /// are undone newest-first, so a key written several times lands back on
-    /// the value it had at the checkpoint and a key the checkpoint never held
-    /// leaves the map entirely.
-    ///
-    /// This is statement-level rollback: Go undoes a failed statement's writes
-    /// back to the `MemBuffer` staging handle it took at statement start, so a
-    /// failure inside an explicit transaction discards that statement's writes
-    /// and keeps every earlier one. The rewind pays for the failed
-    /// statement's OWN writes -- Go's checkpoint revert is the same shape --
-    /// and never re-copies bytes earlier statements already staged.
+    /// Rolls back through native staging while retaining the checkpoint for another retry.
     pub fn restore(&self, checkpoint: BufferCheckpoint) {
-        let mut guard = self.state();
-        let state = &mut *guard;
-        while state.undo.len() > checkpoint.undo_len {
-            match state.undo.pop() {
-                Some(UndoEntry::Write { key, prior }) => {
-                    let entry = state.entries.entry(key.clone()).or_default();
-                    let had_write = entry.write.is_some();
-                    entry.write = prior;
-                    match (had_write, entry.write.is_some()) {
-                        (true, false) => state.writes -= 1,
-                        (false, true) => state.writes += 1,
-                        _ => {}
-                    }
-                    state.drop_if_vacant(&key);
-                }
-                Some(UndoEntry::Presume { key }) => {
-                    if let Some(entry) = state.entries.get_mut(&key) {
-                        entry.presume_not_exists = false;
-                        entry.hint = None;
-                    }
-                    state.drop_if_vacant(&key);
-                }
-                None => break,
+        let mut state = self.state();
+        if checkpoint.native == 0 {
+            state.memdb.reset();
+        } else {
+            while state.memdb.stages().len() >= checkpoint.native {
+                let handle = state.memdb.stages().len();
+                state.memdb.cleanup(handle);
             }
+            state.memdb.staging();
         }
+        let changed_marks: Vec<_> = state
+            .changes
+            .iter()
+            .skip(checkpoint.change_len)
+            .filter_map(|entry| match entry {
+                StatementChange::Presume { key } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        for key in changed_marks {
+            state.memdb.update_flags(
+                key.as_bytes(),
+                &[tikv_client::kv::FlagsOp::DelPresumeKeyNotExists],
+            );
+            state.hints.remove(&key);
+        }
+        state.changes.truncate(checkpoint.change_len);
     }
-
     fn state(&self) -> std::sync::MutexGuard<'_, BufferState> {
-        // A poisoned buffer means another statement panicked mid-write; the
-        // staged bytes are still exactly what was written before that, and the
-        // transaction is going to be rolled back by its owner either way.
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -1388,13 +1405,63 @@ mod tests {
         )
     }
 
-    /// Go `AddRecord`'s two duplicate-check modes, against one committed row:
-    /// `pkg/table/tables/tables.go` reads the whole transaction IN PLACE (the
-    // snapshot included) and reports 1062, while the lazy pessimistic arm
-    /// reads ONLY `GetLocal`, reports nothing, and stages the row with
-    /// `kv.SetPresumeKeyNotExists` -- deferring the verdict to prewrite, whose
-    /// `Op_Insert` rejects a key that exists. This pins both arms and the no
-    /// cluster read property of the second.
+    #[test]
+    fn owned_batch_borrows_the_native_buffer_once_and_keeps_statement_rollback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let buffer = MutationBuffer::new();
+        let native = Arc::new(Mutex::new(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        ));
+        let accesses = Arc::new(AtomicUsize::new(0));
+        buffer.bind_native(42, {
+            let native = Arc::clone(&native);
+            let accesses = Arc::clone(&accesses);
+            Arc::new(move |visit| {
+                accesses.fetch_add(1, Ordering::Relaxed);
+                visit(&mut native.lock().unwrap());
+                true
+            })
+        });
+        let checkpoint = buffer.checkpoint();
+        accesses.store(0, Ordering::Relaxed);
+        buffer.stage_owned_batch([
+            (key(b"a"), Some(b"value".to_vec()), true),
+            (key(b"b"), None, false),
+        ]);
+        assert_eq!(accesses.load(Ordering::Relaxed), 1);
+        assert_eq!(buffer.write_details(), (7, 2));
+        assert_eq!(buffer.get(&key(b"a")), Some(Some(b"value".to_vec())));
+        assert_eq!(buffer.get(&key(b"b")), Some(None));
+        assert!(native
+            .lock()
+            .unwrap()
+            .get_flags_readonly(b"a")
+            .unwrap()
+            .has_presume_key_not_exists());
+        buffer.restore(checkpoint);
+        assert!(buffer.get(&key(b"a")).is_none());
+        assert!(buffer.get(&key(b"b")).is_none());
+    }
+
+    #[test]
+    fn completed_statement_scopes_release_without_losing_outer_savepoints() {
+        let buffer = MutationBuffer::new();
+        let key = Key::from_bytes(b"key".to_vec());
+        buffer.set(key.clone(), b"old".to_vec());
+        let savepoint = buffer.checkpoint();
+        for _ in 0..64 {
+            let statement = buffer.checkpoint();
+            buffer.set(key.clone(), b"new".to_vec());
+            buffer.release(statement);
+            assert_eq!(buffer.state().memdb.stages().len(), 1);
+        }
+        buffer.restore(savepoint);
+        assert_eq!(buffer.get(&key), Some(Some(b"old".to_vec())));
+        buffer.release(savepoint);
+        assert!(buffer.state().memdb.stages().is_empty());
+        assert!(buffer.state().changes.is_empty());
+    }
+
     #[test]
     fn insert_dup_check_is_in_place_eagerly_and_local_only_lazily() {
         use crate::kv_table::{KvColumn, KvIndex, KvTable};

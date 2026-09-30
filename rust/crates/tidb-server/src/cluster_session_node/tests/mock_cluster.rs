@@ -564,16 +564,15 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.pessimistic
     }
 
-    fn lock_staged_keys_with_values(&self, keys: Vec<Vec<u8>>) -> Result<LockKeysOutcome, String> {
+    fn lock_staged_keys_with_values(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
         // This fixture serves rows from its in-memory snapshot, but must
         // still exercise the same lock/retry outcome as its ordinary lock
         // entry point when a point write asks for lock return values.
-        self.lock_staged_keys_with_assertions(
-            keys,
-            Default::default(),
-            Default::default(),
-            tidb_txnkv::transaction::LockWaitTime::session_lock_wait_timeout(),
-        )
+        self.lock_staged_keys_with_assertions(keys, Default::default(), Default::default(), wait)
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {

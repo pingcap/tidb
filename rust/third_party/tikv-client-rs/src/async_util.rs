@@ -9,6 +9,27 @@ use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 use tokio::sync::Notify;
 
+tokio::task_local! {
+    static BACKGROUND_RPC_CANCELLATION: Cancellation;
+}
+
+/// The resolver-owned cancellation scope of the current background RPC.
+/// Injected transports use this instead of inheriting a foreground statement.
+pub fn background_rpc_cancellation() -> Option<Cancellation> {
+    BACKGROUND_RPC_CANCELLATION.try_with(Clone::clone).ok()
+}
+
+/// Runs detached cleanup under its owner's cancellation scope, like Go's
+/// background resolver context. Nested async calls retain the same scope.
+pub async fn with_background_rpc_context<T>(
+    cancellation: Cancellation,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    BACKGROUND_RPC_CANCELLATION
+        .scope(cancellation, future)
+        .await
+}
+
 /// A synchronous task owned by an executor.
 pub type Task = Box<dyn FnOnce() + Send + 'static>;
 
@@ -195,7 +216,8 @@ impl Cancellation {
                 .is_some_and(|parent| parent.is_cancelled())
     }
 
-    pub(crate) async fn cancelled(&self) {
+    /// Waits for this scope or any parent to be cancelled.
+    pub async fn cancelled(&self) {
         while !self.is_cancelled() {
             if let Some(parent) = &self.parent {
                 let parent_cancelled = Box::pin(parent.cancelled());

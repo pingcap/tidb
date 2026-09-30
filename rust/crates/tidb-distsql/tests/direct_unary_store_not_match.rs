@@ -35,7 +35,7 @@ struct DelayedStoreMismatchState {
 }
 
 struct DelayedStoreMismatchClient {
-    state: Rc<RefCell<DelayedStoreMismatchState>>,
+    state: Arc<RwLock<DelayedStoreMismatchState>>,
     replace_before_first_response: bool,
     cancel_after_first_response: bool,
 }
@@ -48,7 +48,7 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
         _timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         assert_eq!(address, "shared-tikv:20160");
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.write().unwrap();
         let generation = match state.active_generation {
             Some(generation) => generation,
             None => {
@@ -89,7 +89,9 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         let result = self.send_request(address, request, call.timeout());
-        if self.cancel_after_first_response && self.state.borrow().sent_generations.len() == 1 {
+        if self.cancel_after_first_response
+            && self.state.read().unwrap().sent_generations.len() == 1
+        {
             call.cancellation().cancel();
         }
         result
@@ -97,7 +99,7 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         assert_eq!(address, "shared-tikv:20160");
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.write().unwrap();
         if let Some(generation) = state.active_generation.take() {
             state.force_closed_generations.push(generation);
         }
@@ -110,7 +112,7 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
         assert_eq!(address, "shared-tikv:20160");
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.write().unwrap();
         state.close_requests.push(version);
         if state
             .active_generation
@@ -136,7 +138,6 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
-
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -157,7 +158,6 @@ impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
             "unexpected lock in delayed StoreNotMatch read".to_owned(),
         ))
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -189,7 +189,7 @@ struct ForwardedStaleMismatchState {
 }
 
 struct ForwardedStaleMismatchClient {
-    state: Rc<RefCell<ForwardedStaleMismatchState>>,
+    state: Arc<RwLock<ForwardedStaleMismatchState>>,
 }
 
 impl DirectUnaryClient for ForwardedStaleMismatchClient {
@@ -223,7 +223,7 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
         _request: &DirectUnaryRequest,
         _call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.write().unwrap();
         state
             .calls
             .push((address.to_owned(), forwarded_host.map(str::to_owned)));
@@ -256,7 +256,8 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         self.state
-            .borrow_mut()
+            .write()
+            .unwrap()
             .close_requests
             .push((address.to_owned(), 0));
         Ok(())
@@ -268,7 +269,8 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
         self.state
-            .borrow_mut()
+            .write()
+            .unwrap()
             .close_requests
             .push((address.to_owned(), version));
         Ok(())
@@ -289,7 +291,6 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
-
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -310,7 +311,6 @@ impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
             "unexpected lock in forwarded stale read".to_owned(),
         ))
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -336,21 +336,21 @@ impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
 
 fn run_store_not_match_with_channel_replacement(
     replace_before_first_response: bool,
-) -> Rc<RefCell<DelayedStoreMismatchState>> {
-    let state = Rc::new(RefCell::new(DelayedStoreMismatchState {
+) -> Arc<RwLock<DelayedStoreMismatchState>> {
+    let state = Arc::new(RwLock::new(DelayedStoreMismatchState {
         active_generation: Some(1),
         next_generation: 1,
         ..DelayedStoreMismatchState::default()
     }));
     let transport = DirectUnaryQueryTransport::new_injected(
         DelayedStoreMismatchClient {
-            state: Rc::clone(&state),
+            state: Arc::clone(&state),
             replace_before_first_response,
             cancel_after_first_response: false,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::new(RefCell::new(Vec::new())),
+            calls: Arc::new(RwLock::new(Vec::new())),
             regions: [
                 location(1, "a", "z", "shared-tikv:20160"),
                 location(1, "a", "z", "shared-tikv:20160"),
@@ -386,7 +386,7 @@ fn run_store_not_match_with_channel_replacement(
 #[test]
 fn current_store_not_match_closes_exact_observed_channel() {
     let state = run_store_not_match_with_channel_replacement(false);
-    let state = state.borrow();
+    let state = state.read().unwrap();
     assert_eq!(state.sent_generations, [1, 2]);
     assert_eq!(state.close_requests, [1]);
     assert_eq!(state.force_closed_generations, [1]);
@@ -396,7 +396,7 @@ fn current_store_not_match_closes_exact_observed_channel() {
 #[test]
 fn delayed_store_not_match_cannot_close_a_replacement_channel() {
     let state = run_store_not_match_with_channel_replacement(true);
-    let state = state.borrow();
+    let state = state.read().unwrap();
     assert_eq!(state.sent_generations, [1, 2]);
     assert_eq!(state.close_requests, [1]);
     assert!(state.force_closed_generations.is_empty());
@@ -405,21 +405,21 @@ fn delayed_store_not_match_cannot_close_a_replacement_channel() {
 
 #[test]
 fn caller_cancellation_wins_before_store_not_match_mutates_channel_or_route() {
-    let state = Rc::new(RefCell::new(DelayedStoreMismatchState {
+    let state = Arc::new(RwLock::new(DelayedStoreMismatchState {
         active_generation: Some(1),
         next_generation: 1,
         ..DelayedStoreMismatchState::default()
     }));
-    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Arc::new(RwLock::new(Vec::new()));
     let transport = DirectUnaryQueryTransport::new_injected(
         DelayedStoreMismatchClient {
-            state: Rc::clone(&state),
+            state: Arc::clone(&state),
             replace_before_first_response: false,
             cancel_after_first_response: true,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::clone(&loader_calls),
+            calls: Arc::clone(&loader_calls),
             regions: VecDeque::from([location(1, "a", "z", "shared-tikv:20160")]),
         }),
         DirectUnaryRuntimeConfig::default(),
@@ -441,30 +441,30 @@ fn caller_cancellation_wins_before_store_not_match_mutates_channel_or_route() {
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("cancelled by caller"), "{error}");
     assert_eq!(result.next_raw().unwrap(), None);
-    let state = state.borrow();
+    let state = state.read().unwrap();
     assert_eq!(state.sent_generations, [1]);
     assert!(state.close_requests.is_empty());
     assert!(state.force_closed_generations.is_empty());
     assert_eq!(state.active_generation, Some(1));
-    assert_eq!(loader_calls.borrow().as_slice(), &[b"a".to_vec()]);
+    assert_eq!(loader_calls.read().unwrap().as_slice(), &[b"a".to_vec()]);
 }
 
 #[test]
 fn stale_forwarded_store_not_match_preserves_replacement_proxy_channel() {
-    let state = Rc::new(RefCell::new(ForwardedStaleMismatchState {
+    let state = Arc::new(RwLock::new(ForwardedStaleMismatchState {
         active_proxy_version: 1,
         ..ForwardedStaleMismatchState::default()
     }));
-    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Arc::new(RwLock::new(Vec::new()));
     let location =
         location_with_second_peer(1, "a", "z", "logical-target:20160", "shared-proxy:20160");
     let transport = DirectUnaryQueryTransport::new_injected(
         ForwardedStaleMismatchClient {
-            state: Rc::clone(&state),
+            state: Arc::clone(&state),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::clone(&loader_calls),
+            calls: Arc::clone(&loader_calls),
             regions: VecDeque::from([location.clone(), location]),
         }),
         DirectUnaryRuntimeConfig {
@@ -492,7 +492,7 @@ fn stale_forwarded_store_not_match_preserves_replacement_proxy_channel() {
         Some(b"stale-forwarded-route-reloaded".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    let state = state.borrow();
+    let state = state.read().unwrap();
     assert_eq!(
         state.calls,
         [
@@ -513,16 +513,16 @@ fn stale_forwarded_store_not_match_preserves_replacement_proxy_channel() {
     );
     assert_eq!(state.active_proxy_version, 2);
     assert_eq!(
-        loader_calls.borrow().as_slice(),
+        loader_calls.read().unwrap().as_slice(),
         &[b"a".to_vec(), b"a".to_vec()]
     );
 }
 
 #[test]
 fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
+    let loader_calls = Arc::new(RwLock::new(Vec::new()));
     let mut left = location_with_second_peer(1, "a", "m", "target-a:20160", "shared-proxy:20160");
     let mut right = location_with_second_peer(2, "m", "z", "target-b:20160", "shared-proxy:20160");
     for location in [&mut left, &mut right] {
@@ -531,7 +531,7 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
     }
     let transport = DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
-            calls: Rc::clone(&calls),
+            calls: Arc::clone(&calls),
             responses: VecDeque::from([
                 Err(connection_failure(
                     "target-a:20160",
@@ -549,18 +549,18 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
                 )),
                 Ok(response(b"right-without-refresh")),
             ]),
-            events: Rc::clone(&events),
-            liveness: RefCell::new(VecDeque::from([
+            events: Arc::clone(&events),
+            liveness: RwLock::new(VecDeque::from([
                 Ok(StoreLiveness::Unreachable),
                 Ok(StoreLiveness::Unreachable),
             ])),
-            batch_errors: RefCell::new(VecDeque::new()),
-            batch_ready_immediately: RefCell::new(VecDeque::new()),
+            batch_errors: RwLock::new(VecDeque::new()),
+            batch_ready_immediately: RwLock::new(VecDeque::new()),
             batch_begin_count: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::clone(&loader_calls),
+            calls: Arc::clone(&loader_calls),
             regions: VecDeque::from([left.clone(), right, left]),
         }),
         DirectUnaryRuntimeConfig {
@@ -585,7 +585,8 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
     assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
         calls
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .map(|call| (call.address.as_str(), call.forwarded_host.as_deref()))
             .collect::<Vec<_>>(),
@@ -598,10 +599,10 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
         ]
     );
     assert_eq!(
-        loader_calls.borrow().as_slice(),
+        loader_calls.read().unwrap().as_slice(),
         &[b"a".to_vec(), b"m".to_vec(), b"a".to_vec()]
     );
-    assert!(events.borrow().iter().all(|event| {
+    assert!(events.read().unwrap().iter().all(|event| {
         !matches!(
             event,
             ClientEvent::ForceClose(address)
@@ -613,12 +614,12 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
 
 #[test]
 fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let events = Arc::new(RwLock::new(Vec::new()));
     let location =
         location_with_second_peer(1, "a", "z", "logical-target:20160", "healthy-proxy:20160");
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Err(connection_failure(
                 "logical-target:20160",
@@ -630,7 +631,7 @@ fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() 
             Ok(response(b"logical-route-reloaded")),
         ],
         [Ok(StoreLiveness::Unreachable)],
-        Rc::clone(&events),
+        Arc::clone(&events),
         [location.clone(), location],
         DirectUnaryRuntimeConfig {
             enable_forwarding: true,
@@ -647,7 +648,8 @@ fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() 
     assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
         calls
-            .borrow()
+            .read()
+            .unwrap()
             .iter()
             .map(|call| call.address.as_str())
             .collect::<Vec<_>>(),
@@ -657,7 +659,7 @@ fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() 
             "healthy-proxy:20160",
         ]
     );
-    assert!(events.borrow().iter().all(|event| {
+    assert!(events.read().unwrap().iter().all(|event| {
         !matches!(
             event,
             ClientEvent::ForceClose(address)

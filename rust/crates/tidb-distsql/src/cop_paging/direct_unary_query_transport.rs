@@ -208,7 +208,7 @@ pub trait LockedResponseDelegate<C, L>: std::fmt::Debug + Send + Sync {
         &self,
         runtime: &SharedReadRuntime<C, L>,
         observation: LockedResponseObservation<'_>,
-    ) -> Result<LockedResponseAction, String>;
+    ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError>;
 }
 
 /// Injectable wait mechanism for response-owned region recovery.
@@ -274,7 +274,7 @@ pub enum DirectUnaryTransportError {
     /// The bind-anchored query deadline cannot admit another retry wait.
     DeadlineExceeded,
     /// A locked response could not be handled by the bounded lock delegate.
-    LockRecovery(String),
+    LockRecovery(tidb_txnkv::lock::LockRecoveryError),
     /// The existing retry budget was exhausted; retain its source category.
     Backoff(tidb_txnkv::region::RegionBackoffExhausted),
 }
@@ -356,7 +356,13 @@ impl From<DirectUnaryTransportError> for QueryResponseError {
     fn from(error: DirectUnaryTransportError) -> Self {
         match error {
             DirectUnaryTransportError::CallerCancelled => Self::Cancelled,
-            DirectUnaryTransportError::Backoff(exhausted) => {
+            DirectUnaryTransportError::LockRecovery(
+                tidb_txnkv::lock::LockRecoveryError::CallerCancelled,
+            ) => Self::Cancelled,
+            DirectUnaryTransportError::Backoff(exhausted)
+            | DirectUnaryTransportError::LockRecovery(
+                tidb_txnkv::lock::LockRecoveryError::BackoffExhausted(exhausted),
+            ) => {
                 let source = tidb_txnkv::StorageDriverError::from_backoff(
                     exhausted.kind,
                     &format!("{exhausted:?}"),
@@ -458,8 +464,8 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient,
-        L: RegionRecoveryLoader,
+        C: tidb_txnkv::lock::LockRecoveryClient + Send + 'static,
+        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
         S: tidb_txnkv::lock::TimestampSource + Send + Sync + 'static,
     {
         Self::with_shared_runtime(
@@ -480,9 +486,9 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher + Send + 'static,
         C::Pending: Send + 'static,
-        L: RegionRecoveryLoader,
+        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
         S: tidb_txnkv::lock::TimestampSource + Send + Sync + 'static,
     {
         Self::with_shared_runtime_batch_first(
@@ -500,8 +506,8 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient,
-        L: RegionRecoveryLoader,
+        C: tidb_txnkv::lock::LockRecoveryClient + Send + 'static,
+        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
         S: tidb_txnkv::lock::TimestampSource + Send + Sync + 'static,
     {
         Self::with_locked_response_delegate(
@@ -519,9 +525,9 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher + Send + 'static,
         C::Pending: Send + 'static,
-        L: RegionRecoveryLoader,
+        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
         S: tidb_txnkv::lock::TimestampSource + Send + Sync + 'static,
     {
         let transport = Self::with_locked_response_delegate(
@@ -1852,32 +1858,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     },
                 ))));
             }
-            // Client-go checks the hints carried by this RPC before resolving
-            // its locks. The shared snapshot sets may have changed since send.
-            // Shared-lock children still consume only one backoff per reply.
-            let locks = if lock.shared_lock_infos.is_empty() {
-                std::slice::from_ref(&lock)
-            } else {
-                lock.shared_lock_infos.as_slice()
-            };
-            if locks.iter().any(|lock| {
-                client_request
-                    .context
-                    .resolved_locks
-                    .contains(&lock.lock_version)
-                    || client_request
-                        .context
-                        .committed_locks
-                        .contains(&lock.lock_version)
-            }) {
-                let delay = self
-                    .region_backoffs
-                    .entry(selected.attempt.region.id)
-                    .or_insert_with(|| RegionBackoffBudget::new(self.config.region_retry_max_sleep))
-                    .next_delay(RegionBackoffKind::TxnLockFast)
-                    .map_err(DirectUnaryTransportError::Backoff)?;
-                self.sleep_retry(delay)?;
-            }
             let call = self.rpc_call();
             let region_retry_max_sleep = self.config.region_retry_max_sleep;
             let backoff = self
@@ -1923,7 +1903,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                             })
                             .next_delay_capped(RegionBackoffKind::TxnLockFast, recovered.ttl)
                             .map_err(DirectUnaryTransportError::Backoff)?;
-                        self.sleep_retry(delay)?;
+                        self.sleep_region_retry(selected.attempt.region.id, delay)?;
                     }
                     let failed = self.runtime.consume_failed_attempt(attempt_id)?;
                     let replacement = self.runtime.retry_transport_attempt(failed)?;
@@ -2045,7 +2025,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .or_insert_with(|| RegionBackoffBudget::new(self.config.region_retry_max_sleep))
             .next_delay(RegionBackoffKind::TikvRpc)
             .map_err(|error| DirectUnaryTransportError::RegionTerminal(format!("{error:?}")))?;
-        self.sleep_retry(delay)?;
+        self.sleep_region_retry(selected.attempt.region.id, delay)?;
         let replacement = self.runtime.retry_transport_attempt(failed)?;
         self.install_same_task_retry(replacement)?;
         debug_assert!(self.request_selectors.contains_key(&logical_task_id));
@@ -2142,12 +2122,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         "typed recovery did not match the selector's completed attempt".to_owned(),
                     ));
                 }
-                self.sleep_retry(delay)?;
+                self.sleep_region_retry(region_id, delay)?;
                 let replacement = self.runtime.retry_transport_attempt(failed)?;
                 self.install_same_task_retry(replacement)
             }
             RegionErrorDisposition::RetryRoute { delay, .. } => {
-                self.sleep_retry(delay)?;
+                self.sleep_region_retry(region_id, delay)?;
                 let ranges = failed.ranges().to_vec();
                 let topology = self.locate_retry_ranges(&ranges)?;
                 let replacement = self.runtime.retry_region_attempt(failed, &topology)?;
@@ -2155,7 +2135,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 self.install_same_task_retry(replacement)
             }
             RegionErrorDisposition::RebuildRanges { delay, action } => {
-                self.sleep_retry(delay)?;
+                self.sleep_region_retry(region_id, delay)?;
                 self.check_retry_active()?;
                 cache_operation(&self.shared_runtime, |region_cache| {
                     region_cache.apply_rebuild_action(action)
@@ -2169,7 +2149,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     .map_err(|error| {
                         DirectUnaryTransportError::RegionTerminal(format!("{error:?}"))
                     })?;
-                self.sleep_retry(outer_delay)?;
+                self.sleep_region_retry(region_id, outer_delay)?;
                 let ranges = self.runtime.retry_ranges_from(&failed)?;
                 let topology = self.locate_retry_ranges(&ranges)?;
                 let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
@@ -2281,7 +2261,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .or_insert_with(|| RegionBackoffBudget::new(self.config.region_retry_max_sleep))
             .next_delay(RegionBackoffKind::RegionMiss)
             .map_err(|error| DirectUnaryTransportError::RegionTerminal(format!("{error:?}")))?;
-        self.sleep_retry(delay)?;
+        self.sleep_region_retry(region_id, delay)?;
         let ranges = self.runtime.retry_ranges_from(&failed)?;
         let topology = self.locate_retry_ranges(&ranges)?;
         let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
@@ -2306,6 +2286,19 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .map_or(deadline, |query| query.min(deadline)),
             self.cancellation.unary_cancellation(),
         )
+    }
+
+    fn sleep_region_retry(
+        &mut self,
+        region_id: u64,
+        delay: Duration,
+    ) -> Result<(), DirectUnaryTransportError> {
+        let result = self.sleep_retry(delay);
+        self.region_backoffs
+            .get_mut(&region_id)
+            .expect("retry wait has a region owner")
+            .finish_wait(result.is_ok());
+        result
     }
 
     fn sleep_retry(&self, delay: Duration) -> Result<(), DirectUnaryTransportError> {
@@ -2478,7 +2471,11 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     active_attempts,
                     logical_index: 0,
                     closed: false,
-                    region_backoffs: self.region_backoffs.clone(),
+                    region_backoffs: self
+                        .region_backoffs
+                        .iter_mut()
+                        .map(|(id, budget)| (*id, budget.fork()))
+                        .collect(),
                     request_selectors,
                     sync_only_chains,
                     pending_batches,

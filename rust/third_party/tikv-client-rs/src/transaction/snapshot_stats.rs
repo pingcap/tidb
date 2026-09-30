@@ -16,7 +16,7 @@ use crate::request::{ApiV2Codec, KeyMode};
 use crate::store::Request;
 use crate::util::format_duration;
 
-/// Snapshot RPC commands and transaction-helper calls that contribute to [`SnapshotRuntimeStats`].
+/// Snapshot RPC commands that contribute to [`SnapshotRuntimeStats`].
 ///
 /// This is the native counterpart of client-go's `tikvrpc.CmdType` values
 /// observed by `SnapshotRuntimeStats.GetCmdRPCCount`.
@@ -26,8 +26,6 @@ pub enum SnapshotRpcCommand {
     BatchGet,
     BufferBatchGet,
     Scan,
-    /// Transaction-layer lock-resolution helper, which may issue multiple RPCs.
-    ResolveLock,
 }
 
 impl fmt::Display for SnapshotRpcCommand {
@@ -37,7 +35,6 @@ impl fmt::Display for SnapshotRpcCommand {
             Self::BatchGet => "BatchGet",
             Self::BufferBatchGet => "BufferBatchGet",
             Self::Scan => "Scan",
-            Self::ResolveLock => "ResolveLock",
         })
     }
 }
@@ -830,8 +827,7 @@ impl SnapshotRuntimeStats {
         })
     }
 
-    /// Record a completed RPC or transaction-helper observation.
-    pub fn record_rpc(&self, command: SnapshotRpcCommand, duration: Duration) {
+    fn record_rpc(&self, command: SnapshotRpcCommand, duration: Duration) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let stat = inner.rpc.entry(command).or_default();
         stat.count += 1;
@@ -844,12 +840,7 @@ impl SnapshotRuntimeStats {
         Self::merge_exec_detail(&mut inner, detail);
     }
 
-    /// Record a recognized point-read response after handling region errors.
-    pub fn record_point_response(
-        &self,
-        detail: Option<&kvrpcpb::ExecDetailsV2>,
-        payload_bytes: u64,
-    ) {
+    fn record_point_response(&self, detail: Option<&kvrpcpb::ExecDetailsV2>, payload_bytes: u64) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let scan_detail = detail.and_then(|detail| detail.scan_detail_v2.as_ref());
         inner
@@ -872,8 +863,7 @@ impl SnapshotRuntimeStats {
         }
     }
 
-    /// Record time spent resolving locks encountered by snapshot reads.
-    pub fn record_resolve_lock(&self, duration: Duration) {
+    pub(crate) fn record_resolve_lock(&self, duration: Duration) {
         self.inner
             .lock()
             .expect("snapshot stats lock poisoned")
@@ -881,17 +871,18 @@ impl SnapshotRuntimeStats {
     }
 
     pub(crate) fn record_backoff(&self, retry_type: &'static str, duration: Duration) {
-        let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
-        let stat = inner.backoff.entry(retry_type).or_default();
-        stat.count += 1;
-        stat.duration += duration;
+        self.record_backoff_totals(retry_type, 1, duration);
     }
 
-    /// Merge a completed backoff history accumulated by an external TiDB retry loop.
-    pub fn record_backoff_totals(&self, retry_type: &'static str, count: u64, duration: Duration) {
+    pub(crate) fn record_backoff_totals(
+        &self,
+        retry_type: &'static str,
+        count: u64,
+        duration: Duration,
+    ) {
         let mut inner = self.inner.lock().expect("snapshot stats lock poisoned");
         let stat = inner.backoff.entry(retry_type).or_default();
-        stat.count = stat.count.wrapping_add(count);
+        stat.count += count;
         stat.duration += duration;
     }
 }

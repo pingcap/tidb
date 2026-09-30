@@ -6,3 +6,8 @@ incompatible-rust-versions = "fallback"
 # threads rather than one core per crate. Nightly-only, which is what
 # `rust-toolchain.toml` pins the channel for.
 rustflags = ["-Zthreads=8"]
+
+[env]
+# Debug async lock-resolution tests exceed the harness's 2 MiB fixed stack.
+# Go grows goroutine stacks; Rust needs enough space at thread creation.
+RUST_MIN_STACK = "33554432"

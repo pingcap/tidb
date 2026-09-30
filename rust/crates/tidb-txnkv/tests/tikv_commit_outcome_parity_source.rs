@@ -42,7 +42,7 @@ impl TikvTransactionSource for MockSource {
         let pd = self.pd.clone();
         Ok(self
             .runtime
-            .block_on(tikv_client::pd::PdClient::get_timestamp(pd))?)
+            .block_on(tikv_client::PdClient::get_timestamp(pd))?)
     }
 
     fn cluster_id(&self) -> Result<u64, TikvTransactionError> {

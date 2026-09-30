@@ -62,10 +62,10 @@ use tidb_txnkv::{
     region::RegionRecoveryLoader,
     rpc::UnaryCallContext,
     transaction::{
-        MutationBufferError, MutationSetError, OptimisticCommitOutcome, OptimisticCoordinatorError,
+        MutationPlan, MutationSetError, OptimisticCommitOutcome, OptimisticCoordinatorError,
         OptimisticMutation, OptimisticMutationKind, ReadOnlyTransaction, RealOptimisticTransaction,
-        RealOptimisticTransactionOpener, TransactionCommandClient, TransactionMutationBuffer,
-        MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+        RealOptimisticTransactionOpener, TransactionCommandClient, MAX_OPTIMISTIC_MUTATIONS,
+        MAX_OPTIMISTIC_TRANSACTION_BYTES,
     },
 };
 
@@ -107,8 +107,6 @@ pub enum ConfiguredWriteError {
     DuplicateHandle(i64),
     /// The transaction rejected the assembled mutation set.
     Mutations(MutationSetError),
-    /// Statement-local coalescing rejected two writes to one key.
-    Staging(MutationBufferError),
     /// The real transaction coordinator failed before or during publication.
     Transaction(OptimisticCoordinatorError),
     /// The statement is not admitted SQL for the configured write boundary.
@@ -225,7 +223,6 @@ impl fmt::Display for ConfiguredWriteError {
                 "configured write repeats clustered handle {handle}"
             ),
             Self::Mutations(error) => write!(formatter, "configured write mutations: {error}"),
-            Self::Staging(error) => write!(formatter, "configured write staging: {error}"),
             Self::Transaction(error) => write!(formatter, "configured write transaction: {error}"),
             Self::Plan(error) => write!(formatter, "{error}"),
             Self::Parse(message) => write!(formatter, "SQL parse error: {message}"),
@@ -293,7 +290,6 @@ impl std::error::Error for ConfiguredWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Mutations(error) => Some(error),
-            Self::Staging(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::Plan(error) => Some(error),
             Self::RowWrite(_)
@@ -452,7 +448,7 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut warnings = Vec::new();
     let mut affected_rows = 0;
 
@@ -492,9 +488,7 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
             unreachable!("one INSERT IGNORE row always has an insert plan")
         };
         for mutation in mutations {
-            staged
-                .stage(mutation)
-                .map_err(ConfiguredWriteError::Staging)?;
+            staged.stage(mutation);
         }
         affected_rows += 1;
     }
@@ -520,7 +514,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut affected_rows = 0;
     let mut warnings = Vec::new();
     for row in rows {
@@ -532,9 +526,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
                 warnings: row_warnings,
             } => {
                 for mutation in mutations {
-                    staged
-                        .stage(mutation)
-                        .map_err(ConfiguredWriteError::Staging)?;
+                    staged.stage(mutation);
                 }
                 affected_rows += row_affected;
                 warnings.extend(row_warnings);
@@ -564,7 +556,7 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
 
 fn plan_replace_row<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
     call: &UnaryCallContext,
@@ -635,7 +627,7 @@ fn plan_replace_row<S: WritePlanningSnapshot>(
 
 fn staged_or_snapshot<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     key: &[u8],
     call: &UnaryCallContext,
 ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
@@ -898,7 +890,7 @@ fn plan_on_duplicate_update(
 /// Plans one configured candidate row against its first visible duplicate.
 fn plan_on_duplicate_row<S: WritePlanningSnapshot>(
     snapshot: &mut S,
-    staged: &TransactionMutationBuffer,
+    staged: &MutationPlan,
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
     assignments: &[ConfiguredOnDuplicateAssignment],
@@ -949,7 +941,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
-    let mut staged = TransactionMutationBuffer::new();
+    let mut staged = MutationPlan::new();
     let mut affected_rows = 0;
     let mut warnings = Vec::new();
     for row in rows {
@@ -960,9 +952,7 @@ pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
                 warnings: row_warnings,
             } => {
                 for mutation in mutations {
-                    staged
-                        .stage(mutation)
-                        .map_err(ConfiguredWriteError::Staging)?;
+                    staged.stage(mutation);
                 }
                 affected_rows += row_affected;
                 warnings.extend(row_warnings);

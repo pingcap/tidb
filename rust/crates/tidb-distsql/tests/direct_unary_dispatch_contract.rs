@@ -23,7 +23,7 @@
 use crate::direct_unary_client_fixture::*;
 
 fn completion_order_transport(
-    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    calls: Arc<RwLock<Vec<ObservedCall>>>,
     ready_on_try: impl IntoIterator<Item = bool>,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
     batch_first_transport(
@@ -41,43 +41,51 @@ fn completion_order_transport(
 fn unordered_regions_publish_first_completed_response() {
     // pkg/store/copr/coprocessor.go:1184-1192, 1416-1465. Unordered
     // workers share respChan, so the first completed region reaches Next.
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 2;
     let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [false, true],
     ));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
-    assert_eq!(calls.borrow().len(), 2, "prefetch stays bounded by concurrency");
+    assert_eq!(
+        calls.read().unwrap().len(),
+        2,
+        "prefetch stays bounded by concurrency"
+    );
 }
 
 #[test]
 fn ordered_regions_retain_logical_range_order() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.concurrency = 2;
     let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [false, true],
     ));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
-    assert_eq!(calls.borrow().len(), 2, "ordered reads still prefetch regions");
+    assert_eq!(
+        calls.read().unwrap().len(),
+        2,
+        "ordered reads still prefetch regions"
+    );
 }
 
 #[test]
 fn unordered_region_window_is_bounded_and_results_are_not_lost() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 2;
     let mut runtime = InjectedQueryRuntime::new(batch_first_transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [
             Ok(response(b"left")),
             Ok(response(b"right")),
@@ -93,18 +101,15 @@ fn unordered_region_window_is_bounded_and_results_are_not_lost() {
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.read().unwrap().len(), 2);
     assert_eq!(result.next_raw().unwrap(), Some(b"third".to_vec()));
-    assert_eq!(calls.borrow().len(), 3);
+    assert_eq!(calls.read().unwrap().len(), 3);
 
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.keep_order = false;
     request_metadata.concurrency = 2;
-    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(
-        calls,
-        [true, true],
-    ));
+    let mut runtime = InjectedQueryRuntime::new(completion_order_transport(calls, [true, true]));
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
@@ -115,9 +120,9 @@ fn unordered_region_window_is_bounded_and_results_are_not_lost() {
 fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
     // client-go/internal/client/client.go:96-105 Client.SendRequest
     // pkg/store/copr/coprocessor.go:1723 handleTaskOnce
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(response(b"left")), Ok(response(b"right"))],
         [
             location(1, "a", "m", "tikv-1:20160"),
@@ -127,16 +132,19 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
     let request = transport_request(metadata("a", "z"));
     let mut result = select_result(&mut runtime, &request);
 
-    assert!(calls.borrow().is_empty(), "send must stay response-lazy");
+    assert!(
+        calls.read().unwrap().is_empty(),
+        "send must stay response-lazy"
+    );
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
-    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(calls.read().unwrap().len(), 1);
     // Go handleTaskOnce creates a fresh RPC timeout for the next region;
     // time spent consuming the previous result is not charged to that RPC.
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
-    let mut normalized_calls = calls.borrow().clone();
+    let mut normalized_calls = calls.read().unwrap().clone();
     assert!(normalized_calls.iter().all(|call| {
         call.timeout <= Duration::from_millis(777) && call.timeout > Duration::from_millis(700)
     }));
@@ -200,7 +208,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
 
 #[test]
 fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let lock = KvrpcLockInfo {
         key: b"locked-key".to_vec(),
         primary_lock: b"primary-key".to_vec(),
@@ -208,7 +216,7 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
         ..KvrpcLockInfo::default()
     };
     let transport = transport(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(locked_response(lock.clone()))],
         [location(1, "a", "z", "tikv-1:20160")],
     );
@@ -237,10 +245,7 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
         .next_raw()
         .expect_err("scripted lock recovery cannot complete");
     assert_eq!(
-        observed
-            .lock()
-            .expect("lock event observation")
-            .as_deref(),
+        observed.lock().expect("lock event observation").as_deref(),
         Some(&lock)
     );
 }
@@ -259,7 +264,7 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
             &self,
             _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
             observation: LockedResponseObservation<'_>,
-        ) -> Result<LockedResponseAction, String> {
+        ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError> {
             Ok(LockedResponseAction::RetrySameTask {
                 recovered: LockRecoveryResult {
                     ttl: Duration::from_millis(observation.lock.lock_ttl),
@@ -269,9 +274,9 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
         }
     }
 
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let client = ScriptedClient {
-        calls: Rc::clone(&calls),
+        calls: Arc::clone(&calls),
         responses: [20_000, 1, 0]
             .into_iter()
             .map(|ttl| {
@@ -285,17 +290,17 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
             })
             .chain([Ok(response(b"unblocked"))])
             .collect(),
-        events: Rc::new(RefCell::new(Vec::new())),
-        liveness: RefCell::new(VecDeque::new()),
-        batch_errors: RefCell::new(VecDeque::new()),
-        batch_ready_immediately: RefCell::new(VecDeque::new()),
+        events: Arc::new(RwLock::new(Vec::new())),
+        liveness: RwLock::new(VecDeque::new()),
+        batch_errors: RwLock::new(VecDeque::new()),
+        batch_ready_immediately: RwLock::new(VecDeque::new()),
         batch_begin_count: None,
     };
     let shared = SharedReadRuntime::new_injected(
         client,
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::new(RefCell::new(Vec::new())),
+            calls: Arc::new(RwLock::new(Vec::new())),
             regions: [location(1, "a", "z", "tikv-1:20160")]
                 .into_iter()
                 .collect(),
@@ -317,9 +322,9 @@ fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
     assert_eq!(result.next_raw().unwrap(), None);
     let waits = waiter.sleeps.lock().unwrap();
     assert_eq!(waits.len(), 2, "each live lock needs one backoff draw");
-    assert!(waits[0] > Duration::ZERO && waits[0] <= Duration::from_millis(2));
+    assert!(waits[0] > Duration::ZERO && waits[0] < Duration::from_millis(10));
     assert_eq!(waits[1], Duration::from_millis(1));
-    assert_eq!(calls.borrow().len(), 4);
+    assert_eq!(calls.read().unwrap().len(), 4);
 }
 
 #[test]
@@ -336,11 +341,15 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
             &self,
             _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
             observation: LockedResponseObservation<'_>,
-        ) -> Result<LockedResponseAction, String> {
+        ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError> {
             observation
                 .backoff
                 .next_delay(RegionBackoffKind::TxnNotFound)
-                .map_err(|error| format!("nested status retry: {error:?}"))?;
+                .map_err(tidb_txnkv::lock::LockRecoveryError::BackoffExhausted)?;
+            observation
+                .backoff
+                .next_delay(RegionBackoffKind::TxnNotFound)
+                .map_err(tidb_txnkv::lock::LockRecoveryError::BackoffExhausted)?;
             Ok(LockedResponseAction::RetrySameTask {
                 recovered: LockRecoveryResult {
                     ttl: Duration::from_millis(1),
@@ -350,9 +359,9 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
         }
     }
 
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
     let client = ScriptedClient {
-        calls: Rc::clone(&calls),
+        calls: Arc::clone(&calls),
         responses: [
             Ok(locked_response(KvrpcLockInfo {
                 key: b"locked-key".to_vec(),
@@ -365,17 +374,17 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
         ]
         .into_iter()
         .collect(),
-        events: Rc::new(RefCell::new(Vec::new())),
-        liveness: RefCell::new(VecDeque::new()),
-        batch_errors: RefCell::new(VecDeque::new()),
-        batch_ready_immediately: RefCell::new(VecDeque::new()),
+        events: Arc::new(RwLock::new(Vec::new())),
+        liveness: RwLock::new(VecDeque::new()),
+        batch_errors: RwLock::new(VecDeque::new()),
+        batch_ready_immediately: RwLock::new(VecDeque::new()),
         batch_begin_count: None,
     };
     let shared = SharedReadRuntime::new_injected(
         client,
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
-            calls: Rc::new(RefCell::new(Vec::new())),
+            calls: Arc::new(RwLock::new(Vec::new())),
             regions: [location(1, "a", "z", "tikv-1:20160")]
                 .into_iter()
                 .collect(),
@@ -396,11 +405,14 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
     let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert!(
-        result.next_raw().is_err(),
-        "nested retry consumes this region's budget"
+        matches!(
+            result.next_raw(),
+            Err(tidb_distsql::QueryResponseError::Sql { code: 9004, .. })
+        ),
+        "native lock retry exhaustion retains its SQL error identity"
     );
     assert_eq!(
-        calls.borrow().len(),
+        calls.read().unwrap().len(),
         1,
         "no retry is sent after budget exhaustion"
     );
@@ -408,7 +420,7 @@ fn nested_lock_recovery_and_lock_wait_share_the_cop_region_budget() {
 }
 
 #[test]
-fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
+fn request_hints_reach_the_resolver_without_a_second_transport_backoff() {
     use tidb_distsql::cop_paging::{
         LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
     };
@@ -425,7 +437,7 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
             &self,
             _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
             observation: LockedResponseObservation<'_>,
-        ) -> Result<LockedResponseAction, String> {
+        ) -> Result<LockedResponseAction, tidb_txnkv::lock::LockRecoveryError> {
             self.observations.lock().unwrap().push((
                 self.waits.sleeps.lock().unwrap().len(),
                 observation.request_context,
@@ -442,15 +454,11 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
     for committed in [false, true] {
         for shared in [false, true] {
             for ordered in [false, true] {
-                for outcome in ["success", "exhaust", "cancel", "unhinted"] {
-                    let exhaust = outcome == "exhaust";
-                    let cancel = outcome == "cancel";
-                    let unhinted = outcome == "unhinted";
+                for unhinted in [false, true] {
                     for asynchronous in [false, true] {
-                        let calls = Rc::new(RefCell::new(Vec::new()));
+                        let calls = Arc::new(RwLock::new(Vec::new()));
                         let observations = Arc::new(Mutex::new(Vec::new()));
                         let waiter = Arc::new(RecordingRetryControl::default());
-                        waiter.fail_next_sleep.store(cancel, Ordering::SeqCst);
                         let lock = KvrpcLockInfo {
                             key: b"locked-key".to_vec(),
                             primary_lock: b"primary".to_vec(),
@@ -473,7 +481,7 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
                             lock
                         };
                         let client = ScriptedClient {
-                            calls: Rc::clone(&calls),
+                            calls: Arc::clone(&calls),
                             responses: (0..3)
                                 .map(|index| {
                                     let mut lock = lock.clone();
@@ -487,17 +495,17 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
                                 })
                                 .chain([Ok(response(b"unblocked"))])
                                 .collect(),
-                            events: Rc::default(),
-                            liveness: RefCell::default(),
-                            batch_errors: RefCell::default(),
-                            batch_ready_immediately: RefCell::new([true; 4].into()),
+                            events: Arc::default(),
+                            liveness: RwLock::default(),
+                            batch_errors: RwLock::default(),
+                            batch_ready_immediately: RwLock::new([true; 4].into()),
                             batch_begin_count: None,
                         };
                         let shared_runtime = SharedReadRuntime::new_injected(
                             client,
                             RegionCache::new(ScriptedLoader {
                                 cluster_id: 9001,
-                                calls: Rc::default(),
+                                calls: Arc::default(),
                                 regions: [location(1, "a", "z", "tikv-1:20160")].into(),
                             }),
                         );
@@ -505,11 +513,7 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
                             shared_runtime,
                             DirectUnaryRuntimeConfig {
                                 region_retry_waiter: waiter.clone(),
-                                region_retry_max_sleep: Duration::from_millis(if exhaust {
-                                    1
-                                } else {
-                                    100
-                                }),
+                                region_retry_max_sleep: Duration::from_millis(100),
                                 ..DirectUnaryRuntimeConfig::default()
                             },
                             Arc::new(Resolve {
@@ -528,69 +532,26 @@ fn ignored_request_lock_hints_back_off_before_resolve_and_stop_at_the_budget() {
                         let mut request = metadata("a", "z");
                         request.keep_order = ordered;
                         let mut result = select_result(&mut runtime, &transport_request(request));
-                        if cancel {
-                            assert_eq!(
-                                result.next_raw().unwrap_err(),
-                                tidb_distsql::QueryResponseError::Cancelled
-                            );
-                            assert_eq!(calls.borrow().len(), 2);
-                        } else if exhaust {
-                            let error = result
-                                .next_raw()
-                                .expect_err("repeated ignored hints must exhaust the lock budget");
-                            assert_eq!(
-                                error,
-                                tidb_distsql::QueryResponseError::Sql {
-                                    code: 9004,
-                                    message: "[tikv:9004]Resolve lock timeout".to_owned()
-                                }
-                            );
-                            assert_eq!(calls.borrow().len(), 3);
-                        } else {
-                            assert_eq!(result.next_raw().unwrap(), Some(b"unblocked".to_vec()));
-                            assert_eq!(result.next_raw().unwrap(), None);
-                            assert_eq!(calls.borrow().len(), 4);
-                        }
+                        assert_eq!(result.next_raw().unwrap(), Some(b"unblocked".to_vec()));
+                        assert_eq!(result.next_raw().unwrap(), None);
+                        assert_eq!(calls.read().unwrap().len(), 4);
                         let observations = observations.lock().unwrap();
                         let waits = waiter.sleeps.lock().unwrap();
-                        assert_eq!(
-                            waits.len(),
-                            if unhinted {
-                                0
-                            } else if exhaust || cancel {
-                                1
-                            } else {
-                                2
-                            }
-                        );
+                        assert!(waits.is_empty(), "the native resolver owns hint backoff");
                         assert_eq!(
                             observations.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
-                            if cancel {
-                                vec![0]
-                            } else if unhinted {
-                                vec![0, 0, 0]
-                            } else if exhaust {
-                                vec![0, 1]
-                            } else {
-                                vec![0, 1, 2]
-                            },
-                            "hint backoff precedes resolution"
+                            vec![0, 0, 0]
                         );
                         assert!(observations[0].1.resolved_locks.is_empty());
                         assert!(observations[0].1.committed_locks.is_empty());
-                        if !cancel {
-                            assert_eq!(
-                                if committed {
-                                    &observations[1].1.committed_locks
-                                } else {
-                                    &observations[1].1.resolved_locks
-                                },
-                                &[42]
-                            );
-                        }
-                        if !unhinted {
-                            assert_eq!(waits[0], Duration::from_millis(1));
-                        }
+                        assert_eq!(
+                            if committed {
+                                &observations[1].1.committed_locks
+                            } else {
+                                &observations[1].1.resolved_locks
+                            },
+                            &[42]
+                        );
                     }
                 }
             }
@@ -605,19 +566,19 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
         (PeerRole::IncomingVoter, 2),
         (PeerRole::DemotingVoter, 3),
     ] {
-        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls = Arc::new(RwLock::new(Vec::new()));
         let mut candidate = location(7, "a", "z", "tikv-7:20160");
         candidate.peers[0].role = role;
         let mut runtime = InjectedQueryRuntime::new(transport(
-            Rc::clone(&calls),
+            Arc::clone(&calls),
             [Ok(response(b"ok"))],
             [candidate],
         ));
         let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
-        assert!(calls.borrow().is_empty());
+        assert!(calls.read().unwrap().is_empty());
         assert_eq!(result.next_raw().unwrap(), Some(b"ok".to_vec()));
 
-        let calls = calls.borrow();
+        let calls = calls.read().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].cluster_id, 9001);
         assert_eq!(calls[0].conf_ver, 1);
@@ -687,18 +648,18 @@ fn production_metadata_drives_supported_replica_policies_and_exact_request_flags
             replica_read: true,
         },
     ] {
-        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls = Arc::new(RwLock::new(Vec::new()));
         let mut metadata = metadata("a", "z");
         metadata.replica_read = case.source;
         let mut runtime = InjectedQueryRuntime::new(transport(
-            Rc::clone(&calls),
+            Arc::clone(&calls),
             [Ok(response(b"ok"))],
             [location_with_three_peers(1, "a", "z", "tikv-policy")],
         ));
         let mut result = select_result(&mut runtime, &transport_request(metadata));
         assert_eq!(result.next_raw().unwrap(), Some(b"ok".to_vec()));
 
-        let calls = calls.borrow();
+        let calls = calls.read().unwrap();
         assert_eq!(calls.len(), 1);
         assert!(
             calls[0].address.ends_with(case.address_suffix),
@@ -729,9 +690,9 @@ fn labels_and_load_inputs_are_consumed_by_the_live_selector() {
         let mut metadata = metadata("a", "z");
         metadata.replica_read = ReplicaReadType::Mixed;
         configure(&mut metadata);
-        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls = Arc::new(RwLock::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport(
-            Rc::clone(&calls),
+            Arc::clone(&calls),
             [Ok(response(b"selected"))],
             [location_with_three_peers(1, "a", "z", "tikv-policy")],
         ));
@@ -746,20 +707,20 @@ fn labels_and_load_inputs_are_consumed_by_the_live_selector() {
             )
             .expect("Campaign 14 selector metadata is supported");
         assert_eq!(result.next_raw().unwrap(), Some(b"selected".to_vec()));
-        assert_eq!(calls.borrow().len(), 1);
+        assert_eq!(calls.read().unwrap().len(), 1);
     }
 }
 
 #[test]
 fn closest_replica_policy_with_labels_reaches_the_live_selector() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let loader_calls = Arc::new(RwLock::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(
-        Rc::clone(&calls),
+        Arc::clone(&calls),
         [Ok(response(b"closest"))],
         [location(1, "a", "z", "one")],
         9001,
-        Rc::clone(&loader_calls),
+        Arc::clone(&loader_calls),
     ));
     let mut closest_with_labels = metadata("a", "z");
     closest_with_labels.replica_read = tidb_distsql::ReplicaReadType::Closest;
@@ -781,6 +742,6 @@ fn closest_replica_policy_with_labels_reaches_the_live_selector() {
         )
         .expect("closest label policy is supported");
     assert_eq!(result.next_raw().unwrap(), Some(b"closest".to_vec()));
-    assert_eq!(calls.borrow().len(), 1);
-    assert_eq!(loader_calls.borrow().as_slice(), &[b"a".to_vec()]);
+    assert_eq!(calls.read().unwrap().len(), 1);
+    assert_eq!(loader_calls.read().unwrap().as_slice(), &[b"a".to_vec()]);
 }

@@ -556,10 +556,8 @@ mod tests {
 
     #[test]
     fn excluded_busy_cap_keeps_the_current_error_generic() {
-        let mut budget = tidb_txnkv::region::RegionBackoffBudget::with_jitter_seed(
-            std::time::Duration::from_secs(20),
-            7,
-        );
+        let mut budget =
+            tidb_txnkv::region::RegionBackoffBudget::new(std::time::Duration::from_secs(20));
         let exhausted = loop {
             match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
                 Ok(_) => continue,

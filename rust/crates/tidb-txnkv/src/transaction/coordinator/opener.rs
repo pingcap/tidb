@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Deriving one transaction from the already-running process authorities, and
-//! keeping a pessimistic transaction's primary lock alive while it runs.
+//! Deriving a native transaction from the already-running process authorities.
 //!
 //! Go boundary: client-go's `txn.go` — `KVStore.Begin` allocates the `start_ts`
 //! from PD and hands back a committer bound to the store's region cache and
-//! transport — plus the TxnHeartBeat sender behind `txnLockTTLKeepAlive`.
+//! transport. The native transaction owns its heartbeat lifecycle.
 
 use std::fmt;
 use std::sync::Arc;
@@ -27,13 +26,10 @@ use tidb_pd_client::PdClient;
 
 use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher};
 use crate::lock::TimestampSource;
-use crate::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use crate::rpc::TonicCoprocessorClient;
 use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
 
-use super::super::command_client::PublishedCommand;
 use super::super::mutation::validate_plan;
-use super::super::region_batches::point_route;
-use super::super::ttl::{HeartBeatFailure, LockKeepAlive, TxnHeartBeatSender, MANAGED_LOCK_TTL_MS};
 use super::{CommitProtocol, OptimisticCoordinatorError, RealOptimisticTransaction};
 
 /// Process-level opener for concrete normal optimistic transactions.
@@ -134,8 +130,18 @@ impl<T> StoreWriteClient for T where
 }
 
 /// The region-routing half of a store, under one name (see [`StoreWriteClient`]).
-pub trait StoreWriteLoader: crate::region::RegionRecoveryLoader + Send + Sync + 'static {}
-impl<T> StoreWriteLoader for T where T: crate::region::RegionRecoveryLoader + Send + Sync + 'static {}
+pub trait StoreWriteLoader:
+    crate::region::RegionRecoveryLoader + crate::region::RegionQueryLoader + Send + Sync + 'static
+{
+}
+impl<T> StoreWriteLoader for T where
+    T: crate::region::RegionRecoveryLoader
+        + crate::region::RegionQueryLoader
+        + Send
+        + Sync
+        + 'static
+{
+}
 
 /// The control-plane half of a store, under one name (see [`StoreWriteClient`]).
 pub trait StorePdCapability: crate::pd_capability::PdCapability + Send + Sync + 'static {}
@@ -360,15 +366,24 @@ where
                 region_cache: runtime.cluster_id(),
             });
         }
-        super::snapshot_read::direct_snapshot_get(
-            &runtime,
-            &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
-            self.gc_state.cache().as_ref(),
-            self.resource_group_name.as_deref(),
-            key,
-            call,
-        )
-        .map(|result| (result.value, result.rpc_count))
+        let mut snapshot = RealOptimisticTransaction::new_opened(
+            runtime,
+            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
+            self.timeout,
+            u64::MAX,
+            Instant::now(),
+            0,
+            0,
+            self.gc_state.cache(),
+        )?;
+        if let Some(name) = self.resource_group_name.as_deref() {
+            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
+        }
+        let result = snapshot
+            .snapshot_get(key, call)
+            .map(|result| (result.value, result.rpc_count));
+        snapshot.finish_without_writes()?;
+        result
     }
 
     /// Reads a bounded range at `u64::MAX` without activating a transaction.
@@ -389,16 +404,22 @@ where
                 region_cache: runtime.cluster_id(),
             });
         }
-        super::snapshot_read::direct_snapshot_scan(
-            &runtime,
-            &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
-            self.gc_state.cache().as_ref(),
-            self.resource_group_name.as_deref(),
-            start_key,
-            end_key,
-            limit,
-            call,
-        )
+        let mut snapshot = RealOptimisticTransaction::new_opened(
+            runtime,
+            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
+            self.timeout,
+            u64::MAX,
+            Instant::now(),
+            0,
+            0,
+            self.gc_state.cache(),
+        )?;
+        if let Some(name) = self.resource_group_name.as_deref() {
+            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
+        }
+        let result = snapshot.snapshot_scan(start_key, end_key, limit, call);
+        snapshot.finish_without_writes()?;
+        result
     }
 
     fn open(
@@ -508,113 +529,6 @@ where
         let opened_at = Instant::now();
         let two_pc = self.open(0, 0)?;
         super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
-    }
-
-    /// Starts refreshing `primary`'s lock TTL until the handle is dropped.
-    ///
-    /// A pessimistic transaction must call this once its primary key is
-    /// locked, because that lock then has to survive every later statement.
-    /// The keep-alive task owns a session lease over these same process
-    /// authorities; its timer does not reserve a thread per transaction.
-    pub fn start_lock_keep_alive(
-        &self,
-        primary: Vec<u8>,
-        start_ts: u64,
-    ) -> Result<LockKeepAlive, String> {
-        // client-go refreshes at half the managed TTL, so a lock is renewed
-        // once before it could expire even if one heartbeat is lost.
-        self.start_lock_keep_alive_with_tick(
-            primary,
-            start_ts,
-            Duration::from_millis(MANAGED_LOCK_TTL_MS / 2),
-        )
-    }
-
-    /// Same as [`Self::start_lock_keep_alive`] with an explicit refresh
-    /// interval, so a proof can observe several refreshes without waiting the
-    /// production interval.
-    pub fn start_lock_keep_alive_with_tick(
-        &self,
-        primary: Vec<u8>,
-        start_ts: u64,
-        tick: Duration,
-    ) -> Result<LockKeepAlive, String> {
-        let opener = self.opener.clone();
-        let pd = self.pd.clone();
-        let timeout = self.timeout;
-        LockKeepAlive::start(primary, start_ts, tick, move || {
-            let runtime = opener
-                .open_session()
-                .map_err(|error| format!("cannot open a keep-alive session: {error}"))?;
-            Ok(SessionHeartBeatSender {
-                runtime,
-                pd,
-                timeout,
-            })
-        })
-    }
-}
-
-/// TxnHeartBeat sender bound to one keep-alive task's session, generic
-/// over the same seams as the opener that starts it.
-struct SessionHeartBeatSender<C, L, P> {
-    runtime: SharedReadRuntime<C, L>,
-    pd: P,
-    timeout: Duration,
-}
-
-impl<C, L, P> TxnHeartBeatSender for SessionHeartBeatSender<C, L, P>
-where
-    C: crate::transaction::TransactionCommandClient,
-    L: crate::region::RegionLoader,
-    P: crate::pd_capability::PdCapability,
-{
-    fn current_ts(&self) -> Result<u64, String> {
-        use crate::pd_capability::TimestampFutureWait;
-        self.pd.timestamp_future()?.wait()
-    }
-
-    fn send_heart_beat(
-        &mut self,
-        primary: &[u8],
-        start_ts: u64,
-        advise_ttl_ms: u64,
-    ) -> Result<u64, HeartBeatFailure> {
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let route = point_route(&self.runtime, primary)
-            .map_err(|error| HeartBeatFailure::Transport(error.to_string()))?;
-        let request = tidb_proto::KvrpcTxnHeartBeatRequest {
-            primary_lock: primary.to_vec(),
-            start_version: start_ts,
-            advise_lock_ttl: advise_ttl_ms,
-            ..tidb_proto::KvrpcTxnHeartBeatRequest::default()
-        };
-        let published = self
-            .runtime
-            .client()
-            .try_lock()
-            .map_err(|_| {
-                HeartBeatFailure::Transport("keep-alive session is already borrowed".to_owned())
-            })?
-            .publish_txn_heart_beat(route.address(), &request, route.context(), &call);
-        match published {
-            PublishedCommand::BeforePublication(error)
-            | PublishedCommand::AfterPublication { error, .. } => {
-                Err(HeartBeatFailure::Transport(error))
-            }
-            PublishedCommand::Response(response) => {
-                // A region error is transient: the next tick reroutes. A key
-                // error is not — it means the lock this heartbeat exists to
-                // refresh is gone.
-                if let Some(region_error) = response.response.region_error.as_ref() {
-                    return Err(HeartBeatFailure::Transport(format!("{region_error:?}")));
-                }
-                if let Some(error) = response.response.error.as_ref() {
-                    return Err(HeartBeatFailure::Rejected(format!("{error:?}")));
-                }
-                Ok(response.response.lock_ttl)
-            }
-        }
     }
 }
 
