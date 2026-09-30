@@ -2954,7 +2954,7 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	// Deliberately not the analyze source: reading saved options is lightweight
 	// metadata work, not the heavy scan that background throttling targets.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, ast.DefaultChoice, nil, err
 	}
@@ -2978,6 +2978,9 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	topn := row.GetInt64(3)
 	if topn >= 0 {
 		analyzeOptions[ast.AnalyzeOptNumTopN] = uint64(topn)
+	}
+	if ndvRate := row.GetFloat64(6); ndvRate > 0 {
+		analyzeOptions[ast.AnalyzeOptNDVRate] = math.Float64bits(ndvRate)
 	}
 	colType := row.GetEnum(4)
 	switch colType.Name {
@@ -3155,6 +3158,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
+	ast.AnalyzeOptNDVRate:       math.Float64bits(1),
 }
 
 // AnalyzeOptionDefault returns the default analyze options.
@@ -3168,6 +3172,7 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 		ast.AnalyzeOptCMSketchDepth: 5,
 		ast.AnalyzeOptNumSamples:    0,
 		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+		ast.AnalyzeOptNDVRate:       math.Float64bits(-1),
 	}
 }
 
@@ -3184,7 +3189,7 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, map[ast.AnalyzeOptionType]struct{}, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
 	resetOpts := make(map[ast.AnalyzeOptionType]struct{}, len(analyzeOptionLimit))
-	sampleNum, sampleRate := uint64(0), 0.0
+	sampleNum, sampleRate, ndvRate := uint64(0), 0.0, 0.0
 	for _, opt := range opts {
 		// Options are processed in statement order, so for repeated mentions of
 		// the same option the last one wins, matching the behavior for
@@ -3198,6 +3203,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				sampleNum = 0
 			case ast.AnalyzeOptSampleRate:
 				sampleRate = 0
+			case ast.AnalyzeOptNDVRate:
+				ndvRate = 0
 			}
 			continue
 		}
@@ -3210,7 +3217,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				return nil, nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 			optMap[opt.Type] = v
-		case ast.AnalyzeOptSampleRate:
+		case ast.AnalyzeOptSampleRate, ast.AnalyzeOptNDVRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
@@ -3220,7 +3227,11 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if fVal <= 0 || fVal > limit {
 				return nil, nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
-			sampleRate = fVal
+			if opt.Type == ast.AnalyzeOptSampleRate {
+				sampleRate = fVal
+			} else {
+				ndvRate = fVal
+			}
 			optMap[opt.Type] = math.Float64bits(fVal)
 		default:
 			v := datumValue.GetUint64()
@@ -3235,6 +3246,10 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
+	}
+	// TiKV draws the TopN and histogram rows from the rows selected for NDV.
+	if ndvRate > 0 && ndvRate < sampleRate {
+		return nil, nil, errors.Errorf("NDVRATE must not be smaller than SAMPLERATE")
 	}
 
 	return optMap, resetOpts, nil
@@ -3267,6 +3282,9 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	stmtOpts, stmtResets, err := handleAnalyzeOptions(as.AnalyzeOpts)
 	if err != nil {
 		return nil, err
+	}
+	if bits, explicit := stmtOpts[ast.AnalyzeOptNDVRate]; explicit && math.Float64frombits(bits) < 1 && vardef.AnalyzeSampledNDVThreshold.Load() == 0 {
+		return nil, errors.Errorf("sampled NDV is disabled by %s = 0", vardef.TiDBAnalyzeSampledNDVThreshold)
 	}
 	// These options are the fallback used when tidb_persist_analyze_options is
 	// off, so there is no saved value for an option given as DEFAULT to reset and

@@ -35,7 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *statsutil.JSONColumn {
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) (*statsutil.JSONColumn, error) {
 	jsonCol := &statsutil.JSONColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
@@ -48,9 +48,17 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 		jsonCol.CMSketch = statistics.CMSketchToProto(cmsketch, topn)
 	}
 	if fmsketch != nil {
-		jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
+		if !fmsketch.Sampled() {
+			jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
+		} else {
+			data, err := statistics.EncodeFMSketch(fmsketch)
+			if err != nil {
+				return nil, err
+			}
+			jsonCol.FMSketchData = data
+		}
 	}
-	return jsonCol
+	return jsonCol, nil
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
@@ -80,7 +88,11 @@ func GenJSONTableFromStats(
 			outerErr = errors.Trace(err)
 			return true
 		}
-		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		proto, err := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		if err != nil {
+			outerErr = err
+			return true
+		}
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -95,7 +107,11 @@ func GenJSONTableFromStats(
 		return nil, outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		proto, err := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, &idx.StatsVer)
+		if err != nil {
+			outerErr = err
+			return true
+		}
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -154,7 +170,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				// we set it to 1.
 				statsVer = int64(statistics.Version1)
 			}
+			fms, err := decodeJSONFMSketch(jsonIdx)
+			if err != nil {
+				return nil, err
+			}
 			idx := &statistics.Index{
+				FMSketch:          fms,
 				Histogram:         *hist,
 				CMSketch:          cm,
 				TopN:              topN,
@@ -194,7 +215,10 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				return nil, errors.Trace(err)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
-			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
+			fms, err := decodeJSONFMSketch(jsonCol)
+			if err != nil {
+				return nil, err
+			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
@@ -338,4 +362,38 @@ func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snaps
 	jsonTbl.ModifyCount = modifyCount
 	jsonTbl.IsHistoricalStats = true
 	return jsonTbl, true, nil
+}
+
+func decodeJSONFMSketch(column *statsutil.JSONColumn) (*statistics.FMSketch, error) {
+	if column.FMSketchData != nil {
+		return statistics.DecodeFMSketch(column.FMSketchData)
+	}
+	return statistics.FMSketchFromProto(column.FMSketch), nil
+}
+
+func saveJSONFMSketches(sctx sessionctx.Context, table *statistics.Table) error {
+	save := func(isIndex, id int64, sketch *statistics.FMSketch) error {
+		if sketch == nil {
+			return nil
+		}
+		encoded, err := statistics.EncodeFMSketch(sketch)
+		if err != nil {
+			return err
+		}
+		_, err = util.Exec(sctx, "replace into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", table.PhysicalID, isIndex, id, encoded)
+		return err
+	}
+	var err error
+	table.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
+		err = save(0, id, col.FMSketch)
+		return err != nil
+	})
+	if err != nil {
+		return err
+	}
+	table.ForEachIndexImmutable(func(id int64, idx *statistics.Index) bool {
+		err = save(1, id, idx.FMSketch)
+		return err != nil
+	})
+	return err
 }

@@ -375,6 +375,7 @@ const (
 		topn BIGINT(64) NOT NULL DEFAULT -1,
 		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
 		column_ids TEXT(19372),
+		ndv_rate DOUBLE NOT NULL DEFAULT -1,
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 	// CreateStatsHistoryTable stores the historical stats.

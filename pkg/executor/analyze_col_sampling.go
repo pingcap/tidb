@@ -216,9 +216,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -638,9 +635,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	})
 	// Keep one private collector per merge worker and flush it when taskCh is closed.
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-	for range totalLen {
-		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
-	}
 	// Early-return paths need to release the worker-local collector explicitly.
 	cleanupCollector := func() {
 		e.memTracker.Release(retCollector.Base().MemSize)
@@ -869,15 +863,16 @@ workLoop:
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if task.isColumn {
-				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
+				if e.tableInfo != nil && statistics.IsColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
 					numTopN = 0
 				}
 			} else {
 				idx := e.indexes[task.slicePos-colLen]
-				if isSingleColNonPrefixUniqueIndex(idx) {
+				if statistics.IsSingleColNonPrefixUniqueIndex(idx) {
 					numTopN = 0
 				}
 			}
+			collector.Unique = statistics.UniqueByDefinition(e.tableInfo, !task.isColumn, task.id)
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err

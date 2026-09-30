@@ -299,18 +299,27 @@ func blockingMergePartitionStats2GlobalStats(
 		// FMSketch use many memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
 		// NOTE: allFms maybe contain empty.
+		// A partition whose TopN and histogram samples missed every non-NULL
+		// value adds no rows to them, so its sketch reports them instead.
+		var missedNotNull int64
+		for j, fms := range allFms[i] {
+			if topNHistNotNull(allHg[i][j], allTopN[i][j]) == 0 {
+				missedNotNull += fms.NotNullRows()
+			}
+		}
 		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j]
 			} else {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				globalStats.Fms[i].MergePartitionFMSketch(allFms[i][j])
 				allFms[i][j] = nil // Release for GC.
 			}
 		}
 
 		// Update the global NDV.
 		globalStatsNDV := min(globalStats.Fms[i].NDV(), globalStats.Count)
+		sampled := globalStats.Fms[i].Sampled()
 		globalStats.Fms[i] = nil // Release for GC.
 
 		// Merge CMSketch.
@@ -334,7 +343,6 @@ func blockingMergePartitionStats2GlobalStats(
 			isIndex,
 		)
 		allTopN[i] = nil // Release for GC.
-		allHg[i] = nil   // Release for GC.
 		if err != nil {
 			return
 		}
@@ -342,10 +350,30 @@ func blockingMergePartitionStats2GlobalStats(
 		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
+			if sampled {
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, globalStats.Count)
+			}
+			if statistics.UniqueByDefinition(globalTableInfo, isIndex, histIDs[i]) {
+				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
+			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
+		allHg[i] = nil // Release for GC.
 	}
 	return
+}
+
+// uniqueGlobalNDV returns the NDV of a column or index whose non-NULL values
+// the schema keeps distinct. They never repeat across partitions either, so
+// the partition NDVs add up exactly, while the merged FMSketch estimates them.
+func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 {
+	var ndv int64
+	for _, hg := range partitionHists {
+		if hg != nil {
+			ndv += hg.NDV
+		}
+	}
+	return min(ndv, count)
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage
@@ -375,4 +403,24 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+// sampledGlobalNDV bounds a sampled estimate by the non-NULL rows that the
+// partitions' ANALYZE saw. The merged TopN and histogram hold those rows, so
+// they match the NULL counts of that ANALYZE, except the rows of partitions
+// whose samples missed every non-NULL value, which their sketches report as
+// missedNotNull. Like a full-input merge, the result also stays within the
+// current row count.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, topN *statistics.TopN, missedNotNull, count int64) int64 {
+	notNull := topNHistNotNull(hist, topN) + missedNotNull
+	return min(ndv, notNull, count)
+}
+
+// topNHistNotNull returns the non-NULL rows that a TopN and histogram hold.
+func topNHistNotNull(hist *statistics.Histogram, topN *statistics.TopN) int64 {
+	notNull := int64(topN.TotalCount())
+	if hist != nil {
+		notNull += int64(hist.NotNullCount())
+	}
+	return notNull
 }

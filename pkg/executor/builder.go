@@ -3548,6 +3548,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
+	// A rate raised to 1 is still sent, so the job shows it and NDVRATE does not
+	// look unused. TiKV reads every row at 1.
+	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate); rate < 1 || raised {
+		e.analyzePB.ColReq.NdvRate = &rate
+	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {
@@ -3556,6 +3561,52 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// minNDVRate is the lowest rate the row-count rule picks. Below it, scanning every
+// row dominates ANALYZE, so a lower rate saves little time while the NDV error
+// keeps growing.
+const minNDVRate = 0.05
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option or, without one, max(minNDVRate,
+// threshold / rows). Others use full input. TiKV draws the TopN and histogram
+// rows from the rows selected for NDV, so the rate covers sampleRate, or with
+// a fixed sample size that many rows. It also reports whether it raised the rate.
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64) (float64, bool) {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	if threshold == 0 {
+		return 1, false
+	}
+	rows := float64(count)
+	// Like getAdjustedSampleRate, trust PD when stats_meta is far behind, for
+	// example right after a physical import.
+	if approx, _ := b.getApproximateTableCountFromStorage(b.ctx, task.TableID.GetStatisticsID(), task); rows*5 < approx {
+		rows = approx
+	}
+	if rows <= float64(threshold) {
+		return 1, false
+	}
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	if rate <= 0 {
+		rate = max(minNDVRate, float64(threshold)/rows)
+	}
+	needed := sampleRate
+	if samples := opts[ast.AnalyzeOptNumSamples]; samples > 0 {
+		needed = min(1, float64(samples)/rows)
+	}
+	if rate >= needed {
+		return rate, false
+	}
+	table := task.DBName + "." + task.TableName
+	if task.PartitionName != "" {
+		table += "'s partition " + task.PartitionName
+	}
+	b.sctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackErrorf(
+		"Analyze raised the NDV rate from %g to %g for table %s, because TopN and histograms sample only the rows selected for NDV",
+		rate, needed, table))
+	return needed, true
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
