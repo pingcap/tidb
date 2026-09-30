@@ -6259,6 +6259,10 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
 		{"analyze table t with default cmsketch width", false, ""},
 		{"analyze table t with default cmsketch depth", false, ""},
+<<<<<<< HEAD
+=======
+		{"analyze table t with default ndvrate", true, "ANALYZE TABLE `t` WITH DEFAULT NDVRATE"},
+>>>>>>> 6b2781326b7 (parser: support WITH DEFAULT NDVRATE in ANALYZE (#71699))
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}

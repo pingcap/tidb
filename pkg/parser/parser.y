@@ -3431,6 +3431,10 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
 	}
+|	"DEFAULT" "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
