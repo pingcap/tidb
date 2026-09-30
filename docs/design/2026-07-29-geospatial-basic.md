@@ -148,7 +148,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | --- | --- |
 | Versioning | Numbered from 1, so a leading `0x00` is never a valid version. |
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
-| SRID | Always carried by the EWKB SRID flag, even where a `SRID n` column fixes it. The coprocessor, the index refine, TiCDC and TiFlash read stored values from the KV layer without schema ([Compatibility](#compatibility)), so the SRID has to travel in the value. |
+| SRID | Always carried by the EWKB SRID flag in version 1, even where a `SRID n` column fixes it. The coprocessor, the index refine, TiCDC and TiFlash read stored values from the KV layer without schema ([Compatibility](#compatibility)), so the SRID has to travel in the value. |
 | Byte order | Little-endian throughout, as MySQL stores it. Big-endian input is accepted and converted, so equal geometries have equal bytes. |
 | Axis order | Longitude first on a geographic SRS, as in MySQL's binary format and PostGIS's EWKB; as given on SRID 0 and projected SRSs. |
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; the bare path converts at the boundary. See *Binary in and out* below. |
