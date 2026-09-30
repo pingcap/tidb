@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Which commit protocols this node's sessions are allowed to attempt.
+//! Transaction activation options and the separate bootstrap storage defaults.
 
 use tidb_txnkv::transaction::CommitProtocol;
 
@@ -21,18 +21,42 @@ use crate::global_sysvar_initial::{
     ON,
 };
 
-/// `@@tidb_enable_async_commit` and `@@tidb_enable_1pc` as a TiKV-backed
-/// cluster actually bootstraps them.
-///
-/// Both variables carry `OFF` in the registry, which is what a mock-store TiDB
-/// runs with. Go `GlobalSystemVariableInitialValue` overrides both to `ON` when
-/// the configured store is TiKV, and that overridden value is what bootstrap
-/// writes into `mysql.global_variables` — so on a real cluster both protocols
-/// are on by default. This node has no `SET`-able session variable store, so it
-/// reads the bootstrap value directly, exactly as it does for
-/// `@@tidb_pessimistic_txn_fair_locking`.
+/// Options copied once when a SQL transaction becomes active (Go
+/// `SetOptionsOnTxnActive`). The native client owns their commit-time meaning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionTransactionOptions {
+    /// Session permissions for native commit-protocol eligibility checks.
+    pub commit_protocol: CommitProtocol,
+    /// Session assertion checking level, fixed for this transaction.
+    pub assertion_level: tidb_proto::KvrpcAssertionLevel,
+}
+
+impl SessionTransactionOptions {
+    /// Applies the activation snapshot before the transaction is exposed.
+    pub fn apply<C, L, T>(
+        self,
+        transaction: &mut tidb_txnkv::transaction::RealOptimisticTransaction<C, L, T>,
+    ) {
+        transaction.set_commit_protocol(self.commit_protocol);
+        transaction.set_assertion_level(self.assertion_level);
+    }
+}
+
+// Low-level storage and bootstrap callers have no SQL session. Preserve their
+// explicit protocol selection and the native client's assertion default.
+impl From<CommitProtocol> for SessionTransactionOptions {
+    fn from(commit_protocol: CommitProtocol) -> Self {
+        Self {
+            commit_protocol,
+            assertion_level: tidb_proto::KvrpcAssertionLevel::Off,
+        }
+    }
+}
+
+/// Bootstrap permissions for low-level TiKV storage operations without a SQL
+/// session. SQL transaction activation must use its session variable snapshot.
 #[must_use]
-pub fn session_commit_protocol() -> CommitProtocol {
+pub fn bootstrap_commit_protocol() -> CommitProtocol {
     let environment = GlobalSysvarEnvironment {
         store_is_tikv: true,
         in_test: false,
@@ -53,7 +77,7 @@ mod tests {
     /// alone would have said otherwise.
     #[test]
     fn a_tikv_backed_node_enables_both_faster_commit_protocols() {
-        let protocol = session_commit_protocol();
+        let protocol = bootstrap_commit_protocol();
         assert!(protocol.async_commit);
         assert!(protocol.one_pc);
 

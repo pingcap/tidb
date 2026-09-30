@@ -73,10 +73,10 @@ use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{
-    BufferMutation, CommitProtocol, LockWaitTime, OptimisticCommitOutcome,
-    OptimisticCoordinatorError, PessimisticLockFailure, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, RealPessimisticTransaction, SchemaLease, SchemaLeaseChecker,
-    StorePdCapability, StoreWriteClient, StoreWriteLoader, TransactionCause,
+    BufferMutation, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
+    PessimisticLockFailure, RealOptimisticTransaction, RealOptimisticTransactionOpener,
+    RealPessimisticTransaction, SchemaLease, SchemaLeaseChecker, StorePdCapability,
+    StoreWriteClient, StoreWriteLoader, TransactionCause,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
@@ -761,16 +761,43 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         Ok(())
     }
 
+    /// Refreshes Go `newLockCtx`'s per-statement assertion setting without
+    /// changing the assertion level captured for commit at activation.
+    pub fn set_statement_assertion_level(
+        &self,
+        level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), StorageError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::PessimisticPending { transaction, .. } => {
+                transaction.set_statement_assertion_level(level);
+            }
+            SessionTransactionState::Pessimistic { transaction, .. } => {
+                transaction.snapshot().set_statement_assertion_level(level);
+            }
+            SessionTransactionState::Finished => {
+                return Err(StorageError::Backend(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Opens the transaction `BEGIN` holds, spending exactly one PD timestamp.
     ///
     /// The native buffer validates actual writes against configured byte limits.
     pub fn begin(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
-        commit_protocol: CommitProtocol,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin()?;
-        transaction.set_commit_protocol(commit_protocol);
+        options.into().apply(&mut transaction);
         let start_ts = transaction.start_ts();
         Ok(Self {
             opened_at: std::time::Instant::now(),
@@ -793,10 +820,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         start_ts: u64,
         timeout: Duration,
-        commit_protocol: CommitProtocol,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let mut transaction = opener.begin_at(start_ts)?;
-        transaction.set_commit_protocol(commit_protocol);
+        options.into().apply(&mut transaction);
         Ok(Self {
             opened_at: std::time::Instant::now(),
             statement_count: std::cell::Cell::new(0),
@@ -815,11 +842,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         start_ts: u64,
         timeout: Duration,
-        commit_protocol: CommitProtocol,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
         let mut transaction = opener.begin_at(start_ts)?;
-        transaction.set_commit_protocol(commit_protocol);
+        options.into().apply(&mut transaction);
         Ok(Self {
             opened_at: std::time::Instant::now(),
             statement_count: std::cell::Cell::new(0),
@@ -842,11 +869,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     pub fn begin_pessimistic(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
-        commit_protocol: CommitProtocol,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
         let mut transaction = opener.begin()?;
-        transaction.set_commit_protocol(commit_protocol);
+        options.into().apply(&mut transaction);
         let start_ts = transaction.start_ts();
         Ok(Self {
             opened_at: std::time::Instant::now(),
@@ -1815,7 +1842,7 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     buffer: &MutationBuffer,
     read_ts: Option<u64>,
     timeout: Duration,
-    commit_protocol: CommitProtocol,
+    options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
     if buffer.is_empty() {
@@ -1832,10 +1859,9 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     .map_err(coordinator_sql_error)?;
     let mut transaction = transaction;
     *transaction.mem_buffer() = buffer.take_native_buffer();
-    // Go's autocommit committer checks `@@tidb_enable_async_commit` /
-    // `@@tidb_enable_1pc` at execute time (`checkAsyncCommit` / `checkOnePC`);
-    // the same eligibility decision then runs at commit.
-    transaction.set_commit_protocol(commit_protocol);
+    // This fallback activates the transaction at publication, retaining the
+    // statement's session options. Native eligibility checks still own commit.
+    options.into().apply(&mut transaction);
     if let Some(lease) = lease {
         transaction.set_schema_lease(lease);
     }

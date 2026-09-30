@@ -31,6 +31,7 @@ struct PersistedAnalyzeJobs {
     catalog: Arc<SharedClusterCatalog>,
     instance: String,
     process_id: u64,
+    global_vars: tidb_session::GlobalSysvars,
 }
 
 impl PersistedAnalyzeJobs {
@@ -48,7 +49,12 @@ impl PersistedAnalyzeJobs {
             &self.catalog.load(),
         )?;
         self.transactions
-            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .commit_optimistic_mutations(
+                plan.mutations,
+                read_ts,
+                "default",
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
+            )
             .map_err(|error| error.message)
     }
 }
@@ -73,7 +79,12 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             )
             .map_err(|error| error.to_string())?;
             self.transactions
-                .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+                .commit_optimistic_mutations(
+                    plan.mutations,
+                    read_ts,
+                    "default",
+                    crate::session_transaction::restricted_transaction_options(&self.global_vars),
+                )
                 .map_err(|error| error.message)?;
             Ok::<_, String>(job_id)
         })();
@@ -398,6 +409,7 @@ impl ClusterServerSession {
                 catalog: Arc::clone(&self.catalog),
                 instance: self.session.analyze_job_instance(),
                 process_id: self.connection_id,
+                global_vars: self.global_vars.clone(),
             };
             let analyzed = recover_analyze_panic(|| {
                 self.analyze.execute(

@@ -35,7 +35,7 @@ use std::time::Duration;
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_exec::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
-use tidb_exec::session_commit_protocol::session_commit_protocol;
+use tidb_exec::session_commit_protocol::bootstrap_commit_protocol;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
@@ -72,7 +72,7 @@ fn a_promoted_session_transaction_locks_fairly_when_the_switch_is_on() {
     let opener = Arc::new(authority.transaction_opener());
 
     let mut transaction =
-        SessionTransaction::begin_pessimistic(opener, RPC_TIMEOUT, session_commit_protocol())
+        SessionTransaction::begin_pessimistic(opener, RPC_TIMEOUT, bootstrap_commit_protocol())
             .expect("a pessimistic transaction begins");
     transaction.set_fair_locking(true);
     assert!(
@@ -103,7 +103,7 @@ fn a_promoted_session_transaction_stays_in_normal_mode_when_the_switch_is_off() 
     let opener = Arc::new(authority.transaction_opener());
 
     let transaction =
-        SessionTransaction::begin_pessimistic(opener, RPC_TIMEOUT, session_commit_protocol())
+        SessionTransaction::begin_pessimistic(opener, RPC_TIMEOUT, bootstrap_commit_protocol())
             .expect("a pessimistic transaction begins");
     let outcome = transaction
         .lock_keys(vec![row_key(2)])

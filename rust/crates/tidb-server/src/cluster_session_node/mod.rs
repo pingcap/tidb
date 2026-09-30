@@ -1572,7 +1572,12 @@ impl ClusterSessionFactory {
                 .map_err(|error| error.to_string())?
             };
             self.transactions
-                .commit_optimistic_mutations(plan.mutations, read_ts, resource_group)
+                .commit_optimistic_mutations(
+                    plan.mutations,
+                    read_ts,
+                    resource_group,
+                    crate::session_transaction::restricted_transaction_options(&self.global_vars),
+                )
                 .map_err(|error| error.message)?;
             Ok(())
         })
@@ -1661,7 +1666,12 @@ impl ClusterSessionFactory {
             }
             // An internal statement: Go's `InRestrictedSQL` sessions never
             // start fair locking (`isolation/base.go:711-714`).
-            let transaction = transactions.begin(true, false, resource_group)?;
+            let transaction = transactions.begin(
+                true,
+                false,
+                resource_group,
+                crate::session_transaction::restricted_transaction_options(global_vars),
+            )?;
             let read_ts = transaction.start_ts();
             let staged = MutationBuffer::new();
             transaction.bind_mutation_buffer(&staged);
@@ -1751,7 +1761,12 @@ impl ClusterSessionFactory {
                     }
                     let result = (|| {
                         // Internal statement: no fair locking (Go `InRestrictedSQL`).
-                        let transaction = transactions.begin(true, false, resource_group)?;
+                        let transaction = transactions.begin(
+                            true,
+                            false,
+                            resource_group,
+                            crate::session_transaction::restricted_transaction_options(global_vars),
+                        )?;
                         let staged = MutationBuffer::new();
                         transaction.bind_mutation_buffer(&staged);
                         let ((modify_count, count), lock_mutations) =
@@ -2345,7 +2360,12 @@ impl ClusterHistoricalStatsHandle {
         let read_ts = snapshot.start_ts();
         let plan = build(&mut SnapshotMetaSnapshot::new(snapshot), read_ts)?;
         self.transactions
-            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .commit_optimistic_mutations(
+                plan.mutations,
+                read_ts,
+                "default",
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
+            )
             .map_err(|error| error.message)
     }
 
@@ -2381,7 +2401,12 @@ impl ClusterHistoricalStatsHandle {
             .map_err(|error| error.to_string())?
         };
         self.transactions
-            .commit_optimistic_mutations(plan.mutations, read_ts, "default")
+            .commit_optimistic_mutations(
+                plan.mutations,
+                read_ts,
+                "default",
+                crate::session_transaction::restricted_transaction_options(&self.global_vars),
+            )
             .map_err(|error| error.message)
     }
 
@@ -2830,7 +2855,12 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             return Ok(0);
         };
         // Internal statement: no fair locking (Go `InRestrictedSQL`).
-        let transaction = self.transactions.begin(true, false, "default")?;
+        let transaction = self.transactions.begin(
+            true,
+            false,
+            "default",
+            crate::session_transaction::restricted_transaction_options(&self.global_vars),
+        )?;
         let staged = MutationBuffer::new();
         transaction.bind_mutation_buffer(&staged);
         let (version, blocks) = tidb_exec::cluster_stats_write::historical_stats_data_blocks(&json)
@@ -4679,6 +4709,12 @@ impl ClusterServerSession {
             transaction
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
+            transaction
+                .set_statement_assertion_level(
+                    crate::session_transaction::transaction_options(self.session.vars())
+                        .assertion_level,
+                )
+                .map_err(SqlQueryError::unknown)?;
         }
         let write_transaction = (self.explicit.is_none()
             && shape == StatementReadShape::AutocommitWrite)
@@ -4796,6 +4832,7 @@ impl ClusterServerSession {
                         Arc::<str>::from(resource_group),
                         pessimistic,
                         fair_locking,
+                        crate::session_transaction::transaction_options(vars),
                     )
                 } else {
                     match self.open_read_snapshot(
@@ -5189,7 +5226,12 @@ impl ClusterServerSession {
         let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
         let transaction = self
             .transactions
-            .begin(pessimistic, fair_locking, resource_group)
+            .begin(
+                pessimistic,
+                fair_locking,
+                resource_group,
+                crate::session_transaction::transaction_options(self.session.vars()),
+            )
             .map_err(SqlQueryError::unknown)?;
         transaction.bind_mutation_buffer(&self.buffer);
         self.session.current_tso().publish(transaction.start_ts());
@@ -5334,6 +5376,7 @@ impl ClusterServerSession {
             read_ts,
             resource_group,
             self.schema_lease_checker(),
+            crate::session_transaction::transaction_options(self.session.vars()),
         ) {
             Ok(()) => {
                 self.refresh_committed_bindings(bindings_changed);

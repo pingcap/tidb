@@ -65,9 +65,9 @@ use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    CommitProtocol, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
-    PessimisticLockFailure, RealOptimisticTransaction, RealOptimisticTransactionOpener,
-    RealPessimisticTransaction, StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure,
+    RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
+    StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 use tidb_txnkv::PdRegionLoader;
 
@@ -264,17 +264,18 @@ where
         opener: &RealOptimisticTransactionOpener<C, L, P>,
         mode: SessionTxnMode,
         fair_locking: bool,
-        commit_protocol: CommitProtocol,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
         table: ConfiguredTable,
         timeout: Duration,
         lock_wait_timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        let options = options.into();
         let open = match mode {
             SessionTxnMode::Optimistic => {
                 let mut transaction = opener.begin()?;
                 // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc` reaching the
                 // transaction; the commit-time eligibility check still decides.
-                transaction.set_commit_protocol(commit_protocol);
+                options.apply(&mut transaction);
                 OpenTransaction::Optimistic(Box::new(transaction))
             }
             SessionTxnMode::Pessimistic => {
@@ -282,7 +283,7 @@ where
                 // `@@tidb_pessimistic_txn_fair_locking`. Only a pessimistic
                 // transaction locks, so only it can lock fairly.
                 transaction.set_fair_locking(fair_locking);
-                transaction.set_commit_protocol(commit_protocol);
+                options.apply(transaction.snapshot());
                 OpenTransaction::Pessimistic(Box::new(transaction))
             }
         };
@@ -295,6 +296,20 @@ where
             lock_wait_timeout,
             lock_values: BTreeMap::new(),
         })
+    }
+
+    /// Applies Go's per-statement fair-locking gate to the native lock owner.
+    pub fn set_fair_locking(&mut self, enabled: bool) {
+        if let OpenTransaction::Pessimistic(transaction) = &mut self.open {
+            transaction.set_fair_locking(enabled);
+        }
+    }
+
+    /// Refreshes the existence check requested by Go's statement lock context.
+    pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
+        if let OpenTransaction::Pessimistic(transaction) = &mut self.open {
+            transaction.snapshot().set_statement_assertion_level(level);
+        }
     }
 
     /// Applies the current statement's session lock-wait setting.

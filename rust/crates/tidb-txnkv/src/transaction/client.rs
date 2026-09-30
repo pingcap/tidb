@@ -32,6 +32,7 @@ pub struct ClientTransaction<C, L, T> {
     marker: std::marker::PhantomData<(C, L, T)>,
 
     sql_staging: bool,
+    check_existence: bool,
     start_ts: u64,
     authority_id: u64,
     gc_state: Arc<GcStateCache>,
@@ -162,6 +163,7 @@ where
             engine,
             client,
             sql_staging: false,
+            check_existence: false,
             marker: std::marker::PhantomData,
             start_ts,
             authority_id,
@@ -194,6 +196,25 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         let transaction = self.engine.transaction_mut().inner_mut();
         transaction.set_enable_async_commit(protocol.async_commit);
         transaction.set_enable_one_pc(protocol.one_pc);
+    }
+    /// Sets Go's assertion level at transaction activation, before SQL staging.
+    pub fn set_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
+        self.set_statement_assertion_level(level);
+        use tikv_client::proto::kvrpcpb::AssertionLevel;
+        let level = match level {
+            tidb_proto::KvrpcAssertionLevel::Off => AssertionLevel::Off,
+            tidb_proto::KvrpcAssertionLevel::Fast => AssertionLevel::Fast,
+            tidb_proto::KvrpcAssertionLevel::Strict => AssertionLevel::Strict,
+        };
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_assertion_level(level);
+    }
+    /// Go `newLockCtx` requests existence metadata using the current statement's
+    /// assertion setting, independently of the commit-time activation snapshot.
+    pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
+        self.check_existence = level != tidb_proto::KvrpcAssertionLevel::Off;
     }
     /// Installs statement-owned snapshot statistics in the client.
     pub fn set_snapshot_runtime_stats(
@@ -755,6 +776,9 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         context.lock_expired = Some(self.lock_expired.clone());
         if return_values {
             context.init_return_values(keys.len());
+        }
+        if self.for_update_ts > 0 && self.transaction.check_existence {
+            context.init_check_existence(keys.len());
         }
         let newly_locked = keys
             .iter()

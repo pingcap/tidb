@@ -191,7 +191,7 @@ fn run_autocommit(
         buffer,
         read_ts,
         TIMEOUT,
-        tidb_exec::session_commit_protocol::session_commit_protocol(),
+        tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
         None,
     ) {
         Ok(None) => {
@@ -218,7 +218,7 @@ fn run_explicit_transaction(
     let transaction = match SessionTransaction::begin(
         Arc::clone(opener),
         TIMEOUT,
-        tidb_exec::session_commit_protocol::session_commit_protocol(),
+        tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
     ) {
         Ok(transaction) => transaction,
         Err(error) => return Some(error.to_string()),

@@ -75,11 +75,23 @@ pub(crate) fn execute_storage_session_set(
     let tidb_ast::SessionStmt::Set(set) = statement.as_ref() else {
         return Ok(false);
     };
+    // These variables have storage consumers in the lightweight session.
+    // Transaction-control SETs still need its separate lifecycle adapter.
+    use tidb_vardef::tidb_vars::{
+        TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+        TIDB_TXN_ASSERTION_LEVEL,
+    };
     if !set.assignments.iter().all(|assignment| {
-        assignment.name.eq_ignore_ascii_case("time_zone")
-            || assignment
-                .name
-                .eq_ignore_ascii_case("innodb_lock_wait_timeout")
+        [
+            "time_zone",
+            "innodb_lock_wait_timeout",
+            TIDB_ENABLE1_PC,
+            TIDB_ENABLE_ASYNC_COMMIT,
+            TIDB_TXN_ASSERTION_LEVEL,
+            TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+        ]
+        .iter()
+        .any(|name| assignment.name.eq_ignore_ascii_case(name))
     }) {
         return Ok(false);
     }

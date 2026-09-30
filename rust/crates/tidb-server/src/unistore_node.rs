@@ -166,7 +166,7 @@ mod transaction_buffer_tests {
                 &opener,
                 SessionTxnMode::Pessimistic,
                 false,
-                tidb_exec::session_commit_protocol::session_commit_protocol(),
+                tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
                 table.clone(),
                 IN_PROCESS_TIMEOUT,
                 IN_PROCESS_TIMEOUT,
@@ -219,7 +219,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::session_commit_protocol(),
+            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let buffer = MutationBuffer::new();
@@ -264,7 +264,7 @@ mod transaction_buffer_tests {
         let mut transaction = SessionTransaction::begin(
             Arc::new(opener),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::session_commit_protocol(),
+            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let checked = Arc::new(CheckedTables::default());
@@ -297,7 +297,7 @@ mod transaction_buffer_tests {
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
-            tidb_exec::session_commit_protocol::session_commit_protocol(),
+            tidb_exec::session_commit_protocol::bootstrap_commit_protocol(),
         )
         .unwrap();
         let key = b"locked".to_vec();
@@ -321,7 +321,7 @@ mod transaction_buffer_tests {
     }
 }
 
-fn in_process_write_stack() -> Result<
+pub(crate) fn in_process_write_stack() -> Result<
     (
         SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
         InProcessPd,
@@ -354,7 +354,7 @@ fn in_process_write_stack() -> Result<
         gc_state,
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-    .with_commit_protocol(tidb_exec::session_commit_protocol::session_commit_protocol());
+    .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
     Ok((read_authority, pd, transaction_opener))
 }
 
@@ -428,7 +428,9 @@ pub(crate) fn run_unistore_node(
     let users = Arc::new(users);
     let (factory, read_authority, admission) =
         unistore_session_factory(&config).map_err(RunConfiguredNodeError::Engine)?;
-    let factory = factory.with_spill_storage(spill_storage);
+    let factory = factory
+        .with_global_vars(users.global_vars())
+        .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,

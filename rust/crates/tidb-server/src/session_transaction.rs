@@ -27,10 +27,6 @@
 //! timestamp at all, and every statement in a real transaction shares the one
 //! `start_ts` the first of them took.
 
-use tidb_exec::global_sysvar_initial::{
-    global_system_variable_initial_value, GlobalSysvarEnvironment, ON,
-    PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-};
 use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, TransactionEnd, TransactionStatementError,
 };
@@ -40,27 +36,48 @@ use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
 
-/// Whether `@@tidb_pessimistic_txn_fair_locking` is on for this node.
-///
-/// The variable's registry value is `OFF`, but that is not what a cluster runs
-/// with: Go `GlobalSystemVariableInitialValue` overrides it to `ON` when a
-/// classic-kernel cluster is bootstrapped, and that is what
-/// `mysql.global_variables` then holds. Captured from TiDB's mock store:
-/// `SELECT @@tidb_pessimistic_txn_fair_locking, @@global....` reads `1 1`, and
-/// `mysql.global_variables` holds `ON`. This node has no `SET`-able session
-/// variable store, so it takes that bootstrap value directly.
-#[must_use]
-pub fn session_fair_locking() -> bool {
-    global_system_variable_initial_value(
-        PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-        // The registry default this node would otherwise carry.
-        "OFF",
-        GlobalSysvarEnvironment {
-            store_is_tikv: true,
-            in_test: false,
-            next_gen: false,
+/// Go `SetOptionsOnTxnActive`: capture the validated session values once.
+pub(crate) fn transaction_options(
+    vars: &tidb_session::SessionVars,
+) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+    options_from_values(|name| {
+        vars.system_value(name)
+            .expect("transaction options are registered")
+    })
+}
+
+/// A restricted operation without a retained SQL session starts with the
+/// global values a new system session would inherit.
+pub(crate) fn restricted_transaction_options(
+    globals: &tidb_session::GlobalSysvars,
+) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+    options_from_values(|name| {
+        globals
+            .get(name)
+            .expect("transaction options are registered")
+    })
+}
+
+fn options_from_values<V: AsRef<str>>(
+    get: impl Fn(&str) -> V,
+) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+    use tidb_session::varsutil::{tidb_opt_assertion_level, AssertionLevel};
+    use tidb_vardef::tidb_vars::{
+        TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,
+    };
+    tidb_exec::session_commit_protocol::SessionTransactionOptions {
+        commit_protocol: tidb_txnkv::transaction::CommitProtocol {
+            async_commit: tidb_exec::option_values::tidb_opt_on(
+                get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
+            ),
+            one_pc: tidb_exec::option_values::tidb_opt_on(get(TIDB_ENABLE1_PC).as_ref()),
         },
-    ) == ON
+        assertion_level: match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
+            AssertionLevel::Off => tidb_proto::KvrpcAssertionLevel::Off,
+            AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
+            AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
+        },
+    }
 }
 
 /// The explicit-transaction state of one session.
@@ -228,8 +245,7 @@ mod tests {
     #[test]
     fn the_begin_keyword_decides_the_mode_and_ending_clears_it() {
         let mut txn: SessionTransaction = SessionTransaction::new();
-        // No SET-able variable store here, so a bare BEGIN takes the registry
-        // default of @@tidb_txn_mode.
+        // This control-state test uses the registry's default transaction mode.
         txn.begin(TransactionMode::Default).unwrap();
         assert_eq!(txn.mode(), Some(SessionTxnMode::Pessimistic));
         txn.begin(TransactionMode::Optimistic).unwrap();

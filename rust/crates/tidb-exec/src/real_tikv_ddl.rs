@@ -1128,7 +1128,7 @@ where
         let transaction = SessionTransaction::begin_pessimistic(
             Arc::clone(&opener),
             timeout,
-            crate::session_commit_protocol::session_commit_protocol(),
+            crate::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let lock_outcome =
             match transaction.lock_keys(vec![tidb_meta::key::next_global_id_kv_key()]) {
@@ -1205,7 +1205,7 @@ pub fn submit_check_constraint_job_with_retry<
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        crate::session_commit_protocol::session_commit_protocol(),
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = preparation.start_ts();
     let prepared = {
@@ -1291,7 +1291,7 @@ pub fn load_active_persisted_ddl_jobs_cached<
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        crate::session_commit_protocol::session_commit_protocol(),
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let jobs = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1361,7 +1361,7 @@ pub fn load_min_persisted_ddl_job_id_cached<
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        crate::session_commit_protocol::session_commit_protocol(),
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let minimum = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1407,7 +1407,7 @@ pub fn load_history_persisted_ddl_job<
     let transaction = SessionTransaction::begin(
         opener,
         timeout,
-        crate::session_commit_protocol::session_commit_protocol(),
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let history = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1447,7 +1447,7 @@ fn mark_check_constraint_job_rollingback_with_retry<
         let transaction = SessionTransaction::begin(
             Arc::clone(&opener),
             timeout,
-            crate::session_commit_protocol::session_commit_protocol(),
+            crate::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let mutations = {
             let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1576,7 +1576,7 @@ fn commit_cluster_ddl_with_backfill_once<
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
-        crate::session_commit_protocol::session_commit_protocol(),
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = transaction.start_ts();
     let plan = {
@@ -1765,7 +1765,7 @@ fn clean_mdl_info_with_retry<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
         let transaction = SessionTransaction::begin(
             Arc::clone(&opener),
             timeout,
-            crate::session_commit_protocol::session_commit_protocol(),
+            crate::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
         let mut mutations = Vec::new();
         mdl_info.append_delete_mutations(ddl_job_id, schema_version, owner_id, &mut mutations)?;

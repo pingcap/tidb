@@ -66,6 +66,7 @@ use tidb_exec::cluster_table_storage::{
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_exec::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };
@@ -152,6 +153,7 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         pessimistic: bool,
         fair_locking: bool,
+        options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
@@ -172,6 +174,7 @@ pub trait ClusterTransactions: Send + Sync {
         buffer: &MutationBuffer,
         read_ts: Option<u64>,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError>;
 
     /// [`Self::commit`] with the session's schema lease checker bound to the
@@ -183,8 +186,9 @@ pub trait ClusterTransactions: Send + Sync {
         read_ts: Option<u64>,
         resource_group: &str,
         _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
-        self.commit(buffer, read_ts, resource_group)
+        self.commit(buffer, read_ts, resource_group, options)
     }
 
     /// Publishes one restricted-session write plan at the snapshot timestamp
@@ -194,12 +198,13 @@ pub trait ClusterTransactions: Send + Sync {
         mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         read_ts: u64,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         let buffer = mutation_buffer_from_mutations(mutations).map_err(|error| match error {
             StorageError::Sql(error) => SqlQueryError::new(error.code, error.state, error.message),
             error => SqlQueryError::unknown(error.to_string()),
         })?;
-        self.commit(&buffer, Some(read_ts), resource_group)
+        self.commit(&buffer, Some(read_ts), resource_group, options)
     }
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
@@ -212,6 +217,7 @@ pub trait ClusterTransactions: Send + Sync {
         pessimistic: bool,
         fair_locking: bool,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<Box<dyn OpenClusterTransaction>, String>;
 
     /// Acquires the TiKV pessimistic key backing one advisory lock.
@@ -299,6 +305,12 @@ pub trait OpenClusterTransaction: Send {
     /// Rebinds all subsequent requests to the statement's resolved resource
     /// group while retaining the transaction and its timestamp.
     fn set_resource_group_name(&self, name: &str) -> Result<(), String>;
+
+    /// Refreshes the current statement's pessimistic existence-check setting.
+    fn set_statement_assertion_level(
+        &self,
+        level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), String>;
 
     /// Go `SetOptionsBeforeCommit`'s `kv.SchemaChecker` option
     /// (`base.go:606-615`): the session's schema lease checker, asked at
@@ -583,13 +595,18 @@ impl DeferredSnapshot {
         resource_group: Arc<str>,
         pessimistic: bool,
         fair_locking: bool,
+        options: SessionTransactionOptions,
     ) -> Self {
         // The timestamp request goes out now and is waited for by the first
         // read; the transaction opens on that thread. Spawning a thread per
         // statement to open it eagerly cost a thread creation and join per
         // autocommit write.
-        let prefetched_write =
-            Some(transactions.prepare_autocommit_write(&resource_group, pessimistic, fair_locking));
+        let prefetched_write = Some(transactions.prepare_autocommit_write(
+            &resource_group,
+            pessimistic,
+            fair_locking,
+            options,
+        ));
         Self {
             transactions,
             resource_group,
@@ -800,6 +817,7 @@ pub(crate) fn prefetched_write_snapshot(
     resource_group: Arc<str>,
     pessimistic: bool,
     fair_locking: bool,
+    options: SessionTransactionOptions,
 ) -> Box<dyn ClusterSnapshot> {
     Box::new(DeferredSnapshot::new_prefetched_write(
         transactions,
@@ -811,6 +829,7 @@ pub(crate) fn prefetched_write_snapshot(
         resource_group,
         pessimistic,
         fair_locking,
+        options,
     ))
 }
 
@@ -1016,6 +1035,7 @@ where
     timeout: Duration,
     pessimistic: bool,
     fair_locking: bool,
+    options: SessionTransactionOptions,
 }
 
 impl<C, L, P> PendingClusterTransaction for PendingSessionTransaction<C, L, P>
@@ -1027,7 +1047,7 @@ where
 {
     fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
         use tidb_txnkv::pd_capability::TimestampFutureWait;
-        let commit_protocol = tidb_exec::session_commit_protocol::session_commit_protocol();
+        let options = self.options;
         let start_ts = match self.start_ts.wait() {
             Ok(start_ts) => start_ts,
             Err(error) => {
@@ -1041,18 +1061,14 @@ where
                         .unwrap_or_else(|_| "\"unprintable\"".to_owned())
                 );
                 return if self.pessimistic {
-                    SessionTransaction::begin_pessimistic(
-                        self.opener,
-                        self.timeout,
-                        commit_protocol,
-                    )
-                    .map(|mut transaction| {
-                        transaction.set_fair_locking(self.fair_locking);
-                        Box::new(transaction) as Box<dyn OpenClusterTransaction>
-                    })
-                    .map_err(|error| error.to_string())
+                    SessionTransaction::begin_pessimistic(self.opener, self.timeout, options)
+                        .map(|mut transaction| {
+                            transaction.set_fair_locking(self.fair_locking);
+                            Box::new(transaction) as Box<dyn OpenClusterTransaction>
+                        })
+                        .map_err(|error| error.to_string())
                 } else {
-                    SessionTransaction::begin(self.opener, self.timeout, commit_protocol)
+                    SessionTransaction::begin(self.opener, self.timeout, options)
                         .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
                         .map_err(|error| error.to_string())
                 };
@@ -1061,21 +1077,16 @@ where
         if self.pessimistic {
             // Go `decideTxnMode`: the retry of a conflicted autocommit DML is
             // pessimistic, so it waits on the row instead of failing again.
-            SessionTransaction::begin_pessimistic_at(
-                self.opener,
-                start_ts,
-                self.timeout,
-                commit_protocol,
-            )
-            .map(|mut transaction| {
-                // Go `OnPessimisticStmtStart` -> `StartFairLocking`, gated on
-                // the session's `@@tidb_pessimistic_txn_fair_locking`.
-                transaction.set_fair_locking(self.fair_locking);
-                Box::new(transaction) as Box<dyn OpenClusterTransaction>
-            })
-            .map_err(|error| error.to_string())
+            SessionTransaction::begin_pessimistic_at(self.opener, start_ts, self.timeout, options)
+                .map(|mut transaction| {
+                    // Go `OnPessimisticStmtStart` -> `StartFairLocking`, gated on
+                    // the session's `@@tidb_pessimistic_txn_fair_locking`.
+                    transaction.set_fair_locking(self.fair_locking);
+                    Box::new(transaction) as Box<dyn OpenClusterTransaction>
+                })
+                .map_err(|error| error.to_string())
         } else {
-            SessionTransaction::begin_at(self.opener, start_ts, self.timeout, commit_protocol)
+            SessionTransaction::begin_at(self.opener, start_ts, self.timeout, options)
                 .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
                 .map_err(|error| error.to_string())
         }
@@ -1161,6 +1172,7 @@ where
         resource_group: &str,
         pessimistic: bool,
         fair_locking: bool,
+        options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
         let start_ts = opener
@@ -1172,6 +1184,7 @@ where
             timeout: self.timeout,
             pessimistic,
             fair_locking,
+            options,
         }))
     }
 
@@ -1180,8 +1193,9 @@ where
         buffer: &MutationBuffer,
         read_ts: Option<u64>,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
-        self.commit_with_schema_lease(buffer, read_ts, resource_group, None)
+        self.commit_with_schema_lease(buffer, read_ts, resource_group, None, options)
     }
 
     fn commit_with_schema_lease(
@@ -1190,6 +1204,7 @@ where
         read_ts: Option<u64>,
         resource_group: &str,
         schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
@@ -1202,7 +1217,7 @@ where
             buffer,
             read_ts,
             self.timeout,
-            tidb_exec::session_commit_protocol::session_commit_protocol(),
+            options,
             schema_lease_checker,
         )
         .map(|_| ())
@@ -1214,14 +1229,16 @@ where
         mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         read_ts: u64,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         if mutations.is_empty() {
             return Ok(());
         }
-        let transaction = self
+        let mut transaction = self
             .opener_for_resource_group(resource_group)
             .begin_at(read_ts)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        options.apply(&mut transaction);
         let outcome = transaction
             .commit(mutations, &UnaryCallContext::with_timeout(self.timeout))
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -1238,26 +1255,20 @@ where
         pessimistic: bool,
         fair_locking: bool,
         resource_group: &str,
+        options: SessionTransactionOptions,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
         let transaction = if pessimistic {
-            SessionTransaction::begin_pessimistic(
-                opener,
-                self.timeout,
-                tidb_exec::session_commit_protocol::session_commit_protocol(),
+            SessionTransaction::begin_pessimistic(opener, self.timeout, options).map(
+                |mut transaction| {
+                    // Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`,
+                    // gated on the session's `@@tidb_pessimistic_txn_fair_locking`.
+                    transaction.set_fair_locking(fair_locking);
+                    transaction
+                },
             )
-            .map(|mut transaction| {
-                // Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`,
-                // gated on the session's `@@tidb_pessimistic_txn_fair_locking`.
-                transaction.set_fair_locking(fair_locking);
-                transaction
-            })
         } else {
-            SessionTransaction::begin(
-                opener,
-                self.timeout,
-                tidb_exec::session_commit_protocol::session_commit_protocol(),
-            )
+            SessionTransaction::begin(opener, self.timeout, options)
         };
         transaction
             .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
@@ -1315,6 +1326,14 @@ where
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
         SessionTransaction::set_resource_group_name(self, name).map_err(|error| error.to_string())
+    }
+
+    fn set_statement_assertion_level(
+        &self,
+        level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), String> {
+        SessionTransaction::set_statement_assertion_level(self, level)
+            .map_err(|error| error.to_string())
     }
 
     fn set_schema_lease_checker(&mut self, checker: Arc<dyn SchemaLeaseChecker>) {
@@ -1463,6 +1482,7 @@ mod tests {
             _buffer: &MutationBuffer,
             _read_ts: Option<u64>,
             _resource_group: &str,
+            _options: SessionTransactionOptions,
         ) -> Result<(), SqlQueryError> {
             panic!("unused in batch-get forwarding test")
         }
@@ -1472,6 +1492,7 @@ mod tests {
             _pessimistic: bool,
             _fair_locking: bool,
             _resource_group: &str,
+            _options: SessionTransactionOptions,
         ) -> Result<Box<dyn OpenClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
@@ -1481,6 +1502,7 @@ mod tests {
             _resource_group: &str,
             _pessimistic: bool,
             _fair_locking: bool,
+            _options: SessionTransactionOptions,
         ) -> Result<Box<dyn PendingClusterTransaction>, String> {
             panic!("unused in batch-get forwarding test")
         }
@@ -1495,6 +1517,81 @@ mod tests {
 
         fn is_advisory_lock_used(&self, _name: &str) -> bool {
             panic!("unused in batch-get forwarding test")
+        }
+    }
+
+    #[test]
+    fn session_activation_retains_options_after_timestamp_future_failure() {
+        use std::sync::atomic::AtomicBool;
+        use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
+
+        #[derive(Clone)]
+        struct FailingPd {
+            inner: tidb_unistore::tso::InProcessPd,
+            fail: Arc<AtomicBool>,
+        }
+        struct TimestampResult(Result<u64, String>);
+        impl TimestampFutureWait for TimestampResult {
+            fn wait(self) -> Result<u64, String> {
+                self.0
+            }
+        }
+        impl PdCapability for FailingPd {
+            type TsFuture = TimestampResult;
+            fn cluster_id(&self) -> u64 {
+                self.inner.cluster_id()
+            }
+            fn gc_safe_point(&self) -> Result<u64, String> {
+                self.inner.gc_safe_point()
+            }
+            fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
+                Ok(TimestampResult(
+                    if self.fail.swap(false, Ordering::AcqRel) {
+                        Err("injected timestamp wait failure".to_owned())
+                    } else {
+                        self.inner.timestamp_future()?.wait()
+                    },
+                ))
+            }
+        }
+        let (authority, pd, _opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let fail = Arc::new(AtomicBool::new(false));
+        let opener = RealOptimisticTransactionOpener::from_capabilities(
+            authority.opener(),
+            FailingPd {
+                inner: pd,
+                fail: fail.clone(),
+            },
+            Duration::from_secs(3),
+            tidb_txnkv::TxnSafePointRefresher::start_with_source(|| Ok(0)).unwrap(),
+        )
+        .unwrap();
+        let transactions = RealClusterTransactions::new(opener, Duration::from_secs(3));
+        for pessimistic in [false, true] {
+            fail.store(true, Ordering::Release);
+            let options = SessionTransactionOptions {
+                commit_protocol: tidb_txnkv::transaction::CommitProtocol::two_phase_only(),
+                assertion_level: tidb_proto::KvrpcAssertionLevel::Strict,
+            };
+            let pending = transactions
+                .prepare_autocommit_write("default", pessimistic, false, options)
+                .unwrap();
+            let transaction = pending.wait().unwrap();
+            assert!(!fail.load(Ordering::Acquire));
+            let buffer = MutationBuffer::new();
+            transaction.bind_mutation_buffer(&buffer);
+            buffer
+                .stage_owned_batch([(
+                    Key::from_bytes(b"absent"),
+                    Some(b"value".to_vec()),
+                    false,
+                    tidb_txnkv::AssertionOp::AssertExist,
+                )])
+                .unwrap();
+            let error = transaction
+                .commit(&buffer)
+                .expect_err("fallback must retain Strict");
+            assert_eq!(error.code, 8141, "{error:?}");
         }
     }
 

@@ -108,6 +108,212 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
 }
 
 #[test]
+fn session_activation_preserves_assertion_level_until_transaction_end() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(129)).unwrap();
+    for (attempt, (mode, level, later, fails)) in [
+        ("OPTIMISTIC", "STRICT", "OFF", true),
+        ("PESSIMISTIC", "FAST", "OFF", true),
+        ("OPTIMISTIC", "OFF", "STRICT", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        rows(
+            &mut session,
+            &format!("SET tidb_txn_assertion_level = '{level}'"),
+        );
+        session
+            .control_transaction(&format!("BEGIN {mode}"))
+            .unwrap();
+        // A later SET must not change this transaction's commit assertion level.
+        rows(
+            &mut session,
+            &format!("SET tidb_txn_assertion_level = '{later}'"),
+        );
+        session
+            .buffer
+            .stage_owned_batch([(
+                tidb_txnkv::Key::from_bytes(format!("activation_assertion_{attempt}").into_bytes()),
+                Some(b"value".to_vec()),
+                false,
+                tidb_txnkv::AssertionOp::AssertExist,
+            )])
+            .unwrap();
+        let result = session.control_transaction("COMMIT");
+        if fails {
+            assert_eq!(
+                result
+                    .expect_err("missing key must fail its Exist assertion")
+                    .code,
+                8141
+            );
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+#[test]
+fn session_activation_controls_the_native_commit_protocol() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(130)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.activation_protocol (id INT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.activation_protocol VALUES (1, 10)",
+    );
+    for (asynchronous, one_pc) in [(false, false), (true, false), (false, true), (true, true)] {
+        for path in [
+            "insert",
+            "prefetched",
+            "fallback",
+            "OPTIMISTIC",
+            "PESSIMISTIC",
+        ] {
+            rows(
+                &mut session,
+                &format!(
+                    "SET tidb_enable_async_commit = {}, tidb_enable_1pc = {}",
+                    u8::from(asynchronous),
+                    u8::from(one_pc)
+                ),
+            );
+            let before = tikv_client::metrics::get_txn_commit_counter();
+            match path {
+                "insert" => {
+                    session
+                        .execute_write("INSERT INTO test.activation_protocol VALUES (2, 20)")
+                        .unwrap();
+                }
+                "prefetched" => {
+                    rows(
+                        &mut session,
+                        "UPDATE test.activation_protocol SET v=v+1 WHERE id=1",
+                    );
+                }
+                "fallback" => {
+                    session
+                        .execute_write("UPDATE test.activation_protocol SET v=v+1 WHERE id=1")
+                        .unwrap();
+                }
+                mode => {
+                    session
+                        .control_transaction(&format!("BEGIN {mode}"))
+                        .unwrap();
+                    session
+                        .execute_write("UPDATE test.activation_protocol SET v=v+1 WHERE id=1")
+                        .unwrap();
+                    // SET cannot change the options of the active transaction.
+                    rows(
+                        &mut session,
+                        &format!(
+                            "SET tidb_enable_async_commit = {}, tidb_enable_1pc = {}",
+                            u8::from(!asynchronous),
+                            u8::from(!one_pc)
+                        ),
+                    );
+                    session.control_transaction("COMMIT").unwrap();
+                }
+            }
+            let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
+            let expected = if one_pc {
+                (0, 0, 1)
+            } else if asynchronous {
+                (0, 1, 0)
+            } else {
+                (1, 0, 0)
+            };
+            assert_eq!(
+                (delta.two_pc, delta.async_commit, delta.one_pc),
+                expected,
+                "{path}: async={asynchronous}, 1pc={one_pc}"
+            );
+            if path == "insert" {
+                session
+                    .execute_write("DELETE FROM test.activation_protocol WHERE id=2")
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn lightweight_session_activation_inherits_globals_and_obeys_set() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    let config = crate::node_config::NodeConfig::parse([
+        "tidb-server",
+        "--store",
+        "unistore",
+        "--port",
+        "0",
+        "--auth-file",
+        "/dev/null",
+        "--read-table",
+        "test",
+        "activation_light",
+        "42",
+        "2",
+        "id:1:clustered-pk",
+        "v:2:stored-not-null",
+    ])
+    .unwrap();
+    let (factory, _authority, _admission) =
+        crate::unistore_node::unistore_session_factory(&config).unwrap();
+    let globals = tidb_session::GlobalSysvars::from_cluster_rows([
+        ("tidb_enable_async_commit".to_owned(), "OFF".to_owned()),
+        ("tidb_enable_1pc".to_owned(), "ON".to_owned()),
+    ]);
+    let factory = factory.with_global_vars(globals.clone());
+    let mut first = factory.open_session(session_context(131)).unwrap();
+    globals.load_from_cluster([("tidb_enable_1pc".to_owned(), "OFF".to_owned())]);
+    let mut second = factory.open_session(session_context(132)).unwrap();
+    for (session, id, one_pc) in [(&mut first, 1, true), (&mut second, 2, false)] {
+        let before = tikv_client::metrics::get_txn_commit_counter();
+        session
+            .execute_write(&format!(
+                "INSERT INTO test.activation_light (id, v) VALUES ({id}, 10)"
+            ))
+            .unwrap();
+        let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
+        assert_eq!(
+            (delta.two_pc, delta.async_commit, delta.one_pc),
+            (i64::from(!one_pc), 0, i64::from(one_pc)),
+            "{delta:?}"
+        );
+    }
+    first.execute_write("SET tidb_enable_1pc = OFF").unwrap();
+    let before = tikv_client::metrics::get_txn_commit_counter();
+    first
+        .execute_write("UPDATE test.activation_light SET v = v + 1 WHERE id=1")
+        .unwrap();
+    let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
+    assert_eq!((delta.two_pc, delta.async_commit, delta.one_pc), (1, 0, 0));
+    first.execute_write("SET tidb_enable_1pc = ON, tidb_txn_assertion_level = 'STRICT', tidb_pessimistic_txn_fair_locking = OFF").unwrap();
+    first.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    first
+        .execute_write("UPDATE test.activation_light SET v = v + 1 WHERE id=1")
+        .unwrap();
+    first.execute_write("SET tidb_enable_1pc = OFF").unwrap();
+    let before = tikv_client::metrics::get_txn_commit_counter();
+    first.control_transaction("COMMIT").unwrap();
+    let delta = tikv_client::metrics::get_txn_commit_counter().subtract(before);
+    assert_eq!((delta.two_pc, delta.async_commit, delta.one_pc), (0, 0, 1));
+    let error = first
+        .execute_write("SET tidb_txn_assertion_level = 'invalid'")
+        .unwrap_err();
+    assert_eq!(error.code, 1231);
+}
+
+#[test]
 fn cluster_account_drop_persists_through_its_own_transaction() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(901)).unwrap();
@@ -1670,6 +1876,59 @@ fn auto_analyze_fills_missing_partition_statistics_like_go() {
         )),
         [["2"]]
     );
+}
+
+/// Go `newLockCtx` asks for existence metadata when assertions are enabled,
+/// including fair locks that do not return the record value.
+#[test]
+fn session_activation_checks_existence_for_pessimistic_locks() {
+    use tidb_txnkv::transaction::BufferMutation;
+
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(904)).unwrap();
+    for (id, (level, fair)) in [
+        ("FAST", "ON"),
+        ("STRICT", "ON"),
+        ("OFF", "ON"),
+        ("FAST", "OFF"),
+        ("STRICT", "OFF"),
+        ("OFF", "OFF"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        rows(
+            &mut session,
+            &format!("SET tidb_txn_assertion_level = '{level}'"),
+        );
+        rows(
+            &mut session,
+            &format!("SET tidb_pessimistic_txn_fair_locking = {fair}"),
+        );
+        let key = format!("assert-existence/{id}").into_bytes();
+        for existing in [false, true] {
+            session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+            // Restricted SQL locks its planned keys without loading values,
+            // then stages them. Both absent and existing records must survive
+            // the native client's assertion check from the lock metadata.
+            super::super::transactions::stage_pessimistic_statement(
+                session.explicit.as_deref().unwrap(),
+                &session.buffer,
+                session.session.lock_wait_timeout(),
+                |_, _| {
+                    let mutation = if existing {
+                        BufferMutation::put_existing(key.clone(), b"updated".to_vec())
+                    } else {
+                        BufferMutation::insert(key.clone(), b"inserted".to_vec())
+                    }
+                    .unwrap();
+                    Ok(((), vec![mutation]))
+                },
+            )
+            .unwrap();
+            session.control_transaction("COMMIT").unwrap();
+        }
+    }
 }
 
 /// Pinned DDL subscriber `ActionCreateTable`, `ActionTruncateTable`, and

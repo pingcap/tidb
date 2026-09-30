@@ -20,7 +20,8 @@ Production transactions must have one native transaction engine, MemDB and lock 
 - [x] Thread session lock timeout through active SQL statements and global timeout through statistics workers; load configured native buffer size limits.
 - [ ] Audit remaining contextless helpers and table-layer assertion propagation.
 - [x] Carry table-selected assertions through ordinary record/index writes using the native MemDB stage path; reproduce missing assertions and validate insert/update/delete, key moves and statement rollback.
-- [ ] Wire session assertion and commit-protocol options to transaction activation and remove the separate generic mutation constructor's assertion policy.
+- [x] Wire session assertion and commit-protocol options to transaction activation, including restricted and lightweight paths; carry per-statement existence checking into pessimistic lock contexts.
+- [ ] Remove the separate generic mutation constructor's assertion policy after reconciling every caller with the table owner.
 - [x] Review the complete assertion-error boundary, preserve wire metadata and error 8141 through commit/locking, and remove the incorrect duplicate-key conversion.
 - [x] Reproduce lost autocommit INSERTs after an empty COMMIT and a failed UPDATE; make completed transaction cleanup unconditional and remove the bound-buffer drain.
 - [x] Validate the transaction-buffer lifetime repair with 87 scoped tests and root lint; publication uses the mandatory hook and fresh pre-push build gates.
@@ -273,8 +274,6 @@ Two regressions failed against the unchanged production code: the hinted asserti
 
 | Priority | Boundary and evidence | Go contract and required change |
 | --- | --- | --- |
-| P1 | Session activation: `tidb_txn_assertion_level` is registered, but no production first-party path calls native `set_assertion_level`; native CommitSettings defaults to Off. Explicit begin, pending autocommit and fallback commit all omit the option. | `pkg/sessiontxn/isolation/base.go:SetOptionsOnTxnActive` and `internal.SetTxnAssertionLevel` apply it once when the transaction activates. Pass a session-owned option set through every activation path; do not set a process-wide Fast default or change an existing transaction on each statement. |
-| P2 | Commit protocol settings: `session_commit_protocol()` always reads TiKV bootstrap defaults. RealClusterTransactions begin, PendingSessionTransaction::wait and fallback commit call it without the session values, so accepted SETs for `tidb_enable_async_commit` and `tidb_enable_1pc` do not control the transaction. | Go applies both session flags in SetOptionsOnTxnActive. Repair with the same activation owner as assertion level, preserving restricted-session and lightweight entry points. Remove the misleading claim that this node lacks a SET-able variable store. |
 | P2 | Competing insert policy: BufferMutation::insert combines presume-not-exists with AssertNotExist. Configured DML plan_insert and system_row_write use it independently of ordinary KvTable. The former intentionally performs no snapshot existence read. | Go table/index owners choose AssertUnknown for lazy optimistic misses and AssertNotExist for eager/pessimistic insertion. Preserve independent flag/assertion inputs and converge table policy across these callers; changing every insert to Unknown would also be wrong. |
 | P2 | Protocol baseline: check-tipb-proto-projection.py resolves this branch's June TiPB via go.mod; Go master pins September fed7bc47c39d. A descriptor comparison against master's pin reports ExecType stale: 21 local values versus 22 upstream, missing TypeExplainForConnection=21. | Select and record the authoritative Go-master dependency pin as a package input; regenerate complete schema inputs and validate against it. Adding just this enum would leave the baseline-selection gap intact. The checker verifies existing projected message fields, not complete message coverage. |
 | Open migration | Region/RPC ownership: ClientPd delegates to TiDB's RegionCache, synchronous region recovery and transport runtime; native equivalents still exist. RegionBackoffBudget itself already wraps the native RetryBackoffer and must not be mistaken for an independent retry algorithm. | Finish one routing/cache/RPC owner while retaining required DistSQL, transport and PD capabilities. Do not delete adapters solely because the native package has similarly named types. No new runtime failure is claimed from duplication alone. |
@@ -311,3 +310,91 @@ Root make lint initially could not resolve proxy.golang.org inside the sandbox, 
 
 
 Publication concurrency note: the first push was rejected because 545fff9a84da177eb093ff51d40f6202bc7be4d5 arrived on hparser-integration after the initial pull. That incoming buffer-drain commit was reviewed and preserved; only this unpublished assertion-error commit was rebased onto it. The newly observed ended-owner finding is listed first above. The incoming commit itself records an INSERT visibility residual. A temporary focused regression bound one staged write to a native MemDB, ended its owner, then checked both is_empty and take_native_buffer. It is saved for the ownership repair in /private/tmp/tidb-review-ended-buffer-regression.patch; the source file is restored afterward and no failing test is committed. It failed with `is_empty=true, drained_len=0`, confirming silent empty-buffer success is possible after owner loss; the log is /private/tmp/tidb-review-ended-buffer-red.log. The exact scoped command was `cd rust && cargo test --locked -p tidb-executor --lib review_ended_buffer_owner`. This is a confirmed open failure, not a passed validation gate. The existing buffer, adapter, SQL transaction and embedded transaction suites were repeated after rebase and passed 22, 6, 28 and 4 tests respectively. Those tests do not cover the ended-owner failure. The amended commit reruns the mandatory hook, followed by another fresh locked server build before retrying a normal, non-forced push.
+
+
+## Session transaction activation follow-up (2026-09-30)
+
+
+The continuation starts from published 079aca0673. Both integration and Go master are current. Go master `pkg/sessiontxn/isolation/base.go:SetOptionsOnTxnActive` copies AssertionLevel, EnableAsyncCommit and Enable1PC from SessionVars once after activation; `internal.SetTxnAssertionLevel` requires assertion level to be set once immediately after activation. Rust instead reads bootstrap defaults at explicit BEGIN, pending autocommit activation and fallback publication, while the native assertion level stays Off. The existing lightweight SQL session also has a variable store but bypasses it for protocol selection. These are maintenance defects in the existing transaction adapter, not a complete-package transcreation claim.
+
+Introduce a typed activation option snapshot from the existing validated session variables, carry it through every SQL transaction activation branch (including timestamp-future fallback), and apply it once to the native transaction. Restricted callers without a retained session derive the same option snapshot from their supplied global-variable authority. Keep low-level bootstrap/storage transactions explicit and separate from SQL-session policy. Remove the false comment claiming SQL sessions cannot SET variables. Preserve an active transaction's options across later SETs. First add real embedded SQL regressions for strict assertions and native commit-protocol counters and verify failure on the baseline; then cover explicit, prepared/prefetched and fallback autocommit paths and the lightweight adapter. Run targeted Rust tests, root lint, the mandatory commit-hook build and a fresh locked server build before pushing. No Go/Bazel changes are planned. The separately rejected native lifetime patch stays unapplied.
+
+
+### Activation outcome and additional root cause
+
+
+The SQL transaction authority now requires `SessionTransactionOptions` (commit permissions and assertion level), copied from the existing session variable registry. Explicit begin, pending timestamp success, timestamp-wait failure, unbound autocommit publication, restricted writes, and the lightweight storage session all apply the same snapshot. The native client retains commit-protocol eligibility and assertion enforcement. The old no-argument `session_commit_protocol` and `session_fair_locking` policies are removed. The remaining no-session storage helper is explicitly named `bootstrap_commit_protocol`; low-level callers retain their native assertion default rather than silently acquiring SQL-session policy.
+
+The lightweight factory now attaches the server's existing global-variable authority when opening each session. Its supported storage SET assignments run through the existing parser and session-variable executor. Protocol, assertion, and fair-locking settings no longer disappear at that dispatcher. Existing sessions retain their inherited values while new sessions see changed globals. This does not complete the lightweight adapter's remaining transaction-control SET behavior.
+
+Enabling Go's registered assertion level exposed a second required dependency: Go master `pkg/executor/select.go:newLockCtx` calls `InitCheckExistence` when the statement has a positive for-update timestamp and assertions are enabled. Rust omitted this for locks without returned values. In particular, fair-lock results lacked existence metadata, so the native client could reject an insertion into an absent key with an erroneous NotExist assertion failure at commit. The repair carries the current statement's assertion setting separately from the immutable commit snapshot and asks the existing native LockContext to check existence. It does not change the native locking or assertion algorithm. The temporary diagnostic trace was removed.
+
+The first strict/protocol regressions failed before production edits (`/private/tmp/tidb-activation-red.log`): a missing-key Exist assertion committed and both protocols OFF still used 1PC. The lightweight regression separately failed when SET OFF was dropped (`-lightweight-red.log`). A new no-value pessimistic lock regression failed with error 8141 under fair locking (`-lock-existence-red.log`), then passed after `InitCheckExistence` was carried through. It now checks FAST, STRICT, and OFF with fair locking both ON and OFF, and inserts and updates. Normal-lock-only probes initially passed and were expanded to the failing fair-lock case before the fix; they were not counted as red evidence.
+
+Five final activation regressions pass. They cover all four protocol combinations through INSERT, prefetched UPDATE, fallback UPDATE, explicit optimistic and explicit pessimistic transactions; SET changes after activation; strict/fast/off assertions; global inheritance and validated lightweight SET; timestamp-future failure; and existence metadata for locks without values. Protocol tests use the native commit counters in isolated processes, not a second commit implementation.
+
+The wider embedded suite after repair passed 112 tests and failed 10. A controlled baseline run restored all changed files from HEAD 079aca0673, ran the same command, and automatically restored every working file from a temporary backup. It passed 108 and failed the same 10 tests. The remaining failures are therefore reproduced on the unchanged branch, not silently marked green:
+
+    add_partition_statistics_follow_global_prune_mode_like_go
+    cluster_info_reports_this_node
+    drop_partitions_statistics_match_go
+    exchange_partition_validates_and_swaps_real_rows_atomically
+    global_stats_drive_partition_plans_like_go
+    partition_scoped_analyze_refreshes_global_count_and_modify_count
+    stats_notifier_uses_a_real_internal_transaction_like_go
+    system_table_ddl_does_not_publish_statistics_events_like_go
+    truncate_hash_partition_statistics_match_go
+    truncate_partitions_refreshes_global_stats_meta_like_go
+
+The baseline and repaired logs are `/private/tmp/tidb-activation-baseline-embedded.log` and `/private/tmp/tidb-activation-embedded-green.log`. The initial broader assertion-enabled run had 20 failures; after the lock-context fix its newly introduced assertion failures are gone. No statistics or partition algorithms were modified to mask those failures.
+
+### Activation validation receipt
+
+
+Final targeted commands from rust/ (respectively 5, 6, 28, 23, 13, 6, 11, and 1 tests passed; 93 test invocations):
+
+    cargo test --locked -p tidb-server --lib session_activation_
+    cargo test --locked -p tidb-server --lib session_time_zone::tests
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::autocommit_transactions
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::prepared_transactions
+    cargo test --locked -p tidb-exec --lib cluster_table_storage::tests
+    cargo test --locked -p tidb-exec --lib multi_statement_transaction::tests
+    cargo test --locked -p tidb-exec --lib session_commit_protocol::tests
+
+Additional validation:
+
+    cd rust && cargo test --locked -p tidb-server --lib transaction_buffer_tests
+    cd rust && cargo test --locked -p tidb-server --lib cluster_session_node::tests::unistore_cop
+    cd rust && cargo check --locked -p tidb-server -p tidb-exec --all-targets
+    make lint
+    git diff --check
+
+The buffer suite passed four tests earlier in the activation repair. The wider embedded result is qualified above; all-target compilation and root lint passed. No Go/Bazel source, import, dependency or generated artifact changed, so bazel_prepare and failpoint setup are not required. Logs are `/private/tmp/tidb-activation-*.log`. Manual diff review included the entire activation call chain, parameter forwarding, tests, mechanical bootstrap-helper renames and formatting edits.
+
+Fresh upstream checks keep Go master at 6b2781326b722f217a61852ab403350858549bd0 and client-rust master at 884589f0365053c0f5bd300209751187a4811782, already synchronized in TiDB. No native source or dependency change is needed. The source comparisons above were also checked with `git show origin/master:pkg/sessiontxn/isolation/base.go` and `git show origin/master:pkg/executor/select.go`.
+
+Correctness/compatibility risk: accepted session settings now actually select native commit permissions and enable Go's registered assertion checks, so latent bad mutation metadata becomes observable instead of being silently ignored. Lock-existence metadata follows Go and adds no extra lock RPC. No sysbench, TPC-C, TPC-H, YCSB, RealTiKV cluster, or exhaustive package parity validation was run; no measured performance improvement or completed-package transcreation is claimed. The remaining generic insertion assertion policy, protocol baseline, routing/RPC migration, and previously rejected native lifetime patch remain open.
+
+Changed files in this activation repair:
+
+    rust/crates/tidb-exec/src/cluster_table_storage.rs
+    rust/crates/tidb-exec/src/multi_statement_transaction.rs
+    rust/crates/tidb-exec/src/real_tikv_ddl.rs
+    rust/crates/tidb-exec/src/real_tikv_read.rs
+    rust/crates/tidb-exec/src/session_commit_protocol.rs
+    rust/crates/tidb-exec/tests/fair_locking_session_seam_realtikv_source.rs
+    rust/crates/tidb-server/src/bin/cluster-session-smoke.rs
+    rust/crates/tidb-server/src/cluster_session_node/mod.rs
+    rust/crates/tidb-server/src/cluster_session_node/statistics.rs
+    rust/crates/tidb-server/src/cluster_session_node/tests/mock_cluster.rs
+    rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs
+    rust/crates/tidb-server/src/cluster_session_node/transactions.rs
+    rust/crates/tidb-server/src/real_tikv_node/mod.rs
+    rust/crates/tidb-server/src/real_tikv_node/session_time_zone.rs
+    rust/crates/tidb-server/src/session_transaction.rs
+    rust/crates/tidb-server/src/unistore_node.rs
+    rust/crates/tidb-txnkv/src/transaction/client.rs
+    rust/docs/remove-extra-storage-policies-execplan.md
+
+Publication requires `TERM=xterm git -c core.hooksPath=hooks commit` (the hook must pass `cd rust && cargo build --locked -p tidb-server`), followed by a separate fresh `cd rust && cargo build --locked -p tidb-server` and normal `git push origin HEAD:hparser-integration`. Gate evidence is recorded in `/private/tmp/tidb-activation-commit.log`, `-prepush.log`, and `-push.log`; publication remains pending until these gates succeed.

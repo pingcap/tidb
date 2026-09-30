@@ -258,6 +258,7 @@ pub struct RealTiKvSessionFactory<
     opener: RealTiKvReadSessionOpener<F, S>,
     transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
     read_authority_id: u64,
+    global_vars: tidb_session::GlobalSysvars,
     /// Tables the cluster really has, that this node loaded and cannot serve.
     /// They are not hidden: a query naming one gets the exact reason back.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
@@ -388,6 +389,7 @@ impl RealTiKvSessionFactory {
             opener: authority.opener(),
             transaction_opener: authority.transaction_opener(),
             read_authority_id: authority.read_authority_id(),
+            global_vars: tidb_session::GlobalSysvars::new(),
             table_refusals: Arc::new(table_refusals),
             catalog,
             watcher,
@@ -427,6 +429,7 @@ where
             opener,
             transaction_opener,
             read_authority_id,
+            global_vars: tidb_session::GlobalSysvars::new(),
             table_refusals: Arc::new(Vec::new()),
             catalog: None,
             watcher: None,
@@ -439,6 +442,11 @@ where
             mem_arbitrator: None,
             processes: ProcessRegistry::default(),
         }
+    }
+
+    pub(crate) fn with_global_vars(mut self, global_vars: tidb_session::GlobalSysvars) -> Self {
+        self.global_vars = global_vars;
+        self
     }
 
     pub(crate) fn with_spill_storage(
@@ -540,7 +548,7 @@ where
     type Session = RealTiKvServerSession<F::Transport, S, C, L, P>;
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
-        let inner = self
+        let mut inner = self
             .opener
             .open_session()
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -563,6 +571,15 @@ where
             Arc::clone(cursor_memory.session_tracker()),
             Arc::clone(cursor_memory.session_disk_tracker()),
         );
+        let mut variables = tidb_session::Session::new();
+        variables
+            .attach_globals(self.global_vars.clone())
+            .map_err(|error| {
+                let error = error.to_mysql_error();
+                SqlQueryError::new(error.code, error.state, error.message)
+            })?;
+        let zone = variables.vars().session_time_zone();
+        inner.set_time_zone(&zone);
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),
@@ -570,8 +587,8 @@ where
             schema_notifier: self.schema_notifier.clone(),
             context,
             transaction: SessionTransaction::new(),
-            time_zone: RealTiKvSessionTimeZone::default(),
-            variables: tidb_session::Session::new(),
+            time_zone: RealTiKvSessionTimeZone::from_zone(zone),
+            variables,
             cursor_memory,
             statement_warnings: Vec::new(),
             statement_message: None,
@@ -653,6 +670,9 @@ where
         let opener = self.transaction_opener.clone();
         let table = self.inner.configured_table().clone();
         let lock_wait_timeout = self.variables.lock_wait_timeout();
+        let fair_locking = self.variables.vars().pessimistic_transaction_fair_locking();
+        let assertion_level =
+            crate::session_transaction::transaction_options(self.variables.vars()).assertion_level;
         // Go `session.checkTxnAborted`, which runs before EVERY statement of
         // an open transaction: once the keep-alive has given up on the
         // lifetime bound, only `COMMIT` and `ROLLBACK` may still run -- and
@@ -673,8 +693,8 @@ where
                 MultiStatementTransaction::begin(
                     &opener,
                     mode,
-                    crate::session_transaction::session_fair_locking(),
-                    tidb_exec::session_commit_protocol::session_commit_protocol(),
+                    self.variables.vars().pessimistic_transaction_fair_locking(),
+                    crate::session_transaction::transaction_options(self.variables.vars()),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                     lock_wait_timeout,
@@ -683,6 +703,8 @@ where
             .map(|opened| {
                 opened.map(|transaction| {
                     transaction.set_lock_wait_timeout(lock_wait_timeout);
+                    transaction.set_fair_locking(fair_locking);
+                    transaction.set_statement_assertion_level(assertion_level);
                     transaction
                 })
             })
@@ -836,8 +858,8 @@ where
                 let mut transaction = MultiStatementTransaction::begin(
                     &opener,
                     tidb_planner::txn_mode::SessionTxnMode::Pessimistic,
-                    crate::session_transaction::session_fair_locking(),
-                    tidb_exec::session_commit_protocol::session_commit_protocol(),
+                    self.variables.vars().pessimistic_transaction_fair_locking(),
+                    crate::session_transaction::transaction_options(self.variables.vars()),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                     self.variables.lock_wait_timeout(),
@@ -1593,7 +1615,9 @@ pub(crate) fn run_bound_node(
     // is owned by `run_with_process_shutdown`, so startup failures still take
     // the ordered PD/transport shutdown path.
     let sysvar_reloader = prepare_cluster_sysvar_runtime(&config, &users, &authority);
-    let factory = factory.with_spill_storage(spill_storage);
+    let factory = factory
+        .with_global_vars(users.global_vars())
+        .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,

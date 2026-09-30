@@ -15,6 +15,7 @@ use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_exec::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::region::RegionBackoffKind;
@@ -393,6 +394,7 @@ impl ClusterTransactions for MockTransactions {
         resource_group: &str,
         pessimistic: bool,
         _fair_locking: bool,
+        _options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         // The mock's timestamp is taken now, as the real opener dispatches
@@ -409,6 +411,7 @@ impl ClusterTransactions for MockTransactions {
         buffer: &MutationBuffer,
         read_ts: Option<u64>,
         resource_group: &str,
+        _options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         self.0.record_resource_group(resource_group);
         let staged = buffer.snapshot();
@@ -463,6 +466,7 @@ impl ClusterTransactions for MockTransactions {
         pessimistic: bool,
         _fair_locking: bool,
         resource_group: &str,
+        _options: SessionTransactionOptions,
     ) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);
         self.0.begun.fetch_add(1, Ordering::AcqRel);
@@ -513,6 +517,13 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
         self.cluster.record_resource_group(name);
+        Ok(())
+    }
+
+    fn set_statement_assertion_level(
+        &self,
+        _level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), String> {
         Ok(())
     }
 
