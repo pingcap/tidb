@@ -19,6 +19,8 @@ Production transactions must have one native transaction engine, MemDB and lock 
 - [x] Remove facade mutation budgets, SQL-category rewriting, duplicate value history, and production attempt-history allocations; retain explicit test observation.
 - [x] Thread session lock timeout through active SQL statements and global timeout through statistics workers; load configured native buffer size limits.
 - [ ] Audit remaining contextless helpers and table-layer assertion propagation.
+- [x] Carry table-selected assertions through ordinary record/index writes using the native MemDB stage path; reproduce missing assertions and validate insert/update/delete, key moves and statement rollback.
+- [ ] Wire the SQL assertion-level option to transaction activation and remove the separate generic mutation constructor's assertion policy.
 - [x] Replace all three executor pessimistic statement retry caps with Go's live global configuration; reproduce configured exhaustion and statement rollback and pass targeted tests/lint.
 - [x] Validate the retry-policy repair with targeted regressions, root lint and the locked server build; publication uses the mandatory hook and fresh pre-push build gates.
 - [x] Remove special SQL parsing and execute supported storage SET assignments through the normal parser/session-variable path.
@@ -147,3 +149,30 @@ The first command passes all three new regressions after the fix. The five surro
 Compatibility intentionally changes the lightweight path's default retry ceiling from eight to Go's configured default of 256, and reports Go's generic exhaustion error rather than the previous final conflict. Nondefault configuration now affects every statement loop. The uncontended lock path does not read the retry configuration. RealTiKV, sysbench, TPC-C, TPC-H and YCSB were not run; no throughput gain or full parity claim is made. The separate native background-lifetime patch remains unapplied after automatic approval review rejected it; it requires the already-requested specific approval. Table assertion ownership and the remaining region/RPC migration are still open.
 
 Changed files for the retry-policy milestone: rust/crates/tidb-exec/src/pessimistic_lock_error.rs, rust/crates/tidb-exec/src/multi_statement_transaction.rs, rust/crates/tidb-exec/src/cluster_table_storage.rs, rust/crates/tidb-server/src/cluster_session_node/mod.rs, rust/crates/tidb-server/src/cluster_session_node/tests/mock_cluster.rs, rust/crates/tidb-server/src/cluster_session_node/tests/transactions.rs, rust/crates/tidb-server/src/unistore_node.rs, and this ExecPlan. No dependencies or generated files changed.
+
+## Table-owned assertion metadata (2026-09-30)
+
+
+The continuation fast-forwarded hparser-integration from 412c668a59 to c5a13dc5290515967e66d9aec0932accee6839a9, retaining the incoming DDL/warning changes. Go master advanced to 6b2781326b722f217a61852ab403350858549bd0. The source contract for this maintenance repair is pkg/table/tables: assertion.go's first-assertion rule, tables.go's add/update/remove record decisions, and index.go's public-index create/delete decisions. The Rust catalog loader currently admits public indexes; this change does not add transitional index or partition DDL support and does not claim complete transcreation of that Go package. A fresh client-rust master lookup still reports 884589f0365053c0f5bd300209751187a4811782, already synchronized in TiDB.
+
+Ordinary KvTable writes previously carried only values and presume-not-exists marks through TableStorage. Even an eager INSERT left native record and index flags at KeyFlags(0). The regression failed on that baseline. TableStorage now carries explicit assertions alongside Set/Delete. ClusterTableStorage delegates those operations to the existing MutationBuffer::stage_owned_batch; there is no second assertion map or assertion transition implementation. Stores without MVCC retain their existing immediate value writes. This preserves native first-assertion-wins behavior and statement rollback without another key copy or buffer borrow.
+
+KvTable chooses Unknown for an optimistic insert whose duplicate check actually deferred a local miss; eager or pessimistic inserts choose NotExist. A local tombstone is an observed deletion, not a local miss. The distinct-index branch follows the actual lazy-check result; the non-distinct-index branch follows Go's lazy-check option. Existing record/index updates and deletes assert Exist, newly inserted keys assert NotExist, and moving a clustered record key deletes the old key with Exist and writes the new key with NotExist. Rewrites of an index payload under the same key keep Exist. Repeated writes preserve the first assertion through the native buffer's existing rule.
+
+The regression exercises eager/lazy checking in both transaction modes, unique and non-unique indexes, both row-delete entry points, update/delete/reinsert sequences, native statement rollback, a local tombstone without an earlier assertion, and clustered-key movement. Existing SQL-value behavior is covered by the surrounding executor and SQL transaction suites.
+
+Changed files: rust/crates/tidb-executor/src/storage.rs; rust/crates/tidb-executor/src/cluster_storage.rs; rust/crates/tidb-executor/src/kv_table.rs; rust/crates/tidb-executor/src/kv_table/index_entries.rs; this ExecPlan. Existing formatting outside the mutation paths was preserved. No Go, Bazel, dependency, generated source or native client file changed.
+
+Commands run from rust/:
+
+    cargo test --locked -p tidb-executor --lib table_writes_preserve_go_assertions
+    cargo test --locked -p tidb-executor --lib cluster_storage::tests
+    cargo test --locked -p tidb-executor --lib kv_table::tests
+    cargo test --locked -p tidb-executor --lib driver::tests::dml
+    cargo test --locked -p tidb-server --lib cluster_session_node::tests::transactions
+    cargo test --locked -p tidb-server --lib transaction_buffer_tests
+    cargo test --locked -p tidb-executor --lib kv_table::
+
+The targeted suites passed 22, 16, 9, 28 and 4 tests (79 total, including the new regression). The broader kv_table:: run passed 65 and failed test_in_memory_alloc and test_issue40584: both observed allocator.next() = 30001 instead of 2 / 20001. Temporarily restoring all four production files from unchanged c5a13dc529 and repeating the exact broader command reproduced the same two failures and 65 passes. All working edits were restored afterward. These failures are not counted as passes. Red/green and baseline logs are /private/tmp/tidb-table-assertions-*.log. Root make lint and git diff --check passed. Publication must still pass the mandatory locked-build pre-commit hook and a fresh cargo build --locked -p tidb-server immediately before pushing hparser-integration. No bazel_prepare is required.
+
+The audit found two additional assertion ownership gaps that this metadata repair does not resolve. First, the SQL tidb_txn_assertion_level variable is registered, but its value is not forwarded to the native transaction's set_assertion_level: native transactions default to Off while Go applies the session level on transaction activation (pkg/sessiontxn/isolation/base.go and internal.SetTxnAssertionLevel). Second, the independent BufferMutation::insert convenience constructor always supplies NotExist even for lazy optimistic writes. That constructor and the lightweight/system mutation planners still need an explicit table-owned policy. Do not claim end-to-end assertion-level parity from the metadata tests. RealTiKV, fault-injected assertion enforcement and sysbench/TPC-C/TPC-H/YCSB performance were not verified. The separate background-lifetime patch remains unapplied pending its previously requested specific approval after automatic review rejection.

@@ -2926,7 +2926,7 @@ impl KvTable {
                 *physical_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle, *physical_id, zone, false)?;
+            self.write_index_entries(row, handle, *physical_id, zone, false, false)?;
             self.store
                 .set(key, value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -3523,22 +3523,38 @@ impl KvTable {
         // A locally staged tombstone is neither: the row was deleted inside
         // this transaction, and the reinsert overwrites it without any
         // presumption -- Go's own `len(v) == 0` arm.
-        if lazy_dup_check || !skip_primary_duplicate_check {
+        let set_presume = if lazy_dup_check || !skip_primary_duplicate_check {
             // Go addRecord checks t.RecordKey(recordID), not every partition
             // containing that handle. Hidden row IDs can repeat across physical
             // partitions, whose record keys are distinct.
-            self.check_insert_key(&key, &duplicate_value, &duplicate_key, lazy_dup_check)?;
-        }
-        // Go writes the row first, then its index entries; a duplicate on a
-        // unique index aborts the statement.
-        self.write_index_entries(row, &handle, physical_id, &zone, lazy_dup_check)?;
+            self.check_insert_key(&key, &duplicate_value, &duplicate_key, lazy_dup_check)?
+        } else {
+            false
+        };
+        let pessimistic = stats_ctx.is_some_and(crate::StmtContext::pessimistic_transaction);
+        self.write_index_entries(
+            row,
+            &handle,
+            physical_id,
+            &zone,
+            lazy_dup_check,
+            pessimistic,
+        )?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx
                 .staged_writes()
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .set(key, value)
+            .set_with_assertion(
+                key,
+                value,
+                if set_presume && !pessimistic {
+                    tidb_txnkv::AssertionOp::AssertUnknown
+                } else {
+                    tidb_txnkv::AssertionOp::AssertNotExist
+                },
+            )
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, 1, 1);
@@ -3862,23 +3878,49 @@ impl KvTable {
                         // Restore every entry the failed update disturbed, so a
                         // rejected statement leaves the index as it found it.
                         self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                        self.write_index_entries(old, handle, old_physical_id, &zone, false)?;
+                        self.write_index_entries(
+                            old,
+                            handle,
+                            old_physical_id,
+                            &zone,
+                            false,
+                            false,
+                        )?;
                         return Err(error);
                     }
                 }
                 Some(old) => {
                     self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                    if let Err(error) =
-                        self.write_index_entries(row, &new_handle, new_physical_id, &zone, false)
-                    {
+                    if let Err(error) = self.write_index_entries(
+                        row,
+                        &new_handle,
+                        new_physical_id,
+                        &zone,
+                        false,
+                        false,
+                    ) {
                         // Restore the entries the failed update removed, so a
                         // rejected statement leaves the index as it found it.
-                        self.write_index_entries(old, handle, old_physical_id, &zone, false)?;
+                        self.write_index_entries(
+                            old,
+                            handle,
+                            old_physical_id,
+                            &zone,
+                            false,
+                            false,
+                        )?;
                         return Err(error);
                     }
                 }
                 None => {
-                    self.write_index_entries(row, &new_handle, new_physical_id, &zone, false)?;
+                    self.write_index_entries(
+                        row,
+                        &new_handle,
+                        new_physical_id,
+                        &zone,
+                        false,
+                        false,
+                    )?;
                 }
             }
         }
@@ -3893,6 +3935,11 @@ impl KvTable {
             new_physical_id,
             &new_handle.record_handle(),
         ));
+        let record_assertion = if old_key.as_ref().is_some_and(|old_key| *old_key != key) {
+            tidb_txnkv::AssertionOp::AssertNotExist
+        } else {
+            tidb_txnkv::AssertionOp::AssertExist
+        };
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
             if let Some(stats_ctx) = stats_ctx {
                 stats_ctx
@@ -3900,7 +3947,7 @@ impl KvTable {
                     .note(self.table_id, old_key.as_bytes());
             }
             self.store
-                .delete(old_key)
+                .delete_with_assertion(old_key, tidb_txnkv::AssertionOp::AssertExist)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
         if let Some(stats_ctx) = stats_ctx {
@@ -3909,7 +3956,7 @@ impl KvTable {
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .set(key, value)
+            .set_with_assertion(key, value, record_assertion)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         if let Some(stats_ctx) = stats_ctx {
             if old_physical_id == new_physical_id {
@@ -3981,7 +4028,7 @@ impl KvTable {
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .delete(key)
+            .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         Ok(())
     }
@@ -4021,7 +4068,7 @@ impl KvTable {
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .delete(key)
+            .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, -1, 1);

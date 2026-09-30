@@ -36,7 +36,7 @@ use tidb_tablecodec::{
     index_kv_is_unique, IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo,
     TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
 };
-use tidb_txnkv::Key;
+use tidb_txnkv::{AssertionOp, Key};
 
 use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
 use crate::storage::{StorageError, TableStorage};
@@ -85,15 +85,16 @@ impl UniquePointRead {
 
 impl KvTable {
     /// Record and unique-index writes share Go's Get/GetLocal duplicate check.
-    /// A local miss defers the assertion; a tombstone is an observed deletion
-    /// and adds no new assertion. Storage errors are never evidence of absence.
+    /// Returns whether a local miss deferred the absence check (Go setPresume /
+    /// lazyCheck). A tombstone is an observed deletion and sets no presumption.
+    /// Storage errors are never evidence of absence.
     pub(super) fn check_insert_key(
         &mut self,
         key: &Key,
         duplicate_value: &str,
         duplicate_key: &str,
         lazy: bool,
-    ) -> Result<(), KvTableError> {
+    ) -> Result<bool, KvTableError> {
         let value = if lazy {
             self.store.get_local(key)
         } else {
@@ -104,7 +105,7 @@ impl KvTable {
                 value: duplicate_value.to_owned(),
                 key: duplicate_key.to_owned(),
             }),
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(false),
             Err(StorageError::NotFound) => {
                 if lazy {
                     self.store.mark_presume_key_not_exists_with_hint(
@@ -113,7 +114,7 @@ impl KvTable {
                         duplicate_key,
                     );
                 }
-                Ok(())
+                Ok(lazy)
             }
             Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
         }
@@ -494,6 +495,7 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
         lazy_dup_check: bool,
+        pessimistic: bool,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
@@ -508,16 +510,23 @@ impl KvTable {
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, physical_id, zone)?;
             let key = Key::from_bytes(key);
-            if distinct {
+            let lazy_check = if distinct {
                 self.check_insert_key(
                     &key,
                     &duplicate_value_text(&self.index_values(index, row)),
                     &self.qualified_key(&index.name),
                     lazy_dup_check,
-                )?;
-            }
+                )?
+            } else {
+                lazy_dup_check
+            };
+            let assertion = if lazy_check && !pessimistic {
+                AssertionOp::AssertUnknown
+            } else {
+                AssertionOp::AssertNotExist
+            };
             self.store
-                .set(key, value)
+                .set_with_assertion(key, value, assertion)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
         Ok(())
@@ -543,7 +552,7 @@ impl KvTable {
             }
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
             self.store
-                .delete(Key::from_bytes(key))
+                .delete_with_assertion(Key::from_bytes(key), AssertionOp::AssertExist)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
         Ok(())
@@ -602,14 +611,14 @@ impl KvTable {
                         });
                     }
                     self.store
-                        .set(key, value)
+                        .set_with_assertion(key, value, AssertionOp::AssertNotExist)
                         .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
                     continue;
                 }
                 (true, false) => {
                     let (old_key, _) = self.index_key(index, old_row, handle, physical_id, zone)?;
                     self.store
-                        .delete(Key::from_bytes(old_key))
+                        .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
                         .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
                     continue;
                 }
@@ -655,7 +664,11 @@ impl KvTable {
                 // Same index key, different payload (a covering or appended
                 // column changed): overwrite the entry in place.
                 self.store
-                    .set(Key::from_bytes(new_key), new_value)
+                    .set_with_assertion(
+                        Key::from_bytes(new_key),
+                        new_value,
+                        AssertionOp::AssertExist,
+                    )
                     .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
                 continue;
             }
@@ -669,10 +682,10 @@ impl KvTable {
                 });
             }
             self.store
-                .delete(Key::from_bytes(old_key))
+                .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
             self.store
-                .set(key, value)
+                .set_with_assertion(key, value, AssertionOp::AssertNotExist)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
         Ok(())

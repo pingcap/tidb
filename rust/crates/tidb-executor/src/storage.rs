@@ -260,9 +260,30 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Writes one key, Go `kv.Mutator.Set`.
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError>;
 
+    /// Writes a value with the assertion selected by the table/index owner.
+    /// Transaction backends retain the first assertion for the buffered key;
+    /// stores without an MVCC commit boundary only need the value write.
+    fn set_with_assertion(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        _assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.set(key, value)
+    }
+
     /// Removes one key, Go `kv.Mutator.Delete`. Removing an absent key
     /// succeeds, as it does in Go.
     fn delete(&mut self, key: Key) -> Result<(), StorageError>;
+
+    /// Deletes a key with the table/index owner's existence assertion.
+    fn delete_with_assertion(
+        &mut self,
+        key: Key,
+        _assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.delete(key)
+    }
 
     /// Iterates `[start, upper_bound)` in key order, Go `kv.Retriever.Iter`.
     /// `None` is Go's `nil` unbounded end.

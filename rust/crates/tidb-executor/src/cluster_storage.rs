@@ -1074,6 +1074,27 @@ impl TableStorage for ClusterTableStorage {
         self.buffer.delete(key)
     }
 
+    fn set_with_assertion(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        self.buffer
+            .stage_owned_batch([(key, Some(value), false, assertion)])
+    }
+
+    fn delete_with_assertion(
+        &mut self,
+        key: Key,
+        assertion: tidb_txnkv::AssertionOp,
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        self.buffer
+            .stage_owned_batch([(key, None, false, assertion)])
+    }
+
     fn iter(
         &mut self,
         start: Option<&Key>,
@@ -1385,6 +1406,192 @@ impl StorageIterator for MergedIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_writes_preserve_go_assertions_through_the_native_buffer() {
+        use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        fn flags(buffer: &MutationBuffer, key: &Key) -> tikv_client::kv::KeyFlags {
+            buffer
+                .state()
+                .memdb
+                .read(|memdb| memdb.get_flags_readonly(key.as_bytes()).unwrap())
+        }
+        fn publish(buffer: &MutationBuffer, snapshot: &Mutex<MockSnapshot>) {
+            let mut snapshot = snapshot.lock().unwrap();
+            for key in buffer.staged_keys() {
+                match buffer.get(&key).unwrap() {
+                    Some(value) => {
+                        snapshot.data.insert(key.into_bytes(), value);
+                    }
+                    None => {
+                        snapshot.data.remove(key.as_bytes());
+                    }
+                }
+            }
+            buffer.reset();
+        }
+
+        for (lazy, pessimistic) in [(false, false), (false, true), (true, false), (true, true)] {
+            let (store, snapshot, buffer) = storage(&[]);
+            let mut table = KvTable::with_storage(
+                42,
+                vec![KvColumn {
+                    name: "a".to_owned(),
+                    id: 1,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                }],
+                Box::new(store),
+            );
+            for (id, unique) in [(1, true), (2, false)] {
+                table.add_index(
+                    KvIndex {
+                        id,
+                        name: format!("idx{id}"),
+                        comment: String::new(),
+                        unique,
+                        column_offsets: vec![0],
+                        prefix_lengths: vec![-1],
+                        visible: true,
+                        global: false,
+                        global_index_version: 0,
+                        clustered_primary: false,
+                    },
+                    false,
+                );
+            }
+            let ctx = crate::StmtContext::default().with_pessimistic_transaction(pessimistic);
+            let row = [Datum::Int(7)];
+            let handle = TableHandle::Int(1);
+            table
+                .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, lazy)
+                .unwrap();
+            let keys = buffer.staged_keys();
+            assert_eq!(keys.len(), 3);
+            for key in &keys {
+                let flag = flags(&buffer, key);
+                if lazy && !pessimistic {
+                    assert!(
+                        flag.has_assert_unknown(),
+                        "lazy optimistic key {key:?}: {flag:?}"
+                    );
+                } else {
+                    assert!(
+                        flag.has_assert_not_exist(),
+                        "eager/pessimistic key {key:?}: {flag:?}"
+                    );
+                }
+            }
+
+            let checkpoint = buffer.checkpoint();
+            table
+                .delete_row_with_old_context(&handle, &row, &ctx)
+                .unwrap();
+            for key in &keys {
+                let flag = flags(&buffer, key);
+                assert_eq!(buffer.get(key), Some(None));
+                assert_eq!(flag.has_assert_unknown(), lazy && !pessimistic);
+                assert_eq!(flag.has_assert_not_exist(), !(lazy && !pessimistic));
+            }
+            buffer.restore(checkpoint);
+            buffer.release(checkpoint);
+            for key in &keys {
+                assert!(buffer.get(key).unwrap().is_some());
+            }
+            publish(&buffer, &snapshot);
+
+            let updated = [Datum::Int(8)];
+            table
+                .update_row_with_old_context(&handle, Some(&row), &updated, &ctx)
+                .unwrap();
+            assert_eq!(buffer.staged_keys().len(), 5);
+            for key in buffer.staged_keys() {
+                let flag = flags(&buffer, &key);
+                if keys.contains(&key) {
+                    assert!(
+                        flag.has_assert_exist(),
+                        "updated/deleted key {key:?}: {flag:?}"
+                    );
+                } else {
+                    assert!(
+                        flag.has_assert_not_exist(),
+                        "new index key {key:?}: {flag:?}"
+                    );
+                }
+            }
+            publish(&buffer, &snapshot);
+            table
+                .delete_row_with_context(&handle, &ctx)
+                .unwrap();
+            assert_eq!(buffer.staged_keys().len(), 3);
+            for key in buffer.staged_keys() {
+                assert!(flags(&buffer, &key).has_assert_exist());
+                assert_eq!(buffer.get(&key), Some(None));
+            }
+            // A reinsert over a local deletion retains the first assertion.
+            table
+                .insert_row_with_row_id_checked(&updated, Some(1), 0, &ctx, true)
+                .unwrap();
+            for key in buffer.staged_keys() {
+                assert!(flags(&buffer, &key).has_assert_exist());
+                assert!(!flags(&buffer, &key).has_presume_key_not_exists());
+            }
+
+            // A local tombstone with no prior assertion is different from a
+            // local miss. Unique keys use NotExist even for a lazy insert.
+            let non_unique = table.index_list_for_check().remove(1);
+            let non_unique_key = Key::from_bytes(
+                table
+                    .index_key_for_check(&non_unique, &updated, &handle, &ctx.session_zone())
+                    .unwrap()
+                    .0,
+            );
+            let keys = buffer.staged_keys();
+            buffer.reset();
+            for key in keys {
+                buffer.delete(key).unwrap();
+            }
+            table
+                .insert_row_with_row_id_checked(&updated, Some(1), 0, &ctx, true)
+                .unwrap();
+            for key in buffer.staged_keys() {
+                let flag = flags(&buffer, &key);
+                if key == non_unique_key && !pessimistic {
+                    assert!(flag.has_assert_unknown());
+                } else {
+                    assert!(flag.has_assert_not_exist());
+                }
+                assert!(!flag.has_presume_key_not_exists());
+            }
+
+            // Moving a clustered handle deletes existing keys and inserts
+            // new keys; it cannot assert existence for the new record key.
+            buffer.reset();
+            snapshot.lock().unwrap().data.clear();
+            table.set_pk_handle_offset(0);
+            table
+                .insert_row_with_row_id_checked(&row, None, 0, &ctx, false)
+                .unwrap();
+            publish(&buffer, &snapshot);
+            table
+                .update_row_with_old_context(&TableHandle::Int(7), Some(&row), &updated, &ctx)
+                .unwrap();
+            assert_eq!(buffer.staged_keys().len(), 6);
+            for key in buffer.staged_keys() {
+                if buffer.get(&key).unwrap().is_none() {
+                    assert!(flags(&buffer, &key).has_assert_exist());
+                } else {
+                    assert!(flags(&buffer, &key).has_assert_not_exist());
+                }
+            }
+        }
+    }
 
     #[test]
     fn statement_locks_inspect_native_writes_even_when_values_are_equal() {
