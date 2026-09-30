@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -76,7 +75,6 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
-	serviceClient atomic.Pointer[dumpservice.Client]
 	status        atomic.Pointer[DumpStatus]
 }
 

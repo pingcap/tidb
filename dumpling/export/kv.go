@@ -495,11 +495,7 @@ func (d *Dumper) dumpFromService() error {
 	if err != nil {
 		return err
 	}
-	d.serviceClient.Store(client)
-	defer func() {
-		d.serviceClient.Store(nil)
-		client.Close()
-	}()
+	defer client.Close()
 	return d.dumpFromScanner(client)
 }
 

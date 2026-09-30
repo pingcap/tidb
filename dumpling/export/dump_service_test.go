@@ -22,7 +22,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -56,7 +55,6 @@ func TestDumpServiceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, dumper.Close()) })
 	require.NoError(t, dumper.Dump())
-	require.Nil(t, dumper.serviceClient.Load())
 	info, err := os.Stat(socketPath)
 	require.NoError(t, err)
 	require.NotZero(t, info.Mode()&os.ModeSocket)
@@ -331,28 +329,4 @@ type testHexRange struct {
 
 type testShardsResponse struct {
 	Ranges []testHexRange `json:"ranges"`
-}
-
-func TestDumpServiceMetrics(t *testing.T) {
-	socketPath := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/metrics" {
-			http.Error(writer, "unexpected request", http.StatusBadRequest)
-			return
-		}
-		_, _ = io.WriteString(writer, "dump_service_scanned_ranges_total 3\n")
-	}))
-	client, err := dumpservice.NewClient((&url.URL{Scheme: "unix", Path: socketPath}).String())
-	require.NoError(t, err)
-	t.Cleanup(client.Close)
-	recorder := httptest.NewRecorder()
-	owner := &Dumper{}
-	owner.serviceClient.Store(client)
-	metricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "dump_service_scanned_ranges_total 3\n")
-	owner.serviceClient.Store(nil)
-	recorder = httptest.NewRecorder()
-	metricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NotContains(t, recorder.Body.String(), "dump_service_scanned_ranges_total")
 }

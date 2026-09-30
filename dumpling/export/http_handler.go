@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/soheilhy/cmux"
 )
 
@@ -74,9 +73,6 @@ func metricsHandler(d *Dumper) http.Handler {
 			gatherer = configured
 		}
 	}
-	if d != nil {
-		gatherer = prometheus.Gatherers{gatherer, dumpServiceMetricsGatherer{owner: d}}
-	}
 	return promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})
 }
 
@@ -105,16 +101,4 @@ func isErrNetClosing(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), useOfClosedErrMsg)
-}
-
-type dumpServiceMetricsGatherer struct {
-	owner *Dumper
-}
-
-func (g dumpServiceMetricsGatherer) Gather() ([]*dto.MetricFamily, error) {
-	client := g.owner.serviceClient.Load()
-	if client == nil {
-		return nil, nil
-	}
-	return client.Gather()
 }

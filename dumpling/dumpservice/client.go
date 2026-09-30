@@ -23,24 +23,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
-	dto "github.com/prometheus/client_model/go"
-	"github.com/prometheus/common/expfmt"
 	"golang.org/x/net/http2"
 )
 
 const (
 	dataURL                  = "http://dump-service/data"
 	shardsURL                = "http://dump-service/shards"
-	metricsURL               = "http://dump-service/metrics"
 	dumperScanStatusTrailer  = "x-dumper-scan-status"
 	dumperScanErrorTrailer   = "x-dumper-scan-error"
 	dumperScanStatusComplete = "complete"
@@ -209,26 +204,6 @@ func decodeShardRanges(
 		)
 	}
 	return ranges, nil
-}
-
-// Gather retrieves Prometheus metric families from the service.
-// It implements prometheus.Gatherer and does not impose a request deadline.
-func (c *Client) Gather() ([]*dto.MetricFamily, error) {
-	response, err := c.httpClient.Get(metricsURL)
-	if err != nil {
-		return nil, errors.Annotate(err, "request dump service metrics")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-		return nil, errors.Errorf("dump service metrics returned %s: %s", response.Status, strings.TrimSpace(string(detail)))
-	}
-	parser := expfmt.TextParser{}
-	families, err := parser.TextToMetricFamilies(response.Body)
-	if err != nil {
-		return nil, errors.Annotate(err, "parse dump service metrics")
-	}
-	return slices.Collect(maps.Values(families)), nil
 }
 
 // Close releases idle connections. It does not cancel active requests or stop the service.

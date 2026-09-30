@@ -233,20 +233,6 @@ func TestKVProtocolRows(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, err = scan.ReadRow(nil, nil)
 	require.EqualError(t, err, "dump service scan ended without a completion trailer")
-	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodGet, request.Method)
-		require.Equal(t, metricsURL, request.URL.String())
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/plain; version=0.0.4"}},
-			Body:       io.NopCloser(strings.NewReader("dump_service_scanned_ranges_total 3\n")),
-		}, nil
-	})
-	families, err := client.Gather()
-	require.NoError(t, err)
-	require.Len(t, families, 1)
-	require.Equal(t, "dump_service_scanned_ranges_total", families[0].GetName())
-	require.Equal(t, float64(3), families[0].GetMetric()[0].GetUntyped().GetValue())
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

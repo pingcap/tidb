@@ -20,7 +20,7 @@
 // runs with --dump-service unix:///path/to/socket; you own the service and the
 // socket's lifecycle. Restrict socket access to trusted clients.
 //
-// Implement the three endpoints below and accept concurrent requests on a shared
+// Implement the two endpoints below and accept concurrent requests on a shared
 // connection. How you serialize or schedule the work is up to you. Snapshot
 // selection and scan concurrency are configured outside this protocol.
 //
@@ -37,7 +37,7 @@
 // snapshot is unavailable.
 //
 // These guarantees cover logical contents only. Serialization and scan order may
-// vary, and metrics may change between requests.
+// vary.
 //
 // # Key and value contents
 //
@@ -131,9 +131,4 @@
 // percent escapes are bytes. In a Go HTTP handler, declare both trailer names in
 // the Trailer header before writing the body, then set them once scanning
 // finishes. EOF with no completion trailer is an error.
-//
-// # GET /metrics
-//
-// Return HTTP 200 with Prometheus text exposition; metric names are yours to
-// choose. Dumpling gathers and forwards these metrics while an export is active.
 package dumpservice
