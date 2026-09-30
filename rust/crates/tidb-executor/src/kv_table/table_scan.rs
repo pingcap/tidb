@@ -585,6 +585,43 @@ impl KvTable {
         read_engine: crate::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
+        self.pushdown_row_cursor_with_context_and_key_ranges(
+            keep,
+            predicates,
+            output_offsets,
+            topn,
+            limit,
+            handle_ranges,
+            range_hints,
+            descending,
+            keep_order,
+            retain_identity,
+            context,
+            statement,
+            read_engine,
+            schema_version,
+            None,
+        )
+    }
+
+    fn pushdown_row_cursor_with_context_and_key_ranges(
+        &mut self,
+        keep: &[usize],
+        predicates: &[ScanPredicate],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        range_hints: Option<&[usize]>,
+        descending: bool,
+        keep_order: bool,
+        retain_identity: bool,
+        context: &RowDecodeContext,
+        statement: &PushdownStatementContext,
+        read_engine: crate::remote_scan::PushdownReadEngine,
+        schema_version: u64,
+        precomputed_ranges: Option<&[(Key, Key)]>,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets.is_empty();
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
         if common_handle && common_primary.is_none() {
@@ -612,7 +649,9 @@ impl KvTable {
         // pair); every shape without a straddle is one group and takes the
         // single-request path unchanged. An UNORDERED read keeps Go's merged
         // ascending wire order from [`Self::record_key_ranges].
-        let groups = if keep_order || descending {
+        let groups = if let Some(ranges) = precomputed_ranges {
+            vec![ranges.to_vec()]
+        } else if keep_order || descending {
             self.record_key_range_groups(handle_ranges, context.zone(), descending)?
         } else {
             vec![self.record_key_ranges(handle_ranges, context.zone(), false)?]
@@ -1096,7 +1135,8 @@ impl KvTable {
         else {
             return Ok(None);
         };
-        let (ranges, range_hints) = Self::table_reader_handle_ranges(handles)?;
+        let (key_ranges, range_hints) =
+            Self::table_reader_handle_key_ranges(self.table_id, handles)?;
         let context = RowDecodeContext::legacy_default(zone);
         let materialization = if keep
             .iter()
@@ -1114,7 +1154,7 @@ impl KvTable {
         let physical_predicates = materialization
             .as_ref()
             .map(|projection| projection.remap_predicates(&keep, &predicates));
-        let Some(cursor) = self.pushdown_row_cursor_with_context(
+        let Some(cursor) = self.pushdown_row_cursor_with_context_and_key_ranges(
             materialization
                 .as_ref()
                 .map_or(keep.as_slice(), |projection| projection.offsets.as_slice()),
@@ -1122,7 +1162,7 @@ impl KvTable {
             None,
             None,
             None,
-            Some(&ranges),
+            None,
             Some(&range_hints),
             false,
             false,
@@ -1131,6 +1171,7 @@ impl KvTable {
             statement,
             crate::remote_scan::PushdownReadEngine::TiKv,
             0,
+            Some(&key_ranges),
         )?
         else {
             return Ok(None);
@@ -1207,6 +1248,32 @@ impl KvTable {
             }
         }
         Ok((ranges, hints))
+    }
+
+    /// Converts integer handles using the direct KV range builder shared with
+    /// Go's RequestBuilder.SetTableHandles, avoiding an IndexRange round trip.
+    fn table_reader_handle_key_ranges(
+        table_id: i64,
+        handles: &[TableHandle],
+    ) -> Result<(Vec<(Key, Key)>, Vec<usize>), KvTableError> {
+        let mut typed = handles
+            .iter()
+            .map(|handle| match handle {
+                TableHandle::Int(value) => Ok(tidb_txnkv::IntHandle::new(*value).into()),
+                TableHandle::Common(_) => Err(KvTableError::Encode(
+                    "table reader handle ranges require integer handles".to_owned(),
+                )),
+            })
+            .collect::<Result<Vec<tidb_txnkv::Handle>, KvTableError>>()?;
+        typed.sort_unstable_by_key(|handle| handle.int_value().expect("integer handle"));
+        let (ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(table_id, &typed);
+        Ok((
+            ranges
+                .into_iter()
+                .map(|range| (range.start_key, range.end_key))
+                .collect(),
+            hints,
+        ))
     }
 
     /// Drains a staged handle lookup and pairs each returned row back to the
