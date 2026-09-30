@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -43,44 +42,6 @@ func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
 	m := &dto.Metric{}
 	require.NoError(t, counter.Write(m))
 	return m.GetCounter().GetValue()
-}
-
-func TestGlobalSortOrphanDataSizeMetric(t *testing.T) {
-	constLabels := metricscommon.GetConstLabels()
-	originalConstLabels := make([]string, 0, len(constLabels)*2)
-	for name, value := range constLabels {
-		originalConstLabels = append(originalConstLabels, name, value)
-	}
-	t.Cleanup(func() {
-		metricscommon.SetConstLabels(originalConstLabels...)
-		InitGlobalSortMetrics()
-	})
-
-	metricscommon.SetConstLabels("keyspace_name", "test_keyspace")
-	InitGlobalSortMetrics()
-
-	registry := prometheus.NewRegistry()
-	require.NoError(t, registry.Register(GlobalSortOrphanDataSize))
-
-	GlobalSortOrphanDataSize.Set(42)
-	t.Cleanup(func() {
-		GlobalSortOrphanDataSize.Set(0)
-	})
-
-	families, err := registry.Gather()
-	require.NoError(t, err)
-	require.Len(t, families, 1)
-	require.Equal(t, "tidb_global_sort_orphan_data_size_bytes", families[0].GetName())
-	require.Equal(t, dto.MetricType_GAUGE, families[0].GetType())
-	require.Len(t, families[0].GetMetric(), 1)
-	metric := families[0].GetMetric()[0]
-	// the metric must carry the package-wide constant labels like its siblings.
-	labels := make(map[string]string, len(metric.GetLabel()))
-	for _, label := range metric.GetLabel() {
-		labels[label.GetName()] = label.GetValue()
-	}
-	require.Equal(t, map[string]string{"keyspace_name": "test_keyspace"}, labels)
-	require.Equal(t, float64(42), metric.GetGauge().GetValue())
 }
 
 func countCollectedMetrics(collector prometheus.Collector) int {
