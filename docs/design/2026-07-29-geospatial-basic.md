@@ -76,13 +76,12 @@ where geospatial data is used in various places.
 Geospatial support is one of the most requested TiDB features: [tracking issue #6347](https://github.com/pingcap/tidb/issues/6347)
 carries `feature/accepted` and ranks among the top open issues by reactions. The dominant workload
 is storing a location per row and answering "what is near me", "which region contains this
-point", or "what overlaps this box". Bike-share, ride-hailing, parcel delivery and asset
-tracking all reduce to points plus proximity and geofence queries.
+point", or "what overlaps this box".
 
 TiDB has none of it today: only the `mysql.TypeGeometry` constant exists
 (`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions, so
 users encode geometry into scalar columns by hand and compute distances in the
-application. This design covers the basic layer only.
+application.
 
 ## Terminology
 
@@ -98,8 +97,8 @@ application. This design covers the basic layer only.
 | [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | World Geodetic System 1984, the datum and reference ellipsoid used by GPS, whose geographic coordinate system is EPSG:4326. |
 | Reference surface | What a measurement or an edge is drawn on: the flat *plane*, a *sphere* of one constant radius, or the oblate WGS 84 *ellipsoid*. SRS class decides whether it is the plane or a curved surface; the function decides which curved surface. See [SRID model](#srid-model). |
 | Geodesic | The shortest path along a curved reference surface, and equivalently the path that never turns sideways: whatever bending it does is forced on it by the surface, so it is the shape a string stretched between its two ends on that surface would take. Always along the surface, never the straight chord through the interior. |
-| Great circle | The geodesic of a *sphere*, and the constructive way to say it: where a plane through the two endpoints and the centre cuts the surface. The contrast that matters here is that a great circle lies in a plane and an ellipsoidal geodesic in general lies in no plane, so the two are different curves rather than the same curve computed to different precision. A plane through the centre of an ellipsoid cuts it in a central ellipse, which is a third curve again and is what neither engine uses. |
-| Andoyer | The spherical law of cosines with a first-order flattening correction, approximating the ellipsoidal geodesic without iterating. MySQL uses it for every ellipsoidal computation, measurement and predicate alike; see [Function set](#function-set). |
+| Great circle | The geodesic of a *sphere*, and the constructive way to say it: where a plane through the two endpoints and the centre cuts the surface. The contrast that matters here is that a great circle lies in a plane and an ellipsoidal geodesic in general lies in no plane, so the two are different curves rather than the same curve computed to different precision. A plane through the centre of an ellipsoid cuts it in a central ellipse, which is a third curve again. |
+| Andoyer | The spherical law of cosines with a first-order flattening correction, approximating the ellipsoidal geodesic without iterating. MySQL uses it for every ellipsoidal computation, measurement and predicate alike; see [SRID model](#srid-model). |
 | [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates. |
 | [GeoJSON](https://datatracker.ietf.org/doc/html/rfc7946) | JSON geometry encoding (RFC 7946), the third I/O format. |
 | MBR | Minimum Bounding Rectangle; basis of MySQL's `MBR*` predicates (deferred). |
@@ -121,8 +120,8 @@ deliberately asymmetric:
 So a stored value can exist that no MySQL `ST_As*` function can express. Reading it back
 needs `ST_AsEWKB`, and no v1 function interprets its coordinates.
 
-MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
-against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
+MySQL behaviors and measurements below were verified against running MySQL 8.4.6 and
+9.7.2. The proof of concept is [PR #69475](https://github.com/pingcap/tidb/pull/69475).
 
 ### Types and storage
 
@@ -142,7 +141,7 @@ Stored value:
 PostGIS and GEOS: standard WKB whose 32-bit type word carries three high-bit flags,
 `0x80000000` for Z, `0x40000000` for M, and `0x20000000` meaning a `u32` SRID follows the
 type word on the outermost geometry. Chosen because it expresses everything stored here,
-and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
+and because below its header a 2D value is plain OGC WKB.
 
 | Rule | |
 | --- | --- |
@@ -199,18 +198,13 @@ assume MySQL's, and bare output could do something better than erroring, so long
 neither silent truncation nor a format the input side will not take back.
 
 **Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
-`max_allowed_packet` can nest millions deep. MySQL guards this pre-emptively: on 9.7.2 with
-the default 1 MiB `thread_stack` a too-deep value returns `ERROR 1436 "Thread stack
-overrun"`, a clean session error, and the server stays up. The depth where it trips differs
-per path and scales with `thread_stack`: `ST_GeomFromText` accepts 4235 levels,
-`ST_GeomFromWKB` 7059, a spatial function reading a stored value 7062, and a bare literal
-into a `GEOMETRY` column 10578. That last gap is a hazard MySQL leaves open: it stores a
-geometry too deeply nested for any `ST_*` function to read back, because the insert path
-validates with less stack than the read path uses. TiDB bounds depth explicitly, since
-Go's stack overflow is a fatal, unrecoverable crash rather than MySQL's catchable guard, so
-the bound is what turns a crash into an error. It applies one bound across ingest and read,
-above real data and below MySQL's storage limit, so unlike MySQL it never persists a value
-it cannot read.
+`max_allowed_packet` can nest millions deep. MySQL returns
+`ERROR 1436 "Thread stack overrun"` for a value too deep, at a depth that varies by path:
+on 9.7.2 with the default 1 MiB `thread_stack`, 4,235 levels through `ST_GeomFromText` and
+10,578 through a bare literal, while `ST_*` functions read only 7,062, so MySQL stores
+values it cannot read back. TiDB bounds depth explicitly, since a Go stack overflow is a
+fatal crash, and applies one bound across ingest and read, above real data and below
+MySQL's storage limit, so it never persists a value it cannot read.
 
 **Size.** An XY vertex is 16 bytes and compresses poorly, 24 with Z or M and 32 with both.
 This design adds no point-count cap, since TiDB's entry size limit already bounds a stored
@@ -263,10 +257,8 @@ is Andoyer throughout, so:
 > `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every pair of
 > geometry types, and likewise for its negation `ST_Disjoint`.
 
-Not the boundary-sensitive predicates, which keep their DE-9IM definitions: a point on a
-polygon's boundary is at distance zero and correctly not `ST_Within`, under any single edge
-model. Mixing surfaces breaks something else, that the same point measured to the same
-polygon is distance zero on one and metres away on the other.
+The boundary-sensitive predicates keep their DE-9IM definitions: a point on a polygon's
+boundary is at distance zero and correctly not `ST_Within`.
 
 **That model is Andoyer, and v1 takes only point operands.** Everywhere else v1 answers as
 MySQL does or not at all; predicates would otherwise be the one surface shipping a
@@ -297,6 +289,17 @@ lever is the operand type rather than the surface. The measurements behind this 
 Everything on SRID 0 is planar throughout, with no operand restriction: the plane needs no
 edge model. Every MySQL cell above is measured against a running engine rather than taken
 from documentation.
+
+**The metric is Andoyer, as in MySQL, not the exact geodesic.** It matches MySQL to about
+10 cm, MySQL's own resolution at short range, and inherits MySQL's error against the exact
+geodesic on purpose, since a more accurate library would be off from MySQL by exactly this
+much:
+
+| Separation | MySQL minus an exact geodesic |
+| --- | --- |
+| 10 km | 9.9 cm |
+| 9,810 km | -7.9 m |
+| near-antipodal | +5,973 m |
 
 **The alternatives, and why not.**
 
@@ -355,13 +358,12 @@ until a later milestone adds it.
   `options` 1 to 4, where 1 rejects coordinate dimensions above 2 and is the default and
   2, 3 and 4 strip them. TiDB extends the range with two values MySQL rejects:
 
-  | `options` | Coordinates | Anything else |
+  | `options` | Third element | Fourth and later |
   | --- | --- | --- |
-  | 5 | keep whatever the stored format holds, so a third element becomes Z | error |
-  | 6 | the same | ignore |
+  | 5 | kept as Z | error |
+  | 6 | kept as Z | dropped |
 
-  Both ignore what MySQL ignores. The difference is a position with more than three
-  elements, which RFC 7946 leaves undefined: 5 errors on it, 6 drops it.
+  Everything else follows MySQL.
 
   `ST_AsGeoJSON(g [, digits [, flags]])` takes MySQL's two: `digits` rounds the
   coordinates, defaulting to full precision and rejecting a negative value, and `flags` is
@@ -370,7 +372,7 @@ until a later milestone adds it.
   is an error. The `bbox` is emitted in output axis order, so it is longitude-first on
   4326 like the coordinates beside it.
 - **MySQL-specific constructors:** the full set of
-  [functions that create geometry values](https://dev.mysql.com/doc/refman/8.0/en/gis-mysql-specific-functions.html):
+  [functions that create geometry values](https://dev.mysql.com/doc/refman/8.4/en/gis-mysql-specific-functions.html):
   `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`, `MultiPolygon`,
   `GeometryCollection` and its synonym `GeomCollection`, which MySQL documents as the
   preferred spelling.
@@ -382,9 +384,8 @@ until a later milestone adds it.
   `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Dimension`, `ST_Envelope`,
   `ST_IsEmpty`, `ST_IsValid`, `ST_StartPoint`, `ST_EndPoint`, `ST_PointN`, `ST_NumPoints`,
   `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`. `ST_Centroid` and `ST_Envelope`
-  are Cartesian-only, as in MySQL, which raises `ERROR 3618` for both on 4326. So MySQL
-  exposes no geodesic envelope at all, though its own R-tree computes one internally.
-  On 4326, `ST_IsValid` raises `ERROR 3618` for polygonal input, which needs the segment
+  are Cartesian-only, as in MySQL, which raises `ERROR 3618` for both on 4326. On 4326,
+  `ST_IsValid` raises `ERROR 3618` for polygonal input, which needs the segment
   intersection v1 defers ([Future extensions](#future-extensions)).
 - **Measurement:** `ST_Length(ls)`, `ST_Distance(g1, g2)`, which on 4326 takes only point
   operands and raises `ERROR 3618` otherwise, and
@@ -416,33 +417,6 @@ again on the way back in. The constructor row is why `ST_SRID(Point(30, 50), 432
 `ST_GeomFromText('POINT(30 50)', 4326)` are different points: the SRS is applied where the
 coordinates are parsed, and `ST_SRID` only writes metadata.
 
-A later milestone covers the geometry-processing tail (`ST_Buffer`, `ST_Union`,
-`ST_Intersection`, ...), the typed I/O aliases, the `MBR*` family, geohash, the niche
-accessors.
-
-**Match MySQL's answer, not the exact geodesic.** Every ellipsoidal computation in MySQL
-9.7 uses one formula, Boost.Geometry's `strategy::andoyer`, for measurement and predicates
-alike. It is the spherical law of cosines plus a first-order flattening term, so it is not
-the exact geodesic:
-
-| Separation | MySQL minus an exact geodesic |
-| --- | --- |
-| 10 km | 9.9 cm |
-| 9,810 km | -7.9 m |
-| near-antipodal | +5,973 m |
-
-v1 uses Andoyer as its metric and inherits those errors on purpose. A more accurate library
-would be off from MySQL by exactly those amounts, so for the metric, being more accurate
-makes us less compatible and costs more than Andoyer's closed form does.
-
-Semantics match MySQL, with these 4326 specifics:
-
-- On 4326, `ST_Distance`/`ST_Length` are ellipsoidal (Andoyer, matching MySQL to about
-  10 cm, MySQL's own resolution at short range); `ST_Distance_Sphere` is the great-circle
-  variant.
-- On SRID 0 the predicates come from `simplefeatures`. On 4326 they are built over
-  Andoyer edges, since no Go library supplies them; see [Reference surface](#srid-model).
-
 **GeoJSON.** Every RFC 7946 geometry is supported. The container and annotation members
 follow MySQL, verified on 8.4.6 and 9.7.2:
 
@@ -453,8 +427,7 @@ follow MySQL, verified on 8.4.6 and 9.7.2:
 | `"geometry": null` | SQL `NULL` |
 | `properties`, `id`, `bbox`, foreign members | ignored, and not validated: MySQL accepts a `bbox` that is the wrong arity, contradicts the geometry, or is not even an array |
 | named `crs` URN | sets the SRID (`urn:ogc:def:crs:OGC:1.3:CRS84` is 4326, link-object CRSs are not accepted, and a nested `crs` naming a different SRID errors); absent, the SRID is 4326 |
-| position with a third coordinate | rejected under the default `options` 1 with `ERROR 3073`, stripped under 2, 3 and 4, kept as Z under TiDB's 5 and 6 |
-| position with more than three coordinates | as above, except TiDB's 5 errors and 6 drops the extras |
+| position with a third or later coordinate | rejected under the default `options` 1 with `ERROR 3073`, stripped under 2, 3 and 4; TiDB's 5 and 6 are in the options table above |
 | unknown `type`, or a required member missing | `ERROR 3072`, and `ERROR 3070` naming the member |
 
 Round-trips are not idempotent: a FeatureCollection returns from `ST_AsGeoJSON` as a
@@ -567,14 +540,9 @@ Out of scope here, each with a home:
   in MySQL that matter once projected SRSs with varied units exist. The `unit` argument on
   `ST_Distance` and `ST_Length` is deferred with it, since that catalog defines the names
   it accepts; v1 has the two-argument forms and returns metres on 4326.
-- **Where the per-SRS attributes come from.** MySQL's six columns do not expose the class,
-  axis order, bounds, unit or ellipsoid; those live inside the WKT `DEFINITION`, which MySQL
-  parses at runtime. The ellipsoid is load-bearing beyond measurement: `ST_Distance_Sphere`
-  derives its default radius from it, so the catalog work has to surface `a` and `b`, not
-  just store the definition string. The full-catalog work chooses between a WKT SRS parser, which
-  `CREATE SPATIAL REFERENCE SYSTEM` needs anyway, and internal parsed metadata. Neither
-  widens this table: extra columns belong in a TiDB-specific companion, expressed as WKT2
-  (ISO 19162) or PROJJSON.
+- **Where the per-SRS attributes come from.** MySQL keeps the class, axis order, bounds,
+  unit and ellipsoid inside each row's WKT `DEFINITION`; the full-catalog work decides how
+  TiDB surfaces them.
 - **`ST_SwapXY`**, which swaps a geometry's coordinates in place. The `axis-order` option
   covers the read and write direction in v1; this is the geometry-mutating variant.
 - **3D / measured (Z/M) geometry**: stored and returned unchanged through the EWKB pair;
@@ -629,12 +597,11 @@ decision were quietly undone.
   form for it. A value whose only extension is its SRID round-trips on the bare path
   byte-for-byte instead, with no axis conversion applied, which is the case replication and
   dump depend on. Functions that interpret coordinates error on both.
-- **Parsing is bounded, and bounded equally.** WKB nested past the depth the parser bounds,
-  truncated and over-long inputs in each format, and a fuzz target over the WKT, WKB and
-  GeoJSON parsers. The bar is a clean error, never a panic, since Go's stack overflow is
-  unrecoverable where MySQL's `ERROR 1436` guard is not. One case pins the read and ingest
-  bounds as equal, a value that ingests must read back, so TiDB does not repeat MySQL's
-  store-but-unreadable gap.
+- **Parsing is bounded, and bounded equally.** WKB nested past the depth the parser
+  bounds, truncated and over-long inputs in each format, and a fuzz target over the WKT,
+  WKB and GeoJSON parsers. The bar is a clean error, never a panic. One case pins the read
+  and ingest bounds as equal, a value that ingests must read back, so TiDB does not repeat
+  MySQL's store-but-unreadable gap.
 - **The format version is checked.** Version 1 decodes; an unknown or zero version byte is
   rejected with a clear error rather than misparsed. Big-endian input is stored
   little-endian, equal to the same geometry given little-endian.
@@ -642,9 +609,9 @@ decision were quietly undone.
   both SRIDs, an explicit radius scales the result and a zero or negative one errors; the
   constructors are longitude-first where WKT at 4326 is latitude-first; `axis-order` swaps
   at 4326, is inert at SRID 0, and rejects a bad value with `ERROR 3559`.
-- **GeoJSON.** The options table above, each row matched against MySQL 8.4 and 9.7, plus
-  `options` 5 and 6 keeping a Z position and differing on a fourth element, and
-  `ST_AsGeoJSON`'s `digits` rounding and each `flags` bit, byte-compared to MySQL.
+- **GeoJSON.** The GeoJSON input table above, each row matched against MySQL 8.4 and 9.7,
+  `options` 5 and 6 as specified, and `ST_AsGeoJSON`'s `digits` rounding and each `flags`
+  bit, byte-compared to MySQL.
 - Routine coverage beyond these: I/O round-trips per subtype and format, accessor and
   measurement values against MySQL, the function aliases, SRID validation on every ingest
   path, the catalog rows, the DDL matrix in [Compatibility](#compatibility), and geometry
@@ -798,11 +765,9 @@ All are additive for users, since they only make queries that were rejected star
 answering, and none needs a format change. Karney's intersection and point-to-line work
 supplies the algorithms.
 
-`ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth adding
-once the spatial index lands: they are index-eligible region predicates
-(`Covers ⊇ Contains`, `CoveredBy ⊇ Within`, so a covering-cell prefilter has no false
-negatives). Other functions outside MySQL's set follow the same rule, added only if
-index-supported or by demand.
+`ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth
+adding once the spatial index lands. Other functions outside MySQL's set follow the same
+rule, added only if index-supported or by demand.
 
 A `GEOGRAPHY` type is a further extension, covered in
 [the appendix](#appendix-postgis-delta-for-the-type-layer). The function tail, the `MBR*`
@@ -898,7 +863,7 @@ becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the 
 
 | Area | PostGIS | This design |
 | --- | --- | --- |
-| Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [Function set](#function-set)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
+| Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [SRID model](#srid-model)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
 | Edge model | Great circle on a sphere for all `geography` topology, so both the predicates and the edges `ST_Distance` measures to are spherical | Andoyer, matching MySQL, which puts TiDB further from PostGIS: the boundaries are 7,797 m apart along the meridian on a continental polygon, enough to flip `ST_Intersects` on the same point. This is the larger of the two deltas, against centimetres for the metric |
 | Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#srid-model)). `ST_Distance` takes only point operands. SRID 0 is unrestricted |
 | Axis order | Longitude first everywhere | Stored longitude first, as PostGIS; WKT, WKB and `ST_X`/`ST_Y` latitude first on a geographic SRS, as MySQL |
