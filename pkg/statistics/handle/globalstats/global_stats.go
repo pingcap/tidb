@@ -334,7 +334,6 @@ func blockingMergePartitionStats2GlobalStats(
 			isIndex,
 		)
 		allTopN[i] = nil // Release for GC.
-		allHg[i] = nil   // Release for GC.
 		if err != nil {
 			return
 		}
@@ -342,10 +341,27 @@ func blockingMergePartitionStats2GlobalStats(
 		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
+			if statistics.UniqueByDefinition(globalTableInfo, isIndex, histIDs[i]) {
+				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
+			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
+		allHg[i] = nil // Release for GC.
 	}
 	return
+}
+
+// uniqueGlobalNDV returns the NDV of a column or index whose non-NULL values
+// the schema keeps distinct. They never repeat across partitions either, so
+// the partition NDVs add up exactly, while the merged FMSketch estimates them.
+func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 {
+	var ndv int64
+	for _, hg := range partitionHists {
+		if hg != nil {
+			ndv += hg.NDV
+		}
+	}
+	return min(ndv, count)
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage

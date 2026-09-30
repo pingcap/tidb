@@ -640,6 +640,31 @@ func SubTestBuild() func(*testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, col.Len())
 		require.Equal(t, col.GetUpper(0), col.GetLower(0))
+
+		// Stats take the row count as the NDV of an integer handle, the column
+		// of a single-column unique index, and a unique index, but a
+		// multi-column index with a nullable column may repeat its tuples.
+		handle := &model.ColumnInfo{ID: 1, Offset: 0}
+		handle.AddFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+		notNull := &model.ColumnInfo{ID: 3, Offset: 2}
+		notNull.AddFlag(mysql.NotNullFlag)
+		tblInfo := &model.TableInfo{PKIsHandle: true, Columns: []*model.ColumnInfo{handle, {ID: 2, Offset: 1}, notNull}}
+		for i, cols := range [][]*model.IndexColumn{
+			{{Offset: 1, Length: types.UnspecifiedLength}},
+			{{Offset: 2, Length: 4}},
+			{{Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+			{{Offset: 0, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		} {
+			tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{ID: int64(i + 1), Unique: true, State: model.StatePublic, Columns: cols})
+		}
+		for _, want := range []struct {
+			isIndex bool
+			id      int64
+			unique  bool
+		}{{false, 1, true}, {false, 2, true}, {false, 3, false}, {false, model.ExtraHandleID, false},
+			{true, 1, true}, {true, 2, true}, {true, 3, false}, {true, 4, true}, {true, 5, false}} {
+			require.Equal(t, want.unique, UniqueByDefinition(tblInfo, want.isIndex, want.id), "%+v", want)
+		}
 	}
 }
 
