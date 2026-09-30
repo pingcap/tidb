@@ -217,17 +217,13 @@ impl Session {
         // fold-time warnings for the NEXT statement's drain to mis-attribute.
         ctx.drain_fold_warnings();
         for (level, code, message) in ctx.take_warnings() {
-            let level = WarningLevel::from_executor(level);
-            // Go's `errctx` at Error level reports the condition as the
-            // statement's own failure — `HandleError` never files a warning
-            // row for it (oracle g-group: `JSON_OBJECTAGG(NULL, 1)` answers
-            // 3158 with an EMPTY SHOW WARNINGS). The statement's error row
-            // reaches this buffer through the error door instead; keeping
-            // the eval-drained copy would show the error twice.
-            if level == WarningLevel::Error {
-                continue;
-            }
-            self.append_warning(level, code, message);
+            // NOTE: the DDL lowering files LEGITIMATE Error-level rows here
+            // (the 1846 algorithm refusal, the 8200 WITHOUT VALIDATION
+            // warning -- oracle g-alter) on statements that SUCCEED, so this
+            // drain must not blanket-drop Error level. The fatal-eval case
+            // (the statement failing WITH the same error: g-group's 3158)
+            // dedups at the error door's retain filter instead.
+            self.append_warning(WarningLevel::from_executor(level), code, message);
         }
     }
 
