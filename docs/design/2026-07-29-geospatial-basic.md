@@ -825,9 +825,7 @@ is settled here and the scope is what stays open.
 ## Future extensions
 
 Documented, not built here. Each is additive over the v1 surface: no v1 behavior changes
-and no stored value has to be rewritten. One of them, the compact point layout, does add to
-the stored format, as a new format-version byte beside version 1 rather than a change to
-it. That is what the version byte is for, and old values keep being read as version 1.
+and no stored value has to be rewritten.
 
 | Step | Cost |
 | --- | --- |
@@ -836,18 +834,6 @@ it. That is what the version byte is for, and old values keep being read as vers
 | Geographic SRSs beyond 4326 | moderate: exact geodesic refine per ellipsoid |
 | `ST_Transform`, which MySQL has had since 8.0.13 and which reprojects between two SRSs | moderate, and pointless before the catalog: with only 0 and 4326 there is nothing to transform to, since 4326 to 4326 is a no-op and MySQL itself rejects a transform to 0 with `ERROR 3742` |
 | User-defined SRSs through `CREATE [OR REPLACE] SPATIAL REFERENCE SYSTEM` and `DROP SPATIAL REFERENCE SYSTEM`, which MySQL also has (there is no `ALTER`; modification is `CREATE OR REPLACE`) | bigger: a writable catalog, a WKT SRS parser, and catalog changes that have to replicate |
-
-**A compact point storage version.** The format-version byte leaves room for layouts
-narrower than EWKB, and a point is the case worth it: version 2 could be
-`<version = 2><f64><f64>`, 17 bytes against the 22 that version 1 needs for the same point,
-since EWKB repeats a byte-order flag and a type word the column already implies. Each
-`f64` is IEEE-754 binary64, little-endian, and the pair is in the stored axis order, the
-same one version 1 holds. It carries no SRID, so it would apply only where a `SRID n`
-column fixes one, which is the same condition under which version 1 already omits the SRID
-flag.
-
-Nothing on the user surface changes, since the bare path exchanges MySQL's format either
-way.
 
 **Predicates between two extended geometries.** v1 answers the eight DE-9IM predicates on
 4326 only for pairs with a point operand ([Reference surface](#srid-model)). Widening that
