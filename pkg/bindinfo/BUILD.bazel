@@ -34,9 +34,16 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/parser",
         "//pkg/util/sqlexec",
+<<<<<<< HEAD
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/table-filter",
         "//pkg/util/timeutil",
+=======
+        "//pkg/util/stringutil",
+        "@com_github_dgraph_io_ristretto//:ristretto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> e59b6ea1bd7 (planner: tolerate reasonable time lag between different TiDB nodes when updating binding cache (#64289))
         "@com_github_pkg_errors//:errors",
         "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
@@ -57,8 +64,12 @@ go_test(
     ],
     embed = [":bindinfo"],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 44,
+=======
+    shard_count = 46,
+>>>>>>> e59b6ea1bd7 (planner: tolerate reasonable time lag between different TiDB nodes when updating binding cache (#64289))
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/config",
