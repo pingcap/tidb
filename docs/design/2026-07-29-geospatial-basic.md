@@ -149,7 +149,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | Versioning | Numbered from 1, so a leading `0x00` is never a valid version. |
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
 | SRID | Always carried by the EWKB SRID flag, even where a `SRID n` column fixes it. The coprocessor, the index refine, TiCDC and TiFlash read stored values from the KV layer without schema ([Compatibility](#compatibility)), so the SRID has to travel in the value. |
-| Byte order | Left to EWKB, which flags it per geometry and permits both. |
+| Byte order | Little-endian throughout, as MySQL stores it. Big-endian input is accepted and converted, so equal geometries have equal bytes. |
 | Axis order | Longitude first on a geographic SRS, as in MySQL's binary format and PostGIS's EWKB; as given on SRID 0 and projected SRSs. |
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; the bare path converts at the boundary. See *Binary in and out* below. |
 | Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
@@ -505,7 +505,8 @@ hash/merge join, DISTINCT, ORDER BY, UPDATE/DELETE/REPLACE, window, `INSERT ... 
 - `pkg/expression`: the `ST_*` builtins (`builtin_geo.go`) and their registration.
 
 Geometry sorts, compares and hashes as its binary value: well-defined, not spatially
-meaningful.
+meaningful. Since the bytes are little-endian, equality matches MySQL, and so does the
+order within one SRID and subtype.
 
 ### SQL surface and examples
 
@@ -646,7 +647,8 @@ decision were quietly undone.
   bounds as equal, a value that ingests must read back, so TiDB does not repeat MySQL's
   store-but-unreadable gap.
 - **The format version is checked.** Version 1 decodes; an unknown or zero version byte is
-  rejected with a clear error rather than misparsed.
+  rejected with a clear error rather than misparsed. Big-endian input is stored
+  little-endian, equal to the same geometry given little-endian.
 - **The counterintuitive surfaces.** `ST_Distance_Sphere`'s default radius matches MySQL on
   both SRIDs, an explicit radius scales the result and a zero or negative one errors; the
   constructors are longitude-first where WKT at 4326 is latitude-first; `axis-order` swaps
@@ -840,10 +842,9 @@ narrower than EWKB, and a point is the case worth it: version 2 could be
 `<version = 2><f64><f64>`, 17 bytes against the 22 that version 1 needs for the same point,
 since EWKB repeats a byte-order flag and a type word the column already implies. Each
 `f64` is IEEE-754 binary64, little-endian, and the pair is in the stored axis order, the
-same one version 1 holds. Dropping the byte-order flag is what makes fixing the
-endianness part of the format rather than a property of the writer. It carries
-no SRID, so it would apply only where a `SRID n` column fixes one, which is the same
-condition under which version 1 already omits the SRID flag.
+same one version 1 holds. It carries no SRID, so it would apply only where a `SRID n`
+column fixes one, which is the same condition under which version 1 already omits the SRID
+flag.
 
 Nothing on the user surface changes, since the bare path exchanges MySQL's format either
 way.
