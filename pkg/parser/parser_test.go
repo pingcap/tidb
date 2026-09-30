@@ -6261,6 +6261,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t with default cmsketch depth", false, ""},
 		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
 		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
+		{"analyze table t with default ndvrate", true, "ANALYZE TABLE `t` WITH DEFAULT NDVRATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
