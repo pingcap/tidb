@@ -618,57 +618,45 @@ Out of scope here, each with a home:
 
 ### Functional Tests
 
-- I/O round-trips: `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/`ST_AsBinary`,
-  `ST_GeomFromGeoJSON`/`ST_AsGeoJSON` for every subtype, byte-compared to MySQL output
-  including its `ST_AsText` spacing and axis order.
-- Accessors and measurement against values measured on MySQL, e.g. for a 1-degree step on
-  4326: `ST_Distance` 111319.49 m and `ST_Distance_Sphere` 111195.08 m.
-- `ST_Distance_Sphere`'s `radius` argument: the default matches MySQL on both SRID 0 and
-  4326, an explicit radius scales the result, and a zero or negative one errors as MySQL
-  does.
-- `ST_GeometryFromText` and `ST_GeometryFromWKB` behave identically to `ST_GeomFromText`
-  and `ST_GeomFromWKB`, while the deferred per-subtype aliases are unknown functions.
-- Predicates: the eight DE-9IM predicates on curated geometry pairs, matched to MySQL
-  byte for byte on 4326 rather than only where semantics agree, since the edge model is
-  MySQL's; with boundary cases explicit, and with the extended-geometry pairs asserted to
-  fail as unsupported rather than to answer.
-- A regression test pins where the 4326 edge sits, so it cannot drift unnoticed:
-  `POLYGON((0 0, 80 0, 0 80, 0 0))`, probed on longitude 70 at latitude 45.035 and 45.5, the
-  first inside and the second outside. That is MySQL's boundary at 45.070155 and not a
-  sphere's at 45.000000, and 45.035 is the probe a spherical engine answers the other way, so
-  the test fails if the edge model ever quietly reverts.
-- SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN rejection,
-  and mixed-SRID arguments to a binary geometry function giving `ERROR 3033`, while the
-  SQL comparison operators keep comparing the stored bytes without erroring.
-- The catalog: `st_spatial_reference_systems` returns the two rows with the same column
-  values MySQL gives for SRID 0 and 4326, and `CREATE SPATIAL REFERENCE SYSTEM` errors.
-- Extended data: Z/M values and SRIDs outside 0 and 4326 go in through `ST_GeomFromEWKB`
-  and come back byte-identical through `ST_AsEWKB`, while a bare `SELECT` of them errors
-  naming `ST_AsEWKB`, and `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function that
-  interprets coordinates error clearly on them.
-- The bare binary boundary is symmetric: bytes from a bare `SELECT` of a MySQL-expressible
-  value insert back unchanged as a bare literal, and a `mysqldump` literal loads as the
-  same geometry. Byte-compared against MySQL for both SRIDs, which is what catches the
-  geographic axis swap: at 4326 the bare bytes must be longitude-first while
+What follows is not exhaustive coverage, which the implementation owns, but the behaviours
+that must not drift: each one pins a decision this document makes, and would fail if that
+decision were quietly undone.
+
+- **Where the 4326 edge sits.** `POLYGON((0 0, 80 0, 0 80, 0 0))`, probed on longitude 70
+  at latitude 45.035 and 45.5, the first inside and the second outside. That is MySQL's
+  boundary at 45.070155 and not a sphere's at 45.000000, and 45.035 is the probe a spherical
+  engine answers the other way, so the test fails if the edge model ever reverts.
+- **The operand restriction holds.** The eight DE-9IM predicates on curated pairs, matched
+  to MySQL byte for byte on 4326 since the edge model is MySQL's, boundary cases explicit,
+  and with extended-geometry pairs asserted to fail as unsupported rather than to answer.
+- **The bare binary boundary is symmetric.** Bytes from a bare `SELECT` of a
+  MySQL-expressible value insert back unchanged as a bare literal, and a `mysqldump` literal
+  loads as the same geometry. Byte-compared against MySQL for both SRIDs, which is what
+  catches the geographic axis swap: at 4326 the bare bytes must be longitude-first while
   `ST_AsBinary` of the same value is latitude-first, and at SRID 0 the two agree.
-- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus `options` 5
-  and 6 keeping a Z position and differing on a fourth element, and `ST_AsGeoJSON`'s
-  `digits` rounding and each `flags` bit, byte-compared to MySQL.
-- `axis-order`: `long-lat` swaps on read and on write at 4326, `lat-long` and
-  `srid-defined` agree there, the option is inert at SRID 0, and a bad value gives
-  `ERROR 3559`.
-- Format version: version 1 decodes; an unknown or zero version byte is rejected with a
-  clear error rather than misparsed.
-- Hostile input: WKB nested past the depth the parser bounds, truncated and over-long
-  inputs in each format, and a fuzz target over the WKT, WKB and GeoJSON parsers. The bar
-  is a clean error, never a panic or a crash, since Go's stack overflow is unrecoverable
-  where MySQL's `ERROR 1436` guard is not. One case pins the read/ingest bound as equal, a
-  value that ingests must read back, so TiDB does not repeat MySQL's store-but-unreadable
-  gap.
-- Type plumbing: geometry through the audited operation surface returns correct bytes.
-- DDL: `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected for the `SRID` attribute,
-  for both subtype directions and for conversion to another type, while `NULL`/`NOT NULL`,
-  `ADD COLUMN` and `DROP COLUMN` succeed.
+- **Extended data stays opt-in.** Z/M values and SRIDs outside 0 and 4326 go in through
+  `ST_GeomFromEWKB` and come back byte-identical through `ST_AsEWKB`, while a bare `SELECT`
+  of them errors naming `ST_AsEWKB`, and every function that interprets coordinates errors
+  clearly on them.
+- **Parsing is bounded, and bounded equally.** WKB nested past the depth the parser bounds,
+  truncated and over-long inputs in each format, and a fuzz target over the WKT, WKB and
+  GeoJSON parsers. The bar is a clean error, never a panic, since Go's stack overflow is
+  unrecoverable where MySQL's `ERROR 1436` guard is not. One case pins the read and ingest
+  bounds as equal, a value that ingests must read back, so TiDB does not repeat MySQL's
+  store-but-unreadable gap.
+- **The format version is checked.** Version 1 decodes; an unknown or zero version byte is
+  rejected with a clear error rather than misparsed.
+- **The counterintuitive surfaces.** `ST_Distance_Sphere`'s default radius matches MySQL on
+  both SRIDs, an explicit radius scales the result and a zero or negative one errors; the
+  constructors are longitude-first where WKT at 4326 is latitude-first; `axis-order` swaps
+  at 4326, is inert at SRID 0, and rejects a bad value with `ERROR 3559`.
+- **GeoJSON.** The options table above, each row matched against MySQL 8.4 and 9.7, plus
+  `options` 5 and 6 keeping a Z position and differing on a fourth element, and
+  `ST_AsGeoJSON`'s `digits` rounding and each `flags` bit, byte-compared to MySQL.
+- Routine coverage beyond these: I/O round-trips per subtype and format, accessor and
+  measurement values against MySQL, the function aliases, SRID validation on every ingest
+  path, the catalog rows, the DDL matrix in [Compatibility](#compatibility), and geometry
+  through the audited operation surface.
 
 ### Scenario Tests
 
@@ -692,9 +680,9 @@ Out of scope here, each with a home:
 
 ### Benchmark Tests
 
-- Geometry ingest and read throughput vs a scalar-encoded baseline.
-- Geometry-predicate latency across selectivities with no other predicate to narrow the
-  scan, the pre-index baseline the index layer will be measured against.
+- Geometry ingest and read throughput, and predicate latency across selectivities with no
+  other predicate to narrow the scan, which is the pre-index baseline the index layer will
+  be measured against.
 - Influence on the online workload: a non-geospatial workload measured with and without
   the feature present, expected to be unchanged, since nothing on a table without a
   geometry column takes a new code path. The one shared cost to watch is the larger
