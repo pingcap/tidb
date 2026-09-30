@@ -105,7 +105,7 @@ application. This design covers the basic layer only.
 | [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates. |
 | [GeoJSON](https://datatracker.ietf.org/doc/html/rfc7946) | JSON geometry encoding (RFC 7946), the third I/O format. |
 | MBR | Minimum Bounding Rectangle; basis of MySQL's `MBR*` predicates (deferred). |
-| [S2](http://s2geometry.io/) | Google's spherical-geometry library. Its shapes live on a sphere, so its edges are great circles, not ellipsoidal geodesics; used here for the 4326 point-in-polygon refine. |
+| [S2](http://s2geometry.io/) | Google's spherical-geometry library. Its shapes live on a sphere, so its edges are great circles rather than ellipsoidal geodesics. The spatial index uses it for cell ids. |
 | [PROJ](https://proj.org/) | The reprojection library that arbitrary-SRS transforms would need; out of scope. |
 | [PostGIS](https://postgis.net/) | The PostgreSQL spatial extension. Not a compatibility target; the delta is in [the appendix](#appendix-postgis-delta-for-the-type-layer). |
 
@@ -481,16 +481,11 @@ Bazel/CI sandbox; the only Bazel work is adding `DEPS.bzl` proxy-fetch entries.
 - `github.com/peterstace/simplefeatures`: OGC/DE-9IM model, WKT/WKB/GeoJSON I/O, and the
   planar predicates and measurement SRID 0 uses. Validated byte-identical to MySQL in the
   PoC.
-- In-tree Andoyer for 4326, since no Go library implements it and the topology primitives
-  exist in no geodesic library in any language ([Reference surface](#srid-model)):
-  ellipsoidal distance and length, which the proof of concept already carries, plus the
-  inverse problem with azimuths and a crossing test over it for the predicates.
-
-`github.com/golang/geo` (Google's S2 port) is **not** needed here. Its only job in the
-proof of concept was the spherical point-in-polygon refine, which Andoyer edges replace;
-`ST_Distance_Sphere` computes its great circle directly. The spatial index does depend on
-it, for cell ids, coverings and bounds, so TiDB keeps the dependency overall
-([`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)).
+- Andoyer for 4326, in-tree or as a new Go library: none implements it, and the topology
+  primitives exist in no geodesic library in any language
+  ([Reference surface](#srid-model)). Ellipsoidal distance and length, which the proof of
+  concept already carries, plus the inverse problem with azimuths and a crossing test over
+  it for the predicates.
 
 The processing tail may need GEOS-equivalent algorithms; it is deferred with the rest of
 the tail.
