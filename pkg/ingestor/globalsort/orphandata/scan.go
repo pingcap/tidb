@@ -31,7 +31,7 @@ const (
 	prefixSampleLimit = 10
 )
 
-// Stats summarizes global-sort residual objects.
+// Stats summarizes global-sort orphan objects.
 type Stats struct {
 	SizeBytes             int64
 	ObjectCount           int64
@@ -65,7 +65,7 @@ func (s *prefixSampler) add(prefix string) {
 	s.prefixes = slices.Insert(s.prefixes, index, prefix)
 }
 
-// Scan walks storage and returns global-sort residual object statistics.
+// Scan walks storage and returns global-sort orphan object statistics.
 func Scan(ctx context.Context, storage storeapi.Storage) (Stats, error) {
 	var stats Stats
 	var sampler prefixSampler
@@ -77,7 +77,7 @@ func Scan(ctx context.Context, storage storeapi.Storage) (Stats, error) {
 		}
 		if stats.SizeBytes > math.MaxInt64-size {
 			return errors.Errorf(
-				"global sort residual size overflow: accumulated bytes %d, next object bytes %d",
+				"global sort orphan data size overflow: accumulated bytes %d, next object bytes %d",
 				stats.SizeBytes,
 				size,
 			)
@@ -86,7 +86,7 @@ func Scan(ctx context.Context, storage storeapi.Storage) (Stats, error) {
 		return nil
 	})
 	if err != nil {
-		return Stats{}, errors.Annotate(err, "scan global sort residual objects")
+		return Stats{}, errors.Annotate(err, "scan global sort orphan objects")
 	}
 
 	stats.SamplePrefixes = sampler.prefixes

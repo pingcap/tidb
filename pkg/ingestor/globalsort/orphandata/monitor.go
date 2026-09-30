@@ -17,55 +17,53 @@ package orphandata
 import (
 	"context"
 	"errors"
-	"sync"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
-// ActiveTaskChecker checks whether active tasks still need cleanup.
-type ActiveTaskChecker interface {
-	HasActiveTasks(context.Context) (bool, error)
+// ActiveProducerChecker reports whether any task that can create or own
+// global-sort objects is still running. While it reports true, objects in cloud
+// storage may still be in use or pending cleanup, so they cannot be treated as
+// orphan data.
+type ActiveProducerChecker interface {
+	HasActiveProducers(context.Context) (bool, error)
 }
 
-// Config configures a residual Monitor.
+// Config configures an orphan data Monitor.
 type Config struct {
-	Enabled           bool
-	ActiveTaskChecker ActiveTaskChecker
-	StorageURI        string
-	Logger            *zap.Logger
+	ActiveProducerChecker ActiveProducerChecker
+	StorageURI            string
+	Logger                *zap.Logger
 }
 
-type noActiveTaskChecker struct{}
+type noActiveProducerChecker struct{}
 
-func (noActiveTaskChecker) HasActiveTasks(context.Context) (bool, error) {
+func (noActiveProducerChecker) HasActiveProducers(context.Context) (bool, error) {
 	return false, nil
 }
 
 type storeFactory func(context.Context, string) (storeapi.Storage, error)
 
-// Monitor scans residual global-sort objects and publishes their size.
+// Monitor scans orphan global-sort objects and publishes their size, but only
+// when no producer is active, so the reported size is orphan data.
 type Monitor struct {
-	ctx          context.Context
-	cfg          Config
+	ctx context.Context
+	cfg Config
+	// storeFactory builds the object store for a scan. It is a field so tests
+	// can substitute a store that injects walk errors and counts Close calls.
 	storeFactory storeFactory
-	wg           sync.WaitGroup
-
-	mu      sync.Mutex
-	running bool
-	stopped bool
 }
 
-// NewMonitor creates a residual Monitor.
+// NewMonitor creates an orphan data Monitor.
 func NewMonitor(ctx context.Context, cfg Config) *Monitor {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
-	if cfg.ActiveTaskChecker == nil {
-		cfg.ActiveTaskChecker = noActiveTaskChecker{}
+	if cfg.ActiveProducerChecker == nil {
+		cfg.ActiveProducerChecker = noActiveProducerChecker{}
 	}
 	return &Monitor{
 		ctx:          ctx,
@@ -82,52 +80,23 @@ func newStore(ctx context.Context, uri string) (storeapi.Storage, error) {
 	return objstore.NewWithDefaultOpt(ctx, backend)
 }
 
-// Request starts at most one residual scan.
-func (m *Monitor) Request() {
-	m.mu.Lock()
-	if !m.cfg.Enabled || m.stopped || m.ctx.Err() != nil || m.running {
-		m.mu.Unlock()
-		return
-	}
-	m.running = true
-	m.wg.Add(1)
-	m.mu.Unlock()
-	failpoint.InjectCall("beforeGlobalSortResidualMonitorRun")
-	go func() {
-		defer func() {
-			m.mu.Lock()
-			m.running = false
-			m.mu.Unlock()
-			m.wg.Done()
-		}()
-		failpoint.InjectCall("globalSortResidualMonitorWorker")
-		m.run()
-	}()
-}
-
-// Stop prevents new scans, waits for an admitted scan, and resets the residual gauge.
-func (m *Monitor) Stop() {
-	m.mu.Lock()
-	m.stopped = true
-	m.mu.Unlock()
-	m.wg.Wait()
-	metrics.GlobalSortResidualDataSize.Set(0)
-}
-
-func (m *Monitor) run() {
+// Trigger scans orphan global-sort objects and publishes their size. It runs
+// synchronously and is not safe for concurrent use: the scheduler cleanup loop
+// calls it serially from its own goroutine, which also owns cancellation.
+func (m *Monitor) Trigger() {
 	if m.ctx.Err() != nil {
 		return
 	}
 
-	hasActiveTasks, err := m.cfg.ActiveTaskChecker.HasActiveTasks(m.ctx)
+	hasActiveProducers, err := m.cfg.ActiveProducerChecker.HasActiveProducers(m.ctx)
 	if err != nil {
 		if !isCancellation(err) {
-			m.cfg.Logger.Warn("global sort residual monitor failed to check active tasks", zap.Error(err))
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to check active producers", zap.Error(err))
 		}
 		return
 	}
-	if hasActiveTasks {
-		metrics.GlobalSortResidualDataSize.Set(0)
+	if hasActiveProducers {
+		metrics.GlobalSortOrphanDataSize.Set(0)
 		return
 	}
 	if m.ctx.Err() != nil {
@@ -140,7 +109,7 @@ func (m *Monitor) run() {
 		storage, err := m.storeFactory(m.ctx, storageURI)
 		if err != nil {
 			if !isCancellation(err) {
-				m.cfg.Logger.Warn("global sort residual monitor failed to create storage")
+				m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage")
 			}
 			return
 		}
@@ -149,7 +118,7 @@ func (m *Monitor) run() {
 		scan, err = Scan(m.ctx, storage)
 		if err != nil {
 			if !isCancellation(err) {
-				m.cfg.Logger.Warn("global sort residual monitor failed to scan storage")
+				m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
 			}
 			return
 		}
@@ -158,32 +127,32 @@ func (m *Monitor) run() {
 		return
 	}
 
-	hasActiveTasks, err = m.cfg.ActiveTaskChecker.HasActiveTasks(m.ctx)
+	hasActiveProducers, err = m.cfg.ActiveProducerChecker.HasActiveProducers(m.ctx)
 	if err != nil {
 		if !isCancellation(err) {
-			m.cfg.Logger.Warn("global sort residual monitor failed to check active tasks", zap.Error(err))
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to check active producers", zap.Error(err))
 		}
 		return
 	}
-	if hasActiveTasks {
-		metrics.GlobalSortResidualDataSize.Set(0)
-		m.cfg.Logger.Info("global sort residual monitor discarded scan because tasks appeared")
+	if hasActiveProducers {
+		metrics.GlobalSortOrphanDataSize.Set(0)
+		m.cfg.Logger.Info("global sort orphan data monitor discarded scan because tasks appeared")
 		return
 	}
 	if m.ctx.Err() != nil {
 		return
 	}
 
-	metrics.GlobalSortResidualDataSize.Set(float64(scan.SizeBytes))
+	metrics.GlobalSortOrphanDataSize.Set(float64(scan.SizeBytes))
 	// an idle cluster scans on every cleanup interval, so keep a clean scan at
-	// debug level and only report it as info when residual data was found.
+	// debug level and only report it as info when orphan data was found.
 	logFn := m.cfg.Logger.Debug
 	if scan.ObjectCount > 0 {
 		logFn = m.cfg.Logger.Info
 	}
-	logFn("global sort residual monitor success",
-		zap.Int64("residual-size-bytes", scan.SizeBytes),
-		zap.Int64("residual-object-count", scan.ObjectCount),
+	logFn("global sort orphan data monitor success",
+		zap.Int64("orphan-data-size-bytes", scan.SizeBytes),
+		zap.Int64("orphan-data-object-count", scan.ObjectCount),
 		zap.Strings("sample-prefixes", scan.SamplePrefixes),
 		zap.Bool("sample-prefixes-omitted", scan.SamplePrefixesOmitted))
 }

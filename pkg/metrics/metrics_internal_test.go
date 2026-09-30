@@ -45,7 +45,7 @@ func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
-func TestGlobalSortResidualDataSizeMetric(t *testing.T) {
+func TestGlobalSortOrphanDataSizeMetric(t *testing.T) {
 	constLabels := metricscommon.GetConstLabels()
 	originalConstLabels := make([]string, 0, len(constLabels)*2)
 	for name, value := range constLabels {
@@ -60,17 +60,17 @@ func TestGlobalSortResidualDataSizeMetric(t *testing.T) {
 	InitGlobalSortMetrics()
 
 	registry := prometheus.NewRegistry()
-	require.NoError(t, registry.Register(GlobalSortResidualDataSize))
+	require.NoError(t, registry.Register(GlobalSortOrphanDataSize))
 
-	GlobalSortResidualDataSize.Set(42)
+	GlobalSortOrphanDataSize.Set(42)
 	t.Cleanup(func() {
-		GlobalSortResidualDataSize.Set(0)
+		GlobalSortOrphanDataSize.Set(0)
 	})
 
 	families, err := registry.Gather()
 	require.NoError(t, err)
 	require.Len(t, families, 1)
-	require.Equal(t, "tidb_global_sort_residual_data_size_bytes", families[0].GetName())
+	require.Equal(t, "tidb_global_sort_orphan_data_size_bytes", families[0].GetName())
 	require.Equal(t, dto.MetricType_GAUGE, families[0].GetType())
 	require.Len(t, families[0].GetMetric(), 1)
 	metric := families[0].GetMetric()[0]
