@@ -155,7 +155,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. |
 | Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are storable, covering GeoJSON positions (XY and XYZ) and measured geometry. Every v1 function is 2D, as in MySQL. |
-| SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL, including on the bare path. No v1 function interprets their coordinates. |
+| SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. See *Extended data* below. |
 
 **Binary in and out.** A value that leaves TiDB as bytes has to be acceptable coming back
 as bytes, or an ordinary client round-trip breaks: read a column, hold the bytes, bind them
@@ -192,18 +192,19 @@ extending the catalog means taking it from the axis order in the SRS definition 
 from a special case (see [Scope and deferrals](#scope-and-deferrals) and
 [the appendix](#appendix-srs-catalog-and-axis-order)).
 
-Z/M coordinates have no MySQL form at all, MySQL being 2D only, so a bare `SELECT` of a
-value carrying them errors, naming `ST_AsEWKB` as the way to read it. A value whose only
-extension is an SRID outside 0 and 4326 is different: MySQL represents any SRID in its own
-binary format, so such a value is returned on the bare path unchanged, which is what keeps
-the DM and dump paths whole for a column MySQL itself accepts.
+**Extended data**, meaning Z/M coordinates or an SRID outside 0 and 4326, is stored
+losslessly and is not otherwise supported in v1: no function interprets its coordinates,
+and those that would error. Storing it is the contract, since it is what lets 3D geometry
+and the wider SRS catalog arrive later as functions over data written today rather than as
+a migration.
 
-A Z/M value is opt-in, since only `ST_GeomFromEWKB` can put one there. An SRID-extended one
-is not: it arrives by ordinary replication or reload. `ST_SRID` and `ST_GeometryType` answer
-for both, and everything that interprets coordinates errors on either.
+One asymmetry is load-bearing rather than incidental. MySQL is 2D, so a Z/M value has no
+MySQL form and cannot come back on the bare path, while a value whose only extension is its
+SRID does, because MySQL represents any SRID in its own binary format. That is what keeps
+replication and dump whole for a column MySQL itself accepts.
 
-Both halves are v1 choices, not properties of the format. Later versions can widen either
-end without a migration: ingest could try to recognise the format it was handed rather than
+Both directions of the bare path are v1 choices, not properties of the format. Later
+versions can widen either end without a migration: ingest could try to recognise the format it was handed rather than
 assume MySQL's, and bare output could do something better than erroring, so long as it is
 neither silent truncation nor a format the input side will not take back.
 
