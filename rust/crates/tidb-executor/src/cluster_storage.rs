@@ -279,11 +279,13 @@ impl NativeMemBuffer {
         let mut f = Some(f);
         if let Some((_, access)) = &self.bound {
             let mut answer = None;
-            if access(&mut |buffer| {
-                answer = Some(f.take().unwrap()(buffer));
-            }) {
-                return answer.unwrap();
-            }
+            assert!(
+                access(&mut |buffer| {
+                    answer = Some(f.take().unwrap()(buffer));
+                }),
+                "SQL buffer outlived its native transaction"
+            );
+            return answer.unwrap();
         }
         f.take().unwrap()(&self.local)
     }
@@ -294,11 +296,13 @@ impl NativeMemBuffer {
         let mut f = Some(f);
         if let Some((_, access)) = &self.bound {
             let mut answer = None;
-            if access(&mut |buffer| {
-                answer = Some(f.take().unwrap()(buffer));
-            }) {
-                return answer.unwrap();
-            }
+            assert!(
+                access(&mut |buffer| {
+                    answer = Some(f.take().unwrap()(buffer));
+                }),
+                "SQL buffer outlived its native transaction"
+            );
+            return answer.unwrap();
         }
         f.take().unwrap()(&mut self.local)
     }
@@ -531,6 +535,10 @@ impl MutationBuffer {
         {
             return;
         }
+        assert!(
+            state.memdb.bound.is_none(),
+            "SQL buffer is still owned by another native transaction"
+        );
         let mut local = Some(std::mem::replace(
             &mut state.memdb.local,
             NativeMemBuffer::default().local,
@@ -554,27 +562,10 @@ impl MutationBuffer {
     /// Transfer an unbound statement buffer to its newly opened transaction.
     pub fn take_native_buffer(&self) -> tikv_client::transaction::unionstore::MemDb {
         let mut state = self.state();
-        if let Some((_, access)) = state.memdb.bound.clone() {
-            // The pessimistic lock path (`bind_native`) already moved the SQL
-            // writes into the native lock transaction's MemDB. The autocommit
-            // commit runs in that same buffer: drain it through the stored
-            // access and unbind, rather than asserting (an autocommit INSERT
-            // that locks its rows hits this on every run -- oracle m12:
-            // `INSERT INTO g1 VALUES (6, 60)` after a locking sequence
-            // commits like go instead of panicking the connection).
-            let mut drained = tikv_client::transaction::unionstore::MemDb::default();
-            let access_ok = access(&mut |buffer| {
-                drained = std::mem::take(buffer);
-            });
-            // `access` returning false means the bound lock transaction has
-            // already ended: its writes are lost at this point (the m12
-            // INSERT-visibility regression -- ledgered, fix direction
-            // recorded). The drain still unbinds so the session can move on.
-            let _ = access_ok;
-            state.memdb.bound = None;
-            state.changes.clear();
-            return drained;
-        }
+        assert!(
+            state.memdb.bound.is_none(),
+            "a bound SQL buffer must commit through its native transaction"
+        );
         state.changes.clear();
         std::mem::replace(&mut state.memdb.local, NativeMemBuffer::default().local)
     }
@@ -784,8 +775,12 @@ impl MutationBuffer {
     /// Clears the completed transaction buffer and SQL metadata.
     pub fn reset(&self) {
         let mut state = self.state();
-        state.memdb.reset();
-        state.memdb.bound = None;
+        // Transaction-end cleanup also runs after the native owner has been
+        // consumed. Only this boundary may detach an inaccessible MemDB.
+        if let Some((_, access)) = state.memdb.bound.take() {
+            access(&mut |buffer| buffer.reset());
+        }
+        state.memdb.local.reset();
         state.changes.clear();
         state.hints.clear();
     }
@@ -1809,6 +1804,69 @@ mod tests {
         assert!(flags.has_locked());
         assert!(flags.has_assert_unknown());
         assert_eq!(native.get_readonly(b"locked").unwrap(), b"value");
+    }
+
+    #[test]
+    fn bound_buffer_cannot_move_to_another_transaction() {
+        let buffer = MutationBuffer::new();
+        let native = Arc::new(Mutex::new(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        ));
+        let access: NativeMemBufferAccess = {
+            let native = native.clone();
+            Arc::new(move |visit| {
+                visit(&mut native.lock().unwrap());
+                true
+            })
+        };
+        buffer.bind_native(42, access.clone());
+        buffer.set(key(b"a"), b"value".to_vec()).unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buffer.take_native_buffer();
+        }))
+        .is_err());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buffer.bind_native(43, access);
+        }))
+        .is_err());
+        assert_eq!(buffer.native_owner(), Some(42));
+        assert_eq!(native.lock().unwrap().get_readonly(b"a").unwrap(), b"value");
+    }
+
+    #[test]
+    fn ended_native_owner_requires_transaction_reset_before_reuse() {
+        let buffer = MutationBuffer::new();
+        let native = Arc::new(Mutex::new(Some(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        )));
+        buffer.bind_native(42, {
+            let native = native.clone();
+            Arc::new(move |visit| {
+                if let Some(native) = native.lock().unwrap().as_mut() {
+                    visit(native);
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        native.lock().unwrap().take();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buffer.is_empty();
+        }))
+        .is_err());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buffer.set(key(b"lost"), b"value".to_vec()).unwrap();
+        }))
+        .is_err());
+        buffer.reset();
+        assert_eq!(buffer.native_owner(), None);
+        assert!(buffer.is_empty());
+        buffer.set(key(b"next"), b"value".to_vec()).unwrap();
+        assert_eq!(
+            buffer.take_native_buffer().get_readonly(b"next").unwrap(),
+            b"value"
+        );
     }
 
     #[test]

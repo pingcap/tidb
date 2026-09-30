@@ -7615,6 +7615,139 @@ fn a_key_partitioned_table_answers_an_ordered_read_in_order() {
     );
 }
 
+#[test]
+fn completed_empty_transaction_does_not_lose_the_next_autocommit_insert() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(66)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.txn_lifetime (id int primary key, v int)",
+    );
+    rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (1, 10)");
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT v FROM test.txn_lifetime WHERE id = 1");
+    session.control_transaction("COMMIT").unwrap();
+    rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (2, 20)");
+
+    rows(
+        &mut session,
+        "UPDATE test.txn_lifetime SET v = 0 WHERE id = 99",
+    );
+    rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (3, 30)");
+    for (end, id) in [("COMMIT", 4), ("ROLLBACK", 5)] {
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        rows(
+            &mut session,
+            "SELECT v FROM test.txn_lifetime WHERE id = 1 FOR UPDATE",
+        );
+        session.control_transaction(end).unwrap();
+        rows(
+            &mut session,
+            &format!("INSERT INTO test.txn_lifetime VALUES ({id}, {})", id * 10),
+        );
+    }
+    session.execute_write("SET autocommit = 0").unwrap();
+    rows(&mut session, "SELECT v FROM test.txn_lifetime WHERE id = 1");
+    session.execute_write("SET autocommit = 1").unwrap();
+    rows(&mut session, "INSERT INTO test.txn_lifetime VALUES (6, 60)");
+
+    // Another connection proves the INSERT was persisted, not merely staged.
+    let mut reader = stack.factory.open_session(session_context(67)).unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT id, v FROM test.txn_lifetime ORDER BY id"
+        )),
+        [
+            ["1", "10"],
+            ["2", "20"],
+            ["3", "30"],
+            ["4", "40"],
+            ["5", "50"],
+            ["6", "60"]
+        ]
+    );
+}
+
+#[test]
+fn failed_autocommit_update_does_not_lose_the_next_insert() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(68)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.failed_txn_lifetime (id int primary key, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.failed_txn_lifetime VALUES (1, 10), (2, 20)",
+    );
+    let error = match session.execute("UPDATE test.failed_txn_lifetime SET id = 2 WHERE id = 1") {
+        Err(error) => error,
+        Ok(_) => panic!("the conflicting UPDATE must fail"),
+    };
+    assert_eq!(error.code, 1062);
+    rows(
+        &mut session,
+        "INSERT INTO test.failed_txn_lifetime VALUES (3, 30)",
+    );
+
+    let mut reader = stack.factory.open_session(session_context(69)).unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT id, v FROM test.failed_txn_lifetime ORDER BY id"
+        )),
+        [["1", "10"], ["2", "20"], ["3", "30"]]
+    );
+}
+
+#[test]
+fn failed_explicit_statement_retains_native_transaction_and_savepoints() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(670)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.statement_lifetime (id int primary key, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.statement_lifetime VALUES (1, 10), (2, 20)",
+    );
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(
+        &mut session,
+        "UPDATE test.statement_lifetime SET v = 11 WHERE id = 1",
+    );
+    session.control_transaction("SAVEPOINT keep_first").unwrap();
+    rows(
+        &mut session,
+        "INSERT INTO test.statement_lifetime VALUES (3, 30)",
+    );
+    let error = match session.execute("UPDATE test.statement_lifetime SET id = 2 WHERE id = 1") {
+        Err(error) => error,
+        Ok(_) => panic!("the conflicting UPDATE must fail"),
+    };
+    assert_eq!(error.code, 1062);
+    assert!(session.buffer.native_owner().is_some());
+    session
+        .control_transaction("ROLLBACK TO keep_first")
+        .unwrap();
+    session.control_transaction("COMMIT").unwrap();
+    rows(
+        &mut session,
+        "INSERT INTO test.statement_lifetime VALUES (4, 40)",
+    );
+
+    let mut reader = stack.factory.open_session(session_context(671)).unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT id, v FROM test.statement_lifetime ORDER BY id"
+        )),
+        [["1", "11"], ["2", "20"], ["4", "40"]]
+    );
+}
+
 /// Two sessions racing their `CREATE TABLE`s both succeed -- sysbench's
 /// parallel `prepare` (`--threads=4 --tables=2`) is exactly this shape, and
 /// it was the workload that found the gap: `sbtest2` never existed and every

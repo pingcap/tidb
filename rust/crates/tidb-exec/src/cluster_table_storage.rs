@@ -1121,6 +1121,19 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         // intact, including tombstone flags and assertions; an empty SQL handle
         // attaches to existing native lock metadata without replacing it.
         self.bind_mutation_buffer(buffer);
+        // Go invalidates LazyTxn on every commit exit, including read-only
+        // transactions and failures. Consume the owner before detaching its
+        // SQL handle so no later statement can use a finished transaction.
+        let result = self.commit_bound_buffer(buffer, extra);
+        buffer.reset();
+        result
+    }
+
+    fn commit_bound_buffer(
+        self,
+        buffer: &MutationBuffer,
+        extra: Vec<BufferMutation>,
+    ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
         let staged_keys = buffer.staged_keys();
         let schema_lease = schema_lease_for_keys(
             self.schema_lease_checker.clone(),
@@ -1182,7 +1195,6 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
         .map_err(|error| engine_sql_error(error.to_string()))?;
         let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
         commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
-        buffer.reset();
         Ok(Some(outcome))
     }
 

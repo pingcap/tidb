@@ -4818,7 +4818,6 @@ impl ClusterServerSession {
             self.declare_read_shape(shape);
             if let Err(error) = self.prepare_snapshot() {
                 let _ = self.finish_snapshot();
-                Self::rollback_prefetched_write(write_transaction.clone());
                 break Err(error);
             }
             let outcome = run(&mut self.session);
@@ -4826,21 +4825,18 @@ impl ClusterServerSession {
             match outcome {
                 Ok(value) => {
                     if let Err(error) = finished {
-                        Self::rollback_prefetched_write(write_transaction.clone());
                         break Err(error);
                     }
                     match self.lock_pessimistic_statement_keys(savepoint) {
                         Ok(PessimisticStep::Done) => {
                             if let Some(transaction) = self.explicit.as_ref() {
                                 if let Err(error) = transaction.finish_pessimistic_statement(true) {
-                                    self.buffer.restore(savepoint.clone());
                                     break Err(SqlQueryError::unknown(error));
                                 }
                             }
                         }
                         Ok(PessimisticStep::Retry { for_update_ts }) => {
                             if let Err(error) = retries.retry() {
-                                self.buffer.restore(savepoint.clone());
                                 break Err(transactions::sql_error(error));
                             }
                             // The statement's writes go back; its locks STAY
@@ -4856,7 +4852,6 @@ impl ClusterServerSession {
                             continue;
                         }
                         Err(error) => {
-                            self.buffer.restore(savepoint.clone());
                             break Err(error);
                         }
                     }
@@ -4872,10 +4867,6 @@ impl ClusterServerSession {
                     }
                 }
                 Err(error) => {
-                    Self::rollback_prefetched_write(write_transaction.clone());
-                    // The statement's own writes go; every earlier
-                    // statement's writes in this transaction stay.
-                    self.buffer.restore(savepoint.clone());
                     break Err(error);
                 }
             }
@@ -4886,8 +4877,14 @@ impl ClusterServerSession {
             // transaction-owned, following Go StmtRollback.
             if let Some(transaction) = self.explicit.as_ref() {
                 let _ = transaction.finish_pessimistic_statement(false);
+                // The statement's writes go; the transaction keeps its
+                // earlier writes and native lock ownership.
+                self.buffer.restore(*savepoint);
+            } else {
+                // Autocommit rollback ends the whole native transaction.
+                // Its statement checkpoint cannot outlive that owner.
+                self.buffer.reset();
             }
-            self.buffer.restore(*savepoint);
         }
         result
     }

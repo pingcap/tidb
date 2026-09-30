@@ -239,6 +239,8 @@ mod transaction_buffer_tests {
             .commit(&buffer)
             .expect_err("deleting a lazy insert must retain its native CheckNotExists mutation");
         assert_eq!(error.code, 1062, "{error:?}");
+        assert_eq!(buffer.native_owner(), None);
+        assert!(buffer.is_empty());
         let mut reader = opener.begin().unwrap();
         assert_eq!(
             reader.snapshot_get(key.as_bytes(), &call).unwrap().value,
