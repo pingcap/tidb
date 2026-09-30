@@ -229,6 +229,10 @@ func (sm *Manager) Stop() {
 	// clear existing counters on owner change
 	dxfmetric.WorkerCount.Reset()
 	dxfmetric.FinishedTaskCounter.Reset()
+	// The orphan data gauge is only meaningful while this node owns the
+	// scheduler. Reset it on owner change, otherwise a former owner keeps
+	// exporting the last value it observed.
+	metrics.GlobalSortOrphanDataSize.Set(0)
 }
 
 // Initialized check the manager initialized.

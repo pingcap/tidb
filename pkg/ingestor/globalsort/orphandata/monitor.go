@@ -105,7 +105,7 @@ func (m *Monitor) Trigger(ctx context.Context) {
 	storage, err := m.storeFactory(ctx, storageURI)
 	if err != nil {
 		if ctx.Err() == nil {
-			m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage")
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to create storage", zap.Error(err))
 		}
 		return
 	}
@@ -114,7 +114,7 @@ func (m *Monitor) Trigger(ctx context.Context) {
 	stats, err := scanOrphanData(ctx, storage)
 	if err != nil {
 		if ctx.Err() == nil {
-			m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage")
+			m.cfg.Logger.Warn("global sort orphan data monitor failed to scan storage", zap.Error(err))
 		}
 		return
 	}
