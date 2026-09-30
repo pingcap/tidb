@@ -307,6 +307,17 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
+	if update, ok := node.(*ast.UpdateStmt); ok {
+		for _, assignment := range update.List {
+			if fn, ok := assignment.Expr.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce && len(fn.Args) == 2 {
+				// Cross-column assignments can introduce observable conversions even
+				// on a miss, so initially allow only updates of the fallback column.
+				if col, ok := fn.Args[1].(*ast.ColumnNameExpr); ok && col.Name.Name.L == assignment.Column.Name.L {
+					checker.coalesceAssignments = append(checker.coalesceAssignments, fn)
+				}
+			}
+		}
+	}
 
 	ast.Walk(node, checker)
 	cacheable, reason := checker.cacheable, checker.reason
@@ -317,6 +328,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	}
 
 	// put the checker back
+	clear(checker.coalesceAssignments)
 	nonPrepCacheCheckerPool.Put(checker)
 	return cacheable, reason
 }
@@ -410,6 +422,8 @@ type nonPreparedPlanCacheableChecker struct {
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
 
+	coalesceAssignments []*ast.FuncCallExpr
+
 	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
@@ -422,6 +436,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 	checker.constCnt = 0
 	checker.filterCnt = 0
 	checker.maxNumberParam = maxNumberParam
+	checker.coalesceAssignments = checker.coalesceAssignments[:0]
 }
 
 // Enter implements InPlaceVisitor interface.
@@ -465,6 +480,9 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren
 		}
 		return !checker.cacheable
 	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.Coalesce && checker.cacheableCoalesceAssignment(node) {
+			return false
+		}
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = "query has un-cacheable functions"
@@ -719,4 +737,36 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	}
 
 	return true, ""
+}
+
+// cacheableCoalesceAssignment initially supports only UPDATE SET expressions of
+// the form col = COALESCE(numeric literal, col), where col is numeric. Prepared statements and
+// other contexts retain the shared blacklist entry.
+// TODO: Rebuild dependent expression types and implicit casts before allowing
+// cross-precision reuse. Never mutate expression types in a shared cached plan.
+// TODO: Extend MySQL compatibility coverage (metadata, NULL transitions, rounding,
+// warnings and scalar/vectorized evaluation) before broadening this exception.
+func (checker *nonPreparedPlanCacheableChecker) cacheableCoalesceAssignment(fn *ast.FuncCallExpr) bool {
+	if len(fn.Args) != 2 || !slices.Contains(checker.coalesceAssignments, fn) {
+		return false
+	}
+	value, ok := fn.Args[0].(*driver.ValueExpr)
+	if !ok || (value.Kind() != types.KindInt64 && value.Kind() != types.KindUint64 && value.Kind() != types.KindMysqlDecimal) {
+		return false
+	}
+	col, ok := fn.Args[1].(*ast.ColumnNameExpr)
+	if !ok {
+		return false
+	}
+	for _, table := range checker.tableNodes {
+		tp, found := getColType(checker.schema, table, col.Name)
+		if !found {
+			continue
+		}
+		switch tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+			return true
+		}
+	}
+	return false
 }

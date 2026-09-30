@@ -254,6 +254,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	paramTypes := parseParamTypes(sctx, params)
+	if stmtCtx.UseCache() && stmt.strictCoalescePrecision {
+		cacheKey = coalescePrecisionCacheKey(cacheKey, paramTypes)
+	}
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled

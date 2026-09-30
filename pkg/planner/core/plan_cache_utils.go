@@ -72,10 +72,14 @@ var (
 )
 
 type paramMarkerExtractor struct {
-	markers []ast.ParamMarkerExpr
+	markers     []ast.ParamMarkerExpr
+	hasCoalesce bool
 }
 
-func (*paramMarkerExtractor) Enter(ast.Node) bool {
+func (e *paramMarkerExtractor) Enter(node ast.Node) bool {
+	if fn, ok := node.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.hasCoalesce = true
+	}
 	return false
 }
 
@@ -237,6 +241,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
+
+	preparedObj.strictCoalescePrecision = !isPrepStmt && extractor.hasCoalesce
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
 	ast.Walk(paramStmt, stmtProcessor)
@@ -748,6 +754,9 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
+	// strictCoalescePrecision prevents cross-precision reuse for non-prepared COALESCE updates.
+	strictCoalescePrecision bool
+
 	PointGet PointGetExecutorCache
 
 	// below fields are for PointGet short path
@@ -1029,4 +1038,20 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		paramTypes = append(paramTypes, tp)
 	}
 	return
+}
+
+// coalescePrecisionCacheKey isolates decimal parameter signatures for the narrow
+// non-prepared UPDATE exception. The general compatibility check deliberately
+// allows lower precision; COALESCE followed by a string cast can observe that
+// difference. Use separate entries for each precision instead of mutating plans.
+func coalescePrecisionCacheKey(key string, paramTypes []*types.FieldType) string {
+	buf := append([]byte(key), "\x00coalesce-precision"...)
+	for i, tp := range paramTypes {
+		if tp.GetType() == mysql.TypeNewDecimal {
+			buf = codec.EncodeInt(buf, int64(i))
+			buf = codec.EncodeInt(buf, int64(tp.GetFlen()))
+			buf = codec.EncodeInt(buf, int64(tp.GetDecimal()))
+		}
+	}
+	return string(buf)
 }

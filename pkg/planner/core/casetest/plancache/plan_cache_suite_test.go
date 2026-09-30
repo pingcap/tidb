@@ -2242,3 +2242,179 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 
 	tk.MustExec(`drop binding for select * from t where b=1`)
 }
+
+func TestCoalescePlanCacheUpdate(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, prepared := range []bool{false, true} {
+			t.Run(fmt.Sprintf("instance=%v/prepared=%v", instance, prepared), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				// Exercise mixed numeric assignments on a partitioned table.
+				tk.MustExec(`CREATE TABLE coalesce_update (
+  id bigint unsigned NOT NULL,
+  tenant_id bigint unsigned NOT NULL,
+  state tinyint unsigned NOT NULL DEFAULT 0,
+  reason smallint DEFAULT 0,
+  source tinyint unsigned DEFAULT 0,
+  amount decimal(36,18) DEFAULT 0,
+  updated_at bigint unsigned NOT NULL DEFAULT 0,
+  revision bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, tenant_id),
+  KEY tenant_state (tenant_id, state)
+) PARTITION BY HASH(tenant_id) PARTITIONS 8`)
+				tk.MustExec("insert into coalesce_update (id,tenant_id,state,reason,source,amount,updated_at,revision) values (1001,101,1,2,3,4,100,10)")
+				sql := `UPDATE coalesce_update SET state=COALESCE(?,state),
+     reason=COALESCE(?,reason), source=COALESCE(?,source),
+     amount=COALESCE(?,amount), updated_at=COALESCE(?,updated_at),
+     revision=GREATEST(?,revision) WHERE id=? AND tenant_id=? AND revision<=?`
+				if prepared {
+					tk.MustExec("prepare upd from '" + sql + "'")
+				}
+				rows := []struct {
+					values []string
+					want   string
+				}{
+					{[]string{"7", "0", "0", "1", "1000", "11", "1001", "101", "11"}, "7 0 0 1.000000000000000000 1000 11"},
+					{[]string{"8", "2", "3", "2.5", "2000", "12", "1001", "101", "12"}, "8 2 3 2.500000000000000000 2000 12"},
+					{[]string{"NULL", "NULL", "NULL", "NULL", "NULL", "13", "1001", "101", "13"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"9", "9", "9", "9", "999", "12", "1001", "101", "12"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"9", "9", "9", "9", "999", "14", "1001", "999", "14"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"8", "2", "3", "0.123456789012345678", "2000", "14", "1001", "101", "14"}, "8 2 3 0.123456789012345678 2000 14"},
+					{[]string{"8", "2", "3", "0.123456789012345679", "2000", "15", "1001", "101", "15"}, "8 2 3 0.123456789012345679 2000 15"},
+					{[]string{"8", "2", "3", "0.1", "2000", "16", "1001", "101", "16"}, "8 2 3 0.100000000000000000 2000 16"},
+				}
+				hits := 0
+				tk.MustExec("begin pessimistic")
+				for _, r := range rows {
+					query := sql
+					if prepared {
+						var names []string
+						for i, v := range r.values {
+							n := fmt.Sprintf("@p%d", i)
+							names = append(names, n)
+							tk.MustExec("set " + n + "=" + v)
+						}
+						query = "execute upd using " + strings.Join(names, ",")
+					} else {
+						for _, v := range r.values {
+							query = strings.Replace(query, "?", v, 1)
+						}
+					}
+					for range 2 {
+						tk.MustExec(query)
+						if tk.Session().GetSessionVars().FoundInPlanCache {
+							hits++
+						}
+						tk.MustQuery("select state,reason,source,amount,updated_at,revision from coalesce_update").Check(testkit.Rows(r.want))
+					}
+				}
+				if prepared {
+					require.Zero(t, hits)
+				} else {
+					require.Positive(t, hits)
+				}
+				tk.MustExec("rollback")
+				tk.MustQuery("select state,revision from coalesce_update").Check(testkit.Rows("1 10"))
+			})
+		}
+	}
+}
+
+func TestNonPreparedCoalescePrecision(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+			tk.MustExec("create table coalesce_precision (id int primary key, d decimal(20,8))")
+			tk.MustExec("insert into coalesce_precision values(1,0)")
+			// The numeric target column determines the stored scale. Parameter precision
+			// changes must still select a separate cached plan.
+			for _, tc := range []struct {
+				v, want string
+				hit     bool
+			}{
+				{"1.23456789", "1.23456789", false},
+				{"2.34567891", "2.34567891", true},
+				{"3.14159", "3.14159000", false},
+				{"4.14159", "4.14159000", true},
+				{"1.2", "1.20000000", false},
+				{"2.3", "2.30000000", true},
+				{"123.4", "123.40000000", false},
+				{"1.23456789", "1.23456789", true},
+			} {
+				tk.MustExec("update coalesce_precision set d=coalesce(" + tc.v + ",d) where id=1")
+				require.Equal(t, tc.hit, tk.Session().GetSessionVars().FoundInPlanCache, tc.v)
+				tk.MustQuery("select d from coalesce_precision").Check(testkit.Rows(tc.want))
+			}
+			// The same precision isolation must apply when another session shares a plan.
+			if instance {
+				other := testkit.NewTestKit(t, store)
+				other.MustExec("use test")
+				other.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				other.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				other.MustExec("update coalesce_precision set d=coalesce(5.14159,d) where id=1")
+				require.True(t, other.Session().GetSessionVars().FoundInPlanCache)
+				other.MustQuery("select d from coalesce_precision").Check(testkit.Rows("5.14159000"))
+			}
+			// Wider integer literal text must not fragment the cache.
+			tk.MustExec("update coalesce_precision set d=coalesce(1,d) where id=1")
+			tk.MustExec("update coalesce_precision set d=coalesce(12345,d) where id=1")
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tk.MustQuery("select d from coalesce_precision").Check(testkit.Rows("12345.00000000"))
+		})
+	}
+}
+
+func TestNonPreparedCoalesceScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+	tk.MustExec("create table coalesce_scope(id int primary key, d decimal(12,2), s varchar(100))")
+	tk.MustExec("insert into coalesce_scope values(1,1,'x')")
+	for _, sql := range []string{
+		"select coalesce(1,d) from coalesce_scope",
+		"update coalesce_scope set s=coalesce(3.14159,0.1) where id=1",
+		"update coalesce_scope set s=coalesce(1.2,d) where id=1",
+		"update coalesce_scope set s=coalesce('abc',s) where id=1",
+		"update coalesce_scope set s=concat(coalesce(1,d),'x') where id=1",
+		"update coalesce_scope set d=2 where id=coalesce(1,id)",
+		"update coalesce_scope set d=coalesce(null,d) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(2,d)) where id=1",
+	} {
+		for range 2 {
+			tk.MustExec(sql)
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache, sql)
+		}
+	}
+	// A different target column must keep the cache-disabled conversion semantics,
+	// even when the first parameter has a smaller scale than the fallback column.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tk.MustExec("update coalesce_scope set s=coalesce(1.2,d) where id=1")
+	want := tk.MustQuery("select s from coalesce_scope").Rows()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	for range 2 {
+		tk.MustExec("update coalesce_scope set s=coalesce(1.2,d) where id=1")
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		tk.MustQuery("select s from coalesce_scope").Check(want)
+	}
+	tk.MustExec("prepare st from 'update coalesce_scope set d=coalesce(?,d) where id=1'")
+	tk.MustExec("set @p=3")
+	for range 2 {
+		tk.MustExec("execute st using @p")
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	}
+	// Existing functions retain their previous eligibility.
+	tk.MustExec("update coalesce_scope set d=greatest(4,d) where id=1")
+	tk.MustExec("update coalesce_scope set d=greatest(5,d) where id=1")
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}
