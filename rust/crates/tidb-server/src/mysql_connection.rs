@@ -1030,6 +1030,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // its own descriptor: a TLS session cannot be cloned, and shutting the
     // descriptor down is what wakes a blocked read either way.
     let stream_for_close = stream.try_clone().map_err(MysqlConnectionError::Io)?;
+    // A second raw clone feeds the statement watchdog's client-EOF peek (the
+    // original clone moves into `ConnectionClose` below).
+    let stream_for_watch = stream_for_close
+        .try_clone()
+        .map_err(MysqlConnectionError::Io)?;
     // Reader and writer share one connection object, because after a TLS
     // upgrade there is exactly one TLS session and both directions run through
     // it.
@@ -1946,10 +1951,82 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                         let statement_started = std::time::Instant::now();
                         let slow_threshold = engine.slow_log_threshold();
+                        // go's server retires a running statement when the client
+                        // disappears: the driver's read timeout closes the socket,
+                        // go tears the connection down, and the in-flight query's
+                        // processlist row goes with it (oracle: `SELECT
+                        // sleep('2020-01-01')` times the client out at 120s and a
+                        // later `SHOW PROCESSLIST` lists nothing -- the row used to
+                        // leak here for the full sleep). This watcher gives the same
+                        // answer: while a statement runs, peek the client socket;
+                        // an EOF (or hard error) cancels the active query, whose
+                        // own killer unwinds it, and the connection loop's failing
+                        // write finishes the teardown.
+                        let watch_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let watch_socket = stream_for_watch
+                            .try_clone()
+                            .map_err(MysqlConnectionError::Io)?;
+                        let watch_cancellation = cancellation.clone();
+                        let watch_flag = Arc::clone(&watch_stop);
+                        let watcher = std::thread::spawn(move || {
+                            let _ = watch_socket
+                                .set_read_timeout(Some(std::time::Duration::from_millis(50)));
+                            let mut byte = [0_u8; 1];
+                            while !watch_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                match watch_socket.peek(&mut byte) {
+                                    // The client is gone: go's teardown kills the
+                                    // in-flight query and retires its processlist
+                                    // row; the cancellation does both here.
+                                    Ok(0) => {
+                                        watch_cancellation.cancel();
+                                        return;
+                                    }
+                                    // A hard socket error: the client is gone.
+                                    Err(error) => {
+                                        let kind = error.kind();
+                                        if kind != std::io::ErrorKind::WouldBlock
+                                            && kind != std::io::ErrorKind::TimedOut
+                                        {
+                                            watch_cancellation.cancel();
+                                            return;
+                                        }
+                                    }
+                                    // The peek's own 50ms timeout -- the client is
+                                    // merely quiet.
+                                    Ok(_) => {}
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                        });
+                        // The watcher must ALSO cover the result-set write: a
+                        // `SELECT sleep(...)` evaluates during the row fetch, not
+                        // inside `execute_statement` (whose plan returns at once).
+                        struct WatcherStop<'a> {
+                            flag: &'a Arc<std::sync::atomic::AtomicBool>,
+                            watcher: Option<std::thread::JoinHandle<()>>,
+                            socket: &'a TcpStream,
+                        }
+                        impl WatcherStop<'_> {
+                            fn stop(self) {
+                                self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                                if let Some(watcher) = self.watcher {
+                                    let _ = watcher.join();
+                                }
+                                // the peek timeout lives on the shared socket; clear
+                                // it so the command loop's own reads block as before.
+                                let _ = self.socket.set_read_timeout(None);
+                            }
+                        }
+                        let stop_watcher = WatcherStop {
+                            flag: &watch_stop,
+                            watcher: Some(watcher),
+                            socket: &stream_for_watch,
+                        };
                         let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
                         {
                             Ok(result) => result,
                             Err(error) => {
+                                stop_watcher.stop();
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
@@ -1973,6 +2050,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             );
                             (written, sink.next_sequence())
                         };
+                        // the streaming write above is where a slow statement's
+                        // rows are produced -- the watcher must not stop before it.
+                        stop_watcher.stop();
                         sequence = next_sequence;
                         match write_result {
                             Ok(_) => {

@@ -124,7 +124,7 @@ impl ConnectionCancellation {
         }
     }
 
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         let cancellation = {
             let mut state = self
                 .state
