@@ -5088,6 +5088,10 @@ fn build_with_state(
                 ctx.statement_memory(),
             )
             .with_output_offsets(output_offsets)
+            // A TopN INSIDE a reader is the cop-layer executor: go runs that
+            // one through the coprocessor's push-built heap, not `heap.Init`
+            // -- its tie order differs (oracle g-group).
+            .with_cop_heap(state.in_reader)
             .with_parallelism(ctx.executor_concurrency());
             if let Some(prefix_col) = topn.prefix_col {
                 let index = child_schema
