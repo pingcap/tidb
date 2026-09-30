@@ -242,7 +242,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:              extractor.markers,
 	}
 
-	preparedObj.strictCoalescePrecision = !isPrepStmt && extractor.hasCoalesce
+	preparedObj.requireExactDecimalPrecision = !isPrepStmt && extractor.hasCoalesce
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
 	ast.Walk(paramStmt, stmtProcessor)
@@ -559,6 +559,10 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
+	// Precision-sensitive expressions require exact DECIMAL parameter types.
+	// This policy is immutable once the plan is cached.
+	requireExactDecimalPrecision bool
+
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
 	processedKeys      int64 // the total number of processed keys in TiKV.
@@ -693,11 +697,12 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:      time.Now(),
-		Plan:          plan,
-		OutputColumns: names,
-		ParamTypes:    userParamTypes,
-		StmtHints:     stmtHints.Clone(),
+		LoadTime:                     time.Now(),
+		Plan:                         plan,
+		OutputColumns:                names,
+		ParamTypes:                   userParamTypes,
+		StmtHints:                    stmtHints.Clone(),
+		requireExactDecimalPrecision: stmt.requireExactDecimalPrecision,
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
@@ -754,8 +759,8 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
-	// strictCoalescePrecision prevents cross-precision reuse for non-prepared COALESCE updates.
-	strictCoalescePrecision bool
+	// requireExactDecimalPrecision records whether the plan needs exact DECIMAL parameter types.
+	requireExactDecimalPrecision bool
 
 	PointGet PointGetExecutorCache
 
@@ -861,6 +866,25 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
+}
+
+// matchesParamTypes applies the cached plan's type requirements to both lookup
+// and insertion. Precision-sensitive plans can coexist under the same cache key.
+func (v *PlanCacheValue) matchesParamTypes(actual any) bool {
+	if !checkTypesCompatibility4PC(v.ParamTypes, actual) {
+		return false
+	}
+	if !v.requireExactDecimalPrecision || actual == nil {
+		return true
+	}
+	for i, tp := range actual.([]*types.FieldType) {
+		expected := v.ParamTypes[i]
+		if expected.GetType() == mysql.TypeNewDecimal &&
+			(expected.GetFlen() != tp.GetFlen() || expected.GetDecimal() != tp.GetDecimal()) {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
@@ -1038,20 +1062,4 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		paramTypes = append(paramTypes, tp)
 	}
 	return
-}
-
-// coalescePrecisionCacheKey isolates decimal parameter signatures for the narrow
-// non-prepared UPDATE exception. The general compatibility check deliberately
-// allows lower precision; COALESCE followed by a string cast can observe that
-// difference. Use separate entries for each precision instead of mutating plans.
-func coalescePrecisionCacheKey(key string, paramTypes []*types.FieldType) string {
-	buf := append([]byte(key), "\x00coalesce-precision"...)
-	for i, tp := range paramTypes {
-		if tp.GetType() == mysql.TypeNewDecimal {
-			buf = codec.EncodeInt(buf, int64(i))
-			buf = codec.EncodeInt(buf, int64(tp.GetFlen()))
-			buf = codec.EncodeInt(buf, int64(tp.GetDecimal()))
-		}
-	}
-	return string(buf)
 }

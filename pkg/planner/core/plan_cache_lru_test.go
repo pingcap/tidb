@@ -47,6 +47,7 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 }
 
 func TestLRUPlanCacheSuite(t *testing.T) {
+	t.Run("ExactDecimalPrecision", testPlanCacheExactDecimalPrecision)
 	t.Run("TestLRUPCPut", testLRUPCPut)
 	t.Run("TestLRUPCGet", testLRUPCGet)
 	t.Run("TestLRUPCDelete", testLRUPCDelete)
@@ -420,4 +421,54 @@ func testLRUPlanCacheMemoryUsage(t *testing.T) {
 	// delete all
 	lru.DeleteAll()
 	require.Equal(t, lru.MemoryUsage(), int64(0))
+}
+
+func testPlanCacheExactDecimalPrecision(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			// Exercise the cache interfaces directly to ensure precision variants
+			// coexist under one key, including insertion after a narrower miss.
+			var get func(string, any) (any, bool)
+			var put func(string, any, any)
+			var count func() int
+			if instance {
+				pc := NewInstancePlanCache(1<<20, 1<<20)
+				get = pc.Get
+				put = func(k string, v, p any) { require.True(t, pc.Put(k, v, p)) }
+				count = func() int { return len(pc.All()) }
+			} else {
+				ctx := coretestsdk.MockContext()
+				defer domain.GetDomain(ctx).StatsHandle().Close()
+				pc := NewLRUPlanCache(10, 0, 0, ctx, false)
+				get, put, count = pc.Get, pc.Put, pc.Size
+			}
+			decimal := func(p, s int) []*types.FieldType {
+				tp := types.NewFieldType(mysql.TypeNewDecimal)
+				tp.SetFlen(p)
+				tp.SetDecimal(s)
+				return []*types.FieldType{tp}
+			}
+			signatures := [][]*types.FieldType{decimal(10, 8), decimal(7, 5), decimal(10, 5)}
+			values := make([]*PlanCacheValue, len(signatures))
+			for i, params := range signatures {
+				_, hit := get("same-key", params)
+				require.False(t, hit)
+				values[i] = &PlanCacheValue{ParamTypes: params, requireExactDecimalPrecision: true, Memory: 100}
+				put("same-key", values[i], params)
+				require.Equal(t, i+1, count())
+			}
+			for i, params := range signatures {
+				v, hit := get("same-key", params)
+				require.True(t, hit)
+				require.Same(t, values[i], v)
+			}
+			// Plans without precision-sensitive expressions keep the existing
+			// compatibility rule; the strict policy must not affect other keys.
+			relaxed := &PlanCacheValue{ParamTypes: signatures[0], Memory: 100}
+			put("relaxed-key", relaxed, signatures[0])
+			v, hit := get("relaxed-key", signatures[1])
+			require.True(t, hit)
+			require.Same(t, relaxed, v)
+		})
+	}
 }
