@@ -786,6 +786,87 @@ mod schema_sync_tests {
     }
 
     #[test]
+    fn tiflash_status_uses_the_shared_ddl_catalog_publication() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_exec::tiflash_replica_manager::TiFlashReplicaControl;
+        use tidb_meta::{key, value};
+        use tidb_model::{DBInfo, GoShared, SchemaState, TableInfo, TiFlashReplicaInfo};
+        use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
+
+        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let timeout = Duration::from_secs(5);
+        let database = DBInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("test"),
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let table = TableInfo {
+            id: 7,
+            name: tidb_ast::CiString::new("replica"),
+            state: SchemaState::PUBLIC,
+            tiflash_replica: Some(GoShared::new(TiFlashReplicaInfo {
+                count: 1,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let seed = opener
+            .begin()
+            .unwrap()
+            .commit(
+                vec![
+                    BufferMutation::set(
+                        key::database_kv_key(1),
+                        value::serialize_db_info(&database).unwrap(),
+                    )
+                    .unwrap(),
+                    BufferMutation::set(
+                        key::table_kv_key(1, 7),
+                        value::serialize_table_info(&table).unwrap(),
+                    )
+                    .unwrap(),
+                    BufferMutation::set(key::schema_version_kv_key(), b"1").unwrap(),
+                ],
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+            )
+            .unwrap();
+        assert!(matches!(seed, OptimisticCommitOutcome::Committed(_)));
+        let catalog = Arc::new(SharedClusterCatalog::new(
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap(),
+        ));
+        let mut info = tidb_domain::serverinfo::ServerInfo::default();
+        info.static_info.id = tidb_domain::serverinfo_syncer::new_node_id();
+        let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(info, None));
+        let ddl = RealClusterDdl::new(
+            opener,
+            catalog.clone(),
+            timeout,
+            None,
+            server_info,
+            None,
+            Arc::new(SchemaValidator::new(Duration::from_secs(45))),
+            false,
+        )
+        .unwrap();
+        assert!(!ddl.is_owner(), "run-ddl=false must not campaign");
+        ddl.update_replica_status(7, true).unwrap();
+        let published = catalog.load();
+        assert_eq!(published.schema_version, 2);
+        let (_, table) = published.find_table("test", "replica").unwrap();
+        assert!(table.tiflash_replica.as_ref().unwrap().read().available);
+        ddl.update_replica_status(7, true).unwrap();
+        assert_eq!(
+            catalog.load().schema_version,
+            2,
+            "repeated status does not advance the schema"
+        );
+        assert!(ddl.update_replica_status(8, true).is_err());
+    }
+
+    #[test]
     fn closed_server_state_watch_rewatches_and_reloads() {
         let rewatched = std::sync::atomic::AtomicBool::new(false);
         assert!(handle_server_state_watch::<()>(
@@ -909,6 +990,26 @@ where
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
         Ok(report)
+    }
+}
+
+impl<C, L, P> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn is_owner(&self) -> bool {
+        self.owner.is_owner()
+    }
+
+    fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), String> {
+        self.execute(&DdlStatement::UpdateTiFlashReplicaStatus {
+            table_id,
+            available,
+        })
+        .map(|_| ())
+        .map_err(|error| error.message)
     }
 }
 

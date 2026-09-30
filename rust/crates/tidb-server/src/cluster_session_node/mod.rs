@@ -7624,37 +7624,30 @@ pub fn build_tiflash_mpp_source(
 }
 
 /// Spawns the TiFlash replica availability poller over the node's catalog
-/// watch, transaction opener, and PD seeds. A node that cannot reach PD
+/// watch, DDL executor, and PD seeds. A node that cannot reach PD
 /// simply never flips availability; the read path answers accordingly.
 #[must_use]
-pub fn build_tiflash_replica_poll<C, L, P>(
-    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+pub fn build_tiflash_replica_poll(
     catalog: std::sync::Arc<tidb_exec::catalog_watch::SharedCatalog>,
     pd_endpoints: &[String],
-) -> Option<std::thread::JoinHandle<()>>
-where
-    C: tidb_txnkv::transaction::StoreWriteClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
-    P: tidb_txnkv::transaction::StorePdCapability,
-{
-    let Some(endpoint) = pd_endpoints.first() else {
-        return None;
-    };
-    match tidb_pd_client::PdClient::connect_seeds(
-        pd_endpoints.to_vec(),
-        std::time::Duration::from_secs(10),
-    ) {
-        Ok(pd) => Some(
-            tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::new(
-                opener,
-                catalog,
-                pd,
-                format!("http://{endpoint}"),
-            )
-            .spawn(),
-        ),
+    ddl: Arc<dyn tidb_exec::tiflash_replica_manager::TiFlashReplicaControl>,
+) -> Option<tidb_exec::tiflash_replica_manager::TiFlashReplicaPoller> {
+    let endpoint = pd_endpoints.first()?;
+    let result =
+        tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), Duration::from_secs(10))
+            .map_err(|error| error.to_string())
+            .and_then(|pd| {
+                tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::new(
+                    catalog,
+                    move || pd.all_stores().map_err(|error| error.to_string()),
+                    ddl,
+                    format!("http://{endpoint}"),
+                )
+            });
+    match result {
+        Ok(manager) => Some(manager.spawn()),
         Err(error) => {
-            eprintln!("{{\"event\":\"tiflash_replica_pd_unreachable\",\"error\":\"{error}\"}}");
+            eprintln!("tiflash replica poll startup: {error}");
             None
         }
     }

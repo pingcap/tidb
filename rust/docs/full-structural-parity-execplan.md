@@ -14,7 +14,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [x] Enumerate upstream scope: 856 Go package directories, 4,420 Go source/test files; 83 Rust crate manifests.
 - [x] Inventory all tracked TiDB and pinned client-go artifacts and Rust gap candidates; classify confirmed mismatches separately from unreviewed evidence.
 - [x] Replace partial TiPB schema ownership with the complete pinned external package inputs, generation and drift gate; validate original Go tests and Rust consumers.
-- [x] Repair MPP statement/query/gather/task identity and carry the existing server-info identity; focused regressions and lifecycle tests pass. Publication gates in progress.
+- [x] Repair MPP statement/query/gather/task identity and carry the existing server-info identity; 98 targeted tests, lint, hook and fresh pre-push locked builds passed; published as 7d8d69b6a0.
+- [x] Remove duplicate TiFlash poller startup, detached lifetime and private DDL publisher; validate the shared owner and HTTP consumers.
 - [ ] Reconcile generic insertion policy with the ordinary table owner.
 - [ ] Reconcile remaining native routing/RPC and operation-lifetime owners.
 - [ ] Resolve each confirmed baseline SQL/DDL/statistics failure at its owning package.
@@ -327,3 +328,111 @@ Real TiFlash/cluster interoperability, complete upstream Go package test suites,
 full-workspace runtime tests and sysbench/TPC-C/TPC-H/YCSB benchmarks were not
 run. No speedup or complete MPP/package/repository parity is claimed. The 10
 previous baseline embedded failures were not rerun or reclassified here.
+
+
+## TiFlash poller ownership removal receipt (2026-09-30)
+
+User asks to keep removing duplication. Pull/fetch left integration and master
+unchanged. Go ddl.Start launches one PollTiFlashRoutine, cancelled by ddl.ctx and
+joined by its wait group. Only ownerManager.IsOwner invokes refreshTiFlashTicker;
+status changes go through executor.UpdateTableReplicaInfo. The current Rust boot
+starts two workers and forgets both handles. Each worker owns another transaction
+opener, writes metadata directly without the DDL executor's notifier/reload, and
+runs on non-owner nodes. Its raw TCP HTTP implementation has no timeout and
+cannot decode chunked responses; its parser treats the count header as a region.
+
+Remove the generic transaction opener from TiFlashReplicaManager. Bind the
+existing RealClusterDdl through a narrow ownership/status-update capability and
+retain one poller handle in the node shutdown scope before its DDL/PD owners.
+Use the existing reqwest dependency for correctly framed, bounded HTTP; stop
+wakes the interval and joins the current pass before releasing capabilities.
+Add deterministic owner-handoff, status-response and lifetime tests, reproducing
+owner/parser failures before their fixes. Keep publication on the shared DDL
+path. Go package inventories remain unreviewed; this is maintenance of the
+existing classic-cluster poller, not a complete DDL/infosync/helper port.
+
+The classic placement-rule workflow needs a separate owner migration: Go configures
+individual rules in the DDL job, while Rust currently repairs them in this poller.
+Do not silently delete this path before migrating its DDL consumers. Its bundle
+replacement and repeated status-publication behavior must be tested here because
+the current implementation can replace sibling rules and continually publish
+already-available tables. No new Go-absent polling policy is authorized.
+
+
+Implementation update: removed the generic transaction opener/private commit,
+duplicate boot call and forgotten handles, raw TCP HTTP code, and the invented
+TiFlash bundle constructor/export. The node retains a single worker guard and
+joins it before releasing its DDL/PD capabilities; an idle worker wakes on stop,
+while an active pass finishes with Go's per-request deadlines (PD HTTP 30 seconds,
+TiFlash InternalHTTPClient five minutes). DDL
+ownership is checked anew each pass. The callback uses RealClusterDdl.execute,
+including its existing notifier and immediate catalog reload.
+
+The additional protocol review reproduced six failures on the pre-fix logic:
+followers performed discovery; the parser counted the header; multiple table
+updates used group replacement; availability publication was incorrect; duplicate
+region reports/progress ignored replica counts; live-store HTTP errors were
+ignored. Logs: /private/tmp/tidb-tiflash-poller-{red,protocol-red-host}.log.
+Loopback tests needed host access because the sandbox rejects socket binding.
+Ten focused tests now pass, including original Go helper count/region cases,
+malformed/truncated reports, count mismatch tolerance, duplicate-region handling,
+owner handoff, group configuration errors, chunked responses and joined shutdown.
+The source parser/progress contract comes from helper.go and infosync; individual
+rule/group and binary-range HTTP contracts were checked against master's pinned
+PD client v0.0.0-20260805103528-afa43111d149.
+
+Remaining TiFlash scope is explicitly split into audit findings: classic rule
+creation/cleanup belongs in DDL/GC rather than the poller; physical partitions,
+ResetAvailable semantics, available-table progress cache/backoff, PD HTTP store
+state discovery, shared security and endpoint failover are not implemented by
+this removal. SetTiFlashReplica still reconstructs unavailable metadata. Normal
+non-CHECK DDL still bypasses persisted jobs in the existing shared executor;
+reusing that executor does not certify the entire DDL scheduler. No complete Go
+package acceptance or repository-wide parity is claimed.
+
+
+Source recheck during self-review confirmed that these specific owner/parser
+functions match origin/master despite unrelated differences in the branch's Go
+files. It also caught an incorrect preliminary deadline assumption: helper
+requests use util.InternalHTTPClient's five minutes, whereas the pinned PD HTTP
+client uses 30 seconds. Requests now carry that owner-specific deadline explicitly;
+shutdown joins an ongoing pass and does not promise immediate cancellation.
+
+
+The embedded DDL regression replayed the former private commit path and failed:
+metadata committed but the shared catalog stayed at schema version 1 rather than
+2 (/private/tmp/tidb-tiflash-poller-ddl-red.log). Restoring the shared executor
+passed, including immediate availability visibility, idempotent repeat update
+and missing-table errors. A final source-edge regression rejected an added HTTP
+status policy: Go parses a TiFlash response body even with non-200 status. The
+policy was removed and that regression now passes too.
+
+Validation commands from the repository root:
+
+    cargo test --manifest-path rust/Cargo.toml --locked -p tidb-exec --lib tiflash_replica_manager::tests
+    cargo test --manifest-path rust/Cargo.toml --locked -p tidb-server --lib cluster_session_node::ddl::schema_sync_tests
+    cargo test --manifest-path rust/Cargo.toml --locked -p tidb-placement --lib bundle
+    cargo check --manifest-path rust/Cargo.toml --locked -p tidb-server -p tidb-exec -p tidb-placement --all-targets
+    make lint
+    git diff --check
+
+The 11 poller, 3 DDL and 12 existing placement tests passed. Lint passed with
+network access for its pinned revive tool; loopback/embedded tests used host
+access for sockets and macOS sysctl. Cargo.lock adds only the existing serde
+dependency edge to tidb-exec for the typed PD rule-group response. No Go/Bazel
+files or generated artifacts changed; no failpoint/Bazel preparation was needed.
+Final publication must run the locked server build inside the pre-commit hook
+and again immediately before push; results are reported with the published
+commit. Logs are /private/tmp/tidb-tiflash-{poller-*,placement-tests}.log.
+
+Changed files: tidb-exec/src/tiflash_replica_manager.rs and its manifest/lockfile;
+tidb-placement/src/{bundle.rs,lib.rs}; tidb-server/src/cluster_session_node/
+{boot.rs,ddl.rs,mod.rs}; this ExecPlan and the current-audit README.
+
+Not verified locally: real PD/TiKV/TiFlash cluster interoperability, TLS/failover,
+complete upstream package test suites, full workspace runtime tests, and
+sysbench/TPC-C/TPC-H/YCSB. Existing compiler/linker/jemalloc configuration warnings
+remain. Shutdown can wait for the current poll pass; deadlines bound individual
+requests, not the entire pass. The still-open placement/partition/state-owner
+gaps above remain material correctness and compatibility risks, not accepted
+parity. Performance improvement from removing duplicate polling is not measured.

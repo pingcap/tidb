@@ -204,27 +204,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None => Arc::new(CopScanSource::new(authority.transport_factory())),
         }
     };
-    // The replica-availability poller: Go `PollTiFlashRoutine`
-    // (ddl_tiflash_api.go:638) flipped onto this node's own catalog and
-    // transaction authority. The handle is forgotten, not stored: the poller
-    // lives for the process lifetime and the node's own exit ends it.
-    let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
-        authority.transaction_opener(),
-        Arc::clone(&catalog),
-        &config.pd_endpoints,
-    );
-    std::mem::forget(replica_poll);
-    // The replica-availability poller: Go `PollTiFlashRoutine`
-    // (ddl_tiflash_api.go:638) flipped onto this node's own catalog and
-    // transaction authority.
-    let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
-        authority.transaction_opener(),
-        Arc::clone(&catalog),
-        &config.pd_endpoints,
-    );
-    // A detached poller lives for the process lifetime; the handle dropping
-    // merely detaches it, which is the intended shutdown story.
-    std::mem::forget(replica_poll);
     // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
     // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
     // long as the process lives -- Go's `Domain.Init` starting the
@@ -322,6 +301,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 "campaign DDL owner failed: {error}"
             )))
         })?,
+    );
+    // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
+    let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
+        Arc::clone(&catalog),
+        &config.pd_endpoints,
+        cluster_ddl.clone(),
     );
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
@@ -479,6 +464,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // on this node, so the acknowledger has nothing left to say.
             schema_sync_ack,
             workload_repository,
+            replica_poll,
             factory,
             watcher,
             reloader,
@@ -495,6 +481,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             server_info_runner,
             schema_sync_ack,
             workload_repository,
+            replica_poll,
             factory,
             watcher,
             reloader,
@@ -538,6 +525,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             workload_repository.stop();
+            drop(replica_poll);
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
             // shutdown drain. The watch goes first: it nudges the reloader,
