@@ -104,14 +104,13 @@ func (sm *Manager) getSchedulers() []Scheduler {
 }
 
 type orphanDataMonitor interface {
-	Trigger()
+	Trigger(context.Context)
 }
 
-// noopOrphanDataMonitor is used when orphan data monitoring is not enabled, so
-// the cleanup loop can call the monitor unconditionally.
+// noopOrphanDataMonitor is used when orphan data monitoring is not enabled.
 type noopOrphanDataMonitor struct{}
 
-func (noopOrphanDataMonitor) Trigger() {}
+func (noopOrphanDataMonitor) Trigger(context.Context) {}
 
 type orphanDataActiveProducerChecker struct {
 	taskMgr TaskManager
@@ -434,14 +433,14 @@ func (sm *Manager) cleanTaskLoop() {
 	// storage is the shared spill area.
 	var monitor orphanDataMonitor = noopOrphanDataMonitor{}
 	if kerneltype.IsNextGen() {
-		monitor = orphandata.NewMonitor(sm.ctx, orphandata.Config{
+		monitor = orphandata.NewMonitor(orphandata.Config{
 			ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
 			StorageURI:            handle.GetCloudStorageURI(sm.ctx, sm.store),
 			Logger:                sm.logger,
 		})
 	}
 	sm.drainCleanTaskBatches()
-	monitor.Trigger()
+	monitor.Trigger(sm.ctx)
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -453,7 +452,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
-			monitor.Trigger()
+			monitor.Trigger(sm.ctx)
 		}
 	}
 }
