@@ -145,9 +145,10 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
             transaction_cause_to_sql_error(cause)
         }
-        PessimisticLockFailure::Transaction(cause @ TransactionCause::SharedLockLost { .. }) => {
-            transaction_cause_to_sql_error(cause)
-        }
+        PessimisticLockFailure::Transaction(
+            cause @ (TransactionCause::SharedLockLost { .. }
+            | TransactionCause::AssertionFailed { .. }),
+        ) => transaction_cause_to_sql_error(cause),
         PessimisticLockFailure::Transaction(cause) => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
@@ -244,21 +245,42 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: message.clone(),
         },
-        TransactionCause::AssertionFailed { key, not_exist, .. } => {
-            // Go's own assertion diagnostic (errno 8141,
-            // `pkg/errno/errname.go`): `assertion failed: key: %s, assertion:
-            // %s, start_ts: %v, existing start ts: %v, existing commit ts:
-            // %v`. The duplicate-direction failures carry the decoded
-            // entry/key hint instead (the 1062 report), so this arm keeps the
-            // raw diagnostic for the Exist direction and hintless cases.
-            let direction = if *not_exist { "NotExist" } else { "Exist" };
+        TransactionCause::AssertionFailed {
+            key,
+            assertion,
+            start_ts,
+            existing_start_ts,
+            existing_commit_ts,
+            ..
+        } => {
+            // Go session.handleAssertionFailure keeps every wire field and
+            // uses the registered KV error, regardless of the assertion's
+            // direction or any retained duplicate-key hint.
+            let direction = tidb_proto::KvrpcAssertion::try_from(*assertion).map_or_else(
+                |_| assertion.to_string(),
+                |value| value.as_str_name().to_owned(),
+            );
+            let prototype = &tidb_txnkv::ERR_ASSERTION_FAILED;
+            let error = tidb_error::mysql::SqlError::new_f(
+                prototype.mysql_code().as_u16(),
+                prototype.message_template(),
+                prototype.redact_arg_positions(),
+                &[
+                    tidb_codec::table_key::hex(key).into(),
+                    direction.into(),
+                    (*start_ts).into(),
+                    (*existing_start_ts).into(),
+                    (*existing_commit_ts).into(),
+                ],
+            );
             LockSqlError {
-                code: 8141,
-                state: DEFAULT_SQL_STATE,
-                message: format!(
-                    "[tikv:8141]assertion failed: key: {}, assertion: {direction}",
-                    tikv_client::redact::key(key)
-                ),
+                code: error.code,
+                state: error
+                    .state
+                    .as_bytes()
+                    .try_into()
+                    .expect("five-byte SQLSTATE"),
+                message: format!("[{}]{}", prototype.rfc_code(), error.message),
             }
         }
         other => LockSqlError {
@@ -269,16 +291,10 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
     }
 }
 
-/// Whether one terminal transaction cause is the duplicate-entry report: the
-/// key already existed, or the write asserted its absence and the store
-/// refuted it — go renders both as `ErrDupEntry` (1062) when the insert's
-/// presume-not-exist bookkeeping supplies the entry text.
+/// Only client-go ErrKeyExist consumes the table's duplicate-entry hint.
+/// ErrAssertionFailed is an independent consistency error in either direction.
 pub(crate) fn duplicate_cause(cause: &TransactionCause) -> bool {
-    match cause {
-        TransactionCause::AlreadyExists { .. } => true,
-        TransactionCause::AssertionFailed { not_exist, .. } => *not_exist,
-        _ => false,
-    }
+    matches!(cause, TransactionCause::AlreadyExists { .. })
 }
 
 fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
@@ -447,6 +463,67 @@ mod tests {
             error.message,
             "Duplicate entry '1' for key 'hbx_dup.PRIMARY'"
         );
+    }
+
+    #[test]
+    fn assertion_failure_is_not_a_deferred_duplicate() {
+        use tidb_txnkv::transaction::CleanupFailedTransaction;
+
+        let hint = DuplicateKeyHint {
+            value: "1".to_owned(),
+            key: "t.PRIMARY".to_owned(),
+        };
+        for (assertion, direction) in [(0, "None"), (1, "Exist"), (2, "NotExist"), (99, "99")] {
+            let cause = TransactionCause::AssertionFailed {
+                key: vec![0xab, 0xcd],
+                assertion,
+                start_ts: 42,
+                existing_start_ts: 7,
+                existing_commit_ts: 11,
+                detail: "assertion failed".to_owned(),
+            };
+            let outcomes = [
+                OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+                    receipt: receipt(),
+                    cause: cause.clone(),
+                }),
+                OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
+                    receipt: receipt(),
+                    cause: cause.clone(),
+                    cleanup_failures: Vec::new(),
+                }),
+            ];
+            let expected = format!(
+                "[tikv:8141]assertion failed: key: abcd, assertion: {direction}, \
+                 start_ts: 42, existing start ts: 7, existing commit ts: 11"
+            );
+            for outcome in outcomes {
+                for hint in [Some(&hint), None] {
+                    let error = commit_outcome_to_sql_error_with_hint(&outcome, hint).unwrap_err();
+                    assert_eq!(error.code, 8141);
+                    assert_eq!(error.state, *b"HY000");
+                    assert_eq!(error.message, expected);
+                }
+            }
+            let error = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(cause));
+            assert_eq!(error.code, 8141);
+            assert_eq!(error.message, expected);
+        }
+    }
+
+    #[test]
+    fn assertion_failure_on_the_lock_path_keeps_its_sql_identity() {
+        let failure = PessimisticLockFailure::Transaction(TransactionCause::AssertionFailed {
+            key: b"key".to_vec(),
+            assertion: tidb_proto::KvrpcAssertion::NotExist as i32,
+            start_ts: 42,
+            existing_start_ts: 7,
+            existing_commit_ts: 11,
+            detail: "assertion failed".to_owned(),
+        });
+        assert_eq!(lock_failure_to_sql_error(&failure).code, 8141);
+        assert!(!is_retryable_statement_failure(&failure));
+        assert!(!failure.is_statement_scoped());
     }
 
     #[test]

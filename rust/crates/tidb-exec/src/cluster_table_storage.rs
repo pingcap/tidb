@@ -1759,11 +1759,8 @@ pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
 }
 
-/// Finds the table/index text that Go retained when a deferred insert marked a
-/// record key presumed absent. Both an `AlreadyExists` verdict and a
-/// `NotExist`-direction assertion the store refuted consume it: go reports
-/// each as `ErrDupEntry` (1062); all other transaction failures keep their
-/// normal typed mapping.
+/// Finds the table/index text retained for client-go ErrKeyExist. Assertion
+/// failures remain consistency errors even when the same key has a hint.
 fn deferred_duplicate_hint(
     outcome: &OptimisticCommitOutcome,
     buffer: &MutationBuffer,
@@ -1775,11 +1772,6 @@ fn deferred_duplicate_hint(
     };
     match key {
         TransactionCause::AlreadyExists { key, .. } => buffer.duplicate_key_hint_for(key),
-        TransactionCause::AssertionFailed {
-            key,
-            not_exist: true,
-            ..
-        } => buffer.duplicate_key_hint_for(key),
         _ => None,
     }
 }

@@ -35,16 +35,18 @@ pub enum TransactionCause {
         /// TiKV diagnostic detail.
         detail: String,
     },
-    /// A strict mutation assertion failed.
+    /// A mutation assertion failed, independently of duplicate-key checking.
     AssertionFailed {
         /// Exact encoded assertion key.
         key: Vec<u8>,
-        /// Whether the failed assertion demanded the key NOT exist. Go turns
-        /// exactly this direction into the duplicate-entry report: the write
-        /// presumed absence and the key is there (`ErrDupEntry` via the
-        /// insert's presume-not-exist bookkeeping). The `Exist` direction
-        /// stays go's own 8141 assertion diagnostic.
-        not_exist: bool,
+        /// Wire assertion enum, including unrecognized values from the store.
+        assertion: i32,
+        /// Timestamp of the transaction whose assertion failed.
+        start_ts: u64,
+        /// Existing version's transaction start timestamp.
+        existing_start_ts: u64,
+        /// Existing version's commit timestamp.
+        existing_commit_ts: u64,
         /// TiKV diagnostic detail.
         detail: String,
     },

@@ -376,3 +376,57 @@ fn deleting_a_lazy_insert_preserves_its_constraint_check() {
     );
     read.rollback().unwrap();
 }
+
+#[test]
+fn strict_assertion_failures_survive_the_native_commit_boundary() {
+    use tidb_txnkv::transaction::{OptimisticCommitOutcome, TransactionCause};
+    use tidb_txnkv::AssertionOp;
+    use tikv_client::proto::kvrpcpb::{Assertion, AssertionLevel};
+
+    let runtime = runtime();
+    let pd = mock_store();
+    let mut seed = driver(&pd, &runtime);
+    let seed_start_ts = seed.start_ts();
+    seed.set(k("existing"), b"old".to_vec()).unwrap();
+    let seed_commit_ts = seed.commit().unwrap().unwrap();
+
+    for (key, operation, assertion) in [
+        ("existing", AssertionOp::AssertNotExist, Assertion::NotExist),
+        ("missing", AssertionOp::AssertExist, Assertion::Exist),
+    ] {
+        let mut txn = driver(&pd, &runtime);
+        txn.transaction_mut()
+            .inner_mut()
+            .set_assertion_level(AssertionLevel::Strict);
+        let start_ts = txn.start_ts();
+        txn.set(k(key), b"new".to_vec()).unwrap();
+        txn.update_assertion_flags(&k(key), operation);
+        let OptimisticCommitOutcome::RolledBack(result) = txn.commit_staged().unwrap() else {
+            panic!("an invalid assertion must refuse the commit");
+        };
+        let TransactionCause::AssertionFailed {
+            key: failed_key,
+            assertion: failed_assertion,
+            start_ts: failed_start_ts,
+            existing_start_ts,
+            existing_commit_ts,
+            ..
+        } = result.cause
+        else {
+            panic!("assertion identity lost: {:?}", result.cause);
+        };
+        assert_eq!(failed_key, key.as_bytes());
+        assert_eq!(failed_assertion, assertion as i32);
+        assert_eq!(failed_start_ts, start_ts);
+        let expected_existing = if key == "existing" {
+            (seed_start_ts, seed_commit_ts)
+        } else {
+            (0, 0)
+        };
+        assert_eq!((existing_start_ts, existing_commit_ts), expected_existing);
+    }
+    let mut reader = driver(&pd, &runtime);
+    assert_eq!(reader.get(&k("existing")).unwrap(), Some(b"old".to_vec()));
+    assert_eq!(reader.get(&k("missing")).unwrap(), None);
+    reader.rollback().unwrap();
+}

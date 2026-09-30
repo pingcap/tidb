@@ -515,8 +515,10 @@ pub(crate) fn classify_client_cause(
         },
         ClientError::AssertionFailed(failed) => TransactionCause::AssertionFailed {
             key: failed.assertion_failed.key.clone(),
-            not_exist: failed.assertion_failed.assertion
-                == tidb_proto::KvrpcAssertion::NotExist as i32,
+            assertion: failed.assertion_failed.assertion,
+            start_ts: failed.assertion_failed.start_ts,
+            existing_start_ts: failed.assertion_failed.existing_start_ts,
+            existing_commit_ts: failed.assertion_failed.existing_commit_ts,
             detail: client_error.to_string(),
         },
         ClientError::WriteConflict(_) | ClientError::WriteConflictInLatch(_) => {
@@ -875,6 +877,44 @@ mod tests {
             unreachable!()
         };
         assert_eq!(key, tikv_client::redact::key(b"primary"));
+    }
+
+    #[test]
+    fn assertion_classification_retains_the_complete_wire_failure() {
+        use tikv_client::proto::kvrpcpb::AssertionFailed;
+
+        for assertion in [0, 1, 2, 99] {
+            let error = tikv_client::Error::from(KeyError {
+                assertion_failed: Some(AssertionFailed {
+                    key: vec![0xab, 0xcd],
+                    assertion,
+                    start_ts: 42,
+                    existing_start_ts: 7,
+                    existing_commit_ts: 11,
+                }),
+                ..Default::default()
+            });
+            let error = TikvTransactionError::Client(tikv_client::Error::ExtractedErrors(vec![
+                tikv_client::Error::MultipleKeyErrors(vec![error]),
+            ]));
+            let TransactionCause::AssertionFailed {
+                key,
+                assertion: actual_assertion,
+                start_ts,
+                existing_start_ts,
+                existing_commit_ts,
+                ..
+            } = classify_cause(&error)
+            else {
+                panic!("assertion identity lost: {error:?}");
+            };
+            assert_eq!(key, [0xab, 0xcd]);
+            assert_eq!(actual_assertion, assertion);
+            assert_eq!(
+                (start_ts, existing_start_ts, existing_commit_ts),
+                (42, 7, 11)
+            );
+        }
     }
 
     // Go: `pkg/store/driver/error/error.go`'s `ToTiDBErr` maps
