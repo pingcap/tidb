@@ -60,6 +60,14 @@ replacement and retained-stream lifecycle are covered; public PD close,
 discovery and metadata concurrency remain open. P06 and the 77-ID count do not
 advance to complete from this prerequisite.
 
+The [PD batch-controller repair](pd-batch-owner-repair.md) implements the complete
+pinned batch package and migrates native TSO to source default collection,
+token ownership and buffer reuse. Native master is
+`bcf74b7282b01372f93fb814ba601eb4c22b5d12`. The 64-request collector and
+65,536-outstanding-batch policy are removed; full dispatcher/options/router
+and public close/discovery/concurrency obligations remain open. This is another
+complete prerequisite, not closure of P06 or all 77 unresolved findings.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

@@ -5,7 +5,8 @@
 //! closing the shared stream.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures::prelude::*;
@@ -13,6 +14,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
+use super::batch::Controller;
 use super::deadline::{DeadlineDone, Watcher};
 use crate::async_util::Cancellation;
 use crate::internal_err;
@@ -20,10 +22,10 @@ use crate::proto::pdpb::pd_client::PdClient;
 use crate::proto::pdpb::*;
 use crate::{Error, Result};
 
-/// Existing native batching bounds; the full Go TSO dispatcher remains a
-/// separate package acceptance unit.
-const MAX_BATCH_SIZE: usize = 64;
-const MAX_PENDING_COUNT: usize = 1 << 16;
+/// Go newTSODispatcher uses defaultMaxTSOBatchSize * 2 for both the
+/// collector and request queue. Its default RPC concurrency is one.
+const MAX_BATCH_SIZE: usize = 20_000;
+const DEFAULT_RPC_CONCURRENCY: usize = 1;
 /// `clients/tso.newTSODispatcher` uses the same deadline channel capacity.
 const DEADLINE_CAPACITY: usize = 64;
 
@@ -141,10 +143,64 @@ async fn run_tso(
 }
 
 struct RequestGroup {
-    count: u32,
-    requests: Vec<TimestampRequest>,
-    done: DeadlineDone,
+    // Rust drops fields in declaration order. Go returns the RPC token before
+    // invoking finishers, including when an entire pending queue is discarded.
     _permit: OwnedSemaphorePermit,
+    count: u32,
+    requests: RequestBatch,
+    done: DeadlineDone,
+}
+
+// Go keeps each in-flight controller in its batchBufferPool until completion.
+// With the native default one-token mode, this holds at most the in-flight
+// buffer and the next collector. No pool lock crosses an await or callback.
+type BatchPool = Arc<StdMutex<Vec<Controller<TimestampRequest>>>>;
+
+struct RequestBatch {
+    controller: Option<Controller<TimestampRequest>>,
+    pool: BatchPool,
+}
+
+impl RequestBatch {
+    fn new(pool: BatchPool) -> Self {
+        let reused = pool.lock().expect("TSO batch pool poisoned").pop();
+        let controller = reused.unwrap_or_else(|| {
+            Controller::new(
+                MAX_BATCH_SIZE,
+                Some(Box::new(|_, request, _| drop(request))),
+                Some(crate::stats::pd_tso_best_batch_size_observer()),
+            )
+        });
+        Self {
+            controller: Some(controller),
+            pool,
+        }
+    }
+}
+
+impl Deref for RequestBatch {
+    type Target = Controller<TimestampRequest>;
+    fn deref(&self) -> &Self::Target {
+        self.controller.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for RequestBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.controller.as_mut().unwrap()
+    }
+}
+
+impl Drop for RequestBatch {
+    fn drop(&mut self) {
+        if let Some(mut controller) = self.controller.take() {
+            controller.finish_collected_requests(None, Some(&Error::ContextCanceled));
+            self.pool
+                .lock()
+                .expect("TSO batch pool poisoned")
+                .push(controller);
+        }
+    }
 }
 
 fn request_stream(
@@ -155,30 +211,34 @@ fn request_stream(
     timeout: Duration,
     cancellation: Cancellation,
 ) -> impl Stream<Item = TsoRequest> + Send + 'static {
-    let pending_capacity = Arc::new(Semaphore::new(MAX_PENDING_COUNT));
+    let pending_capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
+    let batch_pool = Arc::new(StdMutex::new(Vec::new()));
     futures::stream::unfold(request_rx, move |mut request_rx| {
         let pending_requests = pending_requests.clone();
         let pending_capacity = pending_capacity.clone();
+        let batch_pool = batch_pool.clone();
         let watcher = watcher.clone();
         let cancellation = cancellation.clone();
         async move {
             let prepare = async {
-                let permit = pending_capacity.acquire_owned().await.ok()?;
-                let first = request_rx.recv().await?;
-                let mut requests = vec![first];
-                while requests.len() < MAX_BATCH_SIZE {
-                    match request_rx.try_recv() {
-                        Ok(request) => requests.push(request),
-                        Err(_) => break,
-                    }
-                }
+                let mut requests = RequestBatch::new(batch_pool);
+                let permit = requests
+                    .fetch_pending_requests(
+                        &cancellation,
+                        &mut request_rx,
+                        Some(&pending_capacity),
+                        Duration::ZERO,
+                    )
+                    .await
+                    .ok()??;
+                requests.adjust_best_batch_size();
                 let stream_cancellation = cancellation.clone();
                 let done = watcher
                     .start(&cancellation, timeout, move || {
                         stream_cancellation.cancel();
                     })
                     .await?;
-                let count = requests.len() as u32;
+                let count = requests.get_collected_request_count() as u32;
                 let mut pending = pending_requests.lock().await;
                 // A cancelled stream must not publish more pending work after
                 // the receiver has drained it during shutdown.
@@ -215,7 +275,7 @@ fn allocate_timestamps(
 ) -> Result<()> {
     let RequestGroup {
         count,
-        requests,
+        mut requests,
         done,
         _permit,
     } = pending_requests
@@ -232,16 +292,19 @@ fn allocate_timestamps(
             "PD gives different number of timestamps than expected"
         ));
     }
-    let mut offset = resp.count;
-    for request in requests {
-        offset -= 1;
-        let ts = Timestamp {
-            physical: tail_ts.physical,
-            logical: tail_ts.logical - offset as i64,
-            suffix_bits: tail_ts.suffix_bits,
-        };
-        let _ = request.send(ts);
-    }
+    // Go doneCollectedRequests returns the token before request callbacks.
+    drop(_permit);
+    requests.finish_collected_requests(
+        Some(&mut |index, request, _| {
+            let ts = Timestamp {
+                physical: tail_ts.physical,
+                logical: tail_ts.logical - (i64::from(resp.count) - 1 - index as i64),
+                suffix_bits: tail_ts.suffix_bits,
+            };
+            let _ = request.send(ts);
+        }),
+        None,
+    );
     Ok(())
 }
 

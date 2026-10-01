@@ -1,0 +1,189 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/batch"
+  },
+  "native_baseline": "4e3169ed93e433eab38638a1dd92a24f25f7caaf",
+  "claim": "Complete pkg/batch artifact/behavior scope and required native default TSO caller integration. No complete clients/tso, clients/router, opt, metrics, service discovery, PD root or client-go acceptance.",
+  "package_artifacts": [
+    {
+      "path": "pkg/batch/batch_controller.go",
+      "sha256": "a2b42def060b2b01c6bb07059252a1106e8a72600db6f95fcbabe9da44c1d627",
+      "kind": "production",
+      "integration": "src/pd/batch.rs: complete Controller constructor, token/first-request admission, pending drains and extra waiting, timer-only fetch, indexed finish/default override, borrowed request view/short-circuit iteration, request count, AIAD target and observation-before-adjustment, extra batching time. Rust RAII extends source deferred cleanup to dropped futures."
+    },
+    {
+      "path": "pkg/batch/batch_controller_test.go",
+      "sha256": "ba3177c53e8624dd76ba91712cbb440a46f4d8814e597aeacd742992a4583939",
+      "kind": "original tests/support",
+      "integration": "src/pd/batch_tests.rs ports every assertion of TestAdjustBestBatchSize, TestFinishCollectedRequests and TestFetchPendingRequests. Original shared-pointer completion uses Arc. TestMain goleak responsibility is covered by no controller-owned worker, scoped futures and explicit request/token/resource cleanup; original Go race/goleak tests run unchanged."
+    }
+  ],
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_tests": [
+      "TestAdjustBestBatchSize",
+      "TestFinishCollectedRequests",
+      "TestFetchPendingRequests"
+    ],
+    "test_harness": [
+      "TestMain"
+    ]
+  },
+  "dependency_decisions": [
+    {
+      "owner": "Go context, channels and time",
+      "native": "Existing Cancellation, tokio mpsc receiver, semaphore OwnedSemaphorePermit, monotonic Sleep/Instant. A successful pending fetch transfers the token; failure or future drop returns it before default finish. Timer-only error retains caller ownership. Duration::ZERO represents nonpositive optional wait. None represents zero extra-start time."
+    },
+    {
+      "owner": "Rust request/channel ownership",
+      "native": "Source request/token channels remain open throughout their owner lifetime. Rust closure is terminal and finishes collected work instead of synthesizing zero-value T. Error identity on cancellation remains Error::ContextCanceled. Requests are non-Clone; moving them into finish callbacks drops values and retains Vec capacity rather than retaining Go backing-array references."
+    },
+    {
+      "owner": "Source small/invalid batch maxima",
+      "native": "Zero max preserves the empty early return. Initial best size stays eight even below max; push checks the source max+1 storage bound rather than silently inventing a clamp. Production TSO/router maxima exceed eight. Negative maxima are not representable by Rust usize."
+    },
+    {
+      "owner": "prometheus.Histogram",
+      "native": "Existing prometheus Rust dependency; optional Histogram observation occurs before AIAD adjustment. TSO uses source default pd_client_request_handle_tso_best_batch_size name/help and 13 exponential buckets from 1 by 2. Other metric/option variants remain parent-package work."
+    },
+    {
+      "owner": "TSO sync.Pool",
+      "native": "Short mutex pool keeps completed empty controllers for reuse and does not retain senders. One default RPC token bounds buffers to the in-flight batch and next collector. Source pool GC and dynamic-concurrency policy are not separate package claims."
+    },
+    {
+      "owner": "require and goleak",
+      "native": "Rust assertions, paused-time lifecycle tests and resource-drop checks. Unchanged original Go tests run with race detection and goleak; no failpoints occur in this package or used support path."
+    }
+  ],
+  "test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "TestMain uses LeakOptions; all five support files and Linux/non-Linux variants are retained in inventory. URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "TestMain uses LeakOptions; all five support files and Linux/non-Linux variants are retained in inventory. URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "TestMain uses LeakOptions; all five support files and Linux/non-Linux variants are retained in inventory. URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "TestMain uses LeakOptions; all five support files and Linux/non-Linux variants are retained in inventory. URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "TestMain uses LeakOptions; all five support files and Linux/non-Linux variants are retained in inventory. URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "shared module/build/license input",
+      "integration": "Source dependency/build/license provenance. Native Cargo inputs remain unchanged. Source scoped race/goleak and native/TiDB gates are recorded; no unrelated module-wide acceptance."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "shared module/build/license input",
+      "integration": "Source dependency/build/license provenance. Native Cargo inputs remain unchanged. Source scoped race/goleak and native/TiDB gates are recorded; no unrelated module-wide acceptance."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "shared module/build/license input",
+      "integration": "Source dependency/build/license provenance. Native Cargo inputs remain unchanged. Source scoped race/goleak and native/TiDB gates are recorded; no unrelated module-wide acceptance."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "shared module/build/license input",
+      "integration": "Source dependency/build/license provenance. Native Cargo inputs remain unchanged. Source scoped race/goleak and native/TiDB gates are recorded; no unrelated module-wide acceptance."
+    }
+  ],
+  "referenced_caller_inputs": [
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "kind": "parent input, not accepted",
+      "integration": "defaultMaxTSOBatchSize=10000; dispatcher takes twice this for request queue and controller. Full TSO client remains open."
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "kind": "parent input, not accepted",
+      "integration": "NewController, pool, token acquisition, adjustment, timer-only pacing, finish and cancel call sites scoped. Native default-mode collector/completion migrated; dynamic concurrency/pacing and full dispatcher remain open."
+    },
+    {
+      "path": "clients/router/client.go",
+      "sha256": "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2",
+      "kind": "other source consumer, not accepted",
+      "integration": "Router uses same controller without tokens, original no-token tests retained. Rust lacks this full router owner; do not fabricate one or claim migration."
+    },
+    {
+      "path": "opt/option.go",
+      "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1",
+      "kind": "parent configuration input, not accepted",
+      "integration": "Default TSO RPC concurrency=1 and optional wait=0. No new public setting or dynamic-option feature introduced."
+    },
+    {
+      "path": "metrics/metrics.go",
+      "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
+      "kind": "parent observer input, not accepted",
+      "integration": "Exact default best-batch metric descriptor used by native caller. Complete PD metric and custom-label initialization remain parent obligations."
+    }
+  ],
+  "native_artifacts": [
+    "src/pd/batch.rs",
+    "src/pd/batch_tests.rs",
+    "src/pd/mod.rs",
+    "src/pd/timestamp.rs",
+    "src/pd/timestamp_tests.rs",
+    "src/stats.rs",
+    "doc/pd-batch-owner.md",
+    "doc/pd-batch-package.json",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "validation": {
+    "original": "go test -mod=readonly -race ./pkg/batch -count=1: passed",
+    "red": "cargo test --locked --lib source_batch_ -- --test-threads=1: 2 new transport regressions fail, 5 existing controls pass. Prequeued batch is 64 rather than 20000; second RPC proceeds without first completion.",
+    "integration_red": "source_batch_discard_returns_rpc_token_before_request_completion fails before correcting field-drop order: callback sees zero available tokens instead of one.",
+    "pending": [
+      "native publication",
+      "TiDB synchronization and adapter checks",
+      "root lint",
+      "actual hook and fresh pre-push locked server builds"
+    ],
+    "final_native": {
+      "focused": "78 passed; 0 ignored",
+      "library": "1453 passed; 0 failed; 2 pre-existing ignored",
+      "clippy": "cargo clippy --locked --lib -- -D warnings: passed",
+      "targets": "cargo check --locked --all-targets: passed",
+      "format": "cargo fmt --all --check: passed",
+      "diff": "git diff --check: passed",
+      "inventory": "python3 /private/tmp/check-pd-batch.py: passed"
+    }
+  }
+}

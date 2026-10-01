@@ -1059,6 +1059,11 @@ pub(crate) fn batch_stream_cancelled_entry_tail_samples(
         .get_sample_count()
 }
 
+/// Default PD metrics adapter for the shared source batch controller.
+pub(crate) fn pd_tso_best_batch_size_observer() -> Histogram {
+    PD_TSO_BEST_BATCH_SIZE_HISTOGRAM.clone()
+}
+
 #[allow(dead_code)]
 pub fn observe_tso_batch(batch_size: usize) {
     PD_TSO_BATCH_SIZE_HISTOGRAM.observe(batch_size as f64);
@@ -1113,6 +1118,11 @@ lazy_static::lazy_static! {
         &["type"]
     )
     .unwrap();
+    static ref PD_TSO_BEST_BATCH_SIZE_HISTOGRAM: Histogram = register_histogram!(
+        "pd_client_request_handle_tso_best_batch_size",
+        "Bucketed histogram of the best batch size of handled requests.",
+        prometheus::exponential_buckets(1.0, 2.0, 13).unwrap()
+    ).unwrap();
     static ref PD_TSO_BATCH_SIZE_HISTOGRAM: Histogram = register_histogram!(
         "pd_tso_batch_size",
         "Bucketed histogram of TSO request batch size"

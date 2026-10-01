@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/batch` owner and replace native TSO collection/default admission/completion. Two source wire regressions and callback ordering fail before repair; all 78 focused PD cases and 1,453 native library tests pass (two existing ignored), with original Go race/goleak, strict Clippy/all-targets/formatting. Published native master as bcf74b7; exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked server builds gate TiDB publication; the final response records their results. See `parity/current-audit/pd-batch-owner-repair.md`.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/connectionctx` owner and native single-leader integration. Reproduce same-URL healthy-stream replacement before edits; preserve URL-keyed ownership, rejected candidates, cancellation and retained handles. Original Go race/goleak tests and 1,435 native tests pass (two pre-existing ignored). Native strict Clippy/all-targets/formatting, master publication as 4e3169e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked builds gate TiDB publication; see `parity/current-audit/pd-connectionctx-owner-repair.md` and the final publication response.
 - [x] (2026-10-01, W01 prerequisite) Inventory and implement the complete pinned PD `pkg/deadline` package plus its native TSO caller integration. Reproduce missing response/body deadlines, completed-result loss on retirement, and a lost wakeup in the existing cancellation adapter. Complete-package evidence is the deadline leaf only; parent PD/TSO/discovery acceptance and P03/P06/P07 remain open.
 - [x] Finish deadline-leaf validation: 1,422 native library tests (two existing ignored), original Go race tests, strict Clippy/all-targets/formatting, native master publication as 5928b6e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), all-target compilation and root lint. TiDB publication is gated by the actual hook and fresh pre-push locked builds; see `parity/current-audit/pd-deadline-owner-repair.md` and the publication response.
@@ -406,6 +407,14 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+Native TSO retained a private 64-request collector and 65,536-outstanding-batch
+policy despite Go default 20,000-entry collection and a single RPC token. Both
+wire regressions fail before the full batch dependency migration. A separate
+self-review regression catches token return after discarded-request callbacks;
+Rust field drop order now preserves the source order. Buffer reuse retains
+allocation without retaining completed senders. No SQL throughput result follows
+from the deterministic 20,001-request batching case.
+
 The next complete PD prerequisite exposes unconditional native TSO replacement
 on metadata reconnect. Go retains a registered healthy leader stream. A loopback
 regression fails before the connectionctx migration, and six transport cases
@@ -504,6 +513,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): migrate the complete PD batch dependency plus required
+default TSO queue/token/completion call sites. A size-constant edit would retain
+the missing shared collection/finisher/timer lifecycle and allocation churn.
+Use a native permit and cancellation-safe fetch guard; return the token before
+callbacks and recycle the controller after completion. Keep full dynamic
+concurrency, options, router and parent TSO acceptance open.
 
 Decision (2026-10-01): migrate the complete pinned `pkg/connectionctx` dependency
 and its native single-leader callers. A same-URL conditional alone would leave
@@ -659,6 +675,12 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The complete batch leaf replaces native TSO's private drain loop and default
+outstanding-RPC policy. Source and native package tests, fail-before behavior
+and buffer lifetime are recorded in the batch receipt. P06 remains partial;
+public PD close, discovery, metadata serialization and complete parent policy
+remain open, with the same 77 known unresolved findings.
 
 The complete connectionctx leaf removes unconditional healthy-stream replacement
 and provides shared cancellation/retention ownership in native client-rust.

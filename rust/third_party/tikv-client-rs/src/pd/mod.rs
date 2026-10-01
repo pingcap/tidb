@@ -1,3 +1,4 @@
+pub mod batch;
 mod client;
 mod cluster;
 mod codec;

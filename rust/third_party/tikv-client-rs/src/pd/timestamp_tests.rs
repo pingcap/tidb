@@ -297,7 +297,8 @@ async fn source_tso_shared_stream_completes_concurrent_batches() {
     logical.sort_unstable();
     assert_eq!(logical, (1..=256).collect::<Vec<_>>());
     assert!(timestamps.iter().all(|ts| ts.physical == 100));
-    assert!(server.service.received.load(Ordering::SeqCst) > 1);
+    // The source-sized collector can complete this workload in one batch.
+    assert!(server.service.received.load(Ordering::SeqCst) >= 1);
 }
 
 #[tokio::test]
@@ -509,4 +510,191 @@ async fn source_connectionctx_release_cancels_retained_pending_stream_and_joins(
         .unwrap();
     assert!(retained.stream.inner.worker.lock().await.is_none());
     assert!(manager.is_empty());
+}
+
+#[tokio::test]
+async fn source_batch_default_tso_collects_twenty_thousand_prequeued_requests() {
+    let (tx, rx) = mpsc::channel(20_001);
+    let mut responses = Vec::new();
+    for _ in 0..20_001 {
+        let (request, response) = oneshot::channel();
+        tx.send(request).await.unwrap();
+        responses.push(response);
+    }
+    let cancellation = Cancellation::default();
+    let watcher = Watcher::new(&cancellation, 64, "source-batch-test");
+    let pending = Arc::new(Mutex::new(VecDeque::new()));
+    let stream = request_stream(
+        42,
+        rx,
+        pending.clone(),
+        watcher.clone(),
+        Duration::from_secs(10),
+        cancellation,
+    );
+    tokio::pin!(stream);
+    let first = stream.next().await.unwrap();
+    assert_eq!(
+        first.count, 20_000,
+        "Go's default TSO controller takes the full prequeued source-sized batch"
+    );
+    allocate_timestamps(
+        &TsoResponse {
+            count: first.count,
+            timestamp: Some(Timestamp {
+                physical: 1,
+                logical: 20_000,
+                suffix_bits: 0,
+            }),
+            ..Default::default()
+        },
+        &mut *pending.lock().await,
+    )
+    .unwrap();
+    let second = stream.next().await.unwrap();
+    assert_eq!(second.count, 1);
+    allocate_timestamps(
+        &TsoResponse {
+            count: second.count,
+            timestamp: Some(Timestamp {
+                physical: 1,
+                logical: 20_001,
+                suffix_bits: 0,
+            }),
+            ..Default::default()
+        },
+        &mut *pending.lock().await,
+    )
+    .unwrap();
+    for (index, response) in responses.into_iter().enumerate() {
+        assert_eq!(response.await.unwrap().logical, index as i64 + 1);
+    }
+    watcher.close().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn source_batch_default_tso_holds_one_rpc_token_until_completion() {
+    let (tx, rx) = mpsc::channel(2);
+    let (first, _first_response) = oneshot::channel();
+    tx.send(first).await.unwrap();
+    let cancellation = Cancellation::default();
+    let watcher = Watcher::new(&cancellation, 64, "source-token-test");
+    let pending = Arc::new(Mutex::new(VecDeque::new()));
+    let stream = request_stream(
+        42,
+        rx,
+        pending.clone(),
+        watcher.clone(),
+        Duration::from_secs(10),
+        cancellation,
+    );
+    tokio::pin!(stream);
+    assert_eq!(stream.next().await.unwrap().count, 1);
+    let (second, _second_response) = oneshot::channel();
+    tx.send(second).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), stream.next())
+            .await
+            .is_err(),
+        "default Go TSO mode must not send a second RPC before completing the first"
+    );
+    allocate_timestamps(
+        &TsoResponse {
+            count: 1,
+            timestamp: Some(Timestamp {
+                physical: 1,
+                logical: 1,
+                suffix_bits: 0,
+            }),
+            ..Default::default()
+        },
+        &mut *pending.lock().await,
+    )
+    .unwrap();
+    assert_eq!(stream.next().await.unwrap().count, 1);
+    allocate_timestamps(
+        &TsoResponse {
+            count: 1,
+            timestamp: Some(Timestamp {
+                physical: 1,
+                logical: 2,
+                suffix_bits: 0,
+            }),
+            ..Default::default()
+        },
+        &mut *pending.lock().await,
+    )
+    .unwrap();
+    watcher.close().await;
+}
+
+#[tokio::test]
+async fn source_batch_discard_returns_rpc_token_before_request_completion() {
+    let cancellation = Cancellation::default();
+    let watcher = Watcher::new(&cancellation, 64, "source-discard-test");
+    let tokens = Arc::new(Semaphore::new(1));
+    let callback_tokens = tokens.clone();
+    let controller = Controller::new(
+        20,
+        Some(Box::new(move |_, request, error| {
+            assert!(matches!(error, Some(Error::ContextCanceled)));
+            assert_eq!(
+                callback_tokens.available_permits(),
+                1,
+                "Go returns the RPC token before finishing discarded requests"
+            );
+            drop(request);
+        })),
+        None,
+    );
+    let pool = Arc::new(StdMutex::new(Vec::new()));
+    let mut requests = RequestBatch {
+        controller: Some(controller),
+        pool: pool.clone(),
+    };
+    let (tx, mut rx) = mpsc::channel(1);
+    let (request, response) = oneshot::channel();
+    tx.send(request).await.unwrap();
+    let permit = requests
+        .fetch_pending_requests(&cancellation, &mut rx, Some(&tokens), Duration::ZERO)
+        .await
+        .unwrap()
+        .unwrap();
+    let done = watcher
+        .start(&cancellation, Duration::from_secs(1), || {})
+        .await
+        .unwrap();
+    drop(RequestGroup {
+        count: 1,
+        requests,
+        done,
+        _permit: permit,
+    });
+    assert!(response.await.is_err());
+    assert_eq!(tokens.available_permits(), 1);
+    assert_eq!(pool.lock().unwrap().len(), 1);
+    assert_eq!(pool.lock().unwrap()[0].get_collected_request_count(), 0);
+    watcher.close().await;
+}
+
+#[tokio::test]
+async fn source_batch_completed_controller_reuses_its_buffer_without_old_senders() {
+    let cancellation = Cancellation::default();
+    let pool = Arc::new(StdMutex::new(Vec::new()));
+    let mut batch = RequestBatch::new(pool.clone());
+    let allocation = batch.get_collected_requests().as_ptr();
+    let (tx, mut rx) = mpsc::channel(1);
+    let (request, response) = oneshot::channel();
+    tx.send(request).await.unwrap();
+    batch
+        .fetch_pending_requests(&cancellation, &mut rx, None, Duration::ZERO)
+        .await
+        .unwrap();
+    batch.finish_collected_requests(None, Some(&Error::ContextCanceled));
+    drop(batch);
+    assert!(response.await.is_err());
+    let batch = RequestBatch::new(pool.clone());
+    assert_eq!(batch.get_collected_requests().as_ptr(), allocation);
+    assert_eq!(batch.get_collected_request_count(), 0);
+    assert!(pool.lock().unwrap().is_empty());
 }

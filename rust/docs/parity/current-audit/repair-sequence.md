@@ -160,6 +160,14 @@ replaces canceled or stale streams. Store rejection preserves caller ownership;
 retirement retains and joins old workers. Full parent/source-mode/retry ownership
 and public close remain W01 obligations. All 77 IDs retain their assignment.
 
+The complete `pkg/batch` prerequisite is implemented in native
+`bcf74b7282b01372f93fb814ba601eb4c22b5d12`; its
+[repair receipt](pd-batch-owner-repair.md) covers all controller operations,
+original cases and Rust ownership adapters. Native TSO now uses source default
+20,000-entry queue/collector and one RPC token, returns tokens before completion
+and recycles buffers. Dynamic concurrency/pacing, full request/error/options and
+router/PD parent ownership remain open. All 77 IDs retain their assignment.
+
 ## Activation and removal order
 
 
