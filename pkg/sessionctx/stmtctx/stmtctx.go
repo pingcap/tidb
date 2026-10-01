@@ -1274,6 +1274,7 @@ func (sc *StatementContext) resetMuForRetry() {
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.resetMuForRetry()
+	sc.InsertID = 0
 	sc.ReservedRowIDAlloc.Reset(0, 0)
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
