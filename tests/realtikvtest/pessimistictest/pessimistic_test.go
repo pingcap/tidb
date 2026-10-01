@@ -505,6 +505,29 @@ func TestLockUnchangedRowKey(t *testing.T) {
 
 	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
 	tk2.MustExec("rollback")
+
+	// An unchanged REPLACE must lock the physical row in either table layout.
+	for _, isolation := range []string{"READ COMMITTED", "REPEATABLE READ"} {
+		for _, partition := range []string{"", " partition by range(id) (partition p0 values less than (1000), partition p1 values less than (maxvalue))"} {
+			tk.MustExec("drop table unchanged")
+			tk.MustExec("create table unchanged (id bool zerofill primary key clustered)" + partition)
+			tk.MustExec("insert into unchanged values (false), (true)")
+			tk.MustExec("set session transaction isolation level " + isolation)
+			tk.MustExec("begin pessimistic")
+			tk.MustExec("replace into unchanged values (false)")
+			require.Equal(t, uint64(1), tk.Session().AffectedRows())
+
+			tk2.MustExec("begin pessimistic")
+			tk2.MustGetErrCode("select * from unchanged where id = 0 for update nowait", errno.ErrLockAcquireFailAndNoWaitSet)
+			tk2.MustExec("rollback")
+			tk2.MustExec("set innodb_lock_wait_timeout = 1")
+			tk2.MustGetErrCode("update unchanged set id = id + 19 where id = '' or id >= -1598653439", errno.ErrLockWaitTimeout)
+
+			tk.MustExec("rollback")
+			tk2.MustExec("update unchanged set id = id + 19 where id = '' or id >= -1598653439")
+			tk2.MustQuery("select id from unchanged order by id").Check(testkit.Rows("19", "20"))
+		}
+	}
 }
 
 func TestOptimisticConflicts(t *testing.T) {

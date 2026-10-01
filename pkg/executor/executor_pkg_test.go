@@ -655,6 +655,17 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+
+	// REPLACE passes the already selected physical partition to the lock helper.
+	for _, lockTable := range []table.Table{tbl, physicalTbl} {
+		sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+		count, err = addUnchangedKeysForLockByRow(sctx, lockTable, h, row, lockRowKey)
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+		gotKeys = sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+		require.Len(t, gotKeys, 1)
+		require.Equal(t, []byte(tablecodec.EncodeRowKeyWithHandle(physicalID, h)), []byte(gotKeys[0]))
+	}
 }
 
 func TestStrictNotNullCheckForInsert(t *testing.T) {
