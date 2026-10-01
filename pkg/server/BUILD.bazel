@@ -155,6 +155,7 @@ go_test(
         "//pkg/parser/charset",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/server/err",
         "//pkg/server/internal",
         "//pkg/server/internal/column",
         "//pkg/server/internal/handshake",
