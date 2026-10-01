@@ -525,8 +525,9 @@ Out of scope here, each with a home:
 - The **spatial index** and its pushdown:
   [`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)
   ([#69473](https://github.com/pingcap/tidb/pull/69473)), for which this layer is the prerequisite.
-- The **geometry-processing function tail**, `ST_Area`, typed I/O aliases, `MBR*` family,
-  geohash and niche accessors: a later, parallel expression-layer milestone.
+- The **geometry-processing function tail**, `ST_Area`, typed I/O aliases, spatial type
+  casts (`CAST(g AS POINT)` and the other subtypes), `MBR*` family, geohash and niche
+  accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`:
   [Future extensions](#future-extensions). `ST_Transform` is MySQL functionality, but it
   has nothing to do until more SRSs exist, so it is out of scope for v1.
@@ -668,6 +669,10 @@ Risks:
   (measured over 100,000 distances). A 4326 predicate near an edge can flip on that bit, so
   a mixed-architecture cluster could answer one query two ways. Mitigated by fusion-free
   trigonometry of our own, which a later TiKV evaluator ports as is.
+- **Generated columns:** `pt POINT AS (ST_SRID(Point(lng, lat), 4326)) STORED` with a
+  spatial index is the usual MySQL way to index latitude/longitude columns, and v1 rejects
+  it at DDL ([Compatibility](#compatibility)), so such a schema does not migrate until
+  `Point` and `ST_SRID` are allowed there.
 - **MySQL error parity:** exact codes and messages may not match initially (the PoC used
   placeholder wording); a compatibility risk, not a correctness one.
 - **Pure-Go library gaps:** `simplefeatures` covers the planar surface but neither the 4326
