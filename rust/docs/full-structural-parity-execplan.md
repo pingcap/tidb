@@ -7,8 +7,17 @@ This is a living ExecPlan under root PLANS.md. Maintain Progress, Surprises & Di
 
 The user requests every mismatch to be listed and removed, following TiDB Go master and its pinned client-go. Exhaustive coverage means every production source, platform/build variant, generated input, original test, fixture and support/build artifact in each owning Go package. A search hit or passing subset is not package acceptance. The rolling source starts at master 6b2781326b722f217a61852ab403350858549bd0 and integration 5503f8860883c6cd80bdd0d487d34c53787daf24. Native client-rust master is 884589f0365053c0f5bd300209751187a4811782. No new SQL features absent from Go are authorized.
 
+The latest system-level review compares integration
+`82c40b63c371cf7ab2e776c9e92bbb058a83457c` with freshly fetched Go master
+`93a01d31f6da205ae4bf376825293903a6899fdb`. Earlier revision identifiers above
+and in receipts are historical baselines. The objective is equivalent Go
+ownership and state transitions throughout production, including failure,
+retry, cancellation and shutdown. Native Rust types and crate boundaries may
+differ. A correct helper bypassed by a live entrypoint does not satisfy parity.
+
 ## Progress
 
+- [x] (2026-10-01, system-wide design review) Recheck selectable SQL entrypoints, compiler/transaction boundaries, DML handoff, DDL dispatch, boot composition and client routing. Put the shared cache work inside the wider dependency/risk order below. This source review changes the implementation plan only; no runtime finding is repaired or package accepted.
 - [x] (2026-10-01, shared cache design review) Refresh integration/master; trace all four production Ristretto importers, their configuration and owning lifetimes. Recheck 98 consumer/subpackage artifacts against the existing inventory. Include inference, which is absent from this branch's Go checkout. Record the shared dependency and consumer retirement sequence in `parity/current-audit/shared-cache-owner-review.md`; no runtime/package acceptance is claimed.
 - [ ] Implement and validate the complete pinned Ristretto root package before consumer migration. Remove Stretto and both private FIFO stores only as their whole Go owners and production callers acquire equivalent validated behavior. Keep B01/B02, C03, C04 and inference acceptance separate.
 - [x] (2026-10-01, LFU review follow-up) Recheck all five LFU artifacts and inventory all 91 artifacts of pinned Ristretto v0.1.1. Reproduce unguarded public eviction lifetime and fix TriggerEvict/SetCapacity; both are exercised by the passing regression. Add a deterministic primary-admission failure and restore the pressure test's Go Get observation path (still fails). Native owner/parent suites pass 33 tests; two dependency probes remain ignored and unaccepted. The original 10 LFU and 73 Ristretto tests pass with race detection. All-target compilation, lint, formatting and inventory checks pass. Both locked publication builds remain required.
@@ -58,6 +67,76 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 - [ ] Audit all remaining package source, variants, original tests, fixtures and integration paths; retain unreviewed status until complete.
 - [ ] Run scope-specific validation, root lint, commit hook locked server build, fresh pre-push locked build; commit and push each reviewed package repair.
 
+## System ownership and repair order
+
+
+The principal execution chain is server protocol to Session, then preprocessing
+and resolved planning, then executor construction and Open/Next/Close. Table
+mutation and distributed reads branch from that execution layer into the KV
+driver/native client. Domain supplies shared schema, statistics, privileges,
+bindings and service lifetimes. SQL DDL submits persisted jobs and waits for
+their owning worker; the worker performs metadata transactions and schema
+synchronization. These are cooperating owners, not one global object.
+
+Go `pkg/session/session.go::executeStmtImpl` establishes transaction and
+statement context before compilation. `pkg/executor/compiler.go::Compile`
+preprocesses with the transaction context provider, obtains its InfoSchema,
+then calls the optimizer. `pkg/sessiontxn/interface.go` retains separate
+statement timestamps, initialization, retry, commit and rollback hooks.
+Preserve these responsibilities across text, prepared, internal-session and
+point-get paths, including Go's legitimate specialized fast paths. A second
+SQL interpreter selected by storage mode or table count is a different design.
+
+| Ownership correction | Existing findings and migration scope |
+| --- | --- |
+| Shared SQL session and resolved plan | S01/S02, A01, E02/E03, Q01 and X01: replace selectable configured planners/interpreters through the ordinary session and storage adapters; retain resolved column/handle/FK metadata and active expression/write context into execution. Preserve Go's shared candidate lifecycle in merge planning. Name resolution owns privilege requests; downstream executors must not guess them from unresolved AST qualifiers. |
+| SQL transaction policy and native KV execution | T01–T03, S04 and K03: keep the session transaction provider distinct from the client transaction implementation. Table/index code selects uniqueness/assertion and conversion policy; the buffer transports it. Native client-rust must supply client-go's routing, RPC recovery, lock resolution and retry-budget/lifetime contracts to every TiDB consumer before competing TiDB algorithms are retired. |
+| Domain state and durable schema work | O01/O02, I04, D01/D02 and K02: compose identity, bootstrap/upgrade, versioned schema and lease owners; submit DDL through persisted jobs and migrate backfill/cancel/recovery together. Keep metadata transaction helpers used by workers; retire direct SQL publication after all relevant callers migrate. |
+| Process/domain services and resource lifetime | O03–O06, O10/O11/O13 and E04/E06: compose Go's actual configured service owners and executor workers with startup, cancellation, completion and shutdown. Registered variables, metrics or unused helpers do not prove that a service runs. Preserve Go's role/configuration gates. |
+| Shared dependencies and consumer-specific caches | B01/B02, C02–C04 and inference: implement the selected dependency once, preserving each consumer's identity, budget and lifetime. Session and instance plan caches retain their distinct Go contracts. The Ristretto work below is one dependency milestone, not the definition of the full project. |
+
+The present source verifies why these boundaries matter. In
+`rust/crates/tidb-server/src/lib.rs`, startup still chooses separate one/two-table
+sessions when cluster-session mode is disabled; `real_tikv_node/mod.rs` retains
+static descriptors on its two-table route. `cluster_session_node/boot.rs` even
+supplies an inert ConfiguredTable to a process authority whose constructor
+still requires a bounded-read table. Remove that coupling when separating
+process storage construction from SQL session construction, rather than adding
+another placeholder table. This is evidence within S01, not a new finding.
+
+`rust/crates/tidb-executor/src/driver/physical_builder.rs::execute_dml_source`
+drains its child into all rows, while Go `UpdateExec.updateRows` consumes and
+accounts for chunks. `cluster_session_node/ddl.rs::RealClusterDdl::execute`
+submits CHECK operations to the persisted worker but sends other statements
+through direct publication. `tidb-txnkv/src/driver/client_bridge.rs::ClientPd`
+routes native lookups back into the TiDB backend. These call paths must migrate
+with their owners; changing the implementation behind one method is incomplete.
+
+Select the next complete package by correctness risk and prerequisite closure.
+The reproduced privilege bypass (A01), account-policy gaps (A02/A04), generated
+column conversion error (K03) and other data-integrity findings must not wait
+for an unrelated cache optimization. Determine each fix from its resolved
+plan, policy and state owner; do not repair only the SQL example that exposed
+it. Shared schema/transaction contracts and native-client dependencies precede
+the consumers that need them. Independent complete leaf repairs can proceed
+without waiting for every parent package, with their integration limits stated.
+
+For each selected package, retain the complete source/test/variant inventory,
+map every production caller, demonstrate the relevant regression before repair,
+migrate the owning state machine and callers, and remove the displaced
+implementation in the same reviewed change. Test successful execution and
+the source's error/retry/cancel/close paths through real entrypoints. A layer
+with required SQL policy is not redundant merely because another layer also
+has a transaction or cache type. Completion and publication remain atomic per
+Go package, even when the edit crosses Rust crates.
+
+Performance work follows these correctness boundaries: remove unnecessary full
+materialization and copying, restore typed vector execution, shared admission
+and Go's allowed concurrency, and measure equivalent sysbench/TPC-C/TPC-H/YCSB
+workloads. Do not enlarge retry budgets, weaken validation, force cache hits or
+add benchmark-specific execution modes to obtain a better number. This review
+does not establish benchmark results or semantic coverage of every package.
+
 ## Milestones and design
 
 
@@ -103,6 +182,13 @@ Next reconcile transaction insertion, statement options and operation lifetime w
 Run regressions before production fixes and afterward. Protocol validation uses complete source checks, Rust wire tests, original go-tipb tests, affected consumer tests, and all-target compilation. Whole-repository completion requires all package coverage rows to have current, complete evidence; no keyword search can establish it. Record exact commands and results as work progresses. Publication uses TERM=xterm git -c core.hooksPath=hooks commit, then a separate cd rust && cargo build --locked -p tidb-server before normal push to hparser-integration. Native changes publish to client-rust master before synchronization. No forced pushes or hook bypasses.
 
 ## Surprises & Discoveries
+
+The full-picture follow-up confirms that dependency correctness alone cannot
+repair live callers which bypass their intended owners. The default cluster
+session and optional configured-table sessions are distinct paths; only the
+latter has S01/S02's table-count dispatch. The main process authority also
+requires an inert table at cluster startup. Do not generalize that finding
+into a claim that the default session bypasses ordinary planning.
 
 The wider cache scan found four production Ristretto consumers on Go master,
 not three: `pkg/inference/sqlembed.go` is absent from this integration branch's
@@ -173,6 +259,14 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+- Decision: Order work by Go's system ownership, correctness risk and complete
+  package prerequisites; retain the cache design as one bounded milestone.
+  Rationale: Alternate SQL/DDL paths, narrowed plan handoffs and split routing
+  can bypass correctly implemented helpers. Go itself separates session
+  transaction policy, table mutation policy and native KV execution. Preserve
+  those layers while retiring competing implementations after caller migration.
+  Date/Author: 2026-10-01 / Codex, system-wide follow-Go review.
 
 - Decision: Follow the complete shared Ristretto dependency and all four Go
   consumers, with separate cache instances and consumer-specific lifetimes.
@@ -284,6 +378,11 @@ schema publication or require another action tick.
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
+
+The system-wide follow-up changes repair prioritization and the evidence needed
+for removal. No production code, dependency pin or finding status changes in
+this review. Existing reproductions remain evidence at their receipt revisions;
+this source inspection does not claim new runtime validation.
 
 The shared-cache review establishes a complete direct-importer map and a root
 repair sequence, including the previously omitted inference consumer. It changes
@@ -1464,3 +1563,12 @@ artifact hashes: `parity/current-audit/lfu-lifecycle-repair.md` and its inventor
 The register is 74 findings, seven repaired, 67 unresolved. No benchmark or
 complete package acceptance is claimed. All-target compilation, root lint,
 formatting and inventory/diff checks pass; publication gates remain mandatory.
+
+Revision note (2026-10-01): added system ownership and risk/dependency ordering
+after the repeated full-picture request. This prevents the Ristretto milestone
+from replacing the wider session/planner/executor/DDL/client parity objective.
+For this plan-only change, validate with `git diff --check` and the required
+`cargo build --locked -p tidb-server` in both the commit hook and immediately
+before push. Runtime regression suites, Go package tests, root lint and SQL
+benchmarks are not rerun for a documentation-only change; earlier results above
+remain historical. No Go/Bazel metadata changed, so bazel_prepare is not needed.
