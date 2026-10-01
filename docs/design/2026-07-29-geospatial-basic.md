@@ -109,7 +109,7 @@ application.
 ## Detailed Design
 
 **MySQL-compatible, extensible where the extension is free.** The two directions are
-deliberately asymmetric:
+asymmetric:
 
 - **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates and option values MySQL
   rejects are accepted, and the storage layer keeps them losslessly. Accepting more cannot
@@ -154,10 +154,10 @@ and because below its header a 2D value is plain OGC WKB.
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. See *Extended data* below. |
 
 **Binary in and out.** A value that leaves TiDB as bytes has to be acceptable coming back
-as bytes, or an ordinary client round-trip breaks: read a column, hold the bytes, bind them
-into a later `INSERT`. The storage format is deliberately wider than MySQL's, so the two
-cannot share one bare path without guessing which format arrived. Each therefore gets a
-matched pair:
+as bytes, or an ordinary client round-trip breaks: read a column, hold the bytes, bind
+them into a later `INSERT`. The storage format is wider than MySQL's, so the two cannot
+share one bare path without guessing which format arrived. Each therefore gets a matched
+pair:
 
 | Format | Out | In |
 | --- | --- | --- |
@@ -191,16 +191,9 @@ bare path, `ST_GeomFromEWKB`, `ST_GeomFromGeoJSON`, and WKT or WKB given
 unknown. WKT and WKB under `srid-defined` or `lat-long` reject it, since both depend on
 the SRS: MySQL swaps only on a geographic one.
 
-One asymmetry is load-bearing rather than incidental. MySQL is 2D, so a Z/M value has no
-MySQL form and cannot come back on the bare path, while a value whose only extension is its
-SRID does, because MySQL represents any SRID in its own binary format. That is what keeps
-replication and dump whole for a column MySQL itself accepts.
-
-Both directions of the bare path are v1 choices, not properties of the format. Later
-versions can widen either end without a migration: ingest could try to recognise the
-format it was handed rather than assume MySQL's, and bare output could do something better
-than erroring, so long as it is neither silent truncation nor a format the input side will
-not take back.
+A Z/M value has no MySQL form, since MySQL is 2D, so it cannot come back on the bare path.
+A value whose only extension is its SRID can, since MySQL's binary format carries any
+SRID, which keeps replication and dump whole for a column MySQL itself accepts.
 
 **Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
 `max_allowed_packet` can nest millions deep. MySQL returns
@@ -266,8 +259,7 @@ A distance formula answers the second and says nothing about the first, which is
 `ST_Distance` between two points needs no edge model at all and every case involving a line
 or polygon does.
 
-**One edge model, everywhere.** All 4326 topology uses a single edge model, and the metric
-is Andoyer throughout, so:
+**One edge model, everywhere.** All 4326 topology uses a single edge model, so:
 
 > `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every pair of
 > geometry types, and likewise for its negation `ST_Disjoint`.
@@ -525,9 +517,6 @@ Out of scope here, each with a home:
   in MySQL that matter once projected SRSs with varied units exist. The `unit` argument on
   `ST_Distance` and `ST_Length` is deferred with it, since that catalog defines the names
   it accepts; v1 has the two-argument forms and returns metres on 4326.
-- **Where the per-SRS attributes come from.** MySQL keeps the class, axis order, bounds,
-  unit and ellipsoid inside each row's WKT `DEFINITION`; the full-catalog work decides how
-  TiDB surfaces them.
 - **`ST_SwapXY`**, which swaps a geometry's coordinates in place. The `axis-order` option
   covers the read and write direction in v1; this is the geometry-mutating variant.
 - **3D / measured (Z/M) geometry**: stored and returned unchanged through the EWKB pair;
@@ -539,7 +528,7 @@ Out of scope here, each with a home:
 | --- | --- |
 | Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
 | Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. A functional index over a geometry-valued expression is rejected too, as in MySQL. |
-| Generated columns | No `ST_*` function is allowed in a virtual or stored generated column expression in v1. Nothing structural stops them, since they are deterministic scalars, but each one has to be shown useful and correct there rather than assumed, and that is per function. This costs work rather than saving it: `pkg/ddl/generated_column.go` gates generated columns with a blocklist (`expression.IllegalFunctions4GeneratedColumns`) plus a "is it a registered builtin" check, so every `ST_*` name has to be added to that blocklist explicitly, otherwise registering the builtin already admits it. Functions can be taken off the list one at a time later. The separate `GAFunction4ExpressionIndex` allowlist applies to expression indexes only, which v1 does not have. |
+| Generated columns | No `ST_*` function is allowed in a virtual or stored generated column expression in v1; each can be allowed once shown useful and correct there. Registering a builtin admits it in generated columns by default, so every `ST_*` name goes on the generated-column blocklist. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
 | DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected as unsupported in v1, whatever the change: the `SRID` attribute, the subtype in either direction, or conversion to or from another type. The exception is `NULL`/`NOT NULL`, which the generic nullability path handles without knowing the column is geometry. Anything else means adding a new column and backfilling it. `DROP COLUMN` is ordinary. |
@@ -820,19 +809,11 @@ great-circle arcs in PostGIS, Andoyer edges here, as in MySQL.
 
 ### A `GEOGRAPHY` type
 
-The extension a PostGIS user asks for, since it is how PostGIS spells geodetic work.
-Nothing in this design forecloses it, and little of it would be new work.
-
-**Storage costs nothing.** The stored format already holds what a `geography` value needs,
-and EWKB is PostGIS's own exchange format for it, so such a column needs no new bytes, no
-second codec and no migration.
-
-**What it would buy is the PostGIS duality, not accuracy.** PostGIS `geography` is
-great-circle edges with a spheroidal metric: the sphere decides containment and which points
-get measured, and Karney converts that pair into metres. Matching PostGIS therefore means
-reproducing that split rather than being as exact as possible, and it stays within the
-consistency invariant in [Reference surface](#reference-surface), since one edge model still
-decides all topology. So one engine could cover all three audiences:
+How PostGIS spells geodetic work, and nothing here forecloses it. The stored format
+already holds a `geography` value, so it needs no new bytes, codec or migration. It would
+reproduce PostGIS's split of great-circle edges with a Karney metric, which keeps the
+invariant in [Reference surface](#reference-surface), since one edge model still decides
+all topology:
 
 | Spelling | Edge model | Metric | Matches |
 | --- | --- | --- | --- |
@@ -840,10 +821,9 @@ decides all topology. So one engine could cover all three audiences:
 | `GEOMETRY` `SRID 4326`, and further SRIDs later | Andoyer | Andoyer | MySQL |
 | `GEOGRAPHY`, if added | great circle | Karney | PostGIS `geography` |
 
-**Type plumbing is the part worth deciding before it is needed**: whether `GEOGRAPHY`
-becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the parser, DDL,
-`SHOW CREATE TABLE`, `information_schema.columns` and the tool metadata path in
-[Compatibility](#compatibility). No constant is reserved for it here.
+Whether it is a field type of its own or a flag over `mysql.TypeGeometry` touches the
+parser, DDL, `SHOW CREATE TABLE`, `information_schema.columns` and the tool metadata path;
+no constant is reserved for it here.
 
 ### Remaining delta
 
