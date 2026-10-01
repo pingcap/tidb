@@ -1,76 +1,103 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-//! This module is the low-level mechanisms for getting timestamps from a PD
-//! cluster. It should be used via the `get_timestamp` API in `PdClient`.
-//!
-//! Once a `TimestampOracle` is created, there will be two futures running in a background working
-//! thread created automatically. The `get_timestamp` method creates a oneshot channel whose
-//! transmitter is served as a `TimestampRequest`. `TimestampRequest`s are sent to the working
-//! thread through a bounded multi-producer, single-consumer channel. Every time the first future
-//! is polled, it tries to exhaust the channel to get as many requests as possible and sends a
-//! single `TsoRequest` to the PD server. The other future receives `TsoResponse`s from the PD
-//! server and allocates timestamps for the requests.
+//! Batched timestamp allocation on a PD stream. Each sent batch has the PD
+//! deadline watcher's lifetime; completion disarms that deadline without
+//! closing the shared stream.
 
 use std::collections::VecDeque;
-use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
-use futures::pin_mut;
 use futures::prelude::*;
-use futures::task::AtomicWaker;
-use futures::task::Context;
-use futures::task::Poll;
-use log::debug;
-use log::info;
-use pin_project::pin_project;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
+use super::deadline::{DeadlineDone, Watcher};
+use crate::async_util::Cancellation;
 use crate::internal_err;
 use crate::proto::pdpb::pd_client::PdClient;
 use crate::proto::pdpb::*;
-use crate::Result;
+use crate::{Error, Result};
 
-/// It is an empirical value.
+/// Existing native batching bounds; the full Go TSO dispatcher remains a
+/// separate package acceptance unit.
 const MAX_BATCH_SIZE: usize = 64;
-
-/// TODO: This value should be adjustable.
 const MAX_PENDING_COUNT: usize = 1 << 16;
+/// `clients/tso.newTSODispatcher` uses the same deadline channel capacity.
+const DEADLINE_CAPACITY: usize = 64;
 
 type TimestampRequest = oneshot::Sender<Timestamp>;
+
+struct OracleInner {
+    request_tx: mpsc::Sender<TimestampRequest>,
+    cancellation: Cancellation,
+    worker: Mutex<Option<JoinHandle<Result<()>>>>,
+}
+
+impl Drop for OracleInner {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
 
 /// The timestamp oracle (TSO) which provides monotonically increasing timestamps.
 #[derive(Clone)]
 pub(crate) struct TimestampOracle {
-    /// The transmitter of a bounded channel which transports requests of getting a single
-    /// timestamp to the TSO working thread. A bounded channel is used to prevent using
-    /// too much memory unexpectedly.
-    /// In the working thread, the `TimestampRequest`, which is actually a one channel sender,
-    /// is used to send back the timestamp result.
-    request_tx: mpsc::Sender<TimestampRequest>,
+    inner: Arc<OracleInner>,
 }
 
 impl TimestampOracle {
-    pub(crate) fn new(cluster_id: u64, pd_client: &PdClient<Channel>) -> Result<TimestampOracle> {
-        let pd_client = pd_client.clone();
+    pub(crate) fn new(
+        cluster_id: u64,
+        pd_client: &PdClient<Channel>,
+        timeout: Duration,
+    ) -> Result<TimestampOracle> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
-
-        // Start a background thread to handle TSO requests and responses
-        tokio::spawn(run_tso(cluster_id, pd_client, request_rx));
-
-        Ok(TimestampOracle { request_tx })
+        let cancellation = Cancellation::default();
+        let worker = tokio::spawn(run_tso(
+            cluster_id,
+            pd_client.clone(),
+            request_rx,
+            timeout,
+            cancellation.clone(),
+        ));
+        Ok(TimestampOracle {
+            inner: Arc::new(OracleInner {
+                request_tx,
+                cancellation,
+                worker: Mutex::new(Some(worker)),
+            }),
+        })
     }
 
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
-        debug!("getting current timestamp");
         let (request, response) = oneshot::channel();
-        self.request_tx
-            .send(request)
-            .await
-            .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
-        Ok(response.await?)
+        tokio::select! {
+            // Retiring a stream must not revoke a batch result already delivered
+            // to this request. Go Request waits independently of stream context.
+            biased;
+            result = async {
+                self.inner.request_tx.send(request).await
+                    .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
+                Ok(response.await?)
+            } => result,
+            _ = self.inner.cancellation.cancelled() => Err(Error::ContextCanceled),
+        }
+    }
+
+    pub(crate) async fn close(&self) {
+        self.inner.cancellation.cancel();
+        let mut worker = self.inner.worker.lock().await;
+        if let Some(handle) = worker.as_mut() {
+            // Keep ownership through the await so a cancelled close can be retried.
+            match handle.await {
+                Ok(Ok(())) | Ok(Err(Error::ContextCanceled)) => {}
+                Ok(Err(error)) => log::debug!("TSO stream stopped: {error}"),
+                Err(error) => log::error!("TSO worker failed: {error}"),
+            }
+            worker.take();
+        }
     }
 }
 
@@ -78,141 +105,142 @@ async fn run_tso(
     cluster_id: u64,
     mut pd_client: PdClient<Channel>,
     request_rx: mpsc::Receiver<TimestampRequest>,
+    timeout: Duration,
+    cancellation: Cancellation,
 ) -> Result<()> {
-    // The `TimestampRequest`s which are waiting for the responses from the PD server
-    let pending_requests = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_PENDING_COUNT)));
-
-    // When there are too many pending requests, the `send_request` future will refuse to fetch
-    // more requests from the bounded channel. This waker is used to wake up the sending future
-    // if the queue containing pending requests is no longer full.
-    let sending_future_waker = Arc::new(AtomicWaker::new());
-
-    let request_stream = TsoRequestStream {
+    let pending_requests = Arc::new(Mutex::new(VecDeque::new()));
+    let watcher = Watcher::new(&cancellation, DEADLINE_CAPACITY, "tso");
+    let request_stream = request_stream(
         cluster_id,
         request_rx,
-        pending_requests: pending_requests.clone(),
-        self_waker: sending_future_waker.clone(),
+        pending_requests.clone(),
+        watcher.clone(),
+        timeout,
+        cancellation.clone(),
+    );
+    let result = tokio::select! {
+        _ = cancellation.cancelled() => Err(Error::ContextCanceled),
+        result = async {
+            // Include response-header establishment in the stream cancellation
+            // scope. The request stream starts each deadline before yielding its RPC.
+            let mut responses = pd_client.tso(request_stream).await?.into_inner();
+            while let Some(response) = responses.message().await? {
+                allocate_timestamps(&response, &mut *pending_requests.lock().await)?;
+            }
+            Err(internal_err!("TSO stream terminated"))
+        } => result,
     };
-
-    // let send_requests = rpc_sender.send_all(&mut request_stream);
-    let mut responses = pd_client.tso(request_stream).await?.into_inner();
-
-    while let Some(Ok(resp)) = responses.next().await {
-        {
-            let mut pending_requests = pending_requests.lock().await;
-            allocate_timestamps(&resp, &mut pending_requests)?;
-        }
-
-        // Wake up the sending future blocked by too many pending requests or locked.
-        sending_future_waker.wake();
-    }
-    // TODO: distinguish between unexpected stream termination and expected end of test
-    info!("TSO stream terminated");
-    Ok(())
+    cancellation.cancel();
+    watcher.close().await;
+    pending_requests.lock().await.clear();
+    result
 }
 
 struct RequestGroup {
-    tso_request: TsoRequest,
+    count: u32,
     requests: Vec<TimestampRequest>,
+    done: DeadlineDone,
+    _permit: OwnedSemaphorePermit,
 }
 
-#[pin_project]
-struct TsoRequestStream {
+fn request_stream(
     cluster_id: u64,
-    #[pin]
-    request_rx: mpsc::Receiver<oneshot::Sender<Timestamp>>,
+    request_rx: mpsc::Receiver<TimestampRequest>,
     pending_requests: Arc<Mutex<VecDeque<RequestGroup>>>,
-    self_waker: Arc<AtomicWaker>,
-}
-
-impl Stream for TsoRequestStream {
-    type Item = TsoRequest;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut this = self.project();
-
-        let pending_requests = this.pending_requests.lock();
-        pin_mut!(pending_requests);
-        let mut pending_requests = if let Poll::Ready(pending_requests) = pending_requests.poll(cx)
-        {
-            pending_requests
-        } else {
-            this.self_waker.register(cx.waker());
-            return Poll::Pending;
-        };
-        let mut requests = Vec::new();
-
-        while requests.len() < MAX_BATCH_SIZE && pending_requests.len() < MAX_PENDING_COUNT {
-            match this.request_rx.poll_recv(cx) {
-                Poll::Ready(Some(sender)) => {
-                    requests.push(sender);
+    watcher: Watcher,
+    timeout: Duration,
+    cancellation: Cancellation,
+) -> impl Stream<Item = TsoRequest> + Send + 'static {
+    let pending_capacity = Arc::new(Semaphore::new(MAX_PENDING_COUNT));
+    futures::stream::unfold(request_rx, move |mut request_rx| {
+        let pending_requests = pending_requests.clone();
+        let pending_capacity = pending_capacity.clone();
+        let watcher = watcher.clone();
+        let cancellation = cancellation.clone();
+        async move {
+            let prepare = async {
+                let permit = pending_capacity.acquire_owned().await.ok()?;
+                let first = request_rx.recv().await?;
+                let mut requests = vec![first];
+                while requests.len() < MAX_BATCH_SIZE {
+                    match request_rx.try_recv() {
+                        Ok(request) => requests.push(request),
+                        Err(_) => break,
+                    }
                 }
-                Poll::Ready(None) if requests.is_empty() => return Poll::Ready(None),
-                _ => break,
-            }
-        }
-
-        if !requests.is_empty() {
-            let req = TsoRequest {
-                header: Some(RequestHeader {
-                    cluster_id: *this.cluster_id,
-                    ..Default::default()
-                }),
-                count: requests.len() as u32,
-                dc_location: String::new(),
+                let stream_cancellation = cancellation.clone();
+                let done = watcher
+                    .start(&cancellation, timeout, move || {
+                        stream_cancellation.cancel();
+                    })
+                    .await?;
+                let count = requests.len() as u32;
+                let mut pending = pending_requests.lock().await;
+                // A cancelled stream must not publish more pending work after
+                // the receiver has drained it during shutdown.
+                if cancellation.is_cancelled() {
+                    return None;
+                }
+                pending.push_back(RequestGroup {
+                    count,
+                    requests,
+                    done,
+                    _permit: permit,
+                });
+                Some(TsoRequest {
+                    header: Some(RequestHeader {
+                        cluster_id,
+                        ..Default::default()
+                    }),
+                    count,
+                    dc_location: String::new(),
+                })
             };
-
-            let request_group = RequestGroup {
-                tso_request: req.clone(),
-                requests,
-            };
-            pending_requests.push_back(request_group);
-
-            Poll::Ready(Some(req))
-        } else {
-            // Set the waker to the context, then the stream can be waked up after the pending queue
-            // is no longer full.
-            this.self_waker.register(cx.waker());
-            Poll::Pending
+            let request = tokio::select! {
+                _ = cancellation.cancelled() => None,
+                request = prepare => request,
+            }?;
+            Some((request, request_rx))
         }
-    }
+    })
 }
 
 fn allocate_timestamps(
     resp: &TsoResponse,
     pending_requests: &mut VecDeque<RequestGroup>,
 ) -> Result<()> {
-    // PD returns the timestamp with the biggest logical value. We can send back timestamps
-    // whose logical value is from `logical - count + 1` to `logical` using the senders
-    // in `pending`.
+    let RequestGroup {
+        count,
+        requests,
+        done,
+        _permit,
+    } = pending_requests
+        .pop_front()
+        .ok_or_else(|| internal_err!("PD gives more TsoResponse than expected"))?;
+    // Go completes the deadline on both successful and failed batch callbacks.
+    done.complete();
     let tail_ts = resp
         .timestamp
         .as_ref()
         .ok_or_else(|| internal_err!("No timestamp in TsoResponse"))?;
-
+    if count != resp.count {
+        return Err(internal_err!(
+            "PD gives different number of timestamps than expected"
+        ));
+    }
     let mut offset = resp.count;
-    if let Some(RequestGroup {
-        tso_request,
-        requests,
-    }) = pending_requests.pop_front()
-    {
-        if tso_request.count != offset {
-            return Err(internal_err!(
-                "PD gives different number of timestamps than expected"
-            ));
-        }
-
-        for request in requests {
-            offset -= 1;
-            let ts = Timestamp {
-                physical: tail_ts.physical,
-                logical: tail_ts.logical - offset as i64,
-                suffix_bits: tail_ts.suffix_bits,
-            };
-            let _ = request.send(ts);
-        }
-    } else {
-        return Err(internal_err!("PD gives more TsoResponse than expected"));
-    };
+    for request in requests {
+        offset -= 1;
+        let ts = Timestamp {
+            physical: tail_ts.physical,
+            logical: tail_ts.logical - offset as i64,
+            suffix_bits: tail_ts.suffix_bits,
+        };
+        let _ = request.send(ts);
+    }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "timestamp_tests.rs"]
+mod tests;

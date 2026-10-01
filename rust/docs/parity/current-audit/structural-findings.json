@@ -582,12 +582,12 @@
     },
     {
       "id": "P06",
-      "status": "open",
+      "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "**P2; source-confirmed:** native client-rust's TSO worker is spawned without a retained join/cancel owner, waits on its stream/oneshot without the configured request deadline, and is not stopped by the public client's close path. A stalled stream can leave timestamp acquisition pending; retry counts cannot bound an attempt that never finishes.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::new`/`get_timestamp`/`run_tso`; `src/pd/retry.rs::get_timestamp`; `src/pd/client.rs::close`; native originals have the same paths",
-      "go_owner": "Pinned PD client `clients/tso/client.go::Close`, `clients/tso/dispatcher.go` deadline watcher and `client.go::Close`, plus client-go `tikv.KVStore.Close`: retain a shared owner that bounds requests, cancels/drains pending work and joins stream tasks. This is independent of P03's service-mode discovery. No live stalled-PD reproduction was run.",
-      "review_basis": "new source review; SQL probe for O18"
+      "finding": "**P2; partially repaired:** complete PD pkg/deadline ownership now bounds sent TSO batches, disarms completed batches, and cancels/joins retired oracle workers. Loopback stalled-header/body regressions and a shared cancellation lost-wakeup regression are repaired. Public PdRpcClient.close still does not retire its PD owner; root/discovery/retry lifecycle and whole TSO package acceptance remain open.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/deadline.rs`; `src/pd/timestamp.rs`; `src/async_util.rs::Cancellation`; remaining `src/pd/client.rs::close` / `src/pd/retry.rs`; receipt `pd-deadline-owner-repair.md`",
+      "go_owner": "Pinned PD `pkg/deadline` (both artifacts), `clients/tso/dispatcher.go` batch start/completion, `clients/tso/client.go::Close`, PD root close and client-go `tikv.KVStore.Close`. Native 5928b6e implements the complete deadline prerequisite and required call sites. This does not accept the parent packages or close P03/P06/P07.",
+      "review_basis": "Complete deadline package inventory, original Go race suite, fail-before/pass-after loopback transport and deterministic cancellation evidence; see pd-deadline-owner-repair.md."
     },
     {
       "id": "P07",

@@ -40,6 +40,8 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, W01 prerequisite) Inventory and implement the complete pinned PD `pkg/deadline` package plus its native TSO caller integration. Reproduce missing response/body deadlines, completed-result loss on retirement, and a lost wakeup in the existing cancellation adapter. Complete-package evidence is the deadline leaf only; parent PD/TSO/discovery acceptance and P03/P06/P07 remain open.
+- [x] Finish deadline-leaf validation: 1,422 native library tests (two existing ignored), original Go race tests, strict Clippy/all-targets/formatting, native master publication as 5928b6e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), all-target compilation and root lint. TiDB publication is gated by the actual hook and fresh pre-push locked builds; see `parity/current-audit/pd-deadline-owner-repair.md` and the publication response.
 - [x] (2026-10-01, full-picture plan) Pull both implementation branches, fetch Go master, reconcile the current 85-record register and assign all 77 open findings exactly once. Replace stale active TiPB and background-lifetime work with the current dependency and removal gates. No production code or finding status changes.
 - [ ] Establish the next complete PD root/TSO/discovery package closure, original-case mapping and fail-before lifecycle/transport probes (W01). Preserve all other root APIs, variants and dependencies in its acceptance scope.
 - [ ] Migrate complete native routing owners and every TiDB storage consumer before retiring competing TiDB algorithms (W02); retain the MPP transport retirement dependency.
@@ -487,6 +489,14 @@ The old testport manifest contains only 45 package mappings and does not describ
 ## Decision Log
 
 
+- Decision: Implement the complete PD deadline dependency first, with the TSO
+  batch start/completion and worker-retirement call sites required to use it.
+  Rationale: This is the whole two-artifact source package, not a partial TSO
+  dispatcher claim. Native timer/cancellation adapters preserve its lifecycle;
+  the proven shared cancellation race must be repaired for shutdown to work.
+  Public PD close, discovery, root APIs and retry/concurrency remain in W01.
+  Date/Author: 2026-10-01 / Codex, deadline prerequisite implementation.
+
 - Decision: Start implementation with the complete pinned PD root/TSO/discovery
   closure, then native routing and TiDB consumers; allow ready independent
   correctness packages without waiting for unrelated performance work.
@@ -626,6 +636,16 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The W01 prerequisite now implements and integrates the complete pinned PD
+`pkg/deadline` package. Native master `5928b6e` supplies the shared owner to TiDB;
+the [repair receipt](parity/current-audit/pd-deadline-owner-repair.md) records all
+source/support artifacts, fail-before regressions and passing validation. It
+also repairs completed-result loss during stream retirement and the shared
+cancellation adapter's registration race. Public PD close and full root/TSO/
+discovery acceptance remain open, so P06 is partial and 77 known findings remain.
+About 5.3 GiB of obsolete incremental compiler caches were reclaimed. No workload
+performance result is claimed. Publication uses both required locked build gates.
 
 The full-picture planning revision maps every known open finding, identifies
 coupled activation/removal gates, selects the next complete native owner and
@@ -1920,3 +1940,12 @@ source-pinned package acceptance units, dependency/activation/removal gates,
 concrete validation/publication steps and ongoing workload measurement. Preserved
 historical receipts and repaired findings. The next implementation unit is the
 native PD root/TSO/discovery closure; this revision performs planning only.
+
+
+## Revision note — 2026-10-01 PD deadline prerequisite
+
+
+Implemented the complete W01 deadline leaf with native batch/retirement callers
+and the required cancellation adapter correction. Recorded native publication,
+TiDB synchronization and validation in the linked receipt. Preserved the open
+parent-package obligations and current 77-finding assignment.

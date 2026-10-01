@@ -1,0 +1,170 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/deadline"
+  },
+  "native_baseline": "6f663b396552eec6d1bfad76b65f813e317884a4",
+  "claim": "Complete pkg/deadline production/test artifact scope, with native timer/cancellation/log adapters and required TSO caller integration. No clients/tso, servicediscovery, PD root, or entire client-go acceptance.",
+  "package_artifacts": [
+    {
+      "path": "pkg/deadline/watcher.go",
+      "sha256": "949508a4a92b190d31c744cf02ff6786a8e5278ef0883b62b58a5cb5f7c4bfbe",
+      "kind": "production",
+      "integration": "src/pd/deadline.rs: Watcher::new, start, serial watch worker; timer duration starts before bounded admission; timeout callback, explicit done, parent/caller cancellation and zero-capacity channel semantics retained."
+    },
+    {
+      "path": "pkg/deadline/watcher_test.go",
+      "sha256": "ebb9dafd819eedaa11538736e787f81cb571178d67be41abca4b86c0cb7e41d2",
+      "kind": "original tests/support",
+      "integration": "source_go_deadline_TestWatcher ports all TestWatcher assertions; TestMain goleak is covered by retained worker joins, last-owner retirement and callback release tests. Additional deterministic queue/zero/blocked-admission cases cover all production branches."
+    }
+  ],
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_tests": [
+      "TestWatcher"
+    ],
+    "test_harness": [
+      "TestMain"
+    ]
+  },
+  "dependency_decisions": [
+    {
+      "owner": "Go context / time / channels",
+      "native": "Existing async_util::Cancellation, tokio::time::Instant/sleep_until, bounded serial queue with watch notifications. Rust ownership retains and joins the worker; final handle drop cancels it. Negative Go time.Duration has the same immediate-expiry behavior represented by Duration::ZERO. The shared Cancellation adapter now registers its waiter before checking the atomic state; a deterministic fail-before regression proves the eliminated lost-wakeup window."
+    },
+    {
+      "owner": "pkg/utils/timerutil",
+      "native": "Reviewed both artifacts. Adapter uses an absolute monotonic deadline instead of recreating Go timer pooling. No stale timer event can survive completion/reset; queued timers retain original start time. This does not claim a separate timerutil package port."
+    },
+    {
+      "owner": "github.com/pingcap/log and go.uber.org/zap",
+      "native": "Existing log crate emits watcher start/expiry/exit with source. No new logging owner/dependency."
+    },
+    {
+      "owner": "github.com/stretchr/testify/require and go.uber.org/goleak",
+      "native": "Rust assertions, paused Tokio time and retained-task/resource-retirement checks. Original Go suite runs with goleak and -race unchanged."
+    }
+  ],
+  "reviewed_dependency_artifacts": [
+    {
+      "path": "pkg/utils/timerutil/pool.go",
+      "sha256": "cc052c9e58336eb3073beafd65e7fd74e355f717bc05feabba91189a1a52c7b6",
+      "kind": "timer adapter input",
+      "integration": "Native monotonic deadline/drop replaces Go pooled time.Timer channel lifecycle."
+    },
+    {
+      "path": "pkg/utils/timerutil/pool_test.go",
+      "sha256": "6e14c6b7b3fe9d49a141b32ea4f7e117004136a3473a539a1d61254115fcd7cd",
+      "kind": "dependency tests/benchmarks",
+      "integration": "Reviewed timer expiry/reuse and allocation benchmarks; no separate timerutil acceptance or allocation-performance claim."
+    }
+  ],
+  "test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "Reviewed support artifact; this package does not call URL allocation/environment checking or Eventually. Linux/non-Linux variants do not alter TestWatcher."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "Reviewed support artifact; this package does not call URL allocation/environment checking or Eventually. Linux/non-Linux variants do not alter TestWatcher."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "Go TestMain imports LeakOptions; native task/resource retirement tests replace goroutine bookkeeping."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "Reviewed support artifact; this package does not call URL allocation/environment checking or Eventually. Linux/non-Linux variants do not alter TestWatcher."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "Reviewed support artifact; this package does not call URL allocation/environment checking or Eventually. Linux/non-Linux variants do not alter TestWatcher."
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "shared module input",
+      "integration": "Pinned source build/dependency/license evidence; no Go source changes. Run unchanged scoped race tests; native Cargo/lint/build gates recorded in receipt."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "shared module input",
+      "integration": "Pinned source build/dependency/license evidence; no Go source changes. Run unchanged scoped race tests; native Cargo/lint/build gates recorded in receipt."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "shared module input",
+      "integration": "Pinned source build/dependency/license evidence; no Go source changes. Run unchanged scoped race tests; native Cargo/lint/build gates recorded in receipt."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "shared module input",
+      "integration": "Pinned source build/dependency/license evidence; no Go source changes. Run unchanged scoped race tests; native Cargo/lint/build gates recorded in receipt."
+    }
+  ],
+  "production_callers": [
+    {
+      "go": "clients/tso/dispatcher.go:newTSODispatcher/handleDispatcher/processRequests",
+      "rust": "src/pd/timestamp.rs:run_tso/request_stream/allocate_timestamps",
+      "decision": "One watcher per stream owner; start before each batch is yielded to tonic; cancel the stream on expiry; disarm for completed/malformed batches; retire/join watcher at stream shutdown. Full source TSO dispatcher remains unaccepted."
+    },
+    {
+      "go": "clients/tso client/stream lifetime",
+      "rust": "src/pd/cluster.rs:connect_cluster/reconnect",
+      "decision": "Carry configured PD timeout and join retired oracle before replacement. Public PdRpcClient.close propagation and full source discovery/concurrency remain open."
+    }
+  ],
+  "native_artifacts": [
+    "src/async_util.rs",
+    "src/pd/deadline.rs",
+    "src/pd/mod.rs",
+    "src/pd/timestamp.rs",
+    "src/pd/timestamp_tests.rs",
+    "src/pd/cluster.rs",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "validation": {
+    "original": "go test -mod=readonly -race ./pkg/deadline -count=1",
+    "red": "cargo test --locked --lib source_tso_ -- --test-threads=1: two configured-timeout regressions failed on baseline; completed-result retirement and shared cancellation-registration regressions also failed before their corrections.",
+    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 46 passed",
+    "remaining": [
+      "native publication",
+      "TiDB sync and affected checks",
+      "root lint",
+      "actual hook locked build",
+      "fresh locked pre-push build"
+    ],
+    "final_native": {
+      "library": "1422 passed; 0 failed; 2 pre-existing ignored",
+      "clippy": "cargo clippy --locked --lib -- -D warnings: passed",
+      "targets": "cargo check --locked --all-targets: passed",
+      "format": "cargo fmt --all --check: passed",
+      "diff": "git diff --check: passed"
+    }
+  }
+}

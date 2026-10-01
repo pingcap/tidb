@@ -141,6 +141,17 @@ The eight repaired register entries remain outside this queue: C01, E01, O12, P0
 
 **Integration gate:** Source configuration, batching, cache identity/cost, errors, cancellation and owned close pass deterministic provider tests and applicable integration cases. Do not invent provider modes or require production credentials to prove local lifecycle behavior.
 
+## W01 prerequisite progress — 2026-10-01
+
+
+The complete PD `pkg/deadline` leaf and its native batch call sites are implemented
+in client-rust `5928b6e480b441496f9a3cd9bed6a7e8d56215a1`; see the
+[repair receipt](pd-deadline-owner-repair.md). This supplies deadline admission,
+completion and stream retirement, with a correction to the shared cancellation
+adapter. W01 remains open for public PD close propagation, discovery, root APIs,
+metadata concurrency and complete parent-package tests/variants. No known finding
+is fully closed by this prerequisite; the primary 77-ID assignment is unchanged.
+
 ## Activation and removal order
 
 

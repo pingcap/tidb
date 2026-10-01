@@ -317,7 +317,7 @@ impl Connection {
         let members = self.validate_endpoints(endpoints, timeout).await?;
         let (client, keyspace_client, members) = self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
-        let tso = TimestampOracle::new(id, &client)?;
+        let tso = TimestampOracle::new(id, &client, timeout)?;
         let cluster = Cluster {
             id,
             client,
@@ -334,7 +334,8 @@ impl Connection {
         let start = Instant::now();
         let (client, keyspace_client, members) =
             self.try_connect_leader(&cluster.members, timeout).await?;
-        let tso = TimestampOracle::new(cluster.id, &client)?;
+        let tso = TimestampOracle::new(cluster.id, &client, timeout)?;
+        cluster.tso.close().await;
         *cluster = Cluster {
             id: cluster.id,
             client,

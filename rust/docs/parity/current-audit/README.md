@@ -45,6 +45,13 @@ PD package closure, coupled schema/DDL/GC sequence, independent correctness
 work, benchmark method and publication gates. Workstreams are not partial
 package completion claims; no production code changes in this planning update.
 
+The [PD deadline owner repair](pd-deadline-owner-repair.md) implements the complete
+pinned deadline package and its native TSO batch/retirement integration, including
+a shared cancellation lost-wakeup correction. Native master is `5928b6e480b441496f9a3cd9bed6a7e8d56215a1`.
+P06 is partial; public PD close and the whole parent packages remain open. The
+77-unresolved count is unchanged. See the receipt for synchronized-source and
+publication checks; earlier source snapshots above retain their original pins.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

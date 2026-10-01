@@ -202,6 +202,9 @@ pub struct Cancellation {
 struct CancellationInner {
     cancelled: AtomicBool,
     notify: Notify,
+    // Reproduce cancellation between the state check and suspending a waiter.
+    #[cfg(test)]
+    before_wait: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Cancellation {
@@ -231,15 +234,31 @@ impl Cancellation {
 
     /// Waits for this scope or any parent to be cancelled.
     pub async fn cancelled(&self) {
-        while !self.is_cancelled() {
+        loop {
+            // notify_waiters does not retain a permit for a future waiter.
+            // Register before checking state so cancellation cannot fall into
+            // the gap between the check and suspending this task.
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            #[cfg(test)]
+            {
+                let before_wait = self.inner.before_wait.lock().unwrap().take();
+                if let Some(before_wait) = before_wait {
+                    before_wait();
+                }
+            }
             if let Some(parent) = &self.parent {
                 let parent_cancelled = Box::pin(parent.cancelled());
                 tokio::select! {
-                    _ = self.inner.notify.notified() => {}
+                    _ = &mut notified => {}
                     _ = parent_cancelled => {}
                 }
             } else {
-                self.inner.notify.notified().await;
+                notified.await;
             }
         }
     }
@@ -400,6 +419,18 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn cancellation_cannot_be_lost_between_check_and_wait() {
+        let cancellation = Cancellation::default();
+        let cancel_at_registration = cancellation.clone();
+        *cancellation.inner.before_wait.lock().unwrap() = Some(Box::new(move || {
+            cancel_at_registration.cancel();
+        }));
+        tokio::time::timeout(Duration::from_millis(100), cancellation.cancelled())
+            .await
+            .expect("a cancellation before waiter registration must not be lost");
+    }
 
     #[derive(Default)]
     struct MockExecutor {
