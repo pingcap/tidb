@@ -853,6 +853,11 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	if innerCopTask.Invalid() {
 		return base.InvalidTask, nil
 	}
+	// This path bypasses normal property enforcement. An ordered parent such as
+	// StreamAgg must not consume a probe task that cannot preserve the required order.
+	if !prop.IsSortItemEmpty() && !innerCopTask.(*physicalop.CopTask).KeepOrder {
+		return base.InvalidTask, nil
+	}
 	if prop.TaskTp == property.RootTaskType {
 		return innerCopTask.ConvertToRootTask(ds.SCtx()), nil
 	}
