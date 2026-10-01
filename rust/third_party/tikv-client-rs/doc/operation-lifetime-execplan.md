@@ -14,7 +14,7 @@ TiDB should not infer operation cancellation lifetime from a wire request type. 
 - [x] Expose the existing cleanup-pool setting so workerless injection can select zero concurrency without closing its owner.
 - [x] Run all library tests and strict Clippy.
 - [x] Reconcile pipelined and transaction-file completion scopes, compensating cleanup, and initialization rollback; validate both injected and native transports.
-- [ ] Publish this verified milestone and refresh TiDB.
+- [x] Publish the operation-lifetime milestone (488bb738) and refresh TiDB (25996f29).
 
 ## Decisions and discoveries
 
@@ -94,3 +94,32 @@ Go test run, complete feature matrix, or full shutdown acceptance was performed.
 The per-RPC scope lookup/select adds a small cost only to explicitly scoped
 background work; foreground dispatch keeps its direct future path. No throughput
 claim is made. The TiDB dependency refresh follows publication of this commit.
+
+
+## Retry conversion consolidation (2026-10-01)
+
+The continuation starts at published 488bb738 with a clean tree and the same
+client-go pin. Inspection of config/retry/config.go BoPDRPC and
+BackoffWithCfgAndMaxSleep confirms that retry exhaustion returns the configured
+NewErrPDServerTimeout(""). Native common/errors.rs incorrectly substitutes the
+triggering diagnostic, while tikv.rs has a separate converter using Go's empty
+message. Remove the duplicate converter and route all split/scatter terminal
+errors through the corrected common conversion. Diagnostics remain in backoff
+history. Cancelled/noop backoffs must keep their triggering reason; do not
+replace every retry cancellation with the ContextCanceled sentinel.
+
+Extend the existing PD terminal regression and prove it fails before the fix.
+Then run cargo test --locked --lib -- --test-threads=1, cargo clippy --locked
+--lib -- -D warnings, cargo fmt --all --check and git diff --check. Publish to
+master, then refresh TiDB with its maintained sync script. This is a bounded
+repair of existing ports, not acceptance of any complete upstream package.
+
+
+The PD-terminal regression failed before the production repair (message
+"PD unavailable" instead of "") and passed afterward, with the diagnostic
+retained in history. The complete native library passed 1,405 tests with two
+ignored. Strict Clippy, formatting and diff checks passed. Logs are
+/private/tmp/native-retry-identity-{red,green,all,clippy}.log. The only production
+changes are the common PD-terminal correction and removal of tikv.rs's duplicate
+converter; all four split/scatter consumers now use Error::from. Real-cluster,
+original Go tests, benchmarks and the complete feature matrix were not run.

@@ -32,6 +32,7 @@ Production transactions must have one native transaction engine, MemDB and lock 
 - [x] Publish native cancellation/lifetime fixes and synchronize TiDB to client-rust 884589f.
 - [x] Replace the listed native completion lifetime gaps and bridge heartbeat/client-mode heuristics under the renewed request (2026-10-01); preserve Go's separate Begin, foreground and background owners. Broader context capture/shutdown audit remains open.
 - [ ] Consolidate remaining retry/cache/RPC implementations with native owners and retain TiDB-owned adapters.
+- [x] Remove foreground RPC error stringification and client-rust's duplicate retry-terminal converter; validate determined read results against Go's cleanup contract.
 - [ ] Verify affected packages, regression behavior, required lint and locked server builds; commit and push.
 
 ## Source and package inventory
@@ -74,6 +75,10 @@ Add focused SET/session regressions and whole affected retry/cache/RPC package v
 ## Surprises & Discoveries
 
 
+The 2026-10-01 continuation reproduced the remaining resolver cancellation failure on 25996f29: ClientKv's direct foreground path applies map_err(failure) to an already-native Error, erasing its type. The background worker preserves that same error. Go returns the original caller cancellation from the sender. Separately, txnlock.batchLiteResolveLocks deliberately suppresses read cleanup failures even in caller-owned fallback; the existing cancellation-after-status test incorrectly expects the determined status to be discarded. Native tikv.rs also duplicates the common RetryError converter, with inconsistent PD-timeout text: config/retry.BoPDRPC selects NewErrPDServerTimeout("") rather than the triggering diagnostic.
+
+This maintenance milestone keeps one native terminal-error conversion, removes the lossy TiDB conversion for every supported RPC, and corrects the stale read-cleanup expectation. Reproduce native PD-terminal and bridge error identity regressions before changing production code. Validate native library/Clippy/formatting, synchronize only after publishing native master, then run TiDB bridge/resolver, transaction, region and snapshot suites, root lint, the commit-hook locked server build and a fresh pre-push locked server build. Neither a new retry owner nor display-string cancellation detection is allowed. Master remains 93a01d31f6da205ae4bf376825293903a6899fdb, pinning client-go 8edb23f6c7ee. This does not accept any incomplete package or close T02's broader routing/RPC migration.
+
 The branch's revert restored local algorithms and an older native vendor snapshot. The latest explicit user instruction resolves the earlier pending restore decision. Prior integration validation recorded two region-cache failures and 20 DistSQL failures; those are historical baseline observations, not permission to ignore new failures or evidence of parity. The follow-up must verify any affected failures again.
 
 ## Decision Log
@@ -83,6 +88,8 @@ Restore the shared native boundary rather than patching each local algorithm ind
 
 ## Outcomes & Retrospective
 
+
+The error-identity follow-up publishes native b23c6d37, synchronizes TiDB through the maintained protocol-generation script, and removes the foreground conversion for all twelve supported RPCs. Native validation passes 1,405 tests (two ignored), strict Clippy and formatting. TiDB passes 685 tests across the transaction library/integration, resolver, region, snapshot, SQL transaction and embedded transaction scopes (11 ignored). Both remaining resolver failures are resolved: real cancellation retains its type, and the stale read-cleanup expectation follows Go's determined-status contract. Root lint, formatting and diff checks pass. See parity/current-audit/resolver-error-identity-repair.md for red/green evidence and exact commands. Publication still requires the hook's locked server build and a fresh locked build before push. T02 remains open; no full-parity or performance claim is made.
 
 Native cancellation identity was published as 89926da, followed by operation lifetime propagation as 884589f on client-rust master. Full native library validation passed 1,401 tests with two ignored; strict Clippy passed. The public resolver pool configuration change then passed all 42 resolver tests and Clippy. TiDB was synchronized through the maintained source/protobuf generation script to 884589f with four transport compatibility patches. Native changes make ordinary rollback, secondary commit, automatic heartbeat and region fan-out carry explicit background scopes. Injected TiDB clients disable asynchronous resolver scheduling by setting the pool size to zero instead of closing its lifetime.
 

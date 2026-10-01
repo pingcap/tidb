@@ -134,6 +134,13 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 | T02 | TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs` | Pinned client-go owns storage routing/recovery; TiDB coprocessor code consumes it. Move all consumers before deleting the TiDB owner. Native RetryBackoffer already owns the retry budget and must not be duplicated again. |
 | T03 | Repaired the listed request-type and client-mode lifetime heuristics in this continuation. Native owners now distinguish explicit rollback, initialization rollback, failed-commit cleanup, secondary completion and pipelined TTL work; native transport also observes cancellation. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs`, client-rust `488bb73`, and `operation-lifetime-repair.md` | Pinned client-go transaction/lock owners select the context. The bridge's heartbeat exception and `transaction_tasks` flag are removed. This closes the listed workaround, not the broader shutdown/foreground-context audit or a complete-package parity claim. |
 
+The [error-identity follow-up](resolver-error-identity-repair.md) removes a
+remaining foreground bridge conversion that erased native cancellation and
+transport types. Native b23c6d3 also removes the duplicate split/scatter retry
+converter and uses Go's configured PD terminal. Read cleanup retains determined
+status even when cancelled, as Go requires. These bounded repairs do not close
+T02's competing routing/cache/RPC ownership or change the package acceptance count.
+
 The five earlier reviewer defects have their own regression receipts. Retry
 limits, secondary retry history, locked-entry timestamps, mock normal wake-up
 and detached read-resolution fixes are not reopened merely because T02 remains.

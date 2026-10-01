@@ -253,9 +253,8 @@ impl From<crate::retry::RetryError> for Error {
             } => Error::Static(error),
             RetryError::Exhausted {
                 terminal: Some(RetryTerminal::PdServerTimeout),
-                reason,
                 ..
-            } => Error::PdServerTimeout(crate::error::new_pd_server_timeout(reason)),
+            } => Error::PdServerTimeout(crate::error::new_pd_server_timeout("")),
             RetryError::Interrupted(error) => Error::QueryInterruptedWithSignal(error),
             RetryError::KillHandler(error) => error,
             other => Error::StringError(other.to_string()),

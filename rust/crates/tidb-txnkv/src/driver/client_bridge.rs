@@ -606,8 +606,7 @@ impl KvClient for ClientKv {
                     if background.is_none() {
                         return backend
                             .dispatch(&address, &request, &call)
-                            .map(|response| response as Box<dyn Any>)
-                            .map_err(failure);
+                            .map(|response| response as Box<dyn Any>);
                     }
                     let pending = tokio::task::spawn_blocking(move || backend.dispatch(&address, &request, &call));
                     let owner = background.as_ref().unwrap();
@@ -1111,6 +1110,7 @@ mod ownership_regressions {
     #[derive(Default)]
     struct CleanupBackend {
         calls: AtomicUsize,
+        error: Mutex<Option<Error>>,
         blocking: bool,
         started: tokio::sync::Notify,
         finished: tokio::sync::Notify,
@@ -1147,12 +1147,15 @@ mod ownership_regressions {
             request: &dyn Request,
             call: &UnaryCallContext,
         ) -> Result<Box<dyn Any + Send>> {
+            assert!(!call.cancellation().is_cancelled());
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(error) = self.error.lock().unwrap().take() {
+                return Err(error);
+            }
             assert!(
                 request.as_any().is::<kvrpcpb::ResolveLockRequest>()
                     || request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>()
             );
-            assert!(!call.cancellation().is_cancelled());
-            self.calls.fetch_add(1, Ordering::SeqCst);
             if self.blocking {
                 self.started.notify_one();
                 assert!(
@@ -1167,6 +1170,63 @@ mod ownership_regressions {
             } else {
                 Ok(Box::<kvrpcpb::ResolveLockResponse>::default())
             }
+        }
+    }
+
+    #[test]
+    fn every_rpc_preserves_native_error_identity_in_both_operation_scopes() {
+        let requests: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::BatchGetRequest::default()),
+            Box::new(kvrpcpb::ScanRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+        ];
+        for background in [false, true] {
+            let backend = Arc::new(CleanupBackend::default());
+            let client = ClientKv {
+                backend: backend.clone(),
+                address: "store1".to_owned(),
+                call: Arc::new(Mutex::new(None)),
+            };
+            for request in &requests {
+                for error in [
+                    Error::ContextCanceled,
+                    Error::StringError("context canceled".to_owned()),
+                    Error::GrpcAPI(tonic::Status::cancelled("remote cancellation")),
+                ] {
+                    let expected = std::mem::discriminant(&error);
+                    *backend.error.lock().unwrap() = Some(error);
+                    let dispatch = client.dispatch(request.as_ref());
+                    let result = if background {
+                        runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+                            tikv_client::async_util::Cancellation::default(),
+                            dispatch,
+                        ))
+                    } else {
+                        runtime().block_on(dispatch)
+                    };
+                    let error = result.unwrap_err();
+                    assert_eq!(
+                        std::mem::discriminant(&error),
+                        expected,
+                        "{}: {error:?}",
+                        request.label()
+                    );
+                    if let Error::GrpcAPI(status) = error {
+                        assert_eq!(status.code(), tonic::Code::Cancelled);
+                        assert_eq!(status.message(), "remote cancellation");
+                    }
+                }
+            }
+            assert_eq!(backend.calls.load(Ordering::SeqCst), requests.len() * 3);
         }
     }
 

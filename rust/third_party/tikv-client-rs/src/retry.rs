@@ -1570,6 +1570,15 @@ mod tests {
             }
         ));
         assert_eq!(RetryTerminal::PdServerTimeout.to_string(), "");
+        // Go returns the retry class's configured error. The triggering
+        // diagnostic belongs to the backoff history, not the terminal value.
+        let native = crate::Error::from(error);
+        assert!(matches!(native, crate::Error::PdServerTimeout(_)));
+        assert_eq!(native.to_string(), "");
+        assert_eq!(
+            backoffer.latest_errors().last().unwrap().reason,
+            "PD unavailable"
+        );
     }
 
     #[tokio::test]

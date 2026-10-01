@@ -898,12 +898,10 @@ fn read_lite_cleanup_errors_do_not_replace_a_determined_status() {
             &Arc::new(FixedTimestampSource::new(1_100 << 18)),
             true,
         );
-        if cancel_after_resolve {
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap().access_locks, vec![1_000 << 18]);
-        } else {
-            assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
-        }
+        // Go batchLiteResolveLocks ignores read-cleanup errors in both the
+        // async path and caller-owned fallback. Once status is known, even
+        // cancellation before the cleanup RPC must preserve the read hints.
+        assert_eq!(result.unwrap().access_locks, vec![1_000 << 18]);
         assert_eq!(
             recorded.lock().unwrap().resolves.len(),
             usize::from(cancel_after_resolve)

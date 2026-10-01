@@ -1121,29 +1121,13 @@ async fn retry_split_after_lock_resolution(
             )
             .await
         {
-            return SplitBatchOutcome::error(retry_error(error));
+            return SplitBatchOutcome::error(Error::from(error));
         }
     }
     SplitBatchOutcome {
         region_ids: Vec::new(),
         retry_keys: batch,
         error: None,
-    }
-}
-
-fn retry_error(error: crate::retry::RetryError) -> Error {
-    match error {
-        crate::retry::RetryError::Interrupted(error) => error.into(),
-        crate::retry::RetryError::KillHandler(error) => error,
-        crate::retry::RetryError::Exhausted {
-            terminal: Some(crate::retry::RetryTerminal::Static(error)),
-            ..
-        } => error.into(),
-        crate::retry::RetryError::Exhausted {
-            terminal: Some(crate::retry::RetryTerminal::PdServerTimeout),
-            ..
-        } => crate::error::new_pd_server_timeout(String::new()).into(),
-        error => Error::StringError(error.to_string()),
     }
 }
 
@@ -1413,7 +1397,7 @@ impl KvStore {
                     .backoff(BO_REGION_MISS, "split region returned a region error")
                     .await
                 {
-                    return SplitBatchOutcome::error(retry_error(error));
+                    return SplitBatchOutcome::error(Error::from(error));
                 }
                 SplitBatchOutcome {
                     region_ids: Vec::new(),
@@ -1482,7 +1466,7 @@ impl KvStore {
                     retry
                         .backoff(BO_PD_RPC, error.to_string())
                         .await
-                        .map_err(retry_error)?;
+                        .map_err(Error::from)?;
                 }
             }
         }
@@ -1531,7 +1515,7 @@ impl KvStore {
                     if let Err(error) = retry
                         .backoff(BO_REGION_MISS, error.to_string())
                         .await
-                        .map_err(retry_error)
+                        .map_err(Error::from)
                     {
                         // client-go returns `true` with the terminal retry error.
                         // Rust's `Result<bool>` cannot carry a value and error at
