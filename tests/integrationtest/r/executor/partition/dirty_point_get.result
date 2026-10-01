@@ -1,0 +1,34 @@
+set tidb_partition_prune_mode = 'dynamic';
+create table p(a int primary key clustered, b int) partition by hash(a) partitions 4;
+create table t(a int primary key clustered);
+insert into p values (1, 10), (2, 20);
+insert into t values (2);
+begin pessimistic;
+update p set b = 11 where a = 1;
+explain format = 'brief' select * from p where a = 1 order by b;
+id	estRows	task	access object	operator info
+Sort	1.00	root		executor__partition__dirty_point_get.p.b
+└─Projection	1.00	root		executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.p.b
+  └─Point_Get	1.00	root	table:p, partition:p1	handle:1
+select * from p where a = 1 order by b;
+a	b
+1	11
+explain format = 'brief' select /*+ hash_join(p, t) */ p.* from p join t on p.a = t.a where p.a = 2 for update;
+id	estRows	task	access object	operator info
+Projection	1.00	root		executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.p.b
+└─SelectLock	1.00	root		for update 0
+  └─Projection	1.00	root		executor__partition__dirty_point_get.p.a, executor__partition__dirty_point_get.p.b, executor__partition__dirty_point_get.p._tidb_tid, executor__partition__dirty_point_get.t.a
+    └─HashJoin	1.00	root		inner join, equal:[eq(executor__partition__dirty_point_get.t.a, executor__partition__dirty_point_get.p.a)]
+      ├─Point_Get(Build)	1.00	root	table:t	handle:2
+      └─UnionScan(Probe)	1.00	root		eq(executor__partition__dirty_point_get.p.a, 2)
+        └─Point_Get	1.00	root	table:p, partition:p2	handle:2
+select /*+ hash_join(p, t) */ p.* from p join t on p.a = t.a where p.a = 2 for update;
+a	b
+2	20
+begin pessimistic;
+select * from p where a = 2 for update nowait;
+Error 3572 (HY000): Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
+rollback;
+rollback;
+drop table p, t;
+set tidb_partition_prune_mode = default;
