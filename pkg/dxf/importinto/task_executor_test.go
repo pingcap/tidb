@@ -16,6 +16,8 @@ package importinto
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -180,4 +183,43 @@ func TestNormalizeSubtaskErr(t *testing.T) {
 		err := normalizeSubtaskErr(otherErr)
 		require.Equal(t, otherErr, err)
 	})
+}
+
+func TestStaleExecutorDoesNotOverwriteCommittedSubtaskMeta(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	const taskID, subtaskID = 7, 11
+
+	planMeta := &MergeSortStepMeta{KVGroup: globalsort.DataKVGroup}
+	rawPlanMeta, err := planMeta.Marshal()
+	require.NoError(t, err)
+
+	finish := func(totalKVCnt uint64) *proto.Subtask {
+		exec := &mergeSortStepExecutor{
+			task:                &proto.TaskBase{ID: taskID},
+			subtaskSortedKVMeta: &globalsort.SortedKVMeta{TotalKVCnt: totalKVCnt},
+		}
+		subtask := &proto.Subtask{
+			SubtaskBase: proto.SubtaskBase{ID: subtaskID, TaskID: taskID},
+			Meta:        slices.Clone(rawPlanMeta),
+		}
+		require.NoError(t, exec.onFinished(ctx, subtask, store))
+		return subtask
+	}
+
+	// B takes the subtask over from a still-running A and commits; A's
+	// result-metadata write lands afterwards.
+	committedByB := finish(200)
+	staleFromA := finish(100)
+
+	var got MergeSortStepMeta
+	require.NoError(t, json.Unmarshal(committedByB.Meta, &got))
+	require.NoError(t, got.ReadJSONFromExternalStorage(ctx, store, &got))
+	require.Equal(t, uint64(200), got.TotalKVCnt)
+
+	var stale MergeSortStepMeta
+	require.NoError(t, json.Unmarshal(staleFromA.Meta, &stale))
+	require.NotEqual(t, got.ExternalPath, stale.ExternalPath)
+	require.NoError(t, stale.ReadJSONFromExternalStorage(ctx, store, &stale))
+	require.Equal(t, uint64(100), stale.TotalKVCnt)
 }
