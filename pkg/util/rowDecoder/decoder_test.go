@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -108,12 +109,13 @@ func TestRowDecoder(t *testing.T) {
 		},
 	}
 	rd := rowcodec.Encoder{Enable: true}
+	codecEncoder := codec.NewEncoder(collate.NewCollationEnabled())
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {
 			c7.AddFlag(mysql.UnsignedFlag)
 		}
-		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(codecEncoder, sc.TimeZone(), row.input, row.cols, nil, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
@@ -187,8 +189,9 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		},
 	}
 	rd := rowcodec.Encoder{Enable: true}
+	codecEncoder := codec.NewEncoder(collate.NewCollationEnabled())
 	for _, row := range testRows {
-		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(codecEncoder, sc.TimeZone(), row.input, row.cols, nil, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 

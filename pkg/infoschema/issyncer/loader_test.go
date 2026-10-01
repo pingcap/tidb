@@ -33,7 +33,7 @@ import (
 func TestLoadFromTS(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	l := newLoader(store, infoschema.NewCache(nil, 1), nil)
+	l := newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
 	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
@@ -70,7 +70,7 @@ func TestLoadFromTS(t *testing.T) {
 	}))
 	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
-	l = newLoader(store, infoschema.NewCache(nil, 1), nil)
+	l = newLoader(store, infoschema.NewCache(nil, 1), nil, nil)
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	allSchemas = is.AllSchemas()
@@ -217,7 +217,7 @@ func (testStoreWithKS) GetKeyspace() string {
 }
 
 func TestLoaderSkipLoadingDiff(t *testing.T) {
-	syncer := New(nil, nil, 0, nil, nil)
+	syncer := New(nil, nil, 0, nil, nil, nil)
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))

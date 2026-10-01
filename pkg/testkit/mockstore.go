@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -387,7 +388,18 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	dom, err := session.BootstrapSession4DistExecution(store)
+
+	// Multi-domain tests intentionally keep multiple live domains for one mock
+	// store. Skip the temporary global-init domain so it cannot reuse and close
+	// an active test domain.
+	const skipInitGlobalVarFromSystemDB = "github.com/pingcap/tidb/pkg/session/skipInitGlobalVarFromSystemDB"
+	dom, err := func() (*domain.Domain, error) {
+		require.NoError(t, failpoint.Enable(skipInitGlobalVarFromSystemDB, `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(skipInitGlobalVarFromSystemDB))
+		}()
+		return session.BootstrapSession4DistExecution(store)
+	}()
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
