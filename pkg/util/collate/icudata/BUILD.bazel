@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "icudata",
+    srcs = [
+        "danish_generated.go",
+        "data.go",
+        "french_generated.go",
+        "german_generated.go",
+        "root_generated.go",
+        "spanish_generated.go",
+        "swedish_generated.go",
+        "version_generated.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/icudata",
+    visibility = ["//visibility:public"],
+)
