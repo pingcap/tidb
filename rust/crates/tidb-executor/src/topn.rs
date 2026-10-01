@@ -182,6 +182,13 @@ fn spill_parallel_worker_heap(
     if !heap.is_row_ptrs_init() {
         heap.init_ptrs();
         heap.heap_init();
+        for i in 0..heap.len() {
+            eprintln!(
+                "HINIT[{}] = {:?}",
+                i,
+                String::from_utf8_lossy(heap.row_at(i).get_string(0).as_bytes())
+            );
+        }
     }
     heap.take_cmp_err()?;
     heap.sort_row_ptrs_ascending(0)?;
