@@ -1,0 +1,1092 @@
+{
+  "package": "metrics",
+  "collectors": [
+    {
+      "source": "cmdDuration",
+      "field": "cmd_duration",
+      "kind": "HistogramVec",
+      "name": "pd_client_cmd_handle_cmds_duration_seconds",
+      "help": "Bucketed histogram of processing time (s) of handled success cmds.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "cmdFailedDuration",
+      "field": "cmd_failed_duration",
+      "kind": "HistogramVec",
+      "name": "pd_client_cmd_handle_failed_cmds_duration_seconds",
+      "help": "Bucketed histogram of processing time (s) of failed handled cmds.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "internalCmdDuration",
+      "field": "internal_cmd_duration",
+      "kind": "HistogramVec",
+      "name": "pd_client_internal_cmd_handle_cmds_duration_seconds",
+      "help": "Bucketed histogram of processing time (s) of handled success internal cmds.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "internalCmdFailedDuration",
+      "field": "internal_cmd_failed_duration",
+      "kind": "HistogramVec",
+      "name": "pd_client_internal_cmd_handle_failed_cmds_duration_seconds",
+      "help": "Bucketed histogram of processing time (s) of failed handled internal cmds.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "requestDuration",
+      "field": "request_duration",
+      "kind": "HistogramVec",
+      "name": "pd_client_request_handle_requests_duration_seconds",
+      "help": "Bucketed histogram of processing time (s) of handled requests.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "TSOBestBatchSize",
+      "field": "tso_best_batch_size",
+      "kind": "Histogram",
+      "name": "pd_client_request_handle_tso_best_batch_size",
+      "help": "Bucketed histogram of the best batch size of handled requests.",
+      "labels": [],
+      "buckets": [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        16.0,
+        32.0,
+        64.0,
+        128.0,
+        256.0,
+        512.0,
+        1024.0,
+        2048.0,
+        4096.0
+      ]
+    },
+    {
+      "source": "TSOBatchSize",
+      "field": "tso_batch_size",
+      "kind": "Histogram",
+      "name": "pd_client_request_handle_tso_batch_size",
+      "help": "Bucketed histogram of the batch size of handled requests.",
+      "labels": [],
+      "buckets": [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        10.0,
+        14.0,
+        18.0,
+        22.0,
+        26.0,
+        30.0,
+        35.0,
+        40.0,
+        45.0,
+        50.0,
+        60.0,
+        70.0,
+        80.0,
+        90.0,
+        100.0,
+        110.0,
+        120.0,
+        140.0,
+        160.0,
+        180.0,
+        200.0,
+        500.0,
+        1000.0
+      ]
+    },
+    {
+      "source": "TSOBatchSendLatency",
+      "field": "tso_batch_send_latency",
+      "kind": "Histogram",
+      "name": "pd_client_request_tso_batch_send_latency",
+      "help": "tso batch send latency",
+      "labels": [],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    },
+    {
+      "source": "TSORetryCount",
+      "field": "tso_retry_count",
+      "kind": "Histogram",
+      "name": "pd_client_request_tso_retry",
+      "help": "Counter of retry time for TSO request.",
+      "labels": [],
+      "buckets": [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        12.0,
+        16.0,
+        20.0
+      ]
+    },
+    {
+      "source": "RequestForwarded",
+      "field": "request_forwarded",
+      "kind": "GaugeVec",
+      "name": "pd_client_request_forwarded_status",
+      "help": "The status to indicate if the request is forwarded",
+      "labels": [
+        "host",
+        "delegate"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "OngoingRequestCountGauge",
+      "field": "ongoing_request_count_gauge",
+      "kind": "GaugeVec",
+      "name": "pd_client_request_ongoing_requests_count",
+      "help": "Current count of ongoing batch tso requests",
+      "labels": [
+        "stream"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "EstimateTSOLatencyGauge",
+      "field": "estimate_tso_latency_gauge",
+      "kind": "GaugeVec",
+      "name": "pd_client_request_estimate_tso_latency",
+      "help": "Estimated latency of an RTT of getting TSO",
+      "labels": [
+        "stream"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "CircuitBreakerCounters",
+      "field": "circuit_breaker_counters",
+      "kind": "CounterVec",
+      "name": "pd_client_request_circuit_breaker_count",
+      "help": "Circuit breaker counters",
+      "labels": [
+        "name",
+        "event"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "QueryRegionBestBatchSize",
+      "field": "query_region_best_batch_size",
+      "kind": "Histogram",
+      "name": "pd_client_request_handle_query_region_best_batch_size",
+      "help": "Bucketed histogram of the best batch size of handled query region requests.",
+      "labels": [],
+      "buckets": [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        16.0,
+        32.0,
+        64.0,
+        128.0,
+        256.0,
+        512.0,
+        1024.0,
+        2048.0,
+        4096.0
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSize",
+      "field": "query_region_batch_size",
+      "kind": "HistogramVec",
+      "name": "pd_client_request_handle_query_region_batch_size",
+      "help": "Bucketed histogram of the batch size of handled query region requests.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        1.0,
+        2.0,
+        4.0,
+        8.0,
+        10.0,
+        14.0,
+        18.0,
+        22.0,
+        26.0,
+        30.0,
+        35.0,
+        40.0,
+        45.0,
+        50.0,
+        60.0,
+        70.0,
+        80.0,
+        90.0,
+        100.0,
+        110.0,
+        120.0,
+        140.0,
+        160.0,
+        180.0,
+        200.0,
+        500.0,
+        1000.0
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSendLatency",
+      "field": "query_region_batch_send_latency",
+      "kind": "Histogram",
+      "name": "pd_client_request_query_region_batch_send_latency",
+      "help": "query region batch send latency",
+      "labels": [],
+      "buckets": [
+        0.0005,
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048
+      ]
+    }
+  ],
+  "shortcuts": [
+    {
+      "source": "CmdDurationTSOWait",
+      "field": "cmd_duration_tso_wait",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "wait"
+      ]
+    },
+    {
+      "source": "CmdDurationTSO",
+      "field": "cmd_duration_tso",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "tso"
+      ]
+    },
+    {
+      "source": "CmdDurationTSOAsyncWait",
+      "field": "cmd_duration_tso_async_wait",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "tso_async_wait"
+      ]
+    },
+    {
+      "source": "CmdDurationGetRegion",
+      "field": "cmd_duration_get_region",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_region"
+      ]
+    },
+    {
+      "source": "CmdDurationGetAllMembers",
+      "field": "cmd_duration_get_all_members",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_member_info"
+      ]
+    },
+    {
+      "source": "CmdDurationGetPrevRegion",
+      "field": "cmd_duration_get_prev_region",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_prev_region"
+      ]
+    },
+    {
+      "source": "CmdDurationGetRegionByID",
+      "field": "cmd_duration_get_region_by_id",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_region_byid"
+      ]
+    },
+    {
+      "source": "CmdDurationScanRegions",
+      "field": "cmd_duration_scan_regions",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "scan_regions"
+      ]
+    },
+    {
+      "source": "CmdDurationBatchScanRegions",
+      "field": "cmd_duration_batch_scan_regions",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "batch_scan_regions"
+      ]
+    },
+    {
+      "source": "CmdDurationGetStore",
+      "field": "cmd_duration_get_store",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_store"
+      ]
+    },
+    {
+      "source": "CmdDurationGetAllStores",
+      "field": "cmd_duration_get_all_stores",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_all_stores"
+      ]
+    },
+    {
+      "source": "CmdDurationUpdateGCSafePoint",
+      "field": "cmd_duration_update_gc_safe_point",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "update_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdDurationUpdateServiceGCSafePoint",
+      "field": "cmd_duration_update_service_gc_safe_point",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "update_service_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdDurationScatterRegion",
+      "field": "cmd_duration_scatter_region",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "scatter_region"
+      ]
+    },
+    {
+      "source": "CmdDurationScatterRegions",
+      "field": "cmd_duration_scatter_regions",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "scatter_regions"
+      ]
+    },
+    {
+      "source": "CmdDurationGetOperator",
+      "field": "cmd_duration_get_operator",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_operator"
+      ]
+    },
+    {
+      "source": "CmdDurationSplitRegions",
+      "field": "cmd_duration_split_regions",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "split_regions"
+      ]
+    },
+    {
+      "source": "CmdDurationSplitAndScatterRegions",
+      "field": "cmd_duration_split_and_scatter_regions",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "split_and_scatter_regions"
+      ]
+    },
+    {
+      "source": "CmdDurationLoadKeyspace",
+      "field": "cmd_duration_load_keyspace",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "load_keyspace"
+      ]
+    },
+    {
+      "source": "CmdDurationLoadKeyspaceByID",
+      "field": "cmd_duration_load_keyspace_by_id",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "load_keyspace_by_id"
+      ]
+    },
+    {
+      "source": "CmdDurationUpdateKeyspaceState",
+      "field": "cmd_duration_update_keyspace_state",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "update_keyspace_state"
+      ]
+    },
+    {
+      "source": "CmdDurationGetAllKeyspaces",
+      "field": "cmd_duration_get_all_keyspaces",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_all_keyspaces"
+      ]
+    },
+    {
+      "source": "CmdDurationGet",
+      "field": "cmd_duration_get",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get"
+      ]
+    },
+    {
+      "source": "CmdDurationPut",
+      "field": "cmd_duration_put",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "put"
+      ]
+    },
+    {
+      "source": "CmdDurationUpdateGCSafePointV2",
+      "field": "cmd_duration_update_gc_safe_point_v2",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "update_gc_safe_point_v2"
+      ]
+    },
+    {
+      "source": "CmdDurationUpdateServiceSafePointV2",
+      "field": "cmd_duration_update_service_safe_point_v2",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "update_service_safe_point_v2"
+      ]
+    },
+    {
+      "source": "CmdDurationQueryRegionAsyncWait",
+      "field": "cmd_duration_query_region_async_wait",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "query_region_async_wait"
+      ]
+    },
+    {
+      "source": "CmdDurationQueryRegionWait",
+      "field": "cmd_duration_query_region_wait",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "query_region_wait"
+      ]
+    },
+    {
+      "source": "CmdDurationQueryRegion",
+      "field": "cmd_duration_query_region",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "query_region"
+      ]
+    },
+    {
+      "source": "CmdDurationAdvanceTxnSafePoint",
+      "field": "cmd_duration_advance_txn_safe_point",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "advance_txn_safe_point"
+      ]
+    },
+    {
+      "source": "CmdDurationAdvanceGCSafePoint",
+      "field": "cmd_duration_advance_gc_safe_point",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "advance_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdDurationSetGCBarrier",
+      "field": "cmd_duration_set_gc_barrier",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "set_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdDurationDeleteGCBarrier",
+      "field": "cmd_duration_delete_gc_barrier",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "delete_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdDurationGetGCState",
+      "field": "cmd_duration_get_gc_state",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_gc_state"
+      ]
+    },
+    {
+      "source": "CmdDurationSetGlobalGCBarrier",
+      "field": "cmd_duration_set_global_gc_barrier",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "set_global_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdDurationDeleteGlobalGCBarrier",
+      "field": "cmd_duration_delete_global_gc_barrier",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "delete_global_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdDurationGetAllKeyspacesGCStates",
+      "field": "cmd_duration_get_all_keyspaces_gc_states",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_all_keyspaces_gc_states"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetRegion",
+      "field": "cmd_failed_duration_get_region",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_region"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationTSOWait",
+      "field": "cmd_failed_duration_tso_wait",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "wait"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationTSO",
+      "field": "cmd_failed_duration_tso",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "tso"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetAllMembers",
+      "field": "cmd_failed_duration_get_all_members",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_member_info"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetPrevRegion",
+      "field": "cmd_failed_duration_get_prev_region",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_prev_region"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetRegionByID",
+      "field": "cmd_failed_duration_get_region_by_id",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_region_byid"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationScanRegions",
+      "field": "cmd_failed_duration_scan_regions",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "scan_regions"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationBatchScanRegions",
+      "field": "cmd_failed_duration_batch_scan_regions",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "batch_scan_regions"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetStore",
+      "field": "cmd_failed_duration_get_store",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_store"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetAllStores",
+      "field": "cmd_failed_duration_get_all_stores",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_all_stores"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationUpdateGCSafePoint",
+      "field": "cmd_failed_duration_update_gc_safe_point",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "update_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationUpdateServiceGCSafePoint",
+      "field": "cmd_failed_duration_update_service_gc_safe_point",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "update_service_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationLoadKeyspace",
+      "field": "cmd_failed_duration_load_keyspace",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "load_keyspace"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationLoadKeyspaceByID",
+      "field": "cmd_failed_duration_load_keyspace_by_id",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "load_keyspace_by_id"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationUpdateKeyspaceState",
+      "field": "cmd_failed_duration_update_keyspace_state",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "update_keyspace_state"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGet",
+      "field": "cmd_failed_duration_get",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationPut",
+      "field": "cmd_failed_duration_put",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "put"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationUpdateGCSafePointV2",
+      "field": "cmd_failed_duration_update_gc_safe_point_v2",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "update_gc_safe_point_v2"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationUpdateServiceSafePointV2",
+      "field": "cmd_failed_duration_update_service_safe_point_v2",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "update_service_safe_point_v2"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationQueryRegionAsyncWait",
+      "field": "cmd_failed_duration_query_region_async_wait",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "query_region_async_wait"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationQueryRegionWait",
+      "field": "cmd_failed_duration_query_region_wait",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "query_region_wait"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationQueryRegion",
+      "field": "cmd_failed_duration_query_region",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "query_region"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationAdvanceTxnSafePoint",
+      "field": "cmd_failed_duration_advance_txn_safe_point",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "advance_txn_safe_point"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationAdvanceGCSafePoint",
+      "field": "cmd_failed_duration_advance_gc_safe_point",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "advance_gc_safe_point"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationSetGCBarrier",
+      "field": "cmd_failed_duration_set_gc_barrier",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "set_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationDeleteGCBarrier",
+      "field": "cmd_failed_duration_delete_gc_barrier",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "delete_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetGCState",
+      "field": "cmd_failed_duration_get_gc_state",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "get_gc_state"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationSetGlobalGCBarrier",
+      "field": "cmd_failed_duration_set_global_gc_barrier",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "set_global_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationDeleteGlobalGCBarrier",
+      "field": "cmd_failed_duration_delete_global_gc_barrier",
+      "collector": "cmdFailedDuration",
+      "collector_field": "cmd_failed_duration",
+      "labels": [
+        "delete_global_gc_barrier"
+      ]
+    },
+    {
+      "source": "CmdFailedDurationGetAllKeyspacesGCStates",
+      "field": "cmd_failed_duration_get_all_keyspaces_gc_states",
+      "collector": "cmdDuration",
+      "collector_field": "cmd_duration",
+      "labels": [
+        "get_all_keyspaces_gc_states"
+      ]
+    },
+    {
+      "source": "InternalCmdDurationGetClusterInfo",
+      "field": "internal_cmd_duration_get_cluster_info",
+      "collector": "internalCmdDuration",
+      "collector_field": "internal_cmd_duration",
+      "labels": [
+        "get_cluster_info"
+      ]
+    },
+    {
+      "source": "InternalCmdDurationGetMembers",
+      "field": "internal_cmd_duration_get_members",
+      "collector": "internalCmdDuration",
+      "collector_field": "internal_cmd_duration",
+      "labels": [
+        "get_members"
+      ]
+    },
+    {
+      "source": "InternalCmdFailedDurationGetClusterInfo",
+      "field": "internal_cmd_failed_duration_get_cluster_info",
+      "collector": "internalCmdFailedDuration",
+      "collector_field": "internal_cmd_failed_duration",
+      "labels": [
+        "get_cluster_info"
+      ]
+    },
+    {
+      "source": "InternalCmdFailedDurationGetMembers",
+      "field": "internal_cmd_failed_duration_get_members",
+      "collector": "internalCmdFailedDuration",
+      "collector_field": "internal_cmd_failed_duration",
+      "labels": [
+        "get_members"
+      ]
+    },
+    {
+      "source": "RequestDurationTSO",
+      "field": "request_duration_tso",
+      "collector": "requestDuration",
+      "collector_field": "request_duration",
+      "labels": [
+        "tso"
+      ]
+    },
+    {
+      "source": "RequestFailedDurationTSO",
+      "field": "request_failed_duration_tso",
+      "collector": "requestDuration",
+      "collector_field": "request_duration",
+      "labels": [
+        "tso-failed"
+      ]
+    },
+    {
+      "source": "RequestDurationQueryRegion",
+      "field": "request_duration_query_region",
+      "collector": "requestDuration",
+      "collector_field": "request_duration",
+      "labels": [
+        "query_region"
+      ]
+    },
+    {
+      "source": "RequestFailedDurationQueryRegion",
+      "field": "request_failed_duration_query_region",
+      "collector": "requestDuration",
+      "collector_field": "request_duration",
+      "labels": [
+        "query_region-failed"
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSizeTotal",
+      "field": "query_region_batch_size_total",
+      "collector": "QueryRegionBatchSize",
+      "collector_field": "query_region_batch_size",
+      "labels": [
+        "total"
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSizeByKeys",
+      "field": "query_region_batch_size_by_keys",
+      "collector": "QueryRegionBatchSize",
+      "collector_field": "query_region_batch_size",
+      "labels": [
+        "by_keys"
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSizeByPrevKeys",
+      "field": "query_region_batch_size_by_prev_keys",
+      "collector": "QueryRegionBatchSize",
+      "collector_field": "query_region_batch_size",
+      "labels": [
+        "by_prev_keys"
+      ]
+    },
+    {
+      "source": "QueryRegionBatchSizeByIDs",
+      "field": "query_region_batch_size_by_i_ds",
+      "collector": "QueryRegionBatchSize",
+      "collector_field": "query_region_batch_size",
+      "labels": [
+        "by_ids"
+      ]
+    }
+  ],
+  "registered": [
+    "cmdDuration",
+    "cmdFailedDuration",
+    "internalCmdDuration",
+    "internalCmdFailedDuration",
+    "requestDuration",
+    "TSOBestBatchSize",
+    "TSOBatchSize",
+    "TSORetryCount",
+    "TSOBatchSendLatency",
+    "RequestForwarded",
+    "EstimateTSOLatencyGauge",
+    "CircuitBreakerCounters",
+    "QueryRegionBestBatchSize",
+    "QueryRegionBatchSize",
+    "QueryRegionBatchSendLatency"
+  ],
+  "constants": {}
+}

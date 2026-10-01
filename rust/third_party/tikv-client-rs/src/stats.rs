@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::time::Duration;
 use std::time::Instant;
 
-use prometheus::register_histogram;
 use prometheus::register_histogram_vec;
 use prometheus::register_int_counter_vec;
 use prometheus::Gauge;
@@ -271,14 +270,111 @@ pub fn tikv_stats(cmd: &'static str) -> RequestStats {
     )
 }
 
-pub fn pd_stats(cmd: &'static str) -> RequestStats {
-    RequestStats::new(
-        cmd,
-        &PD_REQUEST_DURATION_HISTOGRAM_VEC,
-        &PD_REQUEST_COUNTER_VEC,
-        &PD_FAILED_REQUEST_DURATION_HISTOGRAM_VEC,
-        &PD_FAILED_REQUEST_COUNTER_VEC,
-    )
+/// Timing of one logical PD command. Metadata commands observe total duration
+/// on every exit; TSO wait completion selects its success or failure observer.
+pub struct PdRequestStats {
+    observe_on_drop: bool,
+    start: Instant,
+    duration: Option<Histogram>,
+    failed_duration: Option<Histogram>,
+}
+
+impl PdRequestStats {
+    pub fn done<R>(&self, result: Result<R>) -> Result<R> {
+        if result.is_ok() && !self.observe_on_drop {
+            if let Some(observer) = &self.duration {
+                observer.observe(self.start.elapsed().as_secs_f64());
+            }
+        }
+        if result.is_err() {
+            if let Some(observer) = &self.failed_duration {
+                observer.observe(self.start.elapsed().as_secs_f64());
+            }
+        }
+        result
+    }
+}
+
+impl Drop for PdRequestStats {
+    fn drop(&mut self) {
+        if self.observe_on_drop {
+            if let Some(observer) = &self.duration {
+                observer.observe(self.start.elapsed().as_secs_f64());
+            }
+        }
+    }
+}
+
+pub fn pd_stats(cmd: &'static str) -> PdRequestStats {
+    let metrics = crate::pd::metrics::global_metrics();
+    let (duration, failed_duration) = match cmd {
+        "get_region" | "get_region_with_buckets" => (
+            Some(metrics.cmd_duration_get_region.clone()),
+            Some(metrics.cmd_failed_duration_get_region.clone()),
+        ),
+        "get_prev_region" | "get_prev_region_with_buckets" => (
+            Some(metrics.cmd_duration_get_prev_region.clone()),
+            Some(metrics.cmd_failed_duration_get_prev_region.clone()),
+        ),
+        "get_region_by_id" | "get_region_by_id_with_buckets" => (
+            Some(metrics.cmd_duration_get_region_by_id.clone()),
+            Some(metrics.cmd_failed_duration_get_region_by_id.clone()),
+        ),
+        "scan_regions" => (
+            Some(metrics.cmd_duration_scan_regions.clone()),
+            Some(metrics.cmd_failed_duration_scan_regions.clone()),
+        ),
+        "batch_scan_regions" => (
+            Some(metrics.cmd_duration_batch_scan_regions.clone()),
+            Some(metrics.cmd_failed_duration_batch_scan_regions.clone()),
+        ),
+        "get_store" => (
+            Some(metrics.cmd_duration_get_store.clone()),
+            Some(metrics.cmd_failed_duration_get_store.clone()),
+        ),
+        "get_all_stores" => (
+            Some(metrics.cmd_duration_get_all_stores.clone()),
+            Some(metrics.cmd_failed_duration_get_all_stores.clone()),
+        ),
+        "split_regions" => (Some(metrics.cmd_duration_split_regions.clone()), None),
+        "scatter_regions" => (Some(metrics.cmd_duration_scatter_regions.clone()), None),
+        "get_operator" => (Some(metrics.cmd_duration_get_operator.clone()), None),
+        "load_keyspace" => (
+            Some(metrics.cmd_duration_load_keyspace.clone()),
+            Some(metrics.cmd_failed_duration_load_keyspace.clone()),
+        ),
+        "get_timestamp" => (
+            Some(metrics.cmd_duration_tso.clone()),
+            Some(metrics.cmd_failed_duration_tso.clone()),
+        ),
+        "update_gc_safepoint" => (
+            Some(metrics.cmd_duration_update_gc_safe_point.clone()),
+            Some(metrics.cmd_failed_duration_update_gc_safe_point.clone()),
+        ),
+        "get_gc_state" => (
+            Some(metrics.cmd_duration_get_gc_state.clone()),
+            Some(metrics.cmd_failed_duration_get_gc_state.clone()),
+        ),
+        "advance_txn_safe_point" => (
+            Some(metrics.cmd_duration_advance_txn_safe_point.clone()),
+            Some(metrics.cmd_failed_duration_advance_txn_safe_point.clone()),
+        ),
+        "advance_gc_safe_point" => (
+            Some(metrics.cmd_duration_advance_gc_safe_point.clone()),
+            Some(metrics.cmd_failed_duration_advance_gc_safe_point.clone()),
+        ),
+        // Go defines no command-duration collectors for direct GetMinTS or
+        // external timestamp operations. Do not create extra label values.
+        _ => (None, None),
+    };
+    PdRequestStats {
+        // Go TSO Request.waitCtx selects success/failure separately; metadata
+        // commands defer their total duration even on errors.
+        observe_on_drop: cmd != "get_timestamp",
+        start: Instant::now(),
+        duration,
+        failed_duration,
+    }
 }
 
 pub(crate) fn increment_write_conflict() {
@@ -1061,12 +1157,16 @@ pub(crate) fn batch_stream_cancelled_entry_tail_samples(
 
 /// Default PD metrics adapter for the shared source batch controller.
 pub(crate) fn pd_tso_best_batch_size_observer() -> Histogram {
-    PD_TSO_BEST_BATCH_SIZE_HISTOGRAM.clone()
+    crate::pd::metrics::global_metrics()
+        .tso_best_batch_size
+        .clone()
 }
 
 #[allow(dead_code)]
 pub fn observe_tso_batch(batch_size: usize) {
-    PD_TSO_BATCH_SIZE_HISTOGRAM.observe(batch_size as f64);
+    crate::pd::metrics::global_metrics()
+        .tso_batch_size
+        .observe(batch_size as f64);
 }
 
 lazy_static::lazy_static! {
@@ -1094,40 +1194,6 @@ lazy_static::lazy_static! {
         &["type"]
     )
     .unwrap();
-    static ref PD_REQUEST_DURATION_HISTOGRAM_VEC: HistogramVec = register_histogram_vec!(
-        "pd_request_duration_seconds",
-        "Bucketed histogram of PD requests duration",
-        &["type"]
-    )
-    .unwrap();
-    static ref PD_REQUEST_COUNTER_VEC: IntCounterVec = register_int_counter_vec!(
-        "pd_request_total",
-        "Total number of requests sent to PD",
-        &["type"]
-    )
-    .unwrap();
-    static ref PD_FAILED_REQUEST_DURATION_HISTOGRAM_VEC: HistogramVec = register_histogram_vec!(
-        "pd_failed_request_duration_seconds",
-        "Bucketed histogram of failed PD requests duration",
-        &["type"]
-    )
-    .unwrap();
-    static ref PD_FAILED_REQUEST_COUNTER_VEC: IntCounterVec = register_int_counter_vec!(
-        "pd_failed_request_total",
-        "Total number of failed requests sent to PD",
-        &["type"]
-    )
-    .unwrap();
-    static ref PD_TSO_BEST_BATCH_SIZE_HISTOGRAM: Histogram = register_histogram!(
-        "pd_client_request_handle_tso_best_batch_size",
-        "Bucketed histogram of the best batch size of handled requests.",
-        prometheus::exponential_buckets(1.0, 2.0, 13).unwrap()
-    ).unwrap();
-    static ref PD_TSO_BATCH_SIZE_HISTOGRAM: Histogram = register_histogram!(
-        "pd_tso_batch_size",
-        "Bucketed histogram of TSO request batch size"
-    )
-    .unwrap();
 
 }
 
@@ -1142,6 +1208,40 @@ fn duration_to_sec(d: Duration) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pd_batch_adapter_uses_go_collector_and_exact_buckets() {
+        crate::pd::metrics::init_and_register_metrics(Default::default());
+        use prometheus::core::Collector;
+        let batch = pd_tso_best_batch_size_observer();
+        assert_eq!(
+            batch.desc()[0].fq_name,
+            "pd_client_request_handle_tso_best_batch_size"
+        );
+        observe_tso_batch(10);
+        let families = prometheus::gather();
+        let source = families
+            .iter()
+            .find(|f| f.get_name() == "pd_client_request_handle_tso_batch_size");
+        assert!(
+            source.is_some(),
+            "PD batch collector must use the Go owner, not pd_tso_batch_size"
+        );
+        let upper: Vec<_> = source.unwrap().get_metric()[0]
+            .get_histogram()
+            .get_bucket()
+            .iter()
+            .map(|b| b.get_upper_bound())
+            .collect();
+        assert_eq!(
+            upper,
+            vec![
+                1., 2., 4., 8., 10., 14., 18., 22., 26., 30., 35., 40., 45., 50., 60., 70., 80.,
+                90., 100., 110., 120., 140., 160., 180., 200., 500., 1000.
+            ]
+        );
+        assert!(!families.iter().any(|f| f.get_name() == "pd_tso_batch_size"));
+    }
+
     use crate::proto::{kvrpcpb, metapb};
 
     #[test]

@@ -1,0 +1,91 @@
+// Generated test input; copy into the exact upstream package, then run go test.
+package metrics
+
+import (
+	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus"
+	"os"
+	"testing"
+)
+
+func TestRustParityCollectorOracle(t *testing.T) {
+	initMetrics(prometheus.Labels{"cluster": "oracle"})
+	ResourceGroupStatusGauge.WithLabelValues("variable0", "variable1").Set(1.25)
+	SuccessfulRequestDuration.WithLabelValues("variable0", "variable1").Observe(1.25)
+	FailedLimitReserveDuration.WithLabelValues("variable0", "variable1").Observe(1.25)
+	FailedRequestCounter.WithLabelValues("variable0", "variable1", "variable2").Add(1.25)
+	GroupRunningKVRequestCounter.WithLabelValues("variable0").Set(1.25)
+	RequestRetryCounter.WithLabelValues("variable0", "variable1").Add(1.25)
+	TokenRequestDuration.WithLabelValues("variable0").Observe(1.25)
+	ResourceGroupTokenRequestCounter.WithLabelValues("variable0", "variable1").Add(1.25)
+	LowTokenRequestNotifyCounter.WithLabelValues("variable0").Add(1.25)
+	TokenConsumedHistogram.WithLabelValues("variable0").Observe(1.25)
+	RequestSourceRUCounter.WithLabelValues("variable0", "variable1", "variable2", "variable3").Add(1.25)
+	CopReadPrechargeCounter.WithLabelValues("variable0").Add(1.25)
+	CopReadNoPrechargeCounter.WithLabelValues("variable0").Add(1.25)
+	PagingPrechargeBytesCounter.WithLabelValues("variable0").Add(1.25)
+	PagingActualBytesCounter.WithLabelValues("variable0").Add(1.25)
+	PagingPredictionResidualBytes.WithLabelValues("variable0").Observe(1.25)
+	FailedTokenRequestDuration.Observe(2)
+	SuccessfulTokenRequestDuration.Observe(3)
+	collectors := map[string]prometheus.Collector{
+		"ResourceGroupStatusGauge":         ResourceGroupStatusGauge,
+		"SuccessfulRequestDuration":        SuccessfulRequestDuration,
+		"FailedLimitReserveDuration":       FailedLimitReserveDuration,
+		"FailedRequestCounter":             FailedRequestCounter,
+		"GroupRunningKVRequestCounter":     GroupRunningKVRequestCounter,
+		"RequestRetryCounter":              RequestRetryCounter,
+		"TokenRequestDuration":             TokenRequestDuration,
+		"ResourceGroupTokenRequestCounter": ResourceGroupTokenRequestCounter,
+		"LowTokenRequestNotifyCounter":     LowTokenRequestNotifyCounter,
+		"TokenConsumedHistogram":           TokenConsumedHistogram,
+		"RequestSourceRUCounter":           RequestSourceRUCounter,
+		"CopReadPrechargeCounter":          CopReadPrechargeCounter,
+		"CopReadNoPrechargeCounter":        CopReadNoPrechargeCounter,
+		"PagingPrechargeBytesCounter":      PagingPrechargeBytesCounter,
+		"PagingActualBytesCounter":         PagingActualBytesCounter,
+		"PagingPredictionResidualBytes":    PagingPredictionResidualBytes,
+	}
+	snapshots := map[string]interface{}{}
+	for name, collector := range collectors {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(collector)
+		families, err := registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(families) != 1 {
+			t.Fatalf("%s: families %d", name, len(families))
+		}
+		snapshots[name] = families[0]
+	}
+	payload, err := json.Marshal(snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized interface{}
+	if err := json.Unmarshal(payload, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	stripCreationTimes(normalized)
+	payload, err = json.MarshalIndent(normalized, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PD_METRICS_ORACLE")+"/resource_group.json", payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func stripCreationTimes(v interface{}) {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		delete(x, "created_timestamp")
+		for _, child := range x {
+			stripCreationTimes(child)
+		}
+	case []interface{}:
+		for _, child := range x {
+			stripCreationTimes(child)
+		}
+	}
+}

@@ -1,0 +1,169 @@
+// Generated test input; copy into the exact upstream package, then run go test.
+package metrics
+
+import (
+	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus"
+	"os"
+	"testing"
+)
+
+func TestRustParityCollectorOracle(t *testing.T) {
+	initMetrics(prometheus.Labels{"cluster": "oracle"})
+	initLabelValues()
+	cmdDuration.WithLabelValues("variable0").Observe(1.25)
+	cmdFailedDuration.WithLabelValues("variable0").Observe(1.25)
+	internalCmdDuration.WithLabelValues("variable0").Observe(1.25)
+	internalCmdFailedDuration.WithLabelValues("variable0").Observe(1.25)
+	requestDuration.WithLabelValues("variable0").Observe(1.25)
+	TSOBestBatchSize.Observe(1.25)
+	TSOBatchSize.Observe(1.25)
+	TSOBatchSendLatency.Observe(1.25)
+	TSORetryCount.Observe(1.25)
+	RequestForwarded.WithLabelValues("variable0", "variable1").Set(1.25)
+	OngoingRequestCountGauge.WithLabelValues("variable0").Set(1.25)
+	EstimateTSOLatencyGauge.WithLabelValues("variable0").Set(1.25)
+	CircuitBreakerCounters.WithLabelValues("variable0", "variable1").Add(1.25)
+	QueryRegionBestBatchSize.Observe(1.25)
+	QueryRegionBatchSize.WithLabelValues("variable0").Observe(1.25)
+	QueryRegionBatchSendLatency.Observe(1.25)
+	CmdDurationTSOWait.Observe(2)
+	CmdDurationTSO.Observe(3)
+	CmdDurationTSOAsyncWait.Observe(4)
+	CmdDurationGetRegion.Observe(5)
+	CmdDurationGetAllMembers.Observe(6)
+	CmdDurationGetPrevRegion.Observe(7)
+	CmdDurationGetRegionByID.Observe(8)
+	CmdDurationScanRegions.Observe(9)
+	CmdDurationBatchScanRegions.Observe(10)
+	CmdDurationGetStore.Observe(11)
+	CmdDurationGetAllStores.Observe(12)
+	CmdDurationUpdateGCSafePoint.Observe(13)
+	CmdDurationUpdateServiceGCSafePoint.Observe(14)
+	CmdDurationScatterRegion.Observe(15)
+	CmdDurationScatterRegions.Observe(16)
+	CmdDurationGetOperator.Observe(17)
+	CmdDurationSplitRegions.Observe(18)
+	CmdDurationSplitAndScatterRegions.Observe(19)
+	CmdDurationLoadKeyspace.Observe(20)
+	CmdDurationLoadKeyspaceByID.Observe(21)
+	CmdDurationUpdateKeyspaceState.Observe(22)
+	CmdDurationGetAllKeyspaces.Observe(23)
+	CmdDurationGet.Observe(24)
+	CmdDurationPut.Observe(25)
+	CmdDurationUpdateGCSafePointV2.Observe(26)
+	CmdDurationUpdateServiceSafePointV2.Observe(27)
+	CmdDurationQueryRegionAsyncWait.Observe(28)
+	CmdDurationQueryRegionWait.Observe(29)
+	CmdDurationQueryRegion.Observe(30)
+	CmdDurationAdvanceTxnSafePoint.Observe(31)
+	CmdDurationAdvanceGCSafePoint.Observe(32)
+	CmdDurationSetGCBarrier.Observe(33)
+	CmdDurationDeleteGCBarrier.Observe(34)
+	CmdDurationGetGCState.Observe(35)
+	CmdDurationSetGlobalGCBarrier.Observe(36)
+	CmdDurationDeleteGlobalGCBarrier.Observe(37)
+	CmdDurationGetAllKeyspacesGCStates.Observe(38)
+	CmdFailedDurationGetRegion.Observe(39)
+	CmdFailedDurationTSOWait.Observe(40)
+	CmdFailedDurationTSO.Observe(41)
+	CmdFailedDurationGetAllMembers.Observe(42)
+	CmdFailedDurationGetPrevRegion.Observe(43)
+	CmdFailedDurationGetRegionByID.Observe(44)
+	CmdFailedDurationScanRegions.Observe(45)
+	CmdFailedDurationBatchScanRegions.Observe(46)
+	CmdFailedDurationGetStore.Observe(47)
+	CmdFailedDurationGetAllStores.Observe(48)
+	CmdFailedDurationUpdateGCSafePoint.Observe(49)
+	CmdFailedDurationUpdateServiceGCSafePoint.Observe(50)
+	CmdFailedDurationLoadKeyspace.Observe(51)
+	CmdFailedDurationLoadKeyspaceByID.Observe(52)
+	CmdFailedDurationUpdateKeyspaceState.Observe(53)
+	CmdFailedDurationGet.Observe(54)
+	CmdFailedDurationPut.Observe(55)
+	CmdFailedDurationUpdateGCSafePointV2.Observe(56)
+	CmdFailedDurationUpdateServiceSafePointV2.Observe(57)
+	CmdFailedDurationQueryRegionAsyncWait.Observe(58)
+	CmdFailedDurationQueryRegionWait.Observe(59)
+	CmdFailedDurationQueryRegion.Observe(60)
+	CmdFailedDurationAdvanceTxnSafePoint.Observe(61)
+	CmdFailedDurationAdvanceGCSafePoint.Observe(62)
+	CmdFailedDurationSetGCBarrier.Observe(63)
+	CmdFailedDurationDeleteGCBarrier.Observe(64)
+	CmdFailedDurationGetGCState.Observe(65)
+	CmdFailedDurationSetGlobalGCBarrier.Observe(66)
+	CmdFailedDurationDeleteGlobalGCBarrier.Observe(67)
+	CmdFailedDurationGetAllKeyspacesGCStates.Observe(68)
+	InternalCmdDurationGetClusterInfo.Observe(69)
+	InternalCmdDurationGetMembers.Observe(70)
+	InternalCmdFailedDurationGetClusterInfo.Observe(71)
+	InternalCmdFailedDurationGetMembers.Observe(72)
+	RequestDurationTSO.Observe(73)
+	RequestFailedDurationTSO.Observe(74)
+	RequestDurationQueryRegion.Observe(75)
+	RequestFailedDurationQueryRegion.Observe(76)
+	QueryRegionBatchSizeTotal.Observe(77)
+	QueryRegionBatchSizeByKeys.Observe(78)
+	QueryRegionBatchSizeByPrevKeys.Observe(79)
+	QueryRegionBatchSizeByIDs.Observe(80)
+	collectors := map[string]prometheus.Collector{
+		"cmdDuration":                 cmdDuration,
+		"cmdFailedDuration":           cmdFailedDuration,
+		"internalCmdDuration":         internalCmdDuration,
+		"internalCmdFailedDuration":   internalCmdFailedDuration,
+		"requestDuration":             requestDuration,
+		"TSOBestBatchSize":            TSOBestBatchSize,
+		"TSOBatchSize":                TSOBatchSize,
+		"TSOBatchSendLatency":         TSOBatchSendLatency,
+		"TSORetryCount":               TSORetryCount,
+		"RequestForwarded":            RequestForwarded,
+		"OngoingRequestCountGauge":    OngoingRequestCountGauge,
+		"EstimateTSOLatencyGauge":     EstimateTSOLatencyGauge,
+		"CircuitBreakerCounters":      CircuitBreakerCounters,
+		"QueryRegionBestBatchSize":    QueryRegionBestBatchSize,
+		"QueryRegionBatchSize":        QueryRegionBatchSize,
+		"QueryRegionBatchSendLatency": QueryRegionBatchSendLatency,
+	}
+	snapshots := map[string]interface{}{}
+	for name, collector := range collectors {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(collector)
+		families, err := registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(families) != 1 {
+			t.Fatalf("%s: families %d", name, len(families))
+		}
+		snapshots[name] = families[0]
+	}
+	payload, err := json.Marshal(snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized interface{}
+	if err := json.Unmarshal(payload, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	stripCreationTimes(normalized)
+	payload, err = json.MarshalIndent(normalized, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PD_METRICS_ORACLE")+"/pd.json", payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func stripCreationTimes(v interface{}) {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		delete(x, "created_timestamp")
+		for _, child := range x {
+			stripCreationTimes(child)
+		}
+	case []interface{}:
+		for _, child := range x {
+			stripCreationTimes(child)
+		}
+	}
+}

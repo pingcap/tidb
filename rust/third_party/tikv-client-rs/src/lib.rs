@@ -255,6 +255,7 @@ pub use crate::kv::{
 };
 #[doc(inline)]
 pub use crate::pd::backoff as pd_backoff;
+pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
 pub use crate::pd::opt as pd_options;
 #[doc(inline)]

@@ -1,0 +1,266 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "opt"
+  },
+  "native_baseline": "df0d4ccc5b595959f496b3cf6e6b87f22b337bf4",
+  "packages": [
+    {
+      "package": "metrics",
+      "claim": "complete metric declaration, construction, binding, registration and consumer lifecycle; parent controller/root/TSO/discovery not accepted",
+      "package_artifacts": [
+        {
+          "path": "metrics/metrics.go",
+          "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
+          "integration": "Generated definitions and handwritten shared lifecycle; runtime Go oracle validation."
+        }
+      ],
+      "production_functions": {
+        "init": "MetricsOwner::new (unregistered) + Metrics::new prebinding",
+        "RegisterConsumer": "MetricsOwner::register_consumer",
+        "initRegisteredConsumers": "MetricsOwner::init_and_register callback loop",
+        "InitAndRegisterMetrics": "init_and_register_metrics + MetricsOwner::init_and_register",
+        "initMetrics": "Metrics::new",
+        "initLabelValues": "Metrics::new generated prebinding",
+        "registerMetrics": "Metrics::register_metrics"
+      },
+      "metric_declarations": "pd-metrics-oracle/pd_declarations.json",
+      "metric_count": 16,
+      "observer_count": 79,
+      "global_state": {
+        "initialized": "MetricsOwner.initialized: AtomicBool, SeqCst compare_exchange",
+        "consumersInitializers": "Mutex<Vec<Consumer>>",
+        "collector/observer globals": "Arc<Metrics> snapshots published through RwLock"
+      },
+      "package_variants": {
+        "original_tests": [],
+        "test_support": [],
+        "fixtures": [],
+        "doc_go": [],
+        "generated_inputs": [],
+        "platform_variants": [],
+        "package_build_files": []
+      },
+      "constants": {},
+      "source_callers": [
+        {
+          "path": "client.go",
+          "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/router/client.go",
+          "sha256": "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/router/request.go",
+          "sha256": "22954c3a2823575efea58e0b09b6b4fa38646469db4e3b6fae86000ac19eea80",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/tso/client.go",
+          "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/tso/dispatcher.go",
+          "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/tso/request.go",
+          "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "clients/tso/stream.go",
+          "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "gc_client.go",
+          "sha256": "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "inner_client.go",
+          "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "keyspace_client.go",
+          "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "meta_storage_client.go",
+          "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "pkg/circuitbreaker/circuit_breaker.go",
+          "sha256": "f5364cc36beec2eb3921520ba33d430642d011316fad598b080b011ba63dbb92",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "servicediscovery/service_discovery.go",
+          "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        }
+      ],
+      "integration": "Native RetryClient initializes once before discovery, stats.rs and TSO batch caller use this owner. TiDB adapter must remove its six duplicate definitions during synchronization.",
+      "validation": {
+        "runtime_oracle": "pd-metrics-oracle/pd.json",
+        "oracle_input": "pd-metrics-oracle/pd_test.go.txt",
+        "lifecycle_oracle": "pd-metrics-oracle/lifecycle_test.go.txt",
+        "original_tests": "none upstream; exact source compiled and exercised by race-enabled oracle extensions"
+      }
+    },
+    {
+      "package": "resource_group/controller/metrics",
+      "claim": "complete metric declaration, construction, binding, registration and consumer lifecycle; parent controller/root/TSO/discovery not accepted",
+      "package_artifacts": [
+        {
+          "path": "resource_group/controller/metrics/metrics.go",
+          "sha256": "f45e77d16ca904ac6dd34eb5e91cdf7d966f57d6d6c0efe141441b2e6e7053dd",
+          "integration": "Generated definitions and handwritten shared lifecycle; runtime Go oracle validation."
+        }
+      ],
+      "production_functions": {
+        "init": "ResourceGroupOwner::new",
+        "initMetrics": "resource_group::Metrics::new",
+        "InitAndRegisterMetrics": "resource_group::init_and_register_metrics + ResourceGroupOwner::init_and_register"
+      },
+      "metric_declarations": "pd-metrics-oracle/resource_group_declarations.json",
+      "metric_count": 16,
+      "observer_count": 2,
+      "global_state": {
+        "collector/observer globals": "Arc<resource_group::Metrics> snapshots published through RwLock"
+      },
+      "package_variants": {
+        "original_tests": [],
+        "test_support": [],
+        "fixtures": [],
+        "doc_go": [],
+        "generated_inputs": [],
+        "platform_variants": [],
+        "package_build_files": []
+      },
+      "constants": {
+        "namespace": "resource_manager_client",
+        "requestSubsystem": "request",
+        "tokenRequestSubsystem": "token_request",
+        "resourceGroupNameLabel": "name",
+        "newResourceGroupNameLabel": "resource_group",
+        "requestSourceLabel": "request_source",
+        "directionLabel": "direction",
+        "typeLabel": "type"
+      },
+      "source_callers": [
+        {
+          "path": "metrics/metrics.go",
+          "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "resource_group/controller/global_controller.go",
+          "sha256": "7ef0c95b4f8a23dc2691e7ee869975a9ea03c79040bf793918741eb148747330",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "resource_group/controller/group_controller.go",
+          "sha256": "dba05d0269f179a1b5c47184787f076532d4b764c9de83dc3d017ad0bdb403fc",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "resource_group/controller/group_controller_test.go",
+          "sha256": "5c3539a37029e9782ee8d04b485476393ae2daf76a03dd013aca3c5577e6a4f8",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "resource_group/controller/limiter.go",
+          "sha256": "3e08e99b23b8070e14b21f6c6117701f3604fdea1da66144269452137e24bc0e",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        },
+        {
+          "path": "resource_group/controller/request_source_metrics_test.go",
+          "sha256": "d6f221a6468c107635e8bbcf848f3ef7b360b9492c8ca77d535788602945290f",
+          "integration": "External caller; full parent behavior not accepted by this metrics claim."
+        }
+      ],
+      "integration": "PD initialization delegates to this owner. All collectors are available, but no missing resource-controller behavior is invented. No native resource-controller metric callers existed.",
+      "validation": {
+        "runtime_oracle": "pd-metrics-oracle/resource_group.json",
+        "oracle_input": "pd-metrics-oracle/resource_group_test.go.txt",
+        "lifecycle_oracle": "PD lifecycle oracle calls resource-group reinitialization/registration; native independent duplicate failure tests",
+        "original_tests": "none upstream; exact source compiled and exercised by race-enabled oracle extensions"
+      }
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    }
+  ],
+  "dependency_decisions": {
+    "prometheus": "Native locked prometheus 0.13 replaces Go client_golang v1.20.5. All 32 collectors and 81 observer results compared against live Go output; creation timestamps are omitted because Rust 0.13 does not export them. No other metadata/bucket/label alias is normalized away.",
+    "sync/atomic": "Safe native Arc snapshots and short locks preserve publication/rebinding; one SeqCst CAS decides first PD initialization. No locks span RPCs.",
+    "resource_group/controller/metrics": "Complete second package in this receipt, independently inventoried."
+  },
+  "native_artifacts": [
+    "src/pd/metrics.rs",
+    "src/pd/metrics/pd_definitions.rs",
+    "src/pd/metrics/resource_group_definitions.rs",
+    "src/pd/metrics/tests.rs",
+    "src/pd/retry.rs",
+    "src/pd/mod.rs",
+    "src/stats.rs",
+    "src/lib.rs",
+    "scripts/generate_pd_metrics.py",
+    "doc/pd-metrics-owner.md",
+    "doc/pd-metrics-package.json",
+    "Cargo.toml",
+    "Cargo.lock",
+    "doc/pd-metrics-oracle/lifecycle_test.go.txt",
+    "doc/pd-metrics-oracle/pd.json",
+    "doc/pd-metrics-oracle/pd_declarations.json",
+    "doc/pd-metrics-oracle/pd_test.go.txt",
+    "doc/pd-metrics-oracle/resource_group.json",
+    "doc/pd-metrics-oracle/resource_group_declarations.json",
+    "doc/pd-metrics-oracle/resource_group_test.go.txt"
+  ],
+  "validation": {
+    "status": "Go runtime/race oracles, 110 focused native PD tests, 1486 native library tests (2 existing ignored), strict Clippy, all targets, fmt and diff checks passed; TiDB publication integration uses the linked living receipt",
+    "red": "stats::tests::pd_batch_adapter_uses_go_collector_and_exact_buckets: old native runtime exposes pd_tso_batch_size, not source collector; /private/tmp/pd-metrics-red.log. TiDB failure-duration regression independently fails, total count 0 instead of 1.",
+    "original": "No upstream test files in either package. Added oracles run over byte-identical production and original module inputs with go test -mod=readonly -race ./metrics ./resource_group/controller/metrics -count=1. No package failpoints.",
+    "unverified": [
+      "complete parent-package instrumentation and lifecycle",
+      "live PD/Linux",
+      "sysbench/TPC-C/TPC-H/YCSB performance"
+    ]
+  }
+}

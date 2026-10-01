@@ -205,3 +205,13 @@ The ExecPlan supplies exact validation/publication commands and benchmark proced
 Establish matched Go/previous-Rust baselines before each applicable runtime change and measure the new Rust owner after correctness passes. Preserve SQL results, warnings/errors, isolation, key distribution, tool/input versions, storage topology, configuration and resource limits. Performance improvements must arise from source-compatible ownership, batching, streaming, vectorization and concurrency. Run sysbench, TPC-C, all 22 TPC-H queries and SQL-bound YCSB where supported; an unsupported query or invalid sample is an open result, never silently omitted. No improvement is claimed by this planning document.
 
 Closing all 77 findings is a checkpoint. Complete the remaining package inventory, original tests and platform/build/generated variants before claiming full parity. Every new upstream revision invalidates the affected package/dependency receipts until its delta is reviewed; unchanged receipts retain their exact source pins.
+
+
+The complete PD `metrics` and `resource_group/controller/metrics` prerequisites
+are published in native `61e9a86b9261aff9588597a5899941df57f15b38`; formatting
+follow-up `e3e8de80f2791ed725b6f06c25dfe4ed339ce564` is synchronized.
+The [metrics owner receipt](pd-metrics-owner-repair.md) records both complete
+inventories, independent Go runtime oracles, consumer rebinding and removal of
+six native plus six TiDB collector definitions. Integration validation and the
+mandatory publication gates are tracked there. Circuit breaker/grpcutil and the
+broader W01 root/TSO/discovery owners remain open; finding counts are unchanged.

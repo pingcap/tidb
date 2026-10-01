@@ -1,0 +1,6770 @@
+{
+  "CircuitBreakerCounters": {
+    "help": "Circuit breaker counters",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "event",
+            "value": "variable1"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_circuit_breaker_count",
+    "type": 0
+  },
+  "EstimateTSOLatencyGauge": {
+    "help": "Estimated latency of an RTT of getting TSO",
+    "metric": [
+      {
+        "gauge": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "stream",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_estimate_tso_latency",
+    "type": 1
+  },
+  "OngoingRequestCountGauge": {
+    "help": "Current count of ongoing batch tso requests",
+    "metric": [
+      {
+        "gauge": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "stream",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_ongoing_requests_count",
+    "type": 1
+  },
+  "QueryRegionBatchSendLatency": {
+    "help": "query region batch send latency",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_query_region_batch_send_latency",
+    "type": 4
+  },
+  "QueryRegionBatchSize": {
+    "help": "Bucketed histogram of the batch size of handled query region requests.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 80
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "by_ids"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 78
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "by_keys"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 79
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "by_prev_keys"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 77
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "total"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_handle_query_region_batch_size",
+    "type": 4
+  },
+  "QueryRegionBestBatchSize": {
+    "help": "Bucketed histogram of the best batch size of handled query region requests.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 16
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 32
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 64
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 128
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 256
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 512
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2048
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4096
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_handle_query_region_best_batch_size",
+    "type": 4
+  },
+  "RequestForwarded": {
+    "help": "The status to indicate if the request is forwarded",
+    "metric": [
+      {
+        "gauge": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "delegate",
+            "value": "variable1"
+          },
+          {
+            "name": "host",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_forwarded_status",
+    "type": 1
+  },
+  "TSOBatchSendLatency": {
+    "help": "tso batch send latency",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_tso_batch_send_latency",
+    "type": 4
+  },
+  "TSOBatchSize": {
+    "help": "Bucketed histogram of the batch size of handled requests.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 14
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 18
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 22
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 26
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 35
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 45
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 50
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 70
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 80
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 90
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 100
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 110
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 120
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 140
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 160
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 180
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 200
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 500
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1000
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_handle_tso_batch_size",
+    "type": 4
+  },
+  "TSOBestBatchSize": {
+    "help": "Bucketed histogram of the best batch size of handled requests.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 16
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 32
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 64
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 128
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 256
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 512
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2048
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4096
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_handle_tso_best_batch_size",
+    "type": 4
+  },
+  "TSORetryCount": {
+    "help": "Counter of retry time for TSO request.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 8
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 12
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 16
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 20
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_tso_retry",
+    "type": 4
+  },
+  "cmdDuration": {
+    "help": "Bucketed histogram of processing time (s) of handled success cmds.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 32
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "advance_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 31
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "advance_txn_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 10
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "batch_scan_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 34
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "delete_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 37
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "delete_global_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 24
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 23
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_all_keyspaces"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 2,
+          "sample_sum": 106
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_all_keyspaces_gc_states"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 12
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_all_stores"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 35
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_gc_state"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 6
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_member_info"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 17
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_operator"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 7
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_prev_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 5
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 8
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_region_byid"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 11
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_store"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 20
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "load_keyspace"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 21
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "load_keyspace_by_id"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "put"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 30
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 28
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region_async_wait"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 29
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region_wait"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 9
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "scan_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 15
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "scatter_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 16
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "scatter_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 33
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "set_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 36
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "set_global_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 19
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "split_and_scatter_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 18
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "split_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 3
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "tso"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 4
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "tso_async_wait"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 13
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 26
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_gc_safe_point_v2"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 22
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_keyspace_state"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 14
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_service_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 27
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_service_safe_point_v2"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 2
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "wait"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_cmd_handle_cmds_duration_seconds",
+    "type": 4
+  },
+  "cmdFailedDuration": {
+    "help": "Bucketed histogram of processing time (s) of failed handled cmds.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 62
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "advance_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 61
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "advance_txn_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 46
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "batch_scan_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 64
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "delete_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 67
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "delete_global_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 54
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 48
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_all_stores"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 65
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_gc_state"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 42
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_member_info"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 43
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_prev_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 39
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 44
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_region_byid"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 47
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_store"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 51
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "load_keyspace"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 52
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "load_keyspace_by_id"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 55
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "put"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 60
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 58
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region_async_wait"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 59
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region_wait"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 45
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "scan_regions"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 63
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "set_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 66
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "set_global_gc_barrier"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 41
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "tso"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 49
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 56
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_gc_safe_point_v2"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 53
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_keyspace_state"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 50
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_service_gc_safe_point"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 57
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "update_service_safe_point_v2"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 40
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "wait"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_cmd_handle_failed_cmds_duration_seconds",
+    "type": 4
+  },
+  "internalCmdDuration": {
+    "help": "Bucketed histogram of processing time (s) of handled success internal cmds.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 69
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_cluster_info"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 70
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_members"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_internal_cmd_handle_cmds_duration_seconds",
+    "type": 4
+  },
+  "internalCmdFailedDuration": {
+    "help": "Bucketed histogram of processing time (s) of failed handled internal cmds.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 71
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_cluster_info"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 72
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "get_members"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_internal_cmd_handle_failed_cmds_duration_seconds",
+    "type": 4
+  },
+  "requestDuration": {
+    "help": "Bucketed histogram of processing time (s) of handled requests.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 75
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 76
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "query_region-failed"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 73
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "tso"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 74
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "tso-failed"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "pd_client_request_handle_requests_duration_seconds",
+    "type": 4
+  }
+}

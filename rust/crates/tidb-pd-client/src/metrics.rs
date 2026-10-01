@@ -12,211 +12,168 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The `pd_client_*` dashboard surface.
-//!
-//! Go's PD client declares these families in `client@.../metrics/metrics.go`
-//! and registers them on the process default registry, so the TiDB status
-//! server serves them from the shared `/metrics` handler. This module
-//! transcreates the families the TiDB dashboards read: the per-command
-//! success/failure duration histograms (including Go's pre-materialized
-//! `wait`/`tso`/... label values from `initLabelValues`), the request
-//! handling histogram, the TSO RTT estimate, the forwarded-status gauge,
-//! and the circuit-breaker counter. Names, help strings, label schemas,
-//! and the 0.0005s×2¹³ buckets are copied verbatim from the Apache-2.0
-//! licensed tikv/pd source tree.
+//! Metric observation adapters backed by the native PD package owner.
 
-use std::sync::LazyLock;
+use crate::error::PdOperation;
+use tikv_client::pd_metrics;
 
-use prometheus::{exponential_buckets, CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts};
-
-fn register<C>(collector: prometheus::Result<C>, what: &'static str) -> C
-where
-    C: prometheus::core::Collector + Clone + 'static,
-{
-    let metric = collector.unwrap_or_else(|error| panic!("{what} is constructible: {error}"));
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .unwrap_or_else(|error| panic!("{what} is registered once: {error}"));
-    metric
-}
-
-/// Go `cmdDuration`
-/// (`pd/client/metrics/metrics.go`: `pd_client_cmd_handle_cmds_duration_seconds`).
-pub static CMD_HANDLE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(
-        HistogramVec::new(
-            HistogramOpts::new(
-                "handle_cmds_duration_seconds",
-                "Bucketed histogram of processing time (s) of handled success cmds.",
-            )
-            .namespace("pd_client")
-            .subsystem("cmd")
-            .buckets(exponential_buckets(0.0005, 2.0, 13).expect("13 positive buckets")),
-            &["type"],
-        ),
-        "pd cmd handle duration histogram",
-    )
-});
-
-/// Go `cmdFailedDuration`
-/// (`pd_client_cmd_handle_failed_cmds_duration_seconds`).
-pub static CMD_HANDLE_FAILED_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(
-        HistogramVec::new(
-            HistogramOpts::new(
-                "handle_failed_cmds_duration_seconds",
-                "Bucketed histogram of processing time (s) of failed handled cmds.",
-            )
-            .namespace("pd_client")
-            .subsystem("cmd")
-            .buckets(exponential_buckets(0.0005, 2.0, 13).expect("13 positive buckets")),
-            &["type"],
-        ),
-        "pd cmd handle failed duration histogram",
-    )
-});
-
-/// Go `requestDuration`
-/// (`pd_client_request_handle_requests_duration_seconds`).
-pub static REQUEST_HANDLE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register(
-        HistogramVec::new(
-            HistogramOpts::new(
-                "handle_requests_duration_seconds",
-                "Bucketed histogram of processing time (s) of handled requests.",
-            )
-            .namespace("pd_client")
-            .subsystem("request")
-            .buckets(exponential_buckets(0.0005, 2.0, 13).expect("13 positive buckets")),
-            &["type"],
-        ),
-        "pd request handle duration histogram",
-    )
-});
-
-/// Go `EstimateTSOLatencyGauge`
-/// (`pd_client_request_estimate_tso_latency`).
-pub static ESTIMATE_TSO_LATENCY: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(
-        GaugeVec::new(
-            Opts::new(
-                "estimate_tso_latency",
-                "Estimated latency of an RTT of getting TSO",
-            )
-            .namespace("pd_client")
-            .subsystem("request"),
-            &["stream"],
-        ),
-        "pd estimate tso latency gauge",
-    )
-});
-
-/// Go `RequestForwarded`
-/// (`pd_client_request_forwarded_status`).
-pub static REQUEST_FORWARDED_STATUS: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register(
-        GaugeVec::new(
-            Opts::new(
-                "forwarded_status",
-                "The status to indicate if the request is forwarded",
-            )
-            .namespace("pd_client")
-            .subsystem("request"),
-            &["host", "delegate"],
-        ),
-        "pd forwarded status gauge",
-    )
-});
-
-/// Go `CircuitBreakerCounters`
-/// (`pd_client_request_circuit_breaker_count`).
-pub static CIRCUIT_BREAKER_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(
-        CounterVec::new(
-            Opts::new("circuit_breaker_count", "Circuit breaker counters")
-                .namespace("pd_client")
-                .subsystem("request"),
-            &["name", "event"],
-        ),
-        "pd circuit breaker counter",
-    )
-});
-
-/// The Go `initLabelValues` label values this client can produce,
-/// materialized at startup so the exposition matches Go's.
-const CMD_LABEL_VALUES: &[&str] = &[
-    "wait",
-    "tso",
-    "get_region",
-    "get_prev_region",
-    "get_region_byid",
-    "scan_regions",
-    "batch_scan_regions",
-    "get_store",
-    "get_all_stores",
-    "get_member_info",
-    "get_gc_state",
-];
-
-/// Go `initLabelValues`: binds every label value once so the dashboard
-/// families resolve against a fresh node.
+/// Register the complete Go collector set once, before opening the PD client.
 pub fn init_dashboard_series() {
-    LazyLock::force(&CMD_HANDLE_DURATION);
-    LazyLock::force(&CMD_HANDLE_FAILED_DURATION);
-    LazyLock::force(&REQUEST_HANDLE_DURATION);
-    LazyLock::force(&ESTIMATE_TSO_LATENCY);
-    LazyLock::force(&REQUEST_FORWARDED_STATUS);
-    LazyLock::force(&CIRCUIT_BREAKER_COUNTER);
-    for value in CMD_LABEL_VALUES {
-        let _ = CMD_HANDLE_DURATION.with_label_values(&[value]);
-        let _ = CMD_HANDLE_FAILED_DURATION.with_label_values(&[value]);
-        let _ = REQUEST_HANDLE_DURATION.with_label_values(&[value]);
-    }
-    let _ = ESTIMATE_TSO_LATENCY.with_label_values(&["default"]);
+    pd_metrics::init_and_register_metrics(Default::default());
 }
 
-/// The Go `type` label value for one client command
-/// (`initLabelValues`' `CmdDuration*` bindings).
-#[must_use]
-pub fn cmd_type_label(operation: crate::error::PdOperation) -> Option<&'static str> {
-    match operation {
-        // Go StoreGlobalConfig does not record per-command histograms.
-        crate::error::PdOperation::StoreGlobalConfig => None,
-        crate::error::PdOperation::GetMembers => Some("get_member_info"),
-        crate::error::PdOperation::GetRegion => Some("get_region"),
-        crate::error::PdOperation::GetPrevRegion => Some("get_prev_region"),
-        crate::error::PdOperation::GetRegionById => Some("get_region_byid"),
-        crate::error::PdOperation::ScanRegions => Some("scan_regions"),
-        crate::error::PdOperation::BatchScanRegions => Some("batch_scan_regions"),
-        crate::error::PdOperation::GetStore => Some("get_store"),
-        crate::error::PdOperation::GetAllStores => Some("get_all_stores"),
-        crate::error::PdOperation::Tso => Some("tso"),
-        crate::error::PdOperation::GetGcState => Some("get_gc_state"),
-    }
-}
-
-/// Go `cmdHandleDuration`/`requestDuration`: records one command's wall
-/// time, on the success histogram or the failure histogram exactly as the
-/// PD client's per-command defer does.
-pub fn observe_cmd(operation: crate::error::PdOperation, seconds: f64, succeeded: bool) {
-    let Some(label) = cmd_type_label(operation) else {
-        return;
+/// Metadata commands defer total duration and separately record failed duration.
+/// Stream request durations belong to the native TSO stream, not metadata RPCs.
+pub fn observe_cmd(operation: PdOperation, seconds: f64, succeeded: bool) {
+    let metrics = pd_metrics::global_metrics();
+    let (total, failed) = match operation {
+        PdOperation::GetMembers => (
+            &metrics.cmd_duration_get_all_members,
+            &metrics.cmd_failed_duration_get_all_members,
+        ),
+        PdOperation::GetRegion => (
+            &metrics.cmd_duration_get_region,
+            &metrics.cmd_failed_duration_get_region,
+        ),
+        PdOperation::GetPrevRegion => (
+            &metrics.cmd_duration_get_prev_region,
+            &metrics.cmd_failed_duration_get_prev_region,
+        ),
+        PdOperation::GetRegionById => (
+            &metrics.cmd_duration_get_region_by_id,
+            &metrics.cmd_failed_duration_get_region_by_id,
+        ),
+        PdOperation::ScanRegions => (
+            &metrics.cmd_duration_scan_regions,
+            &metrics.cmd_failed_duration_scan_regions,
+        ),
+        PdOperation::BatchScanRegions => (
+            &metrics.cmd_duration_batch_scan_regions,
+            &metrics.cmd_failed_duration_batch_scan_regions,
+        ),
+        PdOperation::GetStore => (
+            &metrics.cmd_duration_get_store,
+            &metrics.cmd_failed_duration_get_store,
+        ),
+        PdOperation::GetAllStores => (
+            &metrics.cmd_duration_get_all_stores,
+            &metrics.cmd_failed_duration_get_all_stores,
+        ),
+        PdOperation::GetGcState => (
+            &metrics.cmd_duration_get_gc_state,
+            &metrics.cmd_failed_duration_get_gc_state,
+        ),
+        // Native TSO owns its command and stream timing. Go does not time
+        // StoreGlobalConfig with these command collectors.
+        PdOperation::Tso | PdOperation::StoreGlobalConfig => return,
     };
-    let duration = if succeeded {
-        CMD_HANDLE_DURATION.with_label_values(&[label])
+    total.observe(seconds);
+    if !succeeded {
+        failed.observe(seconds);
+    }
+}
+
+/// Record a delivered timestamp result's wait duration. Caller cancellation or
+/// disconnection does not take Go Request.waitCtx's result-observation branch.
+pub fn observe_tso_wait(seconds: f64, succeeded: bool) {
+    let metrics = pd_metrics::global_metrics();
+    if succeeded {
+        metrics.cmd_duration_tso_wait.observe(seconds);
     } else {
-        CMD_HANDLE_FAILED_DURATION.with_label_values(&[label])
-    };
-    duration.observe(seconds);
-    REQUEST_HANDLE_DURATION
-        .with_label_values(&[label])
-        .observe(seconds);
+        metrics.cmd_failed_duration_tso_wait.observe(seconds);
+    }
 }
 
-/// Go `CmdDurationTSOWait`: the end-to-end wait a caller experiences from
-/// requesting a timestamp to receiving one.
-pub fn observe_tso_wait(seconds: f64) {
-    CMD_HANDLE_DURATION
-        .with_label_values(&["wait"])
-        .observe(seconds);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn count(family: &str, kind: &str) -> u64 {
+        prometheus::gather()
+            .iter()
+            .filter(|f| f.get_name() == family)
+            .flat_map(|f| f.get_metric())
+            .filter(|m| {
+                m.get_label()
+                    .iter()
+                    .any(|l| l.get_name() == "type" && l.get_value() == kind)
+            })
+            .map(|m| m.get_histogram().get_sample_count())
+            .sum()
+    }
+
+    #[test]
+    fn failed_metadata_command_counts_total_and_failure_without_tso_stream_sample() {
+        init_dashboard_series();
+        let total = count("pd_client_cmd_handle_cmds_duration_seconds", "get_gc_state");
+        let failed = count(
+            "pd_client_cmd_handle_failed_cmds_duration_seconds",
+            "get_gc_state",
+        );
+        let stream = count(
+            "pd_client_request_handle_requests_duration_seconds",
+            "get_gc_state",
+        );
+        observe_cmd(crate::error::PdOperation::GetGcState, 0.25, false);
+        assert_eq!(
+            count("pd_client_cmd_handle_cmds_duration_seconds", "get_gc_state"),
+            total + 1
+        );
+        assert_eq!(
+            count(
+                "pd_client_cmd_handle_failed_cmds_duration_seconds",
+                "get_gc_state"
+            ),
+            failed + 1
+        );
+        assert_eq!(
+            count(
+                "pd_client_request_handle_requests_duration_seconds",
+                "get_gc_state"
+            ),
+            stream
+        );
+    }
+    #[test]
+    fn shared_owner_preserves_tso_result_classes_and_go_series() {
+        init_dashboard_series();
+        // A second initializer is a no-op, including native-client setup.
+        tikv_client::pd_metrics::init_and_register_metrics(Default::default());
+        let success = count("pd_client_cmd_handle_cmds_duration_seconds", "wait");
+        let failure = count("pd_client_cmd_handle_failed_cmds_duration_seconds", "wait");
+        observe_tso_wait(0.1, false);
+        assert_eq!(
+            count("pd_client_cmd_handle_cmds_duration_seconds", "wait"),
+            success
+        );
+        assert_eq!(
+            count("pd_client_cmd_handle_failed_cmds_duration_seconds", "wait"),
+            failure + 1
+        );
+        observe_tso_wait(0.1, true);
+        assert_eq!(
+            count("pd_client_cmd_handle_cmds_duration_seconds", "wait"),
+            success + 1
+        );
+        let families = prometheus::gather();
+        let stream = families
+            .iter()
+            .find(|f| f.get_name() == "pd_client_request_handle_requests_duration_seconds")
+            .unwrap();
+        let mut kinds = stream
+            .get_metric()
+            .iter()
+            .flat_map(|m| m.get_label())
+            .filter(|l| l.get_name() == "type")
+            .map(|l| l.get_value())
+            .collect::<Vec<_>>();
+        kinds.sort_unstable();
+        assert_eq!(
+            kinds,
+            ["query_region", "query_region-failed", "tso", "tso-failed"]
+        );
+        assert!(families
+            .iter()
+            .any(|f| f.get_name() == "resource_manager_client_token_request_duration"));
+    }
 }

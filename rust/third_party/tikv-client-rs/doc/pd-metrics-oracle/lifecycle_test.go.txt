@@ -1,0 +1,87 @@
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
+// Source oracle extension; copy into the pinned PD metrics package.
+package metrics
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	rg "github.com/tikv/pd/client/resource_group/controller/metrics"
+	"testing"
+)
+
+func TestRustParityInitializationLifecycle(t *testing.T) {
+	savedRegisterer, savedGatherer := prometheus.DefaultRegisterer, prometheus.DefaultGatherer
+	registry := prometheus.NewRegistry()
+	prometheus.DefaultRegisterer, prometheus.DefaultGatherer = registry, registry
+	defer func() { prometheus.DefaultRegisterer, prometheus.DefaultGatherer = savedRegisterer, savedGatherer }()
+	initialized = 0
+	initMetrics(nil)
+	initLabelValues()
+	old := CircuitBreakerCounters
+	var bound []prometheus.Counter
+	RegisterConsumer(func() {
+		families, err := registry.Gather()
+		if err != nil || len(families) != 0 {
+			t.Fatal("consumer must run before registration", err)
+		}
+		bound = append(bound, CircuitBreakerCounters.WithLabelValues("same", "success"))
+	})
+	if len(bound) != 1 {
+		t.Fatal("initial consumer call")
+	}
+	bound[0].Inc()
+	InitAndRegisterMetrics(prometheus.Labels{"cluster": "first"})
+	if len(bound) != 2 || old == CircuitBreakerCounters {
+		t.Fatal("must rebind")
+	}
+	current := CircuitBreakerCounters
+	InitAndRegisterMetrics(prometheus.Labels{"cluster": "ignored"})
+	if current != CircuitBreakerCounters || len(bound) != 2 {
+		t.Fatal("once guard")
+	}
+	calls := 0
+	RegisterConsumer(func() { calls++ })
+	if calls != 1 {
+		t.Fatal("late consumer")
+	}
+	OngoingRequestCountGauge.WithLabelValues("stream").Set(1)
+	EstimateTSOLatencyGauge.WithLabelValues("stream").Set(2)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEstimate := false
+	for _, family := range families {
+		if family.GetName() == "pd_client_request_ongoing_requests_count" {
+			t.Fatal("source does not register ongoing gauge")
+		}
+		if family.GetName() == "pd_client_request_estimate_tso_latency" {
+			foundEstimate = true
+		}
+		for _, metric := range family.GetMetric() {
+			found := false
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "cluster" && label.GetValue() == "first" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("first labels not preserved")
+			}
+		}
+	}
+	if !foundEstimate {
+		t.Fatal("estimate gauge missing")
+	}
+	oldResource := rg.TokenRequestDuration
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("resource package must fail duplicate registration")
+			}
+		}()
+		rg.InitAndRegisterMetrics(prometheus.Labels{"cluster": "first"})
+	}()
+	if oldResource == rg.TokenRequestDuration {
+		t.Fatal("resource globals replaced before panic")
+	}
+}

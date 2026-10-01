@@ -180,10 +180,10 @@ impl PdTimestampFuture {
     pub fn wait(self) -> Result<u64, PdClientError> {
         let started = std::time::Instant::now();
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        // Go `CmdDurationTSOWait`: every timestamp waiter reports its
-        // end-to-end wait under the `wait` type.
         let result = self.response.recv_timeout(remaining);
-        crate::metrics::observe_tso_wait(started.elapsed().as_secs_f64());
+        if let Ok(delivered) = &result {
+            crate::metrics::observe_tso_wait(started.elapsed().as_secs_f64(), delivered.is_ok());
+        }
         match result {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
@@ -249,8 +249,8 @@ impl PdClient {
             .first()
             .cloned()
             .ok_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured"))?;
-        // Go's PD client package `init()` registers its dashboard families and
-        // pre-materializes every `initLabelValues` series before traffic.
+        // Go innerClient.setup initializes the shared PD metrics owner before
+        // service discovery. Native and adapter callers use the same registry.
         crate::metrics::init_dashboard_series();
         let seeds = normalize_endpoints(raw_seeds, false)?;
         let (commands, receiver) = mpsc::channel();
@@ -757,8 +757,8 @@ where
             },
         }
     });
-    // Go `client.callRPC`'s defer records every command's duration on the
-    // success or the failure histogram (`pd client metrics.go`).
+    // Use the native metric owner while this adapter still owns these RPCs.
+    // Metadata total duration includes failed attempts.
     let seconds = started.elapsed().as_secs_f64();
     let succeeded = matches!(&completion, RpcCompletion::Completed(Ok(_)));
     crate::metrics::observe_cmd(op, seconds, succeeded);

@@ -493,3 +493,13 @@ the same complete range-tree package and removes deep progress/result-tree
 clones and detached test snapshots. Inserted, returned and completed progress
 handles now share the original record. This closes the recorded P05 ownership
 limitation without changing the unresolved-finding count.
+
+
+The complete PD `metrics` and `resource_group/controller/metrics` prerequisites
+are published in native `61e9a86b9261aff9588597a5899941df57f15b38`; formatting
+follow-up `e3e8de80f2791ed725b6f06c25dfe4ed339ce564` is synchronized.
+The [metrics owner receipt](pd-metrics-owner-repair.md) records both complete
+inventories, independent Go runtime oracles, consumer rebinding and removal of
+six native plus six TiDB collector definitions. Integration validation and the
+mandatory publication gates are tracked there. Circuit breaker/grpcutil and the
+broader W01 root/TSO/discovery owners remain open; finding counts are unchanged.

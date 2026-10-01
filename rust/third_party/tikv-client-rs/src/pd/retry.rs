@@ -225,31 +225,35 @@ impl<Cl> RetryClient<Cl> {
 macro_rules! retry_core {
     ($self: ident, $tag: literal, $call: expr) => {{
         let stats = pd_stats($tag);
-        let mut last_err = Ok(());
-        for _ in 0..LEADER_CHANGE_RETRY {
-            let res = $call;
+        let result = async {
+            let mut last_err = Ok(());
+            for _ in 0..LEADER_CHANGE_RETRY {
+                let res = $call;
 
-            match stats.done(res) {
-                Ok(r) => return Ok(r),
-                Err(Error::Unimplemented) => return Err(Error::Unimplemented),
-                // Empty metadata belongs to RegionCache's BoPDRPC budget,
-                // not the transport's reconnect loop.
-                Err(error @ Error::RegionForKeyNotFound { .. }) => return Err(error),
-                Err(e) => last_err = Err(e),
-            }
-
-            let mut reconnect_count = MAX_REQUEST_COUNT;
-            while let Err(e) = $self.reconnect(RECONNECT_INTERVAL_SEC).await {
-                reconnect_count -= 1;
-                if reconnect_count == 0 {
-                    return Err(e);
+                match res {
+                    Ok(r) => return Ok(r),
+                    Err(Error::Unimplemented) => return Err(Error::Unimplemented),
+                    // Empty metadata belongs to RegionCache's BoPDRPC budget,
+                    // not the transport's reconnect loop.
+                    Err(error @ Error::RegionForKeyNotFound { .. }) => return Err(error),
+                    Err(e) => last_err = Err(e),
                 }
-                sleep(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
-            }
-        }
 
-        last_err?;
-        unreachable!();
+                let mut reconnect_count = MAX_REQUEST_COUNT;
+                while let Err(e) = $self.reconnect(RECONNECT_INTERVAL_SEC).await {
+                    reconnect_count -= 1;
+                    if reconnect_count == 0 {
+                        return Err(e);
+                    }
+                    sleep(Duration::from_secs(RECONNECT_INTERVAL_SEC)).await;
+                }
+            }
+
+            last_err?;
+            unreachable!();
+        }
+        .await;
+        stats.done(result)
     }};
 }
 
@@ -286,6 +290,9 @@ impl RetryClient<Cluster> {
         // defaults from PD's shared options owner.
         let mut options = super::opt::Options::new();
         super::opt::with_custom_timeout_option(timeout)(&mut options);
+        if options.init_metrics {
+            super::metrics::init_and_register_metrics(Default::default());
+        }
         let connected = std::sync::Mutex::new(None);
         super::backoff::retry(
             std::future::pending(),
@@ -661,6 +668,52 @@ mod test {
     use super::*;
     use crate::internal_err;
 
+    #[tokio::test]
+    async fn logical_command_metrics_do_not_count_recovered_attempts_as_failures() {
+        struct MockClient {
+            attempts: AtomicUsize,
+        }
+        #[async_trait]
+        impl Reconnect for MockClient {
+            type Cl = ();
+            async fn reconnect(&self, _: u64) -> Result<()> {
+                Ok(())
+            }
+        }
+        impl MockClient {
+            async fn get_region(&self) -> Result<()> {
+                retry_core!(
+                    self,
+                    "get_region",
+                    async {
+                        if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            Err(internal_err!("leader changed"))
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    .await
+                )
+            }
+        }
+        super::super::metrics::init_and_register_metrics(Default::default());
+        let metrics = super::super::metrics::global_metrics();
+        let total = metrics.cmd_duration_get_region.get_sample_count();
+        let failed = metrics.cmd_failed_duration_get_region.get_sample_count();
+        let client = MockClient {
+            attempts: AtomicUsize::new(0),
+        };
+        client.get_region().await.unwrap();
+        assert_eq!(client.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            metrics.cmd_duration_get_region.get_sample_count(),
+            total + 1
+        );
+        assert_eq!(
+            metrics.cmd_failed_duration_get_region.get_sample_count(),
+            failed
+        );
+    }
     #[tokio::test]
     async fn missing_region_is_returned_to_cache_without_reconnect() {
         struct MockClient {

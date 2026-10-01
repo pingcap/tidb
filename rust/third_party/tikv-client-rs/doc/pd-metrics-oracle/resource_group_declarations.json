@@ -1,0 +1,320 @@
+{
+  "package": "resource_group/controller/metrics",
+  "collectors": [
+    {
+      "source": "ResourceGroupStatusGauge",
+      "field": "resource_group_status_gauge",
+      "kind": "GaugeVec",
+      "name": "resource_manager_client_resource_group_status",
+      "help": "Status of the resource group.",
+      "labels": [
+        "name",
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "SuccessfulRequestDuration",
+      "field": "successful_request_duration",
+      "kind": "HistogramVec",
+      "name": "resource_manager_client_request_success",
+      "help": "Bucketed histogram of wait duration of successful request.",
+      "labels": [
+        "name",
+        "resource_group"
+      ],
+      "buckets": [
+        0.0005,
+        0.005,
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1.0,
+        5.0,
+        10.0,
+        20.0,
+        25.0,
+        30.0,
+        60.0,
+        600.0,
+        1800.0,
+        3600.0
+      ]
+    },
+    {
+      "source": "FailedLimitReserveDuration",
+      "field": "failed_limit_reserve_duration",
+      "kind": "HistogramVec",
+      "name": "resource_manager_client_request_limit_reserve_time_failed",
+      "help": "Bucketed histogram of wait duration of failed request.",
+      "labels": [
+        "name",
+        "resource_group"
+      ],
+      "buckets": [
+        0.0005,
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1.0,
+        5.0,
+        10.0,
+        20.0,
+        25.0,
+        30.0,
+        60.0,
+        600.0,
+        1800.0,
+        3600.0,
+        86400.0
+      ]
+    },
+    {
+      "source": "FailedRequestCounter",
+      "field": "failed_request_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_fail",
+      "help": "Counter of failed request.",
+      "labels": [
+        "name",
+        "resource_group",
+        "type"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "GroupRunningKVRequestCounter",
+      "field": "group_running_kv_request_counter",
+      "kind": "GaugeVec",
+      "name": "resource_manager_client_request_running_kv_request",
+      "help": "Counter of running kv request.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "RequestRetryCounter",
+      "field": "request_retry_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_retry",
+      "help": "Counter of retry time for request.",
+      "labels": [
+        "name",
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "TokenRequestDuration",
+      "field": "token_request_duration",
+      "kind": "HistogramVec",
+      "name": "resource_manager_client_token_request_duration",
+      "help": "Bucketed histogram of latency(s) of token request.",
+      "labels": [
+        "type"
+      ],
+      "buckets": [
+        0.001,
+        0.002,
+        0.004,
+        0.008,
+        0.016,
+        0.032,
+        0.064,
+        0.128,
+        0.256,
+        0.512,
+        1.024,
+        2.048,
+        4.096
+      ]
+    },
+    {
+      "source": "ResourceGroupTokenRequestCounter",
+      "field": "resource_group_token_request_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_token_request_resource_group",
+      "help": "Counter of token request by every resource group.",
+      "labels": [
+        "name",
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "LowTokenRequestNotifyCounter",
+      "field": "low_token_request_notify_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_token_request_low_token_notified",
+      "help": "Counter of low token request.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "TokenConsumedHistogram",
+      "field": "token_consumed_histogram",
+      "kind": "HistogramVec",
+      "name": "resource_manager_client_token_request_consume",
+      "help": "Bucketed histogram of token consume.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": [
+        0.5,
+        1.0,
+        2.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        40.0,
+        64.0,
+        128.0,
+        256.0,
+        512.0,
+        1024.0,
+        2048.0
+      ]
+    },
+    {
+      "source": "RequestSourceRUCounter",
+      "field": "request_source_ru_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_ru_total",
+      "help": "Counter of request RU accounting deltas grouped by resource group and request source. Refund deltas are stored as positive values under direction=refund.",
+      "labels": [
+        "resource_group",
+        "request_source",
+        "type",
+        "direction"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "CopReadPrechargeCounter",
+      "field": "cop_read_precharge_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_cop_read_precharge_total",
+      "help": "Counter of read coprocessor RPCs that carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "CopReadNoPrechargeCounter",
+      "field": "cop_read_no_precharge_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_cop_read_no_precharge_total",
+      "help": "Counter of read coprocessor RPCs that reached the RC interceptor without a positive PredictedReadBytes hint, so request-side read-byte pre-charge was skipped.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "PagingPrechargeBytesCounter",
+      "field": "paging_precharge_bytes_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_paging_precharge_bytes_total",
+      "help": "Sum of bytes used as the RC paging pre-charge basis (predicted hint from coprocessor RPCs).",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "PagingActualBytesCounter",
+      "field": "paging_actual_bytes_counter",
+      "kind": "CounterVec",
+      "name": "resource_manager_client_request_paging_actual_bytes_total",
+      "help": "Sum of actual bytes read by pre-charged coprocessor RPCs.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": null
+    },
+    {
+      "source": "PagingPredictionResidualBytes",
+      "field": "paging_prediction_residual_bytes",
+      "kind": "HistogramVec",
+      "name": "resource_manager_client_request_paging_prediction_residual_bytes",
+      "help": "Histogram of signed (actual_read_bytes - predicted_read_bytes) for pre-charged coprocessor RPCs. Use bucket series for distribution/quantiles; _sum is non-monotonic because observations can be negative.",
+      "labels": [
+        "resource_group"
+      ],
+      "buckets": [
+        -67108864.0,
+        -16777216.0,
+        -4194304.0,
+        -1048576.0,
+        -262144.0,
+        -65536.0,
+        -16384.0,
+        -4096.0,
+        0.0,
+        4096.0,
+        16384.0,
+        65536.0,
+        262144.0,
+        1048576.0,
+        4194304.0,
+        16777216.0,
+        67108864.0
+      ]
+    }
+  ],
+  "shortcuts": [
+    {
+      "source": "FailedTokenRequestDuration",
+      "field": "failed_token_request_duration",
+      "collector": "TokenRequestDuration",
+      "collector_field": "token_request_duration",
+      "labels": [
+        "fail"
+      ]
+    },
+    {
+      "source": "SuccessfulTokenRequestDuration",
+      "field": "successful_token_request_duration",
+      "collector": "TokenRequestDuration",
+      "collector_field": "token_request_duration",
+      "labels": [
+        "success"
+      ]
+    }
+  ],
+  "registered": [
+    "ResourceGroupStatusGauge",
+    "SuccessfulRequestDuration",
+    "FailedRequestCounter",
+    "FailedLimitReserveDuration",
+    "GroupRunningKVRequestCounter",
+    "RequestRetryCounter",
+    "TokenRequestDuration",
+    "ResourceGroupTokenRequestCounter",
+    "LowTokenRequestNotifyCounter",
+    "TokenConsumedHistogram",
+    "RequestSourceRUCounter",
+    "CopReadPrechargeCounter",
+    "CopReadNoPrechargeCounter",
+    "PagingPrechargeBytesCounter",
+    "PagingActualBytesCounter",
+    "PagingPredictionResidualBytes"
+  ],
+  "constants": {
+    "namespace": "resource_manager_client",
+    "requestSubsystem": "request",
+    "tokenRequestSubsystem": "token_request",
+    "resourceGroupNameLabel": "name",
+    "newResourceGroupNameLabel": "resource_group",
+    "requestSourceLabel": "request_source",
+    "directionLabel": "direction",
+    "typeLabel": "type"
+  }
+}

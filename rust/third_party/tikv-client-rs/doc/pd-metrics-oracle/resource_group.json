@@ -1,0 +1,853 @@
+{
+  "CopReadNoPrechargeCounter": {
+    "help": "Counter of read coprocessor RPCs that reached the RC interceptor without a positive PredictedReadBytes hint, so request-side read-byte pre-charge was skipped.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_cop_read_no_precharge_total",
+    "type": 0
+  },
+  "CopReadPrechargeCounter": {
+    "help": "Counter of read coprocessor RPCs that carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_cop_read_precharge_total",
+    "type": 0
+  },
+  "FailedLimitReserveDuration": {
+    "help": "Bucketed histogram of wait duration of failed request.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.01
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.05
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.5
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 5
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 20
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 25
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 600
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1800
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 3600
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 86400
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_limit_reserve_time_failed",
+    "type": 4
+  },
+  "FailedRequestCounter": {
+    "help": "Counter of failed request.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          },
+          {
+            "name": "type",
+            "value": "variable2"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_fail",
+    "type": 0
+  },
+  "GroupRunningKVRequestCounter": {
+    "help": "Counter of running kv request.",
+    "metric": [
+      {
+        "gauge": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_running_kv_request",
+    "type": 1
+  },
+  "LowTokenRequestNotifyCounter": {
+    "help": "Counter of low token request.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_token_request_low_token_notified",
+    "type": 0
+  },
+  "PagingActualBytesCounter": {
+    "help": "Sum of actual bytes read by pre-charged coprocessor RPCs.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_paging_actual_bytes_total",
+    "type": 0
+  },
+  "PagingPrechargeBytesCounter": {
+    "help": "Sum of bytes used as the RC paging pre-charge basis (predicted hint from coprocessor RPCs).",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_paging_precharge_bytes_total",
+    "type": 0
+  },
+  "PagingPredictionResidualBytes": {
+    "help": "Histogram of signed (actual_read_bytes - predicted_read_bytes) for pre-charged coprocessor RPCs. Use bucket series for distribution/quantiles; _sum is non-monotonic because observations can be negative.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": -67108864
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -16777216
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -4194304
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -1048576
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -262144
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -65536
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -16384
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": -4096
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4096
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 16384
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 65536
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 262144
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1048576
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4194304
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 16777216
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 67108864
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_paging_prediction_residual_bytes",
+    "type": 4
+  },
+  "RequestRetryCounter": {
+    "help": "Counter of retry time for request.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_retry",
+    "type": 0
+  },
+  "RequestSourceRUCounter": {
+    "help": "Counter of request RU accounting deltas grouped by resource group and request source. Refund deltas are stored as positive values under direction=refund.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "direction",
+            "value": "variable3"
+          },
+          {
+            "name": "request_source",
+            "value": "variable1"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          },
+          {
+            "name": "type",
+            "value": "variable2"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_ru_total",
+    "type": 0
+  },
+  "ResourceGroupStatusGauge": {
+    "help": "Status of the resource group.",
+    "metric": [
+      {
+        "gauge": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_resource_group_status",
+    "type": 1
+  },
+  "ResourceGroupTokenRequestCounter": {
+    "help": "Counter of token request by every resource group.",
+    "metric": [
+      {
+        "counter": {
+          "value": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_token_request_resource_group",
+    "type": 0
+  },
+  "SuccessfulRequestDuration": {
+    "help": "Bucketed histogram of wait duration of successful request.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.0005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.005
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.01
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.05
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.1
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.5
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 5
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 20
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 25
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 30
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 60
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 600
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1800
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 3600
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "name",
+            "value": "variable0"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable1"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_request_success",
+    "type": 4
+  },
+  "TokenConsumedHistogram": {
+    "help": "Bucketed histogram of token consume.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.5
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 5
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 10
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 15
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 20
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 40
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 64
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 128
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 256
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 512
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 1024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2048
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "resource_group",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_token_request_consume",
+    "type": 4
+  },
+  "TokenRequestDuration": {
+    "help": "Bucketed histogram of latency(s) of token request.",
+    "metric": [
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4.096
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 2
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "fail"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 2.048
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4.096
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 3
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "success"
+          }
+        ]
+      },
+      {
+        "histogram": {
+          "bucket": [
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.001
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.002
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.004
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.008
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.016
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.032
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.064
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.128
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.256
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 0.512
+            },
+            {
+              "cumulative_count": 0,
+              "upper_bound": 1.024
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 2.048
+            },
+            {
+              "cumulative_count": 1,
+              "upper_bound": 4.096
+            }
+          ],
+          "sample_count": 1,
+          "sample_sum": 1.25
+        },
+        "label": [
+          {
+            "name": "cluster",
+            "value": "oracle"
+          },
+          {
+            "name": "type",
+            "value": "variable0"
+          }
+        ]
+      }
+    ],
+    "name": "resource_manager_client_token_request_duration",
+    "type": 4
+  }
+}
