@@ -362,6 +362,40 @@ func TestDateFunc2Pb(t *testing.T) {
 	require.Equal(t, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}", string(js))
 }
 
+func TestTrimFunc2Pb(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	stringColumn := genColumn(mysql.TypeString, 1)
+	remstrColumn := genColumn(mysql.TypeString, 2)
+	direction := &Constant{
+		Value:   types.NewIntDatum(int64(ast.TrimLeading)),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	funcs := make([]Expression, 0, 3)
+	function, err := NewFunction(ctx, ast.Trim, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_Trim1Arg, function.(*ScalarFunction).Function.PbCode())
+	funcs = append(funcs, function)
+
+	function, err = NewFunction(ctx, ast.Trim, types.NewFieldType(mysql.TypeString), stringColumn, remstrColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_Trim2Args, function.(*ScalarFunction).Function.PbCode())
+	funcs = append(funcs, function)
+
+	function, err = NewFunction(ctx, ast.Trim, types.NewFieldType(mysql.TypeString), stringColumn, remstrColumn, direction)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_Trim3Args, function.(*ScalarFunction).Function.PbCode())
+	funcs = append(funcs, function)
+
+	pbExprs, err := ExpressionsToPBList(ctx, funcs, client)
+	require.NoError(t, err)
+	require.Len(t, pbExprs, 3)
+	require.Equal(t, tipb.ScalarFuncSig_Trim1Arg, pbExprs[0].Sig)
+	require.Equal(t, tipb.ScalarFuncSig_Trim2Args, pbExprs[1].Sig)
+	require.Equal(t, tipb.ScalarFuncSig_Trim3Args, pbExprs[2].Sig)
+}
+
 func TestLogicalFunc2Pb(t *testing.T) {
 	var logicalFuncs = make([]Expression, 0)
 	ctx := mock.NewContext()
