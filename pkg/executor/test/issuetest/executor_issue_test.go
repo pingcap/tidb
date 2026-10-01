@@ -793,3 +793,23 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
 }
+
+func TestCaseWhenBinaryResultDoesNotMutateSharedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue_67375_t0, issue_67375_t1")
+	tk.MustExec("create table issue_67375_t0(c0 text, c1 blob, c2 text as (cast(c1 or c1 regexp c0 as binary)))")
+	tk.MustExec("create table issue_67375_t1 like issue_67375_t0")
+	tk.MustExec("insert into issue_67375_t0(c0, c1) values ('', '1')")
+	tk.MustExec("insert into issue_67375_t1(c0) values (' ')")
+
+	issueFilter := "(case 1 when (case 0 when 0 then t1.c0 when 0 then t1.c1 end) then t1.c0 else t0.c2 end) not like 0"
+
+	// Issue #67375: direct comparison is true under the column collation. Embedding
+	// the same column in a binary CASE result must not mutate this shared comparison.
+	tk.MustQuery("select t1.c0 <= t0.c0, not (t1.c0 <= t0.c0) from issue_67375_t1 t1 join issue_67375_t0 t0 on t1.c0 <= t0.c0").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select sum(t1.c0 <= t0.c0), sum(not (t1.c0 <= t0.c0)) from issue_67375_t1 t1 join issue_67375_t0 t0 on t1.c0 <= t0.c0 where " + issueFilter).Check(testkit.Rows("1 0"))
+	tk.MustQuery("select count(case when not (t1.c0 <= t0.c0) then 1 end) from issue_67375_t1 t1 join issue_67375_t0 t0 on t1.c0 <= t0.c0 where " + issueFilter).Check(testkit.Rows("0"))
+}
