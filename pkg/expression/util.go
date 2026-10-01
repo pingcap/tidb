@@ -2002,6 +2002,17 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt
 
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
 func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec expropt.SQLExecutor) error {
+	if r.mockLocalData == nil && r.mockGlobalData == nil {
+		// The digest-to-text mapping is immutable, so the process-wide cache is always
+		// valid. Mocked retrievers are test doubles and must not touch it.
+		if lookupSQLDigestTextCache(r.SQLDigestsMap) {
+			return nil
+		}
+		// Read the map at defer time: RetrieveLocal may replace it wholesale.
+		defer func() {
+			storeSQLDigestTextCache(r.SQLDigestsMap)
+		}()
+	}
 	err := r.RetrieveLocal(ctx, exec)
 	if err != nil {
 		return errors.Trace(err)
