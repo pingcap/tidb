@@ -304,11 +304,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
-			// TODO: if multiple partitions, then the IDs needs to be
-			// in the same order as the index keys
-			// and should skip table id part when comparing
-			intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1 || e.idxInfo.Global)
 			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) int {
+				if e.tblInfo.Partition != nil && !e.idxInfo.Global {
+					// Local index keys carry different partition prefixes. Compare
+					// only the logical index values, keeping each full request key.
+					i, j = tablecodec.CutIndexPrefix(i), tablecodec.CutIndexPrefix(j)
+				}
 				if e.desc {
 					return j.Cmp(i)
 				}
@@ -420,10 +421,25 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return uintComparator(i, j)
 			}
 		}
-		slices.SortFunc(e.handles, less)
-		// TODO: if partitioned table, sorting the handles would also
-		//  need to have the physIDs rearranged in the same order!
-		intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1)
+		if e.singlePartID == 0 && len(e.planPhysIDs) > 0 {
+			// Move the complete row identity together. A handle alone does not
+			// identify a row in a partitioned table.
+			type partitionHandle struct {
+				handle     kv.Handle
+				physicalID int64
+			}
+			intest.Assert(len(e.handles) == len(e.planPhysIDs))
+			ordered := make([]partitionHandle, len(e.handles))
+			for i, handle := range e.handles {
+				ordered[i] = partitionHandle{handle, e.planPhysIDs[i]}
+			}
+			slices.SortFunc(ordered, func(i, j partitionHandle) int { return less(i.handle, j.handle) })
+			for i, row := range ordered {
+				e.handles[i], e.planPhysIDs[i] = row.handle, row.physicalID
+			}
+		} else {
+			slices.SortFunc(e.handles, less)
+		}
 	}
 
 	keys := make([]kv.Key, 0, len(e.handles))
