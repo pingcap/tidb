@@ -112,13 +112,16 @@ application.
 **MySQL-compatible, extensible where the extension is free.** The two directions are
 asymmetric:
 
-- **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates and option values MySQL
-  rejects are accepted, and the storage layer keeps them losslessly. Accepting more cannot
-  break a query that works on MySQL. SRIDs outside 0 and 4326 are the exception; see
-  *Extended data* in [Types and storage](#types-and-storage).
+- **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates are accepted through
+  `ST_GeomFromEWKB` and GeoJSON `options` 5 and 6, as are option values MySQL rejects, and
+  the storage layer keeps them losslessly. WKT, WKB and the bare literal stay 2D, as in
+  MySQL. Accepting more cannot break a query that works on MySQL. SRIDs outside 0 and 4326
+  are the exception; see *Extended data* in [Types and storage](#types-and-storage).
 - **`ST_As*` emits what MySQL emits.** It errors where MySQL cannot express a value,
   because changing the bytes a client receives is where compatibility actually breaks.
-  Emitting Z/M is a later extension, and then only behind an explicit option.
+  Emitting Z/M is a later extension, and then only behind an explicit option. WKT and WKB
+  output of an SRID outside 0 and 4326 also needs `axis-order=long-lat`; see
+  *Extended data*.
 
 MySQL behaviors and measurements below were verified against running MySQL 8.4.6 and
 9.7.2. The proof of concept is [PR #69475](https://github.com/pingcap/tidb/pull/69475).
@@ -187,8 +190,8 @@ and those that would error. Storing it is the contract, since it is what lets 3D
 and the wider SRS catalog arrive later as functions over data written today rather than as
 a migration.
 
-An SRID outside 0 and 4326 is accepted wherever no SRS axis order has to be applied: the
-bare path, `ST_GeomFromEWKB`, `ST_GeomFromGeoJSON`, and WKT or WKB given
+An SRID outside 0 and 4326 is accepted, in and out, wherever no SRS axis order has to be
+applied: the bare path, the EWKB pair, GeoJSON, and WKT or WKB given
 `axis-order=long-lat`. Its coordinates are not range-checked, since the SRS class is
 unknown. WKT and WKB under `srid-defined` or `lat-long` reject it, since both depend on
 the SRS: MySQL swaps only on a geographic one.
@@ -552,7 +555,7 @@ Every deliberate difference from MySQL 9.7 in v1:
 | 4326 DE-9IM predicates | need a point operand (`POINT` or `MULTIPOINT`); other pairs raise `ERROR 3618`, checked per row | any pair |
 | 4326 `ST_Distance` | point operands only, else `ERROR 3618` | any pair |
 | 4326 `ST_IsValid` | polygonal input raises `ERROR 3618` | any input |
-| SRIDs | the catalog and `SRID n` hold 0 and 4326; WKT and WKB reject other SRIDs unless given `axis-order=long-lat` | its full catalog |
+| SRIDs | the catalog and `SRID n` hold 0 and 4326; WKT and WKB, in and out, reject other SRIDs unless given `axis-order=long-lat` | its full catalog; an SRID outside it is output in stored order, with warning 3565 |
 | NaN and Inf at SRID 0 | rejected | stored through WKB and a bare literal |
 | Indexes on a geometry column | none: a spatial index, and any other index with a geometry member, is rejected | a plain `KEY` on a geometry column becomes a spatial index |
 | Generated columns | no `ST_*` function allowed | allowed |
@@ -581,15 +584,17 @@ decision were quietly undone.
   `ST_Distance` must for any non-point operand. A mixed `GEOMETRY` column fails at its
   first polygon row and succeeds once that row is filtered out.
 - **The bare binary boundary is symmetric.** Bytes from a bare `SELECT` of a
-  MySQL-expressible value insert back unchanged as a bare literal, and a `mysqldump` literal
-  loads as the same geometry. Byte-compared against MySQL for both SRIDs, which is what
-  catches the geographic axis swap: at 4326 the bare bytes must be longitude-first while
+  MySQL-expressible value insert back unchanged as a bare literal, over the text and
+  binary protocols and as a prepared-statement parameter, and a `mysqldump` literal loads
+  as the same geometry. Byte-compared against MySQL for both SRIDs, which is what catches
+  the geographic axis swap: at 4326 the bare bytes must be longitude-first while
   `ST_AsBinary` of the same value is latitude-first, and at SRID 0 the two agree.
-- **Extended data splits two ways.** A Z/M value goes in through `ST_GeomFromEWKB`, comes
-  back byte-identical through `ST_AsEWKB`, and errors on a bare `SELECT`, since MySQL has no
-  form for it. A value whose only extension is its SRID round-trips on the bare path
-  byte-for-byte instead, with no axis conversion applied, which is the case replication and
-  dump depend on. Functions that interpret coordinates error on both.
+- **Extended data splits two ways.** A Z/M value goes in through `ST_GeomFromEWKB` or
+  GeoJSON `options` 5 and 6, is rejected by WKT and WKB, comes back byte-identical through
+  `ST_AsEWKB`, and errors on a bare `SELECT`, since MySQL has no form for it. A value
+  whose only extension is its SRID round-trips on the bare path byte-for-byte instead,
+  which is the case replication and dump depend on, and through WKT and WKB only with
+  `axis-order=long-lat`. Functions that interpret coordinates error on both.
 - **Parsing is bounded, and bounded equally.** WKB nested past the depth the parser
   bounds, truncated and over-long inputs in each format, and a fuzz target over the WKT,
   WKB and GeoJSON parsers. The bar is a clean error, never a panic. One case pins the read
