@@ -119,9 +119,6 @@ deliberately asymmetric:
   because changing the bytes a client receives is where compatibility actually breaks.
   Emitting Z/M is a later extension, and then only behind an explicit option.
 
-So a stored value can exist that no MySQL `ST_As*` function can express. Reading it back
-needs `ST_AsEWKB`, and no v1 function interprets its coordinates.
-
 MySQL behaviors and measurements below were verified against running MySQL 8.4.6 and
 9.7.2. The proof of concept is [PR #69475](https://github.com/pingcap/tidb/pull/69475).
 
@@ -153,7 +150,6 @@ and because below its header a 2D value is plain OGC WKB.
 | Byte order | Little-endian throughout, as MySQL stores it. Big-endian input is accepted and converted, so equal geometries have equal bytes. |
 | Axis order | Longitude first on a geographic SRS, as in MySQL's binary format and PostGIS's EWKB; as given on SRID 0 and projected SRSs. |
 | MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; the bare path converts at the boundary. See *Binary in and out* below. |
-| Binary boundary | Each format has a matching pair, so nothing is write-only or read-only. See *Binary in and out* below. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are storable, covering GeoJSON positions (XY and XYZ) and measured geometry. Functions that interpret coordinates reject Z/M in v1; see *Extended data* below. |
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. See *Extended data* below. |
 
@@ -255,9 +251,6 @@ than an unknown-table error. Row contents are in
 [the appendix](#appendix-srs-catalog).
 
 **Axis order.** Stored longitude first on a geographic SRS, as in MySQL and PostGIS.
-
-DDL restricts the `SRID n` attribute to 0 or 4326. An unrestricted `GEOMETRY` column may
-still hold values of any SRID (see [Types and storage](#types-and-storage)).
 
 ### Reference surface
 
@@ -521,8 +514,7 @@ Out of scope here, each with a home:
   casts (`CAST(g AS POINT)` and the other subtypes), `MBR*` family, geohash and niche
   accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`:
-  [Future extensions](#future-extensions). `ST_Transform` is MySQL functionality, but it
-  has nothing to do until more SRSs exist, so it is out of scope for v1.
+  [Future extensions](#future-extensions).
 - **Coprocessor pushdown.** The predicates and measurement functions are deterministic
   scalars and pushdown-eligible; pushing them filters at the storage node instead of
   shipping every candidate geometry to TiDB, with or without an index. It is cross-repo work
@@ -667,9 +659,6 @@ Risks:
   `Point` and `ST_SRID` are allowed there.
 - **MySQL error parity:** exact codes and messages may not match initially (the PoC used
   placeholder wording); a compatibility risk, not a correctness one.
-- **Pure-Go library gaps:** `simplefeatures` covers the planar surface but neither the 4326
-  edges nor the GEOS-class processing tail, both of which are this design's own work or
-  deferred.
 - **Parsers take untrusted bytes:** geometry parsing is the one new path a client drives
   with arbitrary input, so a parser bug is an availability risk for the server, not just
   the session. Go makes this sharper than MySQL: a stack overflow is a fatal crash with no
@@ -813,8 +802,8 @@ the mapping is not type name to type name:
 - `SRID 0` is PostGIS `geometry`: planar, unitless coordinates, no globe. All three engines
   agree here.
 - `SRID 4326` is PostGIS **`geography`**, not PostGIS `geometry`. PostGIS `geometry` on 4326
-  does planar arithmetic on degrees, and no TiDB spelling reproduces that, by choice: it is
-  the footgun the SRS-class model does not have.
+  does planar arithmetic on degrees, and no TiDB spelling reproduces that, so on migration
+  `ST_Distance` changes from degrees to metres and predicates flip where curvature matters.
 
 Per operation on 4326, extending the v1 and MySQL columns in
 [Reference surface](#reference-surface):
@@ -850,11 +839,6 @@ decides all topology. So one engine could cover all three audiences:
 | `GEOMETRY` `SRID 0` | plane | plane | PostGIS `geometry` and MySQL, all three agree |
 | `GEOMETRY` `SRID 4326`, and further SRIDs later | Andoyer | Andoyer | MySQL |
 | `GEOGRAPHY`, if added | great circle | Karney | PostGIS `geography` |
-
-The row that does not appear is PostGIS `geometry` at `SRID 4326`, planar on degrees. No
-TiDB spelling reproduces it, so that is a behavior difference on migration rather than an
-extension: `ST_Distance` changes from degrees to metres and predicates flip where curvature
-matters.
 
 **Type plumbing is the part worth deciding before it is needed**: whether `GEOGRAPHY`
 becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the parser, DDL,
