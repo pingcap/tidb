@@ -25,6 +25,7 @@ enum Reply {
 #[derive(Clone)]
 struct PdServer {
     endpoint: String,
+    leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
     reply: Reply,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -93,6 +94,10 @@ impl tonic::server::UnaryService<GetMembersRequest> for PdServer {
             client_urls: vec![self.endpoint.clone()],
             ..Default::default()
         };
+        let leader = Member {
+            client_urls: self.leader_urls.read().unwrap().clone(),
+            ..member.clone()
+        };
         Box::pin(async move {
             Ok(tonic::Response::new(GetMembersResponse {
                 header: Some(ResponseHeader {
@@ -100,7 +105,7 @@ impl tonic::server::UnaryService<GetMembersRequest> for PdServer {
                     ..Default::default()
                 }),
                 members: vec![member.clone()],
-                leader: Some(member),
+                leader: Some(leader),
                 ..Default::default()
             }))
         })
@@ -183,8 +188,10 @@ impl Drop for Server {
 impl Server {
     async fn start(reply: Reply) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let service = PdServer {
-            endpoint: format!("http://{}", listener.local_addr().unwrap()),
+            endpoint: endpoint.clone(),
+            leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint])),
             reply,
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
@@ -351,4 +358,155 @@ async fn source_tso_completed_result_survives_stream_retirement() {
         cancellation.cancel();
         assert_eq!(request.await.unwrap(), timestamp);
     }
+}
+
+#[tokio::test]
+async fn source_connectionctx_metadata_refresh_reuses_healthy_tso() {
+    let server = Server::start(Reply::Timestamp).await;
+    let mut cluster = server.cluster(Duration::from_secs(1)).await;
+    let first = cluster.get_timestamp().await.unwrap();
+    Connection::new(Arc::new(SecurityManager::default()))
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    let second = cluster.get_timestamp().await.unwrap();
+    assert_eq!(server.service.received.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        second.logical,
+        first.logical + 1,
+        "metadata refresh must keep the same healthy leader stream"
+    );
+    assert_eq!(server.service.dropped.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn source_connectionctx_changed_leader_releases_old_stream() {
+    let first = Server::start(Reply::Timestamp).await;
+    let second = Server::start(Reply::Timestamp).await;
+    let mut cluster = first.cluster(Duration::from_secs(1)).await;
+    cluster.get_timestamp().await.unwrap();
+    *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
+    Connection::new(Arc::new(SecurityManager::default()))
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    cluster.get_timestamp().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while first.service.dropped.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("changing leaders must retire the previous stream");
+    assert_eq!(first.service.received.load(Ordering::SeqCst), 1);
+    assert_eq!(second.service.received.load(Ordering::SeqCst), 1);
+    assert_eq!(second.service.dropped.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn source_connectionctx_cancelled_same_url_gets_a_new_stream() {
+    let server = Server::start(Reply::StallBody).await;
+    let timeout = Duration::from_millis(20);
+    let mut cluster = server.cluster(timeout).await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), cluster.get_timestamp())
+            .await
+            .unwrap()
+            .is_err()
+    );
+    Connection::new(Arc::new(SecurityManager::default()))
+        .reconnect(&mut cluster, timeout)
+        .await
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), cluster.get_timestamp())
+            .await
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(
+        server.service.received.load(Ordering::SeqCst),
+        2,
+        "a canceled same-URL context must not prevent stream replacement"
+    );
+}
+
+#[tokio::test]
+async fn source_connectionctx_failed_metadata_refresh_preserves_live_stream() {
+    let server = Server::start(Reply::Timestamp).await;
+    let mut cluster = server.cluster(Duration::from_secs(1)).await;
+    let first = cluster.get_timestamp().await.unwrap();
+    *server.service.leader_urls.write().unwrap() = vec!["http://127.0.0.1:0".to_owned()];
+    assert!(Connection::new(Arc::new(SecurityManager::default()))
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .is_err());
+    let second = cluster.get_timestamp().await.unwrap();
+    assert_eq!(second.logical, first.logical + 1);
+    assert_eq!(server.service.dropped.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn source_connectionctx_tracks_the_dialed_url_not_the_first_advertised_url() {
+    let server = Server::start(Reply::Timestamp).await;
+    *server.service.leader_urls.write().unwrap() = vec![
+        "http://127.0.0.1:0".to_owned(),
+        server.service.endpoint.clone(),
+    ];
+    let mut cluster = server.cluster(Duration::from_secs(1)).await;
+    let first = cluster.get_timestamp().await.unwrap();
+    *server.service.leader_urls.write().unwrap() = vec![server.service.endpoint.clone()];
+    Connection::new(Arc::new(SecurityManager::default()))
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    let second = cluster.get_timestamp().await.unwrap();
+    assert_eq!(second.logical, first.logical + 1);
+    assert_eq!(server.service.dropped.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn source_connectionctx_release_cancels_retained_pending_stream_and_joins() {
+    use crate::pd::connectionctx::{ConnectionCtx, Manager};
+
+    let server = Server::start(Reply::StallBody).await;
+    let channel = tonic::transport::Channel::from_shared(server.service.endpoint.clone())
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let oracle =
+        TimestampOracle::new(42, &PdClient::new(channel), Duration::from_secs(100)).unwrap();
+    let ctx = oracle.cancellation();
+    let cancel = ctx.clone();
+    let entry = Arc::new(ConnectionCtx::new(
+        ctx,
+        move || cancel.cancel(),
+        server.service.endpoint.clone(),
+        oracle,
+    ));
+    let manager = Manager::new();
+    assert!(manager.store(&entry, false));
+    drop(entry);
+    let retained = manager.randomly_pick().unwrap();
+    let pending = tokio::spawn(retained.stream.clone().get_timestamp());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.received.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    manager.release_all();
+    assert!(retained.ctx.is_cancelled());
+    assert!(tokio::time::timeout(Duration::from_secs(1), pending)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    tokio::time::timeout(Duration::from_secs(1), retained.stream.close())
+        .await
+        .unwrap();
+    assert!(retained.stream.inner.worker.lock().await.is_none());
+    assert!(manager.is_empty());
 }

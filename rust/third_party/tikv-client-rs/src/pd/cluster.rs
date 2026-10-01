@@ -13,6 +13,7 @@ use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
 
+use super::connectionctx::{ConnectionCtx, Manager};
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::keyspacepb;
@@ -28,7 +29,9 @@ pub struct Cluster {
     client: pdpb::pd_client::PdClient<Channel>,
     keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
     members: pdpb::GetMembersResponse,
-    tso: TimestampOracle,
+    // Native mode has one leader stream. Its URL and cancellation lifetime
+    // belong to the same manager used by Go TSO, independently of metadata RPCs.
+    tso: Manager<TimestampOracle>,
 }
 
 macro_rules! pd_request {
@@ -181,7 +184,11 @@ impl Cluster {
     }
 
     pub async fn get_timestamp(&self) -> Result<Timestamp> {
-        self.tso.clone().get_timestamp().await
+        let connection = self
+            .tso
+            .randomly_pick()
+            .ok_or_else(|| internal_err!("no TSO connection is registered"))?;
+        connection.stream.clone().get_timestamp().await
     }
 
     pub async fn get_min_timestamp(&mut self, timeout: Duration) -> Result<Timestamp> {
@@ -293,6 +300,29 @@ impl Cluster {
     }
 }
 
+impl Drop for Cluster {
+    fn drop(&mut self) {
+        self.tso.release_all();
+    }
+}
+
+fn tso_connection(
+    cluster_id: u64,
+    client: &pdpb::pd_client::PdClient<Channel>,
+    url: String,
+    timeout: Duration,
+) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
+    let oracle = TimestampOracle::new(cluster_id, client, timeout)?;
+    let ctx = oracle.cancellation();
+    let cancel = ctx.clone();
+    Ok(Arc::new(ConnectionCtx::new(
+        ctx,
+        move || cancel.cancel(),
+        url,
+        oracle,
+    )))
+}
+
 fn keyspace_scope(keyspace_id: u32) -> pdpb::KeyspaceScope {
     pdpb::KeyspaceScope {
         keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(keyspace_id)),
@@ -315,9 +345,11 @@ impl Connection {
         timeout: Duration,
     ) -> Result<Cluster> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, keyspace_client, members) = self.try_connect_leader(&members, timeout).await?;
+        let (client, keyspace_client, members, url) =
+            self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
-        let tso = TimestampOracle::new(id, &client, timeout)?;
+        let tso = Manager::new();
+        tso.store(&tso_connection(id, &client, url, timeout)?, false);
         let cluster = Cluster {
             id,
             client,
@@ -332,17 +364,32 @@ impl Connection {
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, keyspace_client, members) =
+        let (client, keyspace_client, members, url) =
             self.try_connect_leader(&cluster.members, timeout).await?;
-        let tso = TimestampOracle::new(cluster.id, &client, timeout)?;
-        cluster.tso.close().await;
-        *cluster = Cluster {
-            id: cluster.id,
-            client,
-            keyspace_client,
-            members,
-            tso,
-        };
+        let previous = cluster.tso.randomly_pick();
+        let reuse = previous.as_ref().is_some_and(|connection| {
+            connection.stream_url == url && !connection.ctx.is_cancelled()
+        });
+        if !reuse {
+            let candidate = tso_connection(cluster.id, &client, url.clone(), timeout)?;
+            // Go's dispatcher releases canceled contexts before reconnecting.
+            // A canceled same-URL entry must not reject its replacement.
+            cluster.tso.release(&url);
+            if !cluster.tso.clean_all_and_store(&candidate) {
+                candidate.cancel();
+                candidate.stream.close().await;
+            }
+        }
+        cluster.client = client;
+        cluster.keyspace_client = keyspace_client;
+        cluster.members = members;
+        if !reuse {
+            if let Some(previous) = previous {
+                // Retain the retired worker through its join. No manager lock
+                // is held while awaiting stream/deadline cleanup.
+                previous.stream.close().await;
+            }
+        }
 
         info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
@@ -486,6 +533,7 @@ impl Connection {
         pdpb::pd_client::PdClient<Channel>,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
+        String,
     )> {
         let previous_leader = previous
             .leader
@@ -527,7 +575,7 @@ impl Connection {
                 if let Ok((client, keyspace_client, members)) =
                     self.try_connect(ep.as_str(), cluster_id, timeout).await
                 {
-                    return Ok((client, keyspace_client, members));
+                    return Ok((client, keyspace_client, members, ep.clone()));
                 }
             }
         }

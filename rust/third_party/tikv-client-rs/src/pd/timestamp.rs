@@ -86,6 +86,10 @@ impl TimestampOracle {
         }
     }
 
+    pub(crate) fn cancellation(&self) -> Cancellation {
+        self.inner.cancellation.clone()
+    }
+
     pub(crate) async fn close(&self) {
         self.inner.cancellation.cancel();
         let mut worker = self.inner.worker.lock().await;

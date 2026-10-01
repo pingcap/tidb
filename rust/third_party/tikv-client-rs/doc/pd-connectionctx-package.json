@@ -1,0 +1,155 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/connectionctx"
+  },
+  "native_baseline": "5928b6e480b441496f9a3cd9bed6a7e8d56215a1",
+  "claim": "Complete connectionctx package and necessary native single-leader caller integration. No PD root, service discovery or complete TSO dispatcher acceptance.",
+  "package_artifacts": [
+    {
+      "path": "pkg/connectionctx/manager.go",
+      "sha256": "92778a87fb3af520cb4c5fd1161a2438f02ee8151ab52c242af0e7ad011c72c4",
+      "kind": "production",
+      "integration": "src/pd/connectionctx.rs: ConnectionCtx, NewManager/new/default, Exist/exist, Store/store, CleanAllAndStore/clean_all_and_store, GC/gc, ReleaseAll/release_all, Release/release, RandomlyPick/randomly_pick, GetConnectionCtx/get_connection_ctx, Size/len; cancellation before deletion, duplicate ownership rejection and retained stream identity."
+    },
+    {
+      "path": "pkg/connectionctx/manager_test.go",
+      "sha256": "b2473aa7e3705eeaddb7c1d3c6ba7aa7ecb62bc66f6fe2ec698b4b77bc685b15",
+      "kind": "original tests/support",
+      "integration": "source_go_connectionctx_test_cancel_func and source_go_connectionctx_test_manager preserve every original assertion. Native retained-resource and explicit cancellation/join tests cover TestMain leak responsibility; unchanged Go suite runs goleak and race detection."
+    }
+  ],
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_tests": [
+      "TestCancelFunc",
+      "TestManager"
+    ],
+    "test_harness": [
+      "TestMain"
+    ]
+  },
+  "dependency_decisions": [
+    {
+      "owner": "Go context and sync.RWMutex",
+      "native": "Existing Cancellation and std::sync::RwLock; retain pointer identity with Arc rather than cloning stream values. Cancellation callbacks run under write lock as in Go and must not re-enter. No manager worker or extra shutdown policy."
+    },
+    {
+      "owner": "math/rand/v2",
+      "native": "Existing rand 0.8 thread-local generator; same one-pass uniform reservoir-sampling algorithm. PRNG bit sequences are not a source contract."
+    },
+    {
+      "owner": "require and goleak",
+      "native": "Rust assertions and scoped threads, retained-resource drop and joined oracle tests; original Go tests execute unchanged. Manager itself starts no worker."
+    }
+  ],
+  "test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "TestMain imports LeakOptions only. Reviewed all five support files and Linux/non-Linux variants; URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "TestMain imports LeakOptions only. Reviewed all five support files and Linux/non-Linux variants; URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "TestMain imports LeakOptions only. Reviewed all five support files and Linux/non-Linux variants; URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "TestMain imports LeakOptions only. Reviewed all five support files and Linux/non-Linux variants; URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "TestMain imports LeakOptions only. Reviewed all five support files and Linux/non-Linux variants; URL/environment/Eventually helpers are not called by this package. No Linux execution claimed."
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "shared module/build/license input",
+      "integration": "Pinned source/module/license evidence; no Go edits. Scoped race/goleak tests plus native formatting/Clippy/all-target and TiDB build gates; no unrelated module-wide certification."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "shared module/build/license input",
+      "integration": "Pinned source/module/license evidence; no Go edits. Scoped race/goleak tests plus native formatting/Clippy/all-target and TiDB build gates; no unrelated module-wide certification."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "shared module/build/license input",
+      "integration": "Pinned source/module/license evidence; no Go edits. Scoped race/goleak tests plus native formatting/Clippy/all-target and TiDB build gates; no unrelated module-wide certification."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "shared module/build/license input",
+      "integration": "Pinned source/module/license evidence; no Go edits. Scoped race/goleak tests plus native formatting/Clippy/all-target and TiDB build gates; no unrelated module-wide certification."
+    }
+  ],
+  "reviewed_caller_artifacts": [
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "kind": "parent caller, not accepted",
+      "integration": "tryConnectToTSO and proxy paths check URL ownership; rejected Store/CleanAllAndStore candidates are explicitly canceled. Native single-leader call sites preserve reuse and ownership transfer; proxy/service-mode updater remains open."
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "kind": "parent caller, not accepted",
+      "integration": "Canceled stream entries are released, and dispatcher exit releases all entries. Native canceled-oracle reconnect, replacement, cluster drop and explicit retirement exercise the same manager lifecycle. Full batch dispatcher remains open."
+    }
+  ],
+  "native_artifacts": [
+    "src/pd/connectionctx.rs",
+    "src/pd/cluster.rs",
+    "src/pd/mod.rs",
+    "src/pd/timestamp.rs",
+    "src/pd/timestamp_tests.rs",
+    "doc/pd-connectionctx-owner.md",
+    "doc/pd-connectionctx-package.json",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "validation": {
+    "original": "go test -mod=readonly -race ./pkg/connectionctx -count=1: passed",
+    "red": "cargo test --locked --lib source_connectionctx_ -- --test-threads=1: healthy refresh regression failed before production edits, got new-stream logical 1 rather than continued logical 2.",
+    "pending": [
+      "native publication",
+      "TiDB sync/adapter tests/lint",
+      "actual hook locked server build",
+      "fresh locked pre-push server build"
+    ],
+    "final_native": {
+      "library": "1435 passed; 0 failed; 2 pre-existing ignored",
+      "clippy": "cargo clippy --locked --lib -- -D warnings: passed",
+      "targets": "cargo check --locked --all-targets: passed",
+      "format": "cargo fmt --all --check: passed",
+      "diff": "git diff --check: passed",
+      "inventory": "python3 /private/tmp/check-pd-connectionctx.py: passed"
+    }
+  }
+}

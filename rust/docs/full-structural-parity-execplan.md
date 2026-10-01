@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/connectionctx` owner and native single-leader integration. Reproduce same-URL healthy-stream replacement before edits; preserve URL-keyed ownership, rejected candidates, cancellation and retained handles. Original Go race/goleak tests and 1,435 native tests pass (two pre-existing ignored). Native strict Clippy/all-targets/formatting, master publication as 4e3169e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked builds gate TiDB publication; see `parity/current-audit/pd-connectionctx-owner-repair.md` and the final publication response.
 - [x] (2026-10-01, W01 prerequisite) Inventory and implement the complete pinned PD `pkg/deadline` package plus its native TSO caller integration. Reproduce missing response/body deadlines, completed-result loss on retirement, and a lost wakeup in the existing cancellation adapter. Complete-package evidence is the deadline leaf only; parent PD/TSO/discovery acceptance and P03/P06/P07 remain open.
 - [x] Finish deadline-leaf validation: 1,422 native library tests (two existing ignored), original Go race tests, strict Clippy/all-targets/formatting, native master publication as 5928b6e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), all-target compilation and root lint. TiDB publication is gated by the actual hook and fresh pre-push locked builds; see `parity/current-audit/pd-deadline-owner-repair.md` and the publication response.
 - [x] Preserve the three incoming partition-DDL commits through b0eccee03f in a conflict-free merge. Merged-tree validation passes 11 partition metadata tests, four cluster exchange-partition tests and root lint. The combined merge commit still requires the actual hook and a fresh pre-push locked server build; incoming DDL package acceptance remains open.
@@ -405,6 +406,13 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+The next complete PD prerequisite exposes unconditional native TSO replacement
+on metadata reconnect. Go retains a registered healthy leader stream. A loopback
+regression fails before the connectionctx migration, and six transport cases
+now cover reuse, replacement, failed refresh, actual dialed URL and retained
+pending-stream cleanup. This does not prove real PD timestamp duplication or
+close the broad root/discovery/dispatcher findings.
+
 During deadline publication, the remote integration branch advanced through three
 partition-DDL commits to b0eccee03f. They are retained without history rewriting;
 merge validation and publication builds are repeated. The incoming live
@@ -496,6 +504,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): migrate the complete pinned `pkg/connectionctx` dependency
+and its native single-leader callers. A same-URL conditional alone would leave
+ownership rejection, cancellation and retained-context behavior without their
+shared source owner. Preserve Go callback/lock semantics with Rust Arc/RwLock,
+and keep PD-root/discovery/dispatcher acceptance open until their full scopes
+qualify. No proxy/service mode or new public close policy is introduced.
 
 - Decision: Implement the complete PD deadline dependency first, with the TSO
   batch start/completion and worker-retirement call sites required to use it.
@@ -644,6 +659,13 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+The complete connectionctx leaf removes unconditional healthy-stream replacement
+and provides shared cancellation/retention ownership in native client-rust.
+The receipt records original tests, source inputs, fail-before evidence and
+publication gates. P06 remains partial and the 77 unresolved finding count is
+unchanged; public close, discovery, metadata concurrency and parent TSO policy
+remain W01 work.
 
 The W01 prerequisite now implements and integrates the complete pinned PD
 `pkg/deadline` package. Native master `5928b6e` supplies the shared owner to TiDB;

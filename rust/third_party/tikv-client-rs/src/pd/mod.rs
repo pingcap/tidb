@@ -1,6 +1,7 @@
 mod client;
 mod cluster;
 mod codec;
+pub mod connectionctx;
 pub mod deadline;
 mod retry;
 mod timestamp;

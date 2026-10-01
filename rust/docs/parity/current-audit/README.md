@@ -52,6 +52,14 @@ P06 is partial; public PD close and the whole parent packages remain open. The
 77-unresolved count is unchanged. See the receipt for synchronized-source and
 publication checks; earlier source snapshots above retain their original pins.
 
+The [PD connection-context repair](pd-connectionctx-owner-repair.md) implements
+the complete pinned connectionctx package and replaces unconditional healthy
+TSO stream replacement with URL-keyed ownership. Native master is
+`4e3169ed93e433eab38638a1dd92a24f25f7caaf`. Source tests, rejected ownership,
+replacement and retained-stream lifecycle are covered; public PD close,
+discovery and metadata concurrency remain open. P06 and the 77-ID count do not
+advance to complete from this prerequisite.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

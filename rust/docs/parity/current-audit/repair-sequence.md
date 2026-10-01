@@ -152,6 +152,14 @@ adapter. W01 remains open for public PD close propagation, discovery, root APIs,
 metadata concurrency and complete parent-package tests/variants. No known finding
 is fully closed by this prerequisite; the primary 77-ID assignment is unchanged.
 
+The next complete dependency, `pkg/connectionctx`, is implemented in native
+`4e3169ed93e433eab38638a1dd92a24f25f7caaf`; see its
+[repair receipt](pd-connectionctx-owner-repair.md). Native single-leader TSO now
+uses this shared URL/cancellation owner, retains healthy same-URL streams and
+replaces canceled or stale streams. Store rejection preserves caller ownership;
+retirement retains and joins old workers. Full parent/source-mode/retry ownership
+and public close remain W01 obligations. All 77 IDs retain their assignment.
+
 ## Activation and removal order
 
 
