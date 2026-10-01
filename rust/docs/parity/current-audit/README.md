@@ -503,3 +503,12 @@ inventories, independent Go runtime oracles, consumer rebinding and removal of
 six native plus six TiDB collector definitions. Integration validation and the
 mandatory publication gates are tracked there. Circuit breaker/grpcutil and the
 broader W01 root/TSO/discovery owners remain open; finding counts are unchanged.
+
+
+The complete PD `pkg/circuitbreaker` prerequisite is published in native
+`44afb53ffadfb5a711fa9c459d95fd197a3adb1a` and synchronized; see the
+[shared circuit-breaker receipt](pd-circuitbreaker-owner-repair.md). It removes
+the private region-cache state machine and restores the shared execution,
+settings, context and metric owner. Source, regression, complete-library and
+TiDB integration evidence and publication gates are recorded there. Full grpcutil per-RPC placement, root/TSO/discovery and
+parent-package acceptance remain open; finding counts are unchanged.

@@ -264,186 +264,45 @@ impl TiFlashLabelFilter {
     }
 }
 
-/// Runtime settings for PD region-metadata overload protection.
-///
-/// The zero error-rate threshold disables opening the breaker, which is the
-/// client-go default. Settings changes take effect at the next state/window
-/// transition rather than resetting in-flight observations.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PdRegionMetaCircuitBreakerSettings {
-    pub error_rate_threshold_pct: u32,
-    pub min_qps_for_open: u32,
-    pub error_rate_window: Duration,
-    pub cool_down_interval: Duration,
-    pub half_open_success_count: u32,
-}
+/// Shared PD settings; duration fields are signed nanoseconds, as in Go.
+/// The process-wide region-meta instance uses client-go's explicit configuration.
+pub type PdRegionMetaCircuitBreakerSettings = crate::pd::circuitbreaker::Settings;
 
-impl Default for PdRegionMetaCircuitBreakerSettings {
-    fn default() -> Self {
-        Self {
-            error_rate_threshold_pct: 0,
-            min_qps_for_open: 10,
-            error_rate_window: Duration::from_secs(30),
-            cool_down_interval: Duration::from_secs(10),
-            half_open_success_count: 1,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CircuitBreakerStateType {
-    Closed,
-    Open,
-    HalfOpen,
-}
-
-#[derive(Debug)]
-struct CircuitBreakerState {
-    state_type: CircuitBreakerStateType,
-    end: Instant,
-    pending_count: u32,
-    success_count: u32,
-    failure_count: u32,
-}
-
-#[derive(Debug)]
-struct PdRegionMetaCircuitBreaker {
-    settings: PdRegionMetaCircuitBreakerSettings,
-    state: Arc<StdMutex<CircuitBreakerState>>,
-}
-
-impl PdRegionMetaCircuitBreaker {
-    fn new(settings: PdRegionMetaCircuitBreakerSettings, now: Instant) -> Self {
-        let state = Self::new_state(&settings, now, CircuitBreakerStateType::Closed);
-        Self { settings, state }
-    }
-
-    fn new_state(
-        settings: &PdRegionMetaCircuitBreakerSettings,
-        now: Instant,
-        state_type: CircuitBreakerStateType,
-    ) -> Arc<StdMutex<CircuitBreakerState>> {
-        let (end, pending_count) = match state_type {
-            CircuitBreakerStateType::Closed => (now + settings.error_rate_window, 0),
-            CircuitBreakerStateType::Open => (now + settings.cool_down_interval, 0),
-            CircuitBreakerStateType::HalfOpen => (now, 1),
-        };
-        Arc::new(StdMutex::new(CircuitBreakerState {
-            state_type,
-            end,
-            pending_count,
-            success_count: 0,
-            failure_count: 0,
-        }))
-    }
-
-    fn transition(&mut self, now: Instant, state_type: CircuitBreakerStateType) {
-        self.state = Self::new_state(&self.settings, now, state_type);
-    }
-
-    fn on_request_at(&mut self, now: Instant) -> Result<Arc<StdMutex<CircuitBreakerState>>> {
-        let (state_type, end, pending_count, success_count, failure_count) = {
-            let state = self.state.lock().unwrap();
-            (
-                state.state_type,
-                state.end,
-                state.pending_count,
-                state.success_count,
-                state.failure_count,
-            )
-        };
-
-        match state_type {
-            CircuitBreakerStateType::Closed => {
-                if now > end {
-                    let total = failure_count + success_count;
-                    let minimum = (self.settings.error_rate_window.as_secs() as u32)
-                        .saturating_mul(self.settings.min_qps_for_open);
-                    let observed_error_rate =
-                        (total > 0).then(|| failure_count.saturating_mul(100) / total);
-                    if self.settings.error_rate_threshold_pct > 0
-                        && total >= minimum
-                        && observed_error_rate
-                            .is_some_and(|rate| rate >= self.settings.error_rate_threshold_pct)
-                    {
-                        self.transition(now, CircuitBreakerStateType::Open);
-                        return Err(Error::CircuitBreakerOpen);
-                    }
-                    self.transition(now, CircuitBreakerStateType::Closed);
-                }
-                Ok(self.state.clone())
-            }
-            CircuitBreakerStateType::Open => {
-                if self.settings.error_rate_threshold_pct == 0 {
-                    self.transition(now, CircuitBreakerStateType::Closed);
-                    return Ok(self.state.clone());
-                }
-                if now > end {
-                    self.transition(now, CircuitBreakerStateType::HalfOpen);
-                    return Ok(self.state.clone());
-                }
-                Err(Error::CircuitBreakerOpen)
-            }
-            CircuitBreakerStateType::HalfOpen => {
-                if self.settings.error_rate_threshold_pct == 0 {
-                    self.transition(now, CircuitBreakerStateType::Closed);
-                    return Ok(self.state.clone());
-                }
-                if failure_count > 0 {
-                    self.transition(now, CircuitBreakerStateType::Open);
-                    return Err(Error::CircuitBreakerOpen);
-                }
-                if success_count == self.settings.half_open_success_count {
-                    self.transition(now, CircuitBreakerStateType::Closed);
-                    return Ok(self.state.clone());
-                }
-                if pending_count < self.settings.half_open_success_count {
-                    self.state.lock().unwrap().pending_count += 1;
-                    return Ok(self.state.clone());
-                }
-                Err(Error::CircuitBreakerOpen)
-            }
-        }
-    }
-
-    fn on_result(state: &Arc<StdMutex<CircuitBreakerState>>, overloaded: bool) {
-        let mut state = state.lock().unwrap();
-        if overloaded {
-            state.failure_count += 1;
-        } else {
-            state.success_count += 1;
-        }
-    }
-}
-
-static PD_REGION_META_CIRCUIT_BREAKER: LazyLock<StdMutex<PdRegionMetaCircuitBreaker>> =
+static PD_REGION_META_CIRCUIT_BREAKER: LazyLock<Arc<crate::pd::circuitbreaker::CircuitBreaker>> =
     LazyLock::new(|| {
-        StdMutex::new(PdRegionMetaCircuitBreaker::new(
-            PdRegionMetaCircuitBreakerSettings::default(),
-            Instant::now(),
-        ))
+        crate::pd::circuitbreaker::CircuitBreaker::new(
+            "region-meta",
+            PdRegionMetaCircuitBreakerSettings {
+                error_rate_threshold_pct: 0,
+                min_qps_for_open: 10,
+                error_rate_window: 30_000_000_000,
+                cool_down_interval: 10_000_000_000,
+                half_open_success_count: 1,
+            },
+        )
     });
 
 /// Changes the process-wide PD region-metadata circuit-breaker settings.
 pub fn change_pd_region_meta_circuit_breaker_settings(
     apply: impl FnOnce(&mut PdRegionMetaCircuitBreakerSettings),
 ) {
-    let mut breaker = PD_REGION_META_CIRCUIT_BREAKER.lock().unwrap();
-    apply(&mut breaker.settings);
+    PD_REGION_META_CIRCUIT_BREAKER.change_settings(apply);
 }
 
 async fn pd_region_meta_call<T>(call: impl Future<Output = Result<T>>) -> Result<T> {
-    let state = PD_REGION_META_CIRCUIT_BREAKER
-        .lock()
-        .unwrap()
-        .on_request_at(Instant::now())?;
-    let result = call.await;
-    let overloaded = result
-        .as_ref()
-        .err()
-        .is_some_and(is_pd_region_meta_overload);
-    PdRegionMetaCircuitBreaker::on_result(&state, overloaded);
-    result
+    if !PD_REGION_META_CIRCUIT_BREAKER.is_enabled() {
+        return call.await;
+    }
+    PD_REGION_META_CIRCUIT_BREAKER
+        .execute_async(|| async {
+            let result = call.await;
+            let overloaded = result
+                .as_ref()
+                .err()
+                .is_some_and(is_pd_region_meta_overload);
+            (overloaded, result)
+        })
+        .await
 }
 
 fn require_region_peer(region: RegionWithLeader) -> Result<RegionWithLeader> {
@@ -3941,7 +3800,7 @@ mod test {
     use std::sync::atomic::Ordering::SeqCst;
     use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex as StdMutex};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use tokio::sync::{Mutex, Notify};
@@ -3950,11 +3809,11 @@ mod test {
         contains_by_end, is_pd_region_meta_overload, next_region_cache_ttl, now_epoch_secs,
         ranges_after_key, regions_have_gap_in_ranges, set_region_cache_ttl_secs,
         set_region_cache_ttl_with_jitter, BatchLocateRegionMerger, CachedStore,
-        MixedReplicaSelection, PdRegionMetaCircuitBreaker, PdRegionMetaCircuitBreakerSettings,
-        RegionCache, ReplicaCandidate, ReplicaLiveness, ReplicaSelectorState, StoreLiveness,
-        StoreResolveState, TiFlashLabelFilter, CLEAN_STORE_METRICS_INTERVAL,
-        NEED_DELAYED_RELOAD_PENDING, NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL,
-        NEED_RELOAD_ON_ACCESS, REGION_CACHE_TTL_JITTER_SECS, REGION_CACHE_TTL_SECS,
+        MixedReplicaSelection, PdRegionMetaCircuitBreakerSettings, RegionCache, ReplicaCandidate,
+        ReplicaLiveness, ReplicaSelectorState, StoreLiveness, StoreResolveState,
+        TiFlashLabelFilter, CLEAN_STORE_METRICS_INTERVAL, NEED_DELAYED_RELOAD_PENDING,
+        NEED_DELAYED_RELOAD_READY, NEED_EXPIRE_AFTER_TTL, NEED_RELOAD_ON_ACCESS,
+        REGION_CACHE_TTL_JITTER_SECS, REGION_CACHE_TTL_SECS,
     };
     use crate::async_util::Cancellation;
     use crate::common::Error;
@@ -6800,38 +6659,34 @@ mod test {
         assert!(TiFlashLabelFilter::AllNodes.matches(&[ordinary]));
     }
 
-    #[test]
-    fn source_pd_region_meta_circuit_breaker_state_machine_and_error_classes() {
-        let base = Instant::now();
-        let settings = PdRegionMetaCircuitBreakerSettings {
-            error_rate_threshold_pct: 50,
-            min_qps_for_open: 1,
-            error_rate_window: Duration::from_secs(1),
-            cool_down_interval: Duration::from_secs(1),
-            half_open_success_count: 2,
-        };
-        let mut breaker = PdRegionMetaCircuitBreaker::new(settings, base);
-
-        let failed = breaker.on_request_at(base).unwrap();
-        PdRegionMetaCircuitBreaker::on_result(&failed, true);
+    #[tokio::test(start_paused = true)]
+    async fn source_pd_region_meta_circuit_breaker_state_machine_and_error_classes() {
+        let breaker = crate::pd::circuitbreaker::CircuitBreaker::new(
+            "region cache source test",
+            PdRegionMetaCircuitBreakerSettings {
+                error_rate_threshold_pct: 50,
+                min_qps_for_open: 1,
+                error_rate_window: 1_000_000_000,
+                cool_down_interval: 1_000_000_000,
+                half_open_success_count: 2,
+            },
+        );
+        breaker.execute(|| (true, Ok(()))).unwrap();
+        tokio::time::advance(Duration::from_secs(2)).await;
         assert!(matches!(
-            breaker.on_request_at(base + Duration::from_secs(2)),
+            breaker.execute(|| (false, Ok(()))),
             Err(Error::CircuitBreakerOpen)
         ));
+        tokio::time::advance(Duration::from_millis(500)).await;
         assert!(matches!(
-            breaker.on_request_at(base + Duration::from_millis(2_500)),
+            breaker.execute(|| (false, Ok(()))),
             Err(Error::CircuitBreakerOpen)
         ));
-
-        let first_probe = breaker
-            .on_request_at(base + Duration::from_secs(4))
-            .unwrap();
-        PdRegionMetaCircuitBreaker::on_result(&first_probe, false);
-        let second_probe = breaker
-            .on_request_at(base + Duration::from_secs(4))
-            .unwrap();
-        PdRegionMetaCircuitBreaker::on_result(&second_probe, false);
-        assert!(breaker.on_request_at(base + Duration::from_secs(4)).is_ok());
+        tokio::time::advance(Duration::from_millis(1_500)).await;
+        // Both probes must succeed before the next request closes the breaker.
+        for _ in 0..3 {
+            breaker.execute(|| (false, Ok(()))).unwrap();
+        }
 
         for code in [
             tonic::Code::DeadlineExceeded,

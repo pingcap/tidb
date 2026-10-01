@@ -1,5 +1,6 @@
 pub mod backoff;
 pub mod batch;
+pub mod circuitbreaker;
 mod client;
 mod cluster;
 mod codec;

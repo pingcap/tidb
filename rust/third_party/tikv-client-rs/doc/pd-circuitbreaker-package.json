@@ -1,0 +1,256 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/circuitbreaker"
+  },
+  "native_baseline": "e3e8de80f2791ed725b6f06c25dfe4ed339ce564",
+  "claim": "Complete shared circuitbreaker state/configuration/execution/metrics/context package. Remove the private region_cache.rs owner and migrate all seven existing logical-call sites. grpcutil physical-RPC placement, root/discovery/TSO, complete locate and mock packages remain unaccepted.",
+  "package_artifacts": [
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker.go",
+      "sha256": "f5364cc36beec2eb3921520ba33d430642d011316fad598b080b011ba63dbb92",
+      "kind": "production",
+      "integration": "Full declaration/case mapping below; byte-identical original Go race/goleak validation."
+    },
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker_test.go",
+      "sha256": "7cc3d6082f522f32886e43085d658b583a8f4e4ca4214d01e3194262671eddac",
+      "kind": "original test/support",
+      "integration": "Full declaration/case mapping below; byte-identical original Go race/goleak validation."
+    }
+  ],
+  "declaration_mapping": {
+    "StateType.String": "StateType Display (including unknown signed discriminants)",
+    "NewCircuitBreaker": "CircuitBreaker::new/new_with_consumer; state begins before metric registration",
+    "registerMetrics": "Counters::new and metrics::register_consumer rebind callback",
+    "CircuitBreaker.IsEnabled": "CircuitBreaker::is_enabled",
+    "CircuitBreaker.ChangeSettings": "CircuitBreaker::change_settings",
+    "CircuitBreaker.Execute": "CircuitBreaker::execute and execute_async, Admission panic/cancellation completion",
+    "CircuitBreaker.onRequest": "CircuitBreaker::on_request; clock sampled under owner lock",
+    "CircuitBreaker.onResult": "CircuitBreaker::on_result, result updates admitted StateHandle",
+    "CircuitBreaker.emitMetric": "CircuitBreaker::on_result counters before state accounting; admit fast_fail",
+    "CircuitBreaker.newState": "State::new plus State::expired signed elapsed comparison",
+    "State.onRequest": "CircuitBreaker::on_request state machine under owner and generation locks",
+    "State.onResult": "State::on_result wrapping increments",
+    "FromContext": "from_context",
+    "WithCircuitBreaker": "with_circuit_breaker"
+  },
+  "type_mapping": {
+    "Overloading": "bool alias; every valid value is No or Yes",
+    "Settings": "Settings (all five fields, signed i64 nanoseconds)",
+    "CircuitBreaker": "Arc<CircuitBreaker>; explicit Rust guards instead of exported embedded RWMutex operations",
+    "StateType": "StateType(isize), integer discriminants and Display",
+    "State": "opaque State plus Arc<Mutex<State>> generation; no back-pointer cycle",
+    "cbCtxKey": "CircuitBreakerKey marker"
+  },
+  "constant_mapping": {
+    "No": "NO=false",
+    "Yes": "YES=true",
+    "StateClosed": "StateType::CLOSED=0",
+    "StateOpen": "StateType::OPEN=1",
+    "StateHalfOpen": "StateType::HALF_OPEN=2"
+  },
+  "global_mapping": {
+    "AlwaysClosedSettings": "ALWAYS_CLOSED_SETTINGS synchronized mutable static; threshold0/window10s/min10/cool10s/half1",
+    "replacer": "Counters::new replaces only spaces and hyphens",
+    "CircuitBreakerKey": "CircuitBreakerKey type-key in existing TraceContext"
+  },
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": []
+  },
+  "original_test_mapping": {
+    "TestCircuitBreakerExecuteWrapperReturnValues": "execute_wrapper_return_values",
+    "TestCircuitBreakerOpenState": "open_state",
+    "TestCircuitBreakerCloseStateNotEnoughQPS": "close_state_not_enough_qps",
+    "TestCircuitBreakerCloseStateNotEnoughErrorRate": "close_state_not_enough_error_rate",
+    "TestCircuitBreakerHalfOpenToClosed": "half_open_to_closed",
+    "TestCircuitBreakerHalfOpenToOpen": "half_open_to_open",
+    "TestCircuitBreakerHalfOpenFailOverPendingCount": "half_open_fail_over_pending_count",
+    "TestCircuitBreakerCountOnlyRequestsInSameWindow": "count_only_requests_in_same_window",
+    "TestCircuitBreakerChangeSettings": "change_settings",
+    "TestCircuitBreakerEnabled": "enabled"
+  },
+  "test_support_mapping": {
+    "TestMain": "Run unchanged source with goleak/race; Rust implementation has no workers, test threads join",
+    "advance": "expire sets elapsed deadline boundary without sleeping",
+    "settings/minCountToOpen": "SETTINGS/MIN_COUNT",
+    "newCircuitBreakerMovedToHalfOpenState": "open_expired",
+    "driveQPS": "drive",
+    "assertFastFail": "fast_fail verifies rejected call is never invoked",
+    "assertSucceeds": "succeeds"
+  },
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    }
+  ],
+  "shared_test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "Original TestMain imports LeakOptions. Retain byte-identical testutil compilation including Linux/non-Linux variants; Eventually/socket helpers are not invoked by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "Original TestMain imports LeakOptions. Retain byte-identical testutil compilation including Linux/non-Linux variants; Eventually/socket helpers are not invoked by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "Original TestMain imports LeakOptions. Retain byte-identical testutil compilation including Linux/non-Linux variants; Eventually/socket helpers are not invoked by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "Original TestMain imports LeakOptions. Retain byte-identical testutil compilation including Linux/non-Linux variants; Eventually/socket helpers are not invoked by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "Original TestMain imports LeakOptions. Retain byte-identical testutil compilation including Linux/non-Linux variants; Eventually/socket helpers are not invoked by this package."
+    }
+  ],
+  "dependency_inputs": [
+    {
+      "path": "errs/errno.go",
+      "sha256": "32fc4ed013f6d810b7d19d3de4634a83faff48359b7e3fcb25ff76633e84fbe2",
+      "kind": "dependency, not new package claim",
+      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+    },
+    {
+      "path": "errs/errs.go",
+      "sha256": "e3af949b6f5db4c8751ed914d77c54d9665babe8b56efe288e83d72e3a64352a",
+      "kind": "dependency, not new package claim",
+      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+    },
+    {
+      "path": "metrics/metrics.go",
+      "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
+      "kind": "dependency, not new package claim",
+      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+    },
+    {
+      "path": "resource_group/controller/metrics/metrics.go",
+      "sha256": "f45e77d16ca904ac6dd34eb5e91cdf7d966f57d6d6c0efe141441b2e6e7053dd",
+      "kind": "dependency, not new package claim",
+      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+    }
+  ],
+  "dependency_decisions": [
+    {
+      "owner": "time.Duration/time.Time",
+      "native": "Settings keeps full Go signed i64 nanoseconds, including negative windows/cooldowns. State stores monotonic start+signed interval and compares i128 elapsed nanoseconds instead of adding possibly out-of-platform-range durations to Instant. Go Seconds float splitting and uint32 wrapping retained; no validation clamps. Tokio clock supports paused deterministic tests."
+    },
+    {
+      "owner": "sync.RWMutex/state pointer",
+      "native": "Owner Mutex serializes config, request-time transitions and result updates as in Go. Generation Mutex keeps an old admitted state safely owned by Arc; it is never acquired before the owner in production. User execution/RPCs hold neither lock. No redundant back-pointer/cycle. Poison recovery matches deferred unlocking after mutator panic; safe encapsulation replaces exported embedded lock methods."
+    },
+    {
+      "owner": "defer/recover/async cancellation",
+      "native": "Admission Drop preserves panic payload and accounts overload without error. Async returns use the same completion path; a dropped admitted future is a cancelled RPC and accounts No plus error. Never-polled futures have no admission. This is a Rust lifetime adaptation, not a new timeout, retry or worker."
+    },
+    {
+      "owner": "metrics/prometheus",
+      "native": "Use complete shared metrics owner. Four counter handles bind immediately and rebind on initialization. Callback retains only counter state; source sanitized name and independent error/overload classes retained. Metric lifecycle already validated by pd-metrics package receipt."
+    },
+    {
+      "owner": "context.Context",
+      "native": "Reuse TraceContext typed immutable derivation; missing/wrong type/nil breaker return None, Arc identity retained. Context base is an existing Rust reference; Go nil-parent panic is prevented by the type."
+    },
+    {
+      "owner": "errs/log/zap",
+      "native": "Reuse Error::CircuitBreakerOpen typed category and exact message. Native enum identity replaces Go normalized singleton/RFC error identity; whole errs package is not part of this claim. Standard log facade emits source transition levels/text and name/settings/rate without a second logger."
+    }
+  ],
+  "source_callers": [
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "kind": "PD parent caller",
+      "integration": "Context lookup/enabled bypass, Execute and overload classification at each unary RPC. Complete grpcutil transport/interceptor owner remains open; leaf API now exists."
+    },
+    {
+      "path": "internal/locate/region_cache.go",
+      "sha256": "c4f04a1ed08ddfb80ff7735e72820d7fee14359fdb9076e627a6c3f6b7a17755",
+      "kind": "client-go parent caller",
+      "integration": "Explicit 30-second region-meta instance and settings changes migrate to shared package. Seven native logical call sites use the shared owner. Physical-RPC context placement remains grpcutil work."
+    },
+    {
+      "path": "tikv/region.go",
+      "sha256": "67f2fe61e25e1d2c90c8f75c533aff0e92f5f3d53f3a28e29c6abc0b2d17a640",
+      "kind": "client-go facade caller",
+      "integration": "Existing src/tikv.rs and lib.rs settings alias/setter facade retained."
+    },
+    {
+      "path": "internal/mockstore/mocktikv/pd.go",
+      "sha256": "2a90521f8e5c2471795313de64ffbe8201dad89da4826e820569b567304c1b8e",
+      "kind": "client-go mock parent caller",
+      "integration": "Go enforces context presence. Full mock PD/transport integration is outside this package; no claim that existing logical wrapper equals per-RPC interception."
+    }
+  ],
+  "native_artifacts": [
+    "src/pd/circuitbreaker.rs",
+    "src/pd/circuitbreaker_tests.rs",
+    "src/pd/mod.rs",
+    "src/lib.rs",
+    "src/region_cache.rs",
+    "src/common/errors.rs",
+    "doc/pd-circuitbreaker-owner.md",
+    "doc/pd-circuitbreaker-package.json",
+    "doc/pd-circuitbreaker-oracle/source_oracle_test.go.txt",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "compatibility": "Public PdRegionMetaCircuitBreakerSettings is now the shared Settings alias. Default is source zero Settings, distinct from named AlwaysClosedSettings and explicit region-meta configuration. Window/cooldown fields change from unsigned Duration to signed nanoseconds. All in-repo callers migrated; third-party callers must supply nanoseconds. No new dependency or lockfile change.",
+  "validation": {
+    "status": "Original Go package/oracle, native full library and static gates passed; native publication and TiDB integration pending.",
+    "red": "cargo test --locked --lib pd_breaker_minimum_qps_uses_source_u32_wrapping -- --test-threads=1 failed at runtime before replacement: old saturation refused to open (pd-circuitbreaker-red.log).",
+    "focused": "18 native package tests passed, including all ten original cases. Additional signed-domain, wrap, panic identity, settings poison, concurrency, cancellation, metrics rebind and context cases.",
+    "go": "go test -mod=readonly -race ./pkg/circuitbreaker -count=1 passed both original-only (1.028s) and with committed two-case boundary oracle (1.020s); original goleak TestMain unchanged; no failpoint imports in package/support.",
+    "unverified": [
+      "Linux execution",
+      "native ThreadSanitizer",
+      "live PD topology",
+      "physical-RPC interceptor/call scope",
+      "full root/discovery/TSO/locate/mock ownership",
+      "sysbench/TPC-C/TPC-H/YCSB performance"
+    ],
+    "native_library": "cargo test --locked --lib -- --test-threads=1: 1504 passed, 2 existing ignored.",
+    "static": "cargo clippy --locked --lib -- -D warnings; cargo check --locked --all-targets; cargo fmt --all --check; git diff --check: passed."
+  }
+}

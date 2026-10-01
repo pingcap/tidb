@@ -124,7 +124,7 @@ pub enum Error {
     /// A logical TiKV store has reached the configured in-flight request limit.
     #[error(transparent)]
     TokenLimit(#[from] crate::error::TokenLimitError),
-    /// PD's region-metadata circuit breaker is open and rejects this request
+    /// PD's circuit breaker is open and rejects this request
     /// without contacting PD.
     #[error("circuit breaker is open")]
     CircuitBreakerOpen,

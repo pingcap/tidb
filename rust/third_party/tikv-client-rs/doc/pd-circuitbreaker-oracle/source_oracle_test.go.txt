@@ -1,0 +1,89 @@
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
+package circuitbreaker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNativeSignedAndWrappingOracle(t *testing.T) {
+	for _, tc := range []struct {
+		window   time.Duration
+		qps      uint32
+		expected StateType
+	}{
+		{2 * time.Second, 1 << 31, StateOpen},
+		{-time.Second, 1, StateClosed},
+		{-500 * time.Millisecond, 1, StateOpen},
+		{time.Duration(math.MinInt64), 0, StateOpen},
+		{time.Duration(math.MaxInt64), 0, StateClosed},
+	} {
+		t.Run(fmt.Sprint(tc.window), func(t *testing.T) {
+			st := settings
+			st.ErrorRateWindow = tc.window
+			st.MinQPSForOpen = tc.qps
+			st.CoolDownInterval = time.Duration(math.MinInt64)
+			cb := NewCircuitBreaker(t.Name(), st)
+			cb.state.failureCount = 1
+			if tc.window == 2*time.Second {
+				cb.state.end = time.Now().Add(-1)
+			}
+			err := cb.Execute(func() (Overloading, error) { return No, nil })
+			require.Equal(t, tc.expected, cb.state.stateType)
+			require.Equal(t, tc.expected == StateOpen, err != nil)
+			if tc.expected == StateOpen {
+				require.NoError(t, cb.Execute(func() (Overloading, error) { return No, nil }))
+				require.Equal(t, StateHalfOpen, cb.state.stateType)
+			}
+		})
+	}
+	cb := NewCircuitBreaker(t.Name(), settings)
+	cb.state.successCount = math.MaxUint32
+	require.NoError(t, cb.Execute(func() (Overloading, error) { return No, nil }))
+	require.Zero(t, cb.state.successCount)
+	cb.state.failureCount = math.MaxUint32
+	require.NoError(t, cb.Execute(func() (Overloading, error) { return Yes, nil }))
+	require.Zero(t, cb.state.failureCount)
+	cb.config.MinQPSForOpen = 0
+	cb.state.failureCount = 1 << 30
+	cb.state.end = time.Now().Add(-1)
+	require.NoError(t, cb.Execute(func() (Overloading, error) { return No, nil }))
+	require.Equal(t, StateClosed, cb.state.stateType)
+	cb.state.failureCount = math.MaxUint32
+	cb.state.successCount = 1
+	cb.state.end = time.Now().Add(-1)
+	require.NoError(t, cb.Execute(func() (Overloading, error) { return No, nil }))
+}
+
+func TestNativePanicAndCancellationOracle(t *testing.T) {
+	cb := NewCircuitBreaker(t.Name(), settings)
+	payload := errors.New("original panic")
+	func() {
+		defer func() { require.Same(t, payload, recover()) }()
+		_ = cb.Execute(func() (Overloading, error) { panic(payload) })
+	}()
+	count := func(c prometheus.Counter) float64 {
+		m := &dto.Metric{}
+		require.NoError(t, c.Write(m))
+		return m.GetCounter().GetValue()
+	}
+	require.Equal(t, float64(1), count(cb.overloadCounter))
+	require.Zero(t, count(cb.errorCounter))
+	require.Equal(t, context.Canceled, cb.Execute(func() (Overloading, error) { return No, context.Canceled }))
+	require.Equal(t, float64(1), count(cb.successCounter))
+	require.Equal(t, float64(1), count(cb.errorCounter))
+	require.Nil(t, FromContext(nil))
+	ctx := context.Background()
+	require.Nil(t, FromContext(context.WithValue(ctx, CircuitBreakerKey, 42)))
+	require.Same(t, cb, FromContext(WithCircuitBreaker(ctx, cb)))
+	require.Nil(t, FromContext(WithCircuitBreaker(ctx, nil)))
+	require.Equal(t, "unknown state: -42", StateType(-42).String())
+}
