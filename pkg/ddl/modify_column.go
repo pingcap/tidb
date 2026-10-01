@@ -1184,7 +1184,12 @@ func buildCheckSQLFromModifyColumn(
 			// Integer conversion
 			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
+			lengthFunc := "LENGTH"
+			// CHAR/VARCHAR widths count characters, unlike binary and blob widths.
+			if types.IsTypeChar(changingTp) && changingCol.GetCharset() != charset.CharsetBin {
+				lengthFunc = "CHAR_LENGTH"
+			}
+			conditions = append(conditions, fmt.Sprintf("%s(%s) > %d", lengthFunc, checkColName, changingCol.FieldType.GetFlen()))
 			if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
 				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
 			}
