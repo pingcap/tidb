@@ -409,6 +409,14 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+Retry integration's first push encountered incoming configured-TopN commit
+0b2cf64069. It removes an implicit final ordinal tie-break absent from Go; two
+exact source-order expectations fail only with that incoming file, while all
+six pass on its pre-merge version with the same native retry dependency. Preserve
+the incoming history and tests, and record both failures in the retry receipt.
+Configured heap ordinals and stable-sort behavior still require W03's complete
+shared-owner migration; this dependency publication does not certify them.
+
 The next PD prerequisite reveals first-error initialization and an ignored
 membership timeout. A retry policy alone cannot recover a stalled probe.
 Source exponential and fixed helpers also intentionally return different errors
@@ -533,6 +541,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): preserve incoming 0b2cf64069 and retain its two diagnosed
+SQL tie-order failures as an explicit inherited limitation. Go does not add a
+source ordinal to final TopN comparison, and restoring one solely for the tests
+would contradict the requested design. Keep all assertions and assign complete
+source-oracle reconciliation to W03's configured/shared SQL owner replacement.
+The independent PD retry package retains its complete passing acceptance gates.
 
 Decision (2026-10-01): complete the pinned PD retry dependency and integrate its
 source default initialization policy with one absolute member-probe deadline.

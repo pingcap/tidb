@@ -58,6 +58,8 @@ The eight repaired register entries remain outside this queue: C01, E01, O12, P0
 
 **Migration and removal:** Unify the configured one/two-table session routes with normal Session/compiler/storage adapters. Preserve resolved privilege/FK/handle metadata through `tidb-executor/src/driver/physical_builder.rs::execute_dml_source`. Move assertion, auto-ID and generated-value conversion decisions to table/mutation-context owners; remove the second SQL interpreter, static catalog and generic insertion policy after caller migration.
 
+The concurrent configured-TopN commit 0b2cf64069 leaves two exact tie-order tests failing; `pd-retry-owner-repair.md` records isolation against the pre-merge file. Include those fixtures, the remaining heap ordinal and stable-sort policy in this complete owner migration rather than restoring Go-absent final ordering.
+
 **Integration gate:** All selectable storage modes execute text/prepared/internal statements through shared owners, preserve warnings/errors/rollback and row identity, migrate session state, and use the shared historical timestamp/schema provider. Test eager/pessimistic versus lazy assertions separately. Historical reads require W04; complete expression/optimizer obligations also include W08.
 
 ## W04 — Schema, identity and GC safety

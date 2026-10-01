@@ -189,10 +189,12 @@ impl ConfiguredTopN {
     /// Finalizes the heap in canonical output order and applies the offset.
     #[must_use]
     pub fn finish(mut self) -> Vec<Row> {
-        self.candidates.sort_by(|left, right| {
-            compare_configured_rows(&left.row, &right.row, self.spec.order_keys())
-                .then_with(|| left.source_ordinal.cmp(&right.source_ordinal))
-        });
+        // go's finish (`slices.SortFunc(rowPtrs, keyColumnsLess)`) carries NO
+        // tie-break: equal-weight rows keep the heap array's order. The
+        // source-ordinal tie-break re-sorted ties into scan order, diverging
+        // from go's heap layout (oracle g-collation).
+        self.candidates
+            .sort_by(|left, right| compare_configured_rows(&left.row, &right.row, self.spec.order_keys()));
         let limit = self.spec.limit();
         self.candidates
             .into_iter()

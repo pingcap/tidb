@@ -157,3 +157,56 @@ directories whose complete contents were older than 24 hours. Process inspection
 confirmed no cargo/rustc process was active before deletion. Sources, final
 binaries, logs and uncommitted work were preserved. Manifest:
 `/private/tmp/pd-retry-cache-candidates.json`.
+
+
+## Concurrent integration update
+
+
+The initial integration commit b99bff02bb passed its actual locked server hook
+and a fresh post-commit locked server build, but the push was rejected because
+remote `hparser-integration` advanced to
+`0b2cf640696983d41e891a474b4c65501582c2e3`. The normal merge preserves that commit
+and the complete native retry work; no force push or upstream-history rewrite
+is used.
+
+The incoming change removes the source-ordinal tie-break from configured TopN's
+final comparator. Fresh Go master `sortexec/topn_chunk_heap.go::keyColumnsCompare`
+compares the declared keys, with no implicit source ordinal. However, the full
+configured owner remains distinct: its heap comparator still uses ordinals and
+its stable Rust sort is not Go's unstable slices.SortFunc. The incoming comment
+about preserving heap-array tie order is not a general Go guarantee. Complete
+configured/shared SQL ownership remains W03 work; this PD receipt does not
+certify that implementation or its exact tied-row choices.
+
+The scoped command from rust/ is:
+
+    cargo test --locked -p tidb-exec --test all configured_topn -- --test-threads=1
+
+On merged code, four cases pass and two exact tie-order expectations fail:
+`configured_topn_source::configured_topn_uses_bounded_max_heap_multi_key_order_and_stable_ties`
+and
+`configured_ordered_query_source::configured_topn_orders_full_schema_then_projects_hidden_keys_away`.
+Replacing only configured_topn.rs with pre-merge b99bff02bb's file makes all six
+pass with the same native dependency; restoring the incoming file restores its
+exact bytes. Logs `/private/tmp/pd-retry-merge-configured-topn{,-baseline}.log`
+isolate the difference to that already-published incoming SQL change. No test
+or assertion is removed, and the Go-absent final ordinal policy is not restored
+to satisfy those expectations. Their complete source-oracle reconciliation
+belongs with the configured-owner replacement, not this PD dependency's atomic
+acceptance. These tests remain explicitly failing on the merged branch.
+
+Additional merge gates:
+
+    cd rust
+    cargo check --locked -p tidb-exec --all-targets
+    cd ..
+    make lint
+    python3 /private/tmp/check-pd-retry.py --synced
+    TERM=xterm git -c core.hooksPath=hooks commit -m 'Merge configured TopN update into PD retry integration'
+    (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
+
+Merged executor all-target compilation, root lint and the exact source/artifact
+checker pass. The final publication response records the actual merge hook,
+fresh pre-push build and published commit. This inherited SQL limitation leaves W03 and the 77-finding register
+open; the complete retry package and its callers passed their own source,
+regression, library and integration gates.
