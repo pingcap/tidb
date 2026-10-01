@@ -85,7 +85,11 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
+<<<<<<< HEAD:pkg/lightning/backend/external/BUILD.bazel
     shard_count = 50,
+=======
+    shard_count = 48,
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756)):pkg/ingestor/simplesst/BUILD.bazel
     deps = [
         "//pkg/config",
         "//pkg/dxf/framework/taskexecutor/execute",
