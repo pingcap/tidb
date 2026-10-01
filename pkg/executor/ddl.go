@@ -620,7 +620,16 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
+		oldTableName := tblInfo.Name
+		tblInfo = tblInfo.Clone()
 		tblInfo.Name = ast.NewCIStr(s.NewName)
+		oldSchemaName := ast.NewCIStr(job.SchemaName)
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 &&
+				fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+				fk.RefTable = tblInfo.Name
+			}
+		}
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
