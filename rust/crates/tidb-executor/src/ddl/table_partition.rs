@@ -625,13 +625,17 @@ pub fn linear_partitioning_warning(create: &CreateTableStmt) -> Option<String> {
 /// The bracket flag is why `hash(a+b)` is stored -- and printed -- as
 /// ``(`a`+`b`)``, with no spaces around the operator, unlike a generated
 /// column's ``(`a` + 1)``. Captured: ``PARTITION BY HASH ((`a`+`b`))``.
-fn partition_restore_flags() -> tidb_ast::RestoreFlags {
+pub(super) fn partition_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_UPPERCASE
         | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
         | tidb_ast::RestoreFlags::BRACKET_AROUND_BINARY_OPERATION
         | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
         | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+        // go's partition-bound restore prints string/DATE bounds WITHOUT the
+        // charset introducer (`SHOW CREATE TABLE pf`: '2021-06-01', not
+        // _UTF8MB4'2021-06-01').
+        | tidb_ast::RestoreFlags::STRING_WITHOUT_CHARSET
 }
 
 /// Go `checkPartitionFuncValid` plus the expression build: the restored text

@@ -133,3 +133,32 @@ contents were all older than 24 hours, after verifying no compiler was active.
 They measured about 5.3 GiB before deletion. Source, final build outputs, test
 logs and uncommitted work were preserved. Logs for this repair are under
 `/private/tmp/pd-deadline-*.log`.
+
+
+## Integration branch advanced during publication
+
+
+The first push was rejected because `hparser-integration` advanced to
+`b0eccee03f` through three partition-DDL commits (`7c4e161b0a`, `d18bacc8db`,
+`b0eccee03f`). They touch only `tidb-exec/src/cluster_ddl.rs` and executor
+`ddl/{alter_table,table_partition}.rs`; no native/PD file overlaps this repair.
+The changes are retained with a normal merge, without force-pushing or
+rewriting their history. The merged tree reruns lint, focused partition tests,
+the actual commit-hook build and a fresh pre-push locked build.
+
+These incoming metadata/repartition changes are not certified as a complete
+DDL package by this deadline repair. In particular, the new repartition helper
+explicitly leaves row movement to missing job backfill and skips the existing
+index-covering check. That live caller remains part of W05/D01's durable-job,
+backfill and table-policy migration; preserving incoming work does not accept
+those gaps. Online repartition data migration was not tested by this repair.
+
+Additional merged-tree validation commands, from `rust/`:
+
+    cargo test --locked -p tidb-executor --lib ddl::table_partition -- --test-threads=1
+    cargo test --locked -p tidb-exec --test all cluster_ddl_source::exchange_partition_ -- --test-threads=1
+
+The merged tree passes **11 partition metadata tests**, **four cluster
+exchange-partition tests** and root `make lint`. The actual-hook commit and the
+fresh locked pre-push build are repeated after this integration. The final
+publication response identifies the merge commit and those outcomes.

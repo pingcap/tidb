@@ -42,6 +42,7 @@ in time. This revision is a plan; it closes no production finding.
 
 - [x] (2026-10-01, W01 prerequisite) Inventory and implement the complete pinned PD `pkg/deadline` package plus its native TSO caller integration. Reproduce missing response/body deadlines, completed-result loss on retirement, and a lost wakeup in the existing cancellation adapter. Complete-package evidence is the deadline leaf only; parent PD/TSO/discovery acceptance and P03/P06/P07 remain open.
 - [x] Finish deadline-leaf validation: 1,422 native library tests (two existing ignored), original Go race tests, strict Clippy/all-targets/formatting, native master publication as 5928b6e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), all-target compilation and root lint. TiDB publication is gated by the actual hook and fresh pre-push locked builds; see `parity/current-audit/pd-deadline-owner-repair.md` and the publication response.
+- [x] Preserve the three incoming partition-DDL commits through b0eccee03f in a conflict-free merge. Merged-tree validation passes 11 partition metadata tests, four cluster exchange-partition tests and root lint. The combined merge commit still requires the actual hook and a fresh pre-push locked server build; incoming DDL package acceptance remains open.
 - [x] (2026-10-01, full-picture plan) Pull both implementation branches, fetch Go master, reconcile the current 85-record register and assign all 77 open findings exactly once. Replace stale active TiPB and background-lifetime work with the current dependency and removal gates. No production code or finding status changes.
 - [ ] Establish the next complete PD root/TSO/discovery package closure, original-case mapping and fail-before lifecycle/transport probes (W01). Preserve all other root APIs, variants and dependencies in its acceptance scope.
 - [ ] Migrate complete native routing owners and every TiDB storage consumer before retiring competing TiDB algorithms (W02); retain the MPP transport retirement dependency.
@@ -403,6 +404,13 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 
 ## Surprises & Discoveries
 
+
+During deadline publication, the remote integration branch advanced through three
+partition-DDL commits to b0eccee03f. They are retained without history rewriting;
+merge validation and publication builds are repeated. The incoming live
+repartition helper explicitly lacks row backfill and skips index covering checks,
+so W05/D01 must include that caller. This deadline prerequisite does not accept
+its DDL behavior or certify complete DDL-package parity.
 
 The current 77 open findings span shared broad packages, so assigning each ID
 to an independent patch would fragment the very owners being restored. PD

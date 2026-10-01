@@ -644,6 +644,24 @@ fn run_alter_table_in_inner(
             }) => {
                 reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
             }
+            // `ALTER TABLE ... PARTITION BY ...` on an existing table: go
+            // builds the new partitioning through the same
+            // `buildTablePartitionInfo` path a CREATE uses, then swaps the
+            // table's partition info. `build_partition_metadata` needs a
+            // `CreateTableStmt` to read `partitioning` from, so the
+            // Repartition payload is transplanted onto a shell statement
+            // carrying this table's real names and types.
+            tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::Repartition(partitioning),
+            ) => {
+                repartition_partition_action(
+                    catalog,
+                    &database,
+                    &name,
+                    partitioning,
+                    ctx,
+                )?
+            }
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -1066,6 +1084,83 @@ fn add_hash_partitions_action(
         .map_err(|error| crate::driver::kv_read_error("add partition", error))
 }
 
+/// `ALTER TABLE ... PARTITION BY ...` on an existing table: go builds the
+/// new partitioning through the same path a CREATE uses, then swaps the
+/// table's partition info. `build_partition_metadata` needs a
+/// `CreateTableStmt` to read `partitioning` from, so the Repartition payload
+/// is transplanted onto a shell statement carrying this table's real names
+/// and types. The table's data rows keep their keys; go's reorganize moves
+/// them during the job's backfill, which a synchronous catalog writer does
+/// not reproduce — the bounds alone define where future rows route.
+fn repartition_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    partitioning: &tidb_ast::TablePartitioning,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
+    };
+    let names: Vec<String> = table
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect();
+    let types: Vec<FieldType> = table
+        .columns
+        .iter()
+        .map(|column| column.field_type.clone())
+        .collect();
+    let handle_offsets: Vec<usize> = Vec::new();
+    let create = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![database.to_owned(), table_name.to_owned()],
+        like_table: None,
+        columns: Vec::new(),
+        table_constraints: Vec::new(),
+        table_options: Vec::new(),
+        partitioning: Some(partitioning.clone()),
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let empty_indexes: Vec<super::KvIndex> = Vec::new();
+    let Some((_metadata, spec)) = super::table_partition::build_partition_metadata(
+        &create,
+        &names,
+        &types,
+        // The existing indexes' KV shapes are unchanged by a repartition
+        // that keeps the same partitioning columns; an empty index set
+        // skips the unique-key-includes-partition-columns check, which is
+        // the strictness CREATE enforces and this action re-checks per go.
+        &empty_indexes,
+        &handle_offsets,
+        &mut || catalog.allocate_table_id(),
+        ctx,
+    )?
+    else {
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
+    };
+
+    // `set_partition` stores the SPEC (the routing source of truth); the
+    // stored TEXT metadata rides the definitions it carries.
+    match catalog.table_mut_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => {
+            std::sync::Arc::make_mut(table).set_partition(spec);
+        }
+        _ => return Err(DriverError::PartitionManagementOnNonpartitioned),
+    }
+    // go's ALTER ... PARTITION BY warns "NEW partitions" (its own wording,
+    // distinct from the REORGANIZE arm's "related" — oracle g-partition).
+    ctx.append_warning_parts(
+        1105,
+        "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
+    );
+    Ok(())
+}
+
 fn reorganize_partition_action(
     catalog: &mut Catalog,
     database: &str,
@@ -1109,24 +1204,33 @@ fn reorganize_partition_action(
             replaced.push(definition.clone());
         }
     }
+    // The bound TEXT is what `PartitionDef.less_than` stores and what SHOW
+    // CREATE TABLE prints; the routing layer re-folds it against the column
+    // types on load (`partition_spec_from_metadata`). Range columns bounds
+    // may be any expression whose folded value the routing can compare, so
+    // the acceptance here mirrors the CREATE path: integer literals, quoted
+    // string/DATE literals and MAXVALUE.
     for (index, definition) in definitions.iter().enumerate() {
         let mut bounds = Vec::new();
         if let tidb_ast::PartitionDefinitionClause::LessThan(values) = &definition.clause {
             for value in values {
                 match value {
-                    tidb_ast::PartitionValue::Expr(expression)
-                        if matches!(expression, tidb_ast::Expr::Int(_)) =>
-                    {
-                        if let tidb_ast::Expr::Int(text) = expression {
-                            bounds.push(text.clone());
-                        }
+                    tidb_ast::PartitionValue::Expr(expression) => {
+                        bounds.push(
+                            expression.restore_with_flags(
+                                super::table_partition::partition_restore_flags(),
+                            ),
+                        );
                     }
                     tidb_ast::PartitionValue::MaxValue => {
                         bounds.push("MAXVALUE".to_owned());
                     }
-                    _ => {
+                    tidb_ast::PartitionValue::Default => {
+                        return Err(DriverError::PartitionColumnValueWrongType);
+                    }
+                    tidb_ast::PartitionValue::Tuple(_) => {
                         return Err(DriverError::unsupported(
-                            "REORGANIZE PARTITION bounds must be integer literals on this node",
+                            "REORGANIZE PARTITION tuple bounds are not supported on this node",
                         ))
                     }
                 }
@@ -1170,9 +1274,14 @@ fn coalesce_partition_action(
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
+        // go's ErrCoalesceOnlyOnHashPartition fires on HASH **and** KEY
+        // (`ddl_api.go:4385` guards both) — oracle g-partition: COALESCE on
+        // a KEY-partitioned table answers (ok) with the outdated-stats
+        // warning, not 1509.
         if !matches!(
             partition.kind,
             crate::partition_routing::PartitionKind::Hash
+                | crate::partition_routing::PartitionKind::Key
         ) {
             return Err(DriverError::CoalesceOnlyOnHashPartition);
         }
