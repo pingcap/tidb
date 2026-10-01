@@ -9,6 +9,10 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-09-30, subsystem review) Refresh integration/master/native references; trace additional optimizer, table, schema, session, executor and domain owners. Add 18 findings, bringing the register to 72 records / 68 unresolved. Reproduce generated-column strict-mode failure and unsupported session-state/historical/BR job entrypoints.
+- [x] Account for all 83 Rust crates and 856 inventoried TiDB package directories in a checked scope matrix; preserve unreviewed variants/tests/dependencies and exclude disproved candidates. No whole-package acceptance or production repair is claimed.
+- [x] Validate subsystem audit evidence: diagnostic, scope generation, 72 unique IDs, Python syntax, receipt/source links, rustfmt and root lint pass. Publication must use the actual hook and fresh pre-push locked build; the publication response records those results.
+
 - [x] (2026-09-30, expanded review) Refresh integration/master and verify native master; add 13 source-confirmed findings with six groups of executable observations and passing controls. The consolidated register has 54 tracked findings, 50 unresolved. No production repair or complete-package acceptance is claimed.
 - [x] Validate expanded audit evidence: both retained probes complete, 54 unique IDs and receipt links checked, diagnostic source formatted, root lint passes. Publish through the mandatory hook build and fresh pre-push locked build; the publication response records their results.
 
@@ -56,6 +60,14 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 
 ## Surprises & Discoveries
 
+The subsystem probe stores generated TINYINT 127 from input 1000 under strict
+mode while ordinary TINYINT correctly rejects the same input; the immediate
+warning list is empty. The generated-column owner uses default conversion
+flags. Complete generated protocols also do not eliminate narrowed consumers:
+BR range helpers still own an incomplete File type. Conversely, Go itself drops
+the new singleton fields from baseCollector, so the analogous Rust collector
+projection is not counted as a demonstrated behavioral mismatch.
+
 
 The expanded owner review reproduces an unqualified joined UPDATE succeeding
 for a SELECT-only user while the qualified control is denied. PASSWORD HISTORY
@@ -89,6 +101,12 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+(2026-09-30, subsystem audit) Keep the latest request as a structural review.
+Use one stable register and an exhaustive scope queue, not a claim of exhaustive
+semantic coverage. Compare handwritten protocol consumers with the actual Go
+consumer before demanding deletion. Record source-only consequences separately
+from executable observations, and retain all package acceptance obligations.
 
 
 Keep this continuation an audit. Record all established ownership mismatches
@@ -1016,3 +1034,31 @@ distributed failure tests and all four workload benchmarks remain unfinished.
 Revision note: expanded the audit beyond session cache ownership into
 privilege policy, import, binding maintenance, wire/configuration and domain
 worker composition; retained executable observations and their controls.
+
+## Subsystem ownership review outcome
+
+Integration dae65456f9, freshly fetched master e953a09d9d and native master
+b2b3783 were current. The follow-up records 18 additional findings and a scope
+matrix accounting for all 83 Rust crates and 856 inventoried TiDB package
+directories. The stable register now has 72 records, 68 unresolved and four
+repaired. Details and exact commands are in
+`parity/current-audit/subsystem-structure-review.md`.
+
+The retained diagnostic completed after checking warnings immediately after
+the generated-column INSERT. Ordinary strict conversion rejects 1000; generated
+conversion stores 127 without warnings. Session migration, BR job lookup and
+ordinary staleness reads are explicitly refused. Configuration/cache metadata
+observations are kept separate from the source-only owner findings.
+
+Production code and client-rust dependencies are unchanged. Scope accounting
+is not package acceptance, and the other original tests, variants, external
+dependencies, distributed scenarios and all four benchmarks remain outstanding.
+Root `make lint` passed after retrying outside the network-restricted sandbox;
+the initial failure was DNS resolution of the Go lint dependency. The probe,
+coverage generator, Python syntax, 72 IDs, receipt/source links, rustfmt and
+`git diff --check` passed. The actual commit hook must run the locked server
+build, followed by a separate fresh locked server build before push. The
+publication response records those final gate outcomes.
+
+Revision note: broadened the owner audit and added complete scope accounting,
+retained diagnostics and negative controls for stale comments/partial models.

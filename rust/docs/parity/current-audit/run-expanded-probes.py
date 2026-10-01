@@ -5,6 +5,7 @@ The output records observations, including incorrect behavior. Exit zero means
 the diagnostics completed, not that Go/Rust parity passed. The server probe
 opens an ephemeral localhost listener. Run from any directory.
 """
+import argparse
 import pathlib
 import subprocess
 
@@ -36,5 +37,12 @@ def run(crate, source, example, output):
 
 
 if __name__ == "__main__":
-    run("tidb-session", "expanded-ownership-probe.rs", "expanded_ownership_audit", "expanded-ownership-probe.txt")
-    run("tidb-server", "expanded-server-probe.rs", "expanded_server_audit", "expanded-server-probe.txt")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--probe", choices=("all", "ownership", "server", "structure"), default="all")
+    selected = parser.parse_args().probe
+    if selected in ("all", "ownership"):
+        run("tidb-session", "expanded-ownership-probe.rs", "expanded_ownership_audit", "expanded-ownership-probe.txt")
+    if selected in ("all", "server"):
+        run("tidb-server", "expanded-server-probe.rs", "expanded_server_audit", "expanded-server-probe.txt")
+    if selected in ("all", "structure"):
+        run("tidb-session", "subsystem-structure-probe.rs", "subsystem_structure_audit", "subsystem-structure-probe.txt")

@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 54 tracked ownership/contract findings (50 unresolved, four repaired), review candidates and the
+consolidates 72 tracked ownership/contract findings (68 unresolved, four repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -29,6 +29,16 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [subsystem ownership review](subsystem-structure-review.md) compares integration
+`dae65456f9` with the same master and adds 18 findings across optimization,
+expression execution, table/write policy, historical schemas, session migration,
+worker lifetimes, control-plane services and remaining BR protocol consumers.
+The retained probe reproduces strict-mode generated-column overflow and missing
+session-state/historical-read/BR job handlers. The [complete scope matrix](structural-coverage.md)
+accounts for every Rust crate and inventoried Go package directory, including
+explicitly unreviewed queues. Scope accounting does not establish semantic
+coverage or package acceptance. No production code is changed in this audit.
 
 The [expanded production-owner review](expanded-ownership-review.md) compares
 integration `13689e0b13` with the same current master and adds 13 findings in
