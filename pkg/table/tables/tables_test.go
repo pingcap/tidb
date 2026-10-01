@@ -1689,7 +1689,7 @@ func TestWriteWithChecksums(t *testing.T) {
 
 			var seq int64
 			fn := func(job *model.Job) {
-				if job.State != model.JobStateRunning {
+				if job.State != model.JobStateRunning || job.SchemaState == model.StatePublic {
 					return
 				}
 				doDML(t, atomic.AddInt64(&seq, 1), job)
