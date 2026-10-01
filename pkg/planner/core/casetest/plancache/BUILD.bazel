@@ -45,7 +45,6 @@ go_test(
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util/benchdaily",
-        "//pkg/util/collate",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
