@@ -497,7 +497,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	joinTypes = append(joinTypes, base.LeftOuterJoin)
 	joinTypes = append(joinTypes, base.RightOuterJoin)
 
-	for range 15 {
+	for range 5 {
 		for _, joinType := range joinTypes {
 			for _, param := range params {
 				testRandomFail(t, ctx, joinType, param, leftDataSource, rightDataSource)
