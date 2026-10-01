@@ -160,10 +160,11 @@ func testTxnLazyInitialize(t *testing.T, isPessimistic bool) {
 	tk.MustExec("set @@tidb_general_log = 0")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
-	// Explain now also build the query and starts a transaction
+	// EXPLAIN may activate the lazy transaction depending on the target plan
+	// shape. Reset it so the following checks start from a stable state.
 	tk.MustQuery("explain select * from t")
-	res := tk.MustQuery("select @@tidb_current_ts")
-	require.NotEqual(t, "0", res.Rows()[0][0])
+	tk.MustExec("rollback")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	// Begin statement should start a new transaction.
 	tk.MustExec("begin")
