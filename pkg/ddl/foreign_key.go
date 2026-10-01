@@ -686,38 +686,31 @@ func checkForeignKeyConstrain(
 	}()
 
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*2)
+	buf.WriteString("select 1 from %n.%n as c where ")
+	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*3)
 	paramsList = append(paramsList, schema, table)
 	for i, col := range fkInfo.Cols {
 		if i == 0 {
-			buf.WriteString("%n is not null")
+			buf.WriteString("c.%n is not null")
 			paramsList = append(paramsList, col.L)
 		} else {
-			buf.WriteString(" and %n is not null")
+			buf.WriteString(" and c.%n is not null")
 			paramsList = append(paramsList, col.L)
 		}
 	}
-	buf.WriteString(" and (")
-	for i, col := range fkInfo.Cols {
-		if i == 0 {
-			buf.WriteString("%n")
-		} else {
-			buf.WriteString(",%n")
-		}
-		paramsList = append(paramsList, col.L)
-	}
-	buf.WriteString(") not in (select ")
-	for i, col := range fkInfo.RefCols {
-		if i == 0 {
-			buf.WriteString("%n")
-		} else {
-			buf.WriteString(",%n")
-		}
-		paramsList = append(paramsList, col.L)
-	}
-	buf.WriteString(" from %n.%n ) limit 1")
+	// Use a correlated NOT EXISTS anti-join instead of NOT IN. If the referenced
+	// key contains NULL, NOT IN can evaluate to UNKNOWN for an orphan child row,
+	// so the child row would not be reported as a constraint violation.
+	buf.WriteString(" and not exists (select 1 from %n.%n as r where ")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	for i, refCol := range fkInfo.RefCols {
+		if i > 0 {
+			buf.WriteString(" and ")
+		}
+		buf.WriteString("r.%n = c.%n")
+		paramsList = append(paramsList, refCol.L, fkInfo.Cols[i].L)
+	}
+	buf.WriteString(") limit 1")
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		ctx,
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
