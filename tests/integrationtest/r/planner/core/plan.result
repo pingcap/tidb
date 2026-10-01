@@ -406,5 +406,5 @@ IndexJoin	12487.50	2	root	<access_object>	<execution_info>	<operator_info>	<memo
 │   └─TableFullScan	10000.00	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
 └─IndexLookUp(Probe)	12487.50	2	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
   ├─Selection(Build)	12487.50	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
-  │ └─IndexRangeScan	12500.00	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  │ └─IndexRangeScan	12487.50	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
   └─TableRowIDScan(Probe)	12487.50	2	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
