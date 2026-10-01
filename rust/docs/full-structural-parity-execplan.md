@@ -9,6 +9,9 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, LFU owner review/native repair) Review all five artifacts at current master; reproduce and repair premature Close, fake-table/negative-key classification, and signed-shard drift; remove the exclusive per-access primary mutex/clones and synthetic trigger tables. Map all ten original tests; 19 LFU and 13 parent tests, original Go race suite, all-target compilation and lint pass. Publication still requires both locked server builds.
+- [ ] (2026-10-01, C04 external boundary) Replace or accept the complete pinned Ristretto dependency owner. The original low-capacity concurrent workload retains full payloads in Stretto after Wait; its failing native reproduction is explicitly ignored, not accepted. Policy-metric assertions also remain unavailable in its synchronous public API. Do not claim complete LFU package parity.
+
 - [x] (2026-10-01, retained progress ownership) Recheck the complete seven-artifact `br/pkg/rtree` package against master; reproduce stale retained progress records; replace value copies with shared handles through insertion, lookup, collection and deletion; restore original retained-pointer tests. Forty Rust tests, all original Go race tests, all-target compilation and lint pass. Both locked server-build gates remain required for publication.
 
 - [x] (2026-10-01, rtree follow-up) Review all seven artifacts of `br/pkg/rtree`; remove RangeFile/TestFile, generic file adapters and RPC-range projection; migrate restore callers. Both RPC type regressions, 38 Rust tests, all original Go race tests, update/merge workloads, all-target check and lint pass. Publication requires the hook and fresh pre-push locked build.
@@ -1311,3 +1314,72 @@ preserves their ownership on early return. The prior send-failure test still
 verifies Go's repeated callback on retry and deferred checksum publication.
 All-target compilation, lint, formatting, diff and inventory checks pass;
 publication gates are recorded in the linked receipt and publication response. No new complete BR application claim is made.
+
+
+## Statistics LFU lifecycle follow-up (2026-10-01)
+
+The complete Go package has three production files (`key_set.go`,
+`key_set_shard.go`, `lfu_cache.go`), one test file with ten tests, and
+BUILD.bazel. Current master 93a01d31f6da205ae4bf376825293903a6899fdb still
+matches the five blobs in the older LFU audit receipt. There is no doc.go,
+fixture, generated input, platform variant or benchmark. The Rust owner is
+`tidb-stats-handle-cache-internal-lfu`, used by the parent statistics cache.
+Its Ristretto/Stretto dependency equivalence remains explicitly unaccepted.
+
+Rust substitutes an allocated empty Table for Go's nil eviction trigger and
+classifies all negative keys as triggers. Go's shard operation uses signed
+remainder: -1 is invalid but -256 reaches shard zero and remains a real table.
+Rust instead uses Euclidean remainder, contradicting its own retained
+should-panic regression. Rust Close also marks itself closed before acquiring
+the primary-cache mutex; a concurrent Close returns immediately instead of
+waiting for Go's sync.Once completion. Every Get and Put clones its primary
+handle through this exclusive mutex, adding avoidable contention.
+
+Milestone one runs the unchanged LFU suite, then adds regressions for closure
+waiting and negative real-table eviction. Preserve fail-before evidence.
+The baseline sandbox denies the host-memory sysctl used before the zero-quota
+test override; rerun that test with host access instead of changing Go's error
+ordering. Milestone two represents nil as Option<Arc<Table>>, removes the fake
+empty Table and sign-based callback filter, restores signed shard selection,
+and uses a shared-read/exclusive-close cache lifetime. All aliases must wait
+for completed shutdown, with callbacks closed before the cache is drained.
+Never hold a caller lifetime lock from a cache callback. Keep primary-first
+reads, publication-before-admission, eviction/drop/cost order and shared Copy.
+
+Milestone three maps all ten original test functions and supporting table
+fixtures, including concurrent replacement, low-capacity eviction and capacity
+reduction. Run the original Go package with race detection in the prepared
+master reference; run the Rust owner and parent cache tests, all-target check,
+formatting, root make lint and diff hygiene. Add no new cache policy. Tests
+must not assert a deterministic sampled victim. Before publishing, run the
+actual commit hook's locked server build and a separate fresh locked server
+build before pushing hparser-integration. Clean/ archive the reference after
+validation. Existing source receipts remain historical, with a link to the
+new receipt rather than an unsupported complete external-module claim.
+
+Decision: encode nil directly and share the cache's lifetime, rather than
+adding special-case negative-key exceptions or removing synchronization from
+a concurrently closed cache. This preserves Go's native lifetime boundary
+while respecting Rust's worker/drop ownership. The complete package review
+does not accept its external cache implementation.
+
+Outcomes: three regressions failed before repair and pass afterward. The new
+Clear path reuses the shared owner, drops fallback map storage, preserves Go's
+post-close accounting, and still clears metadata published after Close.
+Callbacks recover independently with diagnostics and run onExit after a
+recovered eviction/rejection. Fake trigger allocation, sequential key counter,
+sign-based payload classification and primary Arc clones are removed.
+
+The original Go race suite passes; native owner/parent suites have 32 passing
+tests and one retained failing C04 reproduction. The full pressure workload
+exposed a Stretto nonresident admission/replacement mismatch. An initial
+Cost==0 assertion was disproved against Go (three runs retain positive cost
+but all 50 table payloads are evicted); no such assertion remains. Rust still
+retains a full 136-byte payload, so its payload regression stays unaccepted.
+Stretto's cached archive and extracted sources match the locked checksum.
+There is no safe package-complete dependency replacement in this batch; do
+not add a second eviction policy to the wrapper. Current receipt and all five
+artifact hashes: `parity/current-audit/lfu-lifecycle-repair.md` and its inventory.
+The register is 74 findings, seven repaired, 67 unresolved. No benchmark or
+complete package acceptance is claimed. All-target compilation, root lint,
+formatting and inventory/diff checks pass; publication gates remain mandatory.

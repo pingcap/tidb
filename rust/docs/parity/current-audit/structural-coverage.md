@@ -24,7 +24,7 @@ The exact package/artifact list remains in [package-coverage.json](package-cover
 | Domain and shared services | 11 | 5 | O01–O11, O13, I04, C02; O12 repaired |
 | Metadata and tables | 27 | 4 | K01–K03, I04, T01, D01–D11 |
 | DDL | 32 | 8 | D01–D11, F01–F03 |
-| Statistics | 40 | 19 | O07; cache/loading/analyze have live owners, full contract review remains |
+| Statistics | 40 | 19 | O07, C04; LFU lifetime repaired, dependency admission/metrics remain open |
 | Storage and distributed reads | 34 | 5 | T01–T03, C03, M01–M04, O03, O13 |
 | Protocols and external services | 0 | 3 | P03, T02; P01–P02, P04–P05 repaired; other helpers/variants unreviewed |
 | Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O11, O13; O12 repaired |

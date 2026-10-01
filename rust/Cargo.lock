@@ -4255,7 +4255,9 @@ dependencies = [
 name = "tidb-stats-handle-cache-internal-lfu"
 version = "0.0.0"
 dependencies = [
+ "rand 0.10.2",
  "stretto",
+ "tidb-log",
  "tidb-stats",
  "tidb-stats-handle-cache-internal",
  "tidb-stats-handle-cache-internal-testutil",

@@ -1,5 +1,11 @@
 # `pkg/statistics/handle/cache/internal/lfu` parity audit
 
+Historical receipt. The [2026-10-01 follow-up](../../docs/parity/current-audit/lfu-lifecycle-repair.md)
+rechecks all five artifacts at current master, repairs native lifetime/nil
+handling, and retains a newly reproduced Stretto admission gap. Its current
+test outcomes supersede the eight-test result below. The negative-ID rule is
+signed remainder: negative multiples of 256 still use the valid zero shard.
+
 Pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (Go `master` at the
 audit boundary).
 

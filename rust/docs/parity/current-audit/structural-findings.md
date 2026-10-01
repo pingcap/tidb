@@ -26,12 +26,14 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **73 tracked findings: 66 unresolved (including E02's
-partial repair) and seven repaired ownership/contract findings (C01, E01,
+The register contains **74 tracked findings: 67 unresolved (including E02's
+and C04's partial repairs) and seven repaired ownership/contract findings (C01, E01,
 O12, P01, P02, P04, P05)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
 see [its package receipt](rtree-protocol-repair.md).
+The complete [statistics LFU review](lfu-lifecycle-repair.md) adds C04 at master
+93a01d31f6da205ae4bf376825293903a6899fdb, including a reproduced dependency gap.
 The latest 18 additions are Q01, X01, C03, K01–K03, I04, S03–S04, E06–E07,
 N04–N05, O10–O13 and P04; see [the subsystem review](subsystem-structure-review.md).
 The preceding 13 additions are A01–A04, B01–B02, E05, N01–N03 and O07–O09;
@@ -92,6 +94,7 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 | --- | --- | --- | --- |
 | C01 | **Ownership repaired:** one session physical-entry LRU now serves prepared/non-prepared SELECT/DML, with shared capacity, recency, pressure, close and flush. Separate per-statement vectors and the DML-only metadata LRU are removed. See the [repair receipt](shared-session-plan-cache-repair.md) for regressions and limits; this is not whole-package acceptance. | `rust/crates/tidb-executor/src/driver/plan_cache.rs`, `rust/crates/tidb-planner/src/plan_cache_lru.rs`, `rust/crates/tidb-session/src/session_plan_cache.rs`; server factory and COM_STMT_CLOSE callers | `pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache` and `prepared.go::DeallocateExec.Next`. C02 remains open. |
 | C02 | Instance-plan-cache variables are registered, but no domain-scoped shared cache or instance hit/clone/eviction path is composed into production. Enabling the flag cannot select Go's instance owner. | `rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:256`; C01's owners; production reference audit in the review receipt | `pkg/planner/core/plan_cache.go::lookupPlanCache`/`clonePlanForInstancePlanCache`, `plan_cache_instance.go`, Domain: shared ownership plus per-execution cloning. Reuse admission/key/rebuild contracts; another ad hoc global map is insufficient. |
+| C04 | **P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, signed shards, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. Native policy metrics are also not exposed. | `rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs` and `source_tests.rs::concurrent_small_capacity`; complete inventory and red/green evidence in [receipt](lfu-lifecycle-repair.md) | Complete `pkg/statistics/handle/cache/internal/lfu` plus pinned `github.com/dgraph-io/ristretto v0.1.1`. Accept or replace the whole dependency lifecycle/admission owner; do not add special-case eviction in the TiDB wrapper. Native lifetime repairs are not package acceptance. |
 
 ## DML and executor handoff
 

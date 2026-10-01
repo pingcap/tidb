@@ -41,6 +41,10 @@ section, test target, or module dependency changed.
 
 ## Open boundary
 
+The [2026-10-01 follow-up](../parity/current-audit/lfu-lifecycle-repair.md) records
+the current native lifetime/nil repair and a failing retained concurrency case
+at the Stretto boundary. The earlier passing eight-test suite is historical.
+
 The Go package delegates its correctness-critical admission, TinyLFU counters,
 buffering, callbacks, and eviction ordering to external
 `github.com/dgraph-io/ristretto`. The Rust `stretto` owner is executable seed

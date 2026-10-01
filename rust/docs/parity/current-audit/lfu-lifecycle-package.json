@@ -1,0 +1,87 @@
+{
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "integration_base": "affe8b392b4957ab84009f4cb44c586ecf677354",
+  "package": "pkg/statistics/handle/cache/internal/lfu",
+  "finding": "C04",
+  "artifacts": [
+    {
+      "path": "pkg/statistics/handle/cache/internal/lfu/BUILD.bazel",
+      "blob": "c8e67ed8c85bb67450941c7730836852d05efb01",
+      "sha256": "e6b4ed348fe8d34d5b760229931068637f874248127673c491737eb34f6eda02",
+      "lines": 37
+    },
+    {
+      "path": "pkg/statistics/handle/cache/internal/lfu/key_set.go",
+      "blob": "5e3e6f1deef23f84af1b52b225b96b83139f22f3",
+      "sha256": "f4aa32c896ba0445340b1e43932dbe456d5f0172d9954ac7c5ed231f30454cbd",
+      "lines": 74
+    },
+    {
+      "path": "pkg/statistics/handle/cache/internal/lfu/key_set_shard.go",
+      "blob": "396842a6ef2465784ac0a4c37cf6495720a584eb",
+      "sha256": "357036a84ea064c7e9ee079eb3eddfd153961f7d2593a583560a4e3ff57dac54",
+      "lines": 69
+    },
+    {
+      "path": "pkg/statistics/handle/cache/internal/lfu/lfu_cache.go",
+      "blob": "20ee62bf973c888d228550025f40c4b1520dcb97",
+      "sha256": "5f4618cfff8c3b73261fad9d206171dbb62976f3823cfb2b17840b3c81b153fd",
+      "lines": 286
+    },
+    {
+      "path": "pkg/statistics/handle/cache/internal/lfu/lfu_cache_test.go",
+      "blob": "e77571fb936d033ab73072d213cc9637ac016413",
+      "sha256": "e5af4feb31baf59faf5ae99a0ef8c67d165c49bddfc655323bb31c742cc914f9",
+      "lines": 316
+    }
+  ],
+  "source_membership": "Complete recursive git ls-tree: three production sources, one test source with ten functions, BUILD.bazel. No doc.go, generated source/input, platform/build variant, fixture, benchmark or fuzz corpus.",
+  "rust_owner": [
+    "rust/crates/tidb-stats-handle-cache-internal-lfu/Cargo.toml",
+    "rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs",
+    "rust/crates/tidb-stats-handle-cache-internal-lfu/src/source_tests.rs"
+  ],
+  "callers": [
+    "rust/crates/tidb-stats-handle-cache/src/lib.rs"
+  ],
+  "production_mapping": {
+    "key_set.go": "KeySetShard independently locked table maps; removal cost is unused by the Go shard owner. Clear replaces each map.",
+    "key_set_shard.go": "KeySetShard, all 256 shards, signed remainder, shared table identities. Values retains unspecified concurrent enumeration order.",
+    "lfu_cache.go": "Lfu and State/Callbacks; complete source reviewed together, dependency admission/metrics remain unaccepted."
+  },
+  "original_test_mapping": {
+    "TestLFUPutGetDel": "tests::put_get_delete_preserves_go_visibility",
+    "TestLFUFreshMemUsage": "source_tests::fresh_memory_usage",
+    "TestLFUPutTooBig": "source_tests::oversized_and_enumerable_tables",
+    "TestCacheLen": "source_tests::oversized_and_enumerable_tables",
+    "TestLFUCachePutGetWithManyConcurrency": "source_tests::concurrent_distinct_tables",
+    "TestLFUCachePutGetWithManyConcurrency2": "source_tests::concurrent_replacements",
+    "TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency": "source_tests::concurrent_small_capacity (executed and failed; retained ignored C04 reproduction, not accepted)",
+    "TestLFUReject": "source_tests::rejected_after_capacity_change",
+    "TestMemoryControl": "source_tests::memory_control",
+    "TestMemoryControlWithUpdate": "source_tests::memory_control_with_update"
+  },
+  "support_mapping": {
+    "mockCMSMemoryUsage": "Existing mock table support calculates four bytes per CMS, shared by all translated source cases.",
+    "checkTable": "source_tests::check_table checks eviction flags, TopN and histogram bucket capacity for columns and indexes.",
+    "testutil.NewMockStatisticsTable": "Existing tidb-stats-handle-cache-internal-testutil::new_mock_statistics_table; its complete source was read. No separate support-package acceptance claim.",
+    "test scheduling": "2,000 operations use 32 OS workers instead of 2,000 goroutines; five-writer/five-reader cases retain source loop counts. Pressure case uses deterministic 50-key warmup instead of Go one-second writer head start.",
+    "Ristretto metrics assertions": "Original Go race suite executes CostAdded/CostEvicted assertions. Stretto synchronous cache does not expose these metrics; Rust cost/visibility assertions are not a substitute for this unaccepted contract."
+  },
+  "build_mapping": "Existing Cargo crate plus parent tests; lockfile regenerated with direct dependencies on already-resolved rand 0.10.2 and tidb-log. BUILD.bazel enables race, flaky=true, ten shards. Reference bazel_prepare and Go race suite executed; no Go/Bazel change in main tree.",
+  "dependencies": {
+    "ristretto": "github.com/dgraph-io/ristretto v0.1.1, selected by Go master; complete external package acceptance remains open.",
+    "stretto": "0.9.0, registry checksum a1d042915dad0991b1dc54d0b5005029901a9705113389050d53503f2a182f28. Cached archive SHA and every expanded file verified. Eager nonresident insertion differs from Ristretto buffered admission.",
+    "native_client": "b2b3783 unchanged; no dependency update needed for this LFU repair.",
+    "statistics_memory_metrics_logging": "Existing shared owners retained; no independent package acceptance inferred."
+  },
+  "removed_owners": [
+    "Exclusive per-operation primary mutex and cloned primary handles",
+    "Synthetic empty Table eviction triggers and monotonic fake-key counter",
+    "Negative-key callback classification",
+    "Early-return concurrent close and ignored cache clear/wait failures"
+  ],
+  "integration": "Existing parent StatsCache consumes the same StatsCacheInner implementation. Shared read lifetime and exclusive joined shutdown replace primary clones; callbacks never take lifetime gate. Existing LFU remains seed evidence, not an accepted Ristretto implementation.",
+  "acceptance_scope": "Complete five-artifact review and native lifetime/nil-callback repair. C04 remains open for dependency admission/replacement and metrics. One original concurrency case is a failing retained reproduction; no package-completion claim.",
+  "validation_receipt": "lfu-lifecycle-repair.md"
+}
