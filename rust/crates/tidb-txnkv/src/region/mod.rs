@@ -17,7 +17,6 @@ pub(crate) mod recovery;
 mod replica_selector;
 mod request_selector;
 mod route;
-mod slow_score;
 mod store_health;
 mod store_state;
 mod topology;
@@ -56,12 +55,12 @@ pub use request_selector::{
     MAX_REPLICA_ATTEMPTS, MAX_REPLICA_ATTEMPT_TIME,
 };
 pub use route::{RouteFeedback, RouteOutcome};
-pub use slow_score::SlowScoreStat;
 pub use store_health::{
     HealthInstant, StoreHealth, StoreHealthDetail, StoreLoad, StoreRoutingHealth,
 };
 pub use store_state::{
     StoreFailureOutcome, StoreLiveness, StoreRefreshOutcome, StoreResolveState, StoreState,
 };
+pub use tikv_client::tikv::SlowScoreStat;
 pub(crate) use topology::RegionStoreTopology;
 pub use topology::{RouteFeedbackApplication, RoutePeer, RouteSnapshot};

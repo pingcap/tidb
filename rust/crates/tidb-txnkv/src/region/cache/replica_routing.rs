@@ -21,7 +21,7 @@
 //! against the cache's current epoch, so a route built from a stale attempt is
 //! rejected rather than retried.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use super::super::{
     HealthInstant, LeaderRequest, Peer, PeerRole, ReadPolicy, RegionAttempt,
@@ -772,10 +772,8 @@ impl<L> RegionCache<L> {
     }
 }
 
-pub(super) fn health_now() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
+pub(super) fn health_now() -> Instant {
+    Instant::now()
 }
 
 pub(super) fn selectable_peer_count(location: &RegionLocation) -> usize {

@@ -111,7 +111,7 @@ impl ReplicaHealthPolicy {
         StoreSelectionScore(self.selection().calculate_score(&self.candidate(
             0,
             facts,
-            Duration::ZERO,
+            HealthInstant::now(),
         )))
     }
 

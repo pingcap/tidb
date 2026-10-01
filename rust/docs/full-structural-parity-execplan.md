@@ -1641,3 +1641,10 @@ The next continuation removes foreground RPC error stringification and native ti
 The candidate-selection continuation publishes native 568a68d9 and public-facade follow-up 5777c01c, then synchronizes TiDB. Native idle selection no longer rejects every previously attempted peer before Go's DataIsNotReady exception can apply. TiDB removes its independent candidate attempt/scoring/tie loop, and DistSQL removes the per-query selection seed. Remaining metadata/health/request state is explicit T02 work; no complete internal/locate acceptance is claimed.
 
 Native validation passes 1,405 library tests with two ignored and strict Clippy. TiDB validation passes 884 tests with 14 ignored across transaction, region and DistSQL suites; root lint passes. The living implementation plan is replica-selection-owner-execplan.md and the receipt is parity/current-audit/replica-selection-owner-repair.md. The actual hook and separate post-commit locked server builds passed. The final receipt amendment repeats the hook and requires another locked build immediately before push.
+
+
+## Shared store health (2026-10-01)
+
+Native 6f663b3 is published and synchronized. TiDB removes its separate slow-score and feedback/decay implementations and uses the native StoreLoadStats with monotonic Instants. Its topology copies retain an Arc to native StoreHealthStatus. Native score reads are atomic and feedback/decay writes skip contention. Both the lost shared-health identity regression and held-lock feedback regression fail before repair and pass after it.
+
+The native library passes 1,406 tests/two ignored with strict Clippy. TiDB transaction/region/DistSQL validation passes 886 tests/14 ignored; root lint passes. The actual pre-commit locked server build passed; the final publication command reruns the locked build after the receipt amendment and pushes only on success. See store-health-owner-execplan.md and parity/current-audit/store-health-owner-repair.md. Production TiDB latency/feedback/tick wiring, broader T02 ownership and complete-package acceptance remain open.

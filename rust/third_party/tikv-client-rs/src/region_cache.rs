@@ -696,7 +696,7 @@ struct CachedStore {
     liveness: AtomicU8,
     health_check_running: AtomicBool,
     unreachable_since: StdMutex<Option<Instant>>,
-    load_stats: StdMutex<Option<StoreLoadStats>>,
+    load_stats: StdMutex<StoreLoadStats>,
     replica_flows: [AtomicU64; 2],
 }
 
@@ -734,10 +734,26 @@ impl std::fmt::Display for StoreResolveState {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct StoreLoadStats {
+/// TiKV queue estimate, decayed using elapsed monotonic time.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct StoreLoadStats {
     estimated_wait: Duration,
-    updated_at: Instant,
+    updated_at: Option<Instant>,
+}
+
+impl StoreLoadStats {
+    pub fn update(&mut self, estimated_wait: Duration, now: Instant) {
+        self.estimated_wait = estimated_wait;
+        self.updated_at = Some(now);
+    }
+
+    pub fn estimated_wait(&self, now: Instant) -> Duration {
+        self.updated_at.map_or(Duration::ZERO, |updated_at| {
+            self.estimated_wait
+                .saturating_sub(now.saturating_duration_since(updated_at))
+        })
+    }
 }
 
 struct TiFlashComputeStoreCache {
@@ -803,7 +819,7 @@ impl CachedStore {
             liveness: AtomicU8::new(StoreLiveness::Reachable as u8),
             health_check_running: AtomicBool::new(false),
             unreachable_since: StdMutex::new(None),
-            load_stats: StdMutex::new(None),
+            load_stats: StdMutex::new(StoreLoadStats::default()),
             replica_flows: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
@@ -843,21 +859,16 @@ impl CachedStore {
     }
 
     fn update_server_load(&self, estimated_wait_ms: u32, now: Instant) {
-        *self.load_stats.lock().unwrap() = Some(StoreLoadStats {
-            estimated_wait: Duration::from_millis(u64::from(estimated_wait_ms)),
-            updated_at: now,
-        });
+        self.load_stats
+            .lock()
+            .unwrap()
+            .update(Duration::from_millis(u64::from(estimated_wait_ms)), now);
     }
 
     /// client-go's optimistic estimate subtracts elapsed wall time from the
     /// last TiKV-provided server queue delay.
     fn estimated_wait(&self, now: Instant) -> Duration {
-        let Some(stats) = *self.load_stats.lock().unwrap() else {
-            return Duration::ZERO;
-        };
-        stats
-            .estimated_wait
-            .saturating_sub(now.saturating_duration_since(stats.updated_at))
+        self.load_stats.lock().unwrap().estimated_wait(now)
     }
 
     fn update_liveness_metric(&self) {

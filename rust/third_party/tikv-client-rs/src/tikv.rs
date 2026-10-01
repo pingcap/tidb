@@ -38,6 +38,8 @@ pub use crate::async_util::Pool;
 pub use crate::backoff::{Backoff, DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
 pub use crate::interceptor::{RpcInterceptor, RpcInterceptorChain, RpcInterceptorHandle};
 pub use crate::kv::Getter;
+#[doc(hidden)]
+pub use crate::locate::{HealthStatusDetail, SlowScoreStat, StoreHealthStatus};
 pub use crate::logutil::with_logger as with_log_context;
 pub use crate::pd::PdClient as PlacementDriverClient;
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
@@ -49,7 +51,9 @@ pub use crate::region_cache::{
     TiFlashSelectionError,
 };
 #[doc(hidden)]
-pub use crate::region_cache::{MixedReplicaSelection, ReplicaCandidate, ReplicaLiveness};
+pub use crate::region_cache::{
+    MixedReplicaSelection, ReplicaCandidate, ReplicaLiveness, StoreLoadStats,
+};
 pub use crate::request::{
     api_v1_excluded_prefixes as codec_v1_exclude_prefixes, api_v2_prefixes as codec_v2_prefixes,
     decode_api_key, ApiV1Codec, ApiV2Codec, KeyMode, Keyspace, DEFAULT_KEYSPACE_ID,

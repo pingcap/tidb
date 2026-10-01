@@ -366,11 +366,16 @@ fn busy_runtime_executes_the_exact_500_800_150_diversion_sequence() {
         labels: BTreeMap::new(),
     });
     let version = cache.locate_key(b"k").unwrap().region;
-    let start = Duration::from_secs(1);
+    let start = std::time::Instant::now();
     let mut selector = cache
         .request_selector(version, ReadPolicy::default())
         .unwrap();
-    selector.set_busy_threshold(Duration::from_millis(50));
+    selector.set_health_policy(tidb_txnkv::region::ReplicaHealthPolicy {
+        busy_threshold: Duration::from_millis(50),
+        // Keep the intended 800 ms follower first without relying on tied order.
+        stores: vec![602],
+        ..Default::default()
+    });
 
     for (expected_peer, estimated_wait_ms) in [(61, 500), (62, 800), (63, 150)] {
         let RequestSelection::Attempt(selected) =
@@ -408,4 +413,27 @@ fn busy_runtime_executes_the_exact_500_800_150_diversion_sequence() {
     };
     assert_eq!(least_busy.target().peer_id, 63);
     assert!(least_busy.replica_read);
+}
+
+#[test]
+fn inserting_another_region_retains_the_canonical_store_health() {
+    let mut cache = RegionCache::new(Loader {
+        locations: VecDeque::from([
+            region(1, b"a", b"m", &[(11, 101, PeerRole::Voter)]),
+            region(2, b"m", b"z", &[(21, 101, PeerRole::Voter)]),
+        ]),
+        labels: BTreeMap::new(),
+    });
+    cache.locate_key(b"b").unwrap();
+    let health = cache
+        .store_state(101)
+        .unwrap()
+        .routing_health()
+        .health
+        .clone();
+    cache.locate_key(b"s").unwrap();
+    let current = &cache.store_state(101).unwrap().routing_health().health;
+    assert!(std::sync::Arc::ptr_eq(&health, current));
+    health.mark_already_slow();
+    assert!(current.is_slow());
 }

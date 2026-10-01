@@ -148,6 +148,13 @@ selection, preserving the DataIsNotReady second attempt. Cache metadata,
 health state and broader sender/recovery ownership remain in T02; the package
 acceptance count is unchanged.
 
+The [store-health follow-up](store-health-owner-repair.md) deletes TiDB's
+parallel slow-score implementation and aliases native health/load state.
+Topology copies retain a native health handle; native feedback and decay skip
+contended updates. Native 6f663b3 is synchronized. Production TiDB latency,
+feedback and periodic health-tick wiring still need migration; native client
+cache wiring already exists. This remains part of T02, not a new package claim.
+
 The five earlier reviewer defects have their own regression receipts. Retry
 limits, secondary retry history, locked-entry timestamps, mock normal wake-up
 and detached read-resolution fixes are not reopened merely because T02 remains.

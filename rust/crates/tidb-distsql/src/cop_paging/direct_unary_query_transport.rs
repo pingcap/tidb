@@ -2027,7 +2027,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         selector,
                         &observed_attempt,
                         server_busy.estimated_wait_ms,
-                        (self.config.observation_time)(),
+                        Instant::now(),
                     )
                 })?
                 .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;

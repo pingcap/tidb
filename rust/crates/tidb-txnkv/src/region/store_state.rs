@@ -49,7 +49,7 @@ pub enum StoreRefreshOutcome {
     Removed,
 }
 
-/// Immutable view of the sole RegionCache-owned store authority.
+/// Store metadata view retaining the canonical native health owner.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoreState {
     pub(crate) id: u64,
@@ -91,7 +91,7 @@ impl StoreState {
         self.liveness
     }
 
-    /// Immutable load and slow-health facts used by replica policy.
+    /// Current load snapshot and shared health handle used by replica policy.
     #[must_use]
     pub const fn routing_health(&self) -> &StoreRoutingHealth {
         &self.routing_health

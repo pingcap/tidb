@@ -14,7 +14,7 @@
 
 #![allow(dead_code, missing_docs)]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tidb_txnkv::region::{
     ReplicaHealthFacts, ReplicaHealthPolicy, SlowScoreStat, StoreHealth, StoreHealthDetail,
     StoreLoad, StoreRoutingHealth, StoreSelectionScore,
@@ -217,53 +217,60 @@ fn label_matching_requires_every_pair_and_falls_back_instead_of_failing() {
 
 #[test]
 fn optimistic_wait_decays_and_busy_comparison_is_strict() {
+    let start = Instant::now();
     let mut load = StoreLoad::default();
-    load.update(Duration::from_millis(500), Duration::from_millis(10));
+    load.update(
+        Duration::from_millis(500),
+        start + Duration::from_millis(10),
+    );
     assert_eq!(
-        load.estimated_wait(Duration::from_millis(210)),
+        load.estimated_wait(start + Duration::from_millis(210)),
         Duration::from_millis(300)
     );
     assert_eq!(
-        load.estimated_wait(Duration::from_millis(510)),
+        load.estimated_wait(start + Duration::from_millis(510)),
         Duration::ZERO
     );
 
-    load.update(Duration::from_millis(50), Duration::from_secs(1));
+    load.update(Duration::from_millis(50), start + Duration::from_secs(1));
     let policy = ReplicaHealthPolicy {
         busy_threshold: Duration::from_millis(50),
         ..ReplicaHealthPolicy::default()
     };
     let mut equal = facts(&[], false, false, 0, false);
     equal.load = load;
-    assert!(policy.is_candidate(equal, Duration::from_secs(1)));
+    assert!(policy.is_candidate(equal, start + Duration::from_secs(1)));
 
-    load.update(Duration::from_millis(51), Duration::from_secs(1));
+    load.update(Duration::from_millis(51), start + Duration::from_secs(1));
     let mut greater = equal;
     greater.load = load;
-    assert!(!policy.is_candidate(greater, Duration::from_secs(1)));
+    assert!(!policy.is_candidate(greater, start + Duration::from_secs(1)));
 
     let leader = facts(&[], true, false, 0, false);
-    assert!(!policy.is_candidate(leader, Duration::from_secs(1)));
+    assert!(!policy.is_candidate(leader, start + Duration::from_secs(1)));
 }
 
 #[test]
 fn positive_busy_estimates_update_load_and_zero_marks_slow() {
+    let start = Instant::now();
     let mut routing = StoreRoutingHealth::default();
-    routing.observe_server_busy(500, Duration::from_secs(1));
+    routing.observe_server_busy(500, start + Duration::from_secs(1));
     assert_eq!(
-        routing.load.estimated_wait(Duration::from_millis(1_200)),
+        routing
+            .load
+            .estimated_wait(start + Duration::from_millis(1_200)),
         Duration::from_millis(300)
     );
     assert!(!routing.health.is_slow());
 
-    routing.observe_server_busy(0, Duration::from_secs(2));
+    routing.observe_server_busy(0, start + Duration::from_secs(2));
     assert!(routing.health.is_slow());
     assert_eq!(routing.health.detail().client_side_slow_score, 100);
 }
 
 #[test]
 fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
-    let now = Duration::from_secs(1);
+    let now = Instant::now();
     let policy = ReplicaHealthPolicy {
         busy_threshold: Duration::from_millis(50),
         ..ReplicaHealthPolicy::default()
@@ -331,31 +338,31 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
 
 #[test]
 fn thirty_second_request_immediately_marks_client_slow() {
-    let mut health = StoreHealth::default();
-    health.tick(Duration::ZERO);
-    health.record_client_duration(Duration::from_secs(30));
+    let health = StoreHealth::default();
+    health.tick(Instant::now());
+    health.record_client_side_latency(Duration::from_secs(30));
     assert!(health.is_slow());
     assert_eq!(health.detail().client_side_slow_score, 100);
 }
 
 #[test]
 fn source_slow_score_rising_and_falling_latency_stays_below_threshold() {
-    let mut score = SlowScoreStat::default();
+    let score = SlowScoreStat::default();
     assert!(!score.is_slow());
     score.record(Duration::from_millis(1));
-    score.tick();
+    score.update();
     assert!(!score.is_slow());
     for millis in 2..=100 {
         score.record(Duration::from_millis(millis));
         if millis % 5 == 0 {
-            score.tick();
+            score.update();
             assert!(!score.is_slow());
         }
     }
     for millis in (2..=100).rev() {
         score.record(Duration::from_millis(millis));
         if millis % 5 == 0 {
-            score.tick();
+            score.update();
             assert!(!score.is_slow());
         }
     }
@@ -365,17 +372,18 @@ fn source_slow_score_rising_and_falling_latency_stays_below_threshold() {
 
 #[test]
 fn tikv_score_rate_limit_threshold_and_linear_decay_match_source() {
-    let mut health = StoreHealth::default();
-    let start = Duration::from_secs(1);
+    let health = StoreHealth::default();
+    let start = Instant::now();
     assert_eq!(health.detail().tikv_side_slow_score, 0);
     health.tick(start);
     assert!(!health.is_slow());
 
-    assert!(health.update_tikv_score(50, start + Duration::from_millis(200)));
-    assert!(!health.is_slow());
-    assert!(!health.update_tikv_score(100, start + Duration::from_millis(250)));
+    health.record_tikv_slow_score(50, start + Duration::from_millis(200));
     assert_eq!(health.detail().tikv_side_slow_score, 50);
-    assert!(health.update_tikv_score(100, start + Duration::from_millis(400)));
+    assert!(!health.is_slow());
+    health.record_tikv_slow_score(100, start + Duration::from_millis(250));
+    assert_eq!(health.detail().tikv_side_slow_score, 50);
+    health.record_tikv_slow_score(100, start + Duration::from_millis(400));
     assert!(health.is_slow());
 
     health.tick(start + Duration::from_secs(120) + Duration::from_millis(400));
@@ -387,12 +395,13 @@ fn tikv_score_rate_limit_threshold_and_linear_decay_match_source() {
 
 #[test]
 fn unchanged_tikv_score_above_one_refreshes_decay_clock() {
-    let mut health = StoreHealth::default();
-    assert!(health.update_tikv_score(90, Duration::from_secs(1)));
-    assert!(health.update_tikv_score(90, Duration::from_secs(2)));
-    health.tick(Duration::from_secs(16));
+    let start = Instant::now();
+    let health = StoreHealth::default();
+    health.record_tikv_slow_score(90, start + Duration::from_secs(1));
+    health.record_tikv_slow_score(90, start + Duration::from_secs(2));
+    health.tick(start + Duration::from_secs(16));
     assert_eq!(health.detail().tikv_side_slow_score, 90);
-    health.tick(Duration::from_secs(17));
+    health.tick(start + Duration::from_secs(17));
     assert_eq!(health.detail().tikv_side_slow_score, 85);
 }
 
@@ -402,8 +411,8 @@ fn prefer_leader_filters_slow_followers_but_not_slow_leader() {
         prefer_leader: true,
         ..ReplicaHealthPolicy::default()
     };
-    assert!(!policy.is_candidate(facts(&[], false, false, 0, true), Duration::ZERO));
-    assert!(policy.is_candidate(facts(&[], true, false, 0, true), Duration::ZERO));
+    assert!(!policy.is_candidate(facts(&[], false, false, 0, true), Instant::now()));
+    assert!(policy.is_candidate(facts(&[], true, false, 0, true), Instant::now()));
 }
 
 #[test]
@@ -413,12 +422,24 @@ fn shared_candidate_owner_applies_attempt_budget_to_idle_retries() {
         ..Default::default()
     };
     let mut follower = facts(&[], false, false, 1, false);
-    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
+    assert_eq!(policy.select(&[follower], Instant::now()), None);
     follower.data_is_not_ready = true;
-    assert_eq!(policy.select(&[follower], Duration::ZERO), Some(0));
+    assert_eq!(policy.select(&[follower], Instant::now()), Some(0));
     follower.reported_busy = true;
-    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
+    assert_eq!(policy.select(&[follower], Instant::now()), None);
     follower.reported_busy = false;
     follower.attempts = 2;
-    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
+    assert_eq!(policy.select(&[follower], Instant::now()), None);
+}
+
+#[test]
+fn topology_copy_retains_the_same_store_health_owner() {
+    let original = StoreRoutingHealth::default();
+    let copied = original.clone();
+    original.health.mark_already_slow();
+    assert!(
+        copied.health.is_slow(),
+        "topology copies must retain the store's health owner"
+    );
+    assert_eq!(copied.health.detail(), original.health.detail());
 }
