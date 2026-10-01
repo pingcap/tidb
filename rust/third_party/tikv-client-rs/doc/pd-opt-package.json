@@ -1,0 +1,354 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "opt"
+  },
+  "native_baseline": "2fd0ecebadf0e8274a2b10ebfed729b03284a52b",
+  "claim": "Complete opt data/notification/constructor package. Existing native default initialization and region scan callers migrate; no PD root, discovery, TSO, grpcutil or transport package acceptance.",
+  "package_artifacts": [
+    {
+      "path": "opt/option.go",
+      "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1",
+      "kind": "production",
+      "integration": "src/pd/opt.rs: every source type, static field, dynamic setting/channel, constructor and option builder; declaration_mapping and dependency_decisions describe native representations."
+    },
+    {
+      "path": "opt/option_test.go",
+      "sha256": "c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e",
+      "kind": "original test/support",
+      "integration": "src/pd/opt_tests.rs: original TestDynamicOptionChange/TestOptions and deterministic equivalents of clearChannel/ensureNoNotification; race/goleak on original Go. Additional full-constructor/shared-identity/channel/concurrency coverage."
+    }
+  ],
+  "declaration_mapping": {
+    "NewOption": "Options::new",
+    "SetMaxTSOBatchWaitInterval": "Options::set_max_tso_batch_wait_interval",
+    "SetEnableFollowerHandle": "Options::set_enable_follower_handle",
+    "GetEnableFollowerHandle": "Options::get_enable_follower_handle",
+    "GetMaxTSOBatchWaitInterval": "Options::get_max_tso_batch_wait_interval",
+    "SetEnableTSOFollowerProxy": "Options::set_enable_tso_follower_proxy",
+    "GetEnableTSOFollowerProxy": "Options::get_enable_tso_follower_proxy",
+    "SetTSOClientRPCConcurrency": "Options::set_tso_client_rpc_concurrency",
+    "GetTSOClientRPCConcurrency": "Options::get_tso_client_rpc_concurrency",
+    "SetEnableRouterClient": "Options::set_enable_router_client",
+    "GetEnableRouterClient": "Options::get_enable_router_client",
+    "WithGRPCDialOptions": "with_grpc_dial_options",
+    "WithCustomTimeoutOption": "with_custom_timeout_option",
+    "WithForwardingOption": "with_forwarding_option",
+    "WithTSOServerProxyOption": "with_tso_server_proxy_option",
+    "WithMaxErrorRetry": "with_max_error_retry",
+    "WithMetricsLabels": "with_metrics_labels",
+    "WithInitMetricsOption": "with_init_metrics_option",
+    "WithBackoffer": "with_backoffer",
+    "WithEnableRouterClient": "with_enable_router_client",
+    "WithEnableFollowerHandle": "with_enable_follower_handle",
+    "WithExcludeTombstone": "with_exclude_tombstone",
+    "WithAllowRouterServiceHandleStoreRequest": "with_allow_router_service_handle_store_request",
+    "WithPDLeaderHandleStoreRequestOnly": "with_pd_leader_handle_store_request_only",
+    "WithGroup": "with_group",
+    "WithRetry": "with_retry",
+    "WithSkipStoreLimit": "with_skip_store_limit",
+    "WithBuckets": "with_buckets",
+    "WithAllowFollowerHandle": "with_allow_follower_handle",
+    "WithAllowRouterServiceHandle": "with_allow_router_service_handle",
+    "WithOutputMustContainAllKeyRange": "with_output_must_contain_all_key_range",
+    "WithAllowPDLeaderOnly": "with_allow_pd_leader_only",
+    "WithLimit": "with_limit",
+    "WithRangeEnd": "with_range_end",
+    "WithRev": "with_rev",
+    "WithPrevKV": "with_prev_kv",
+    "WithLease": "with_lease",
+    "WithPrefix": "with_prefix"
+  },
+  "type_mapping": {
+    "DynamicOption": "DynamicOption, identical five discriminants",
+    "Option": "Options, typed atomic fields instead of heterogeneous atomic.Value array",
+    "ClientOption": "ClientOption",
+    "GetStoreOp": "GetStoreOp",
+    "GetStoreOption": "GetStoreOption",
+    "RegionsOp": "RegionsOp",
+    "RegionsOption": "RegionsOption",
+    "GetRegionOp": "GetRegionOp; RegionScanOptions is a compatibility type alias only",
+    "GetRegionOption": "GetRegionOption",
+    "MetaStorageOp": "MetaStorageOp",
+    "MetaStorageOption": "MetaStorageOption"
+  },
+  "constant_mapping": {
+    "defaultPDTimeout": "Options::default timeout=3s",
+    "maxInitClusterRetries": "Options::default max_retry_times=100",
+    "defaultMaxTSOBatchWaitInterval": "Options::default max_tso_batch_wait_interval=0",
+    "defaultEnableTSOFollowerProxy": "Options::default false",
+    "defaultEnableFollowerHandle": "Options::default false",
+    "defaultTSOClientRPCConcurrency": "Options::default 1",
+    "defaultEnableRouterClient": "Options::default true",
+    "dynamicOptionCount": "five typed slots, enum discriminants 0..4"
+  },
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_tests": [
+      "TestDynamicOptionChange",
+      "TestOptions"
+    ],
+    "test_harness": [
+      "TestMain"
+    ],
+    "test_helpers": [
+      "clearChannel",
+      "ensureNoNotification"
+    ],
+    "failpoints": []
+  },
+  "dependency_decisions": [
+    {
+      "owner": "time.Duration and int",
+      "native": "std::time::Duration admits nonnegative durations only; negative Go duration states are not expressible. Concurrency and retry count retain signed machine width with isize/AtomicIsize and no validation. Metadata signed fields stay i64. Interval validation covers inclusive 0..10ms with exact nanoseconds."
+    },
+    {
+      "owner": "atomic.Value and chan struct{}",
+      "native": "Typed sequentially consistent atomics preserve the source single-CAS behavior, including successful setter return after losing an interval CAS. Capacity-one Tokio channels coalesce changes and retain pending data across canceled receives. Receiver mutex is the language adapter for one owned Tokio receiver, not a worker or polling loop. Sending a real change after caller closure panics like Go. Options is constructed before Arc sharing instead of copying synchronization primitives."
+    },
+    {
+      "owner": "grpc.DialOption",
+      "native": "Opaque append-ordered Arc<Fn(Endpoint)->Endpoint> handles. This package only stores options; complete grpcutil dialing, interceptors/reconnection and execution of those options remain parent/dependency work, not accepted here."
+    },
+    {
+      "owner": "prometheus.Labels, retry.Backoffer and []byte",
+      "native": "Optional Arc<RwLock<HashMap>> retains mutable label-map identity; existing SharedBackoffer retains policy identity. RangeEnd is a fixed Arc<[AtomicU8]> so shared byte updates remain visible without changing slice length or introducing data races. Option closures retain those handles across repeated application; None represents nil."
+    },
+    {
+      "owner": "Go functional options",
+      "native": "Reusable Send+Sync boxed Fn closures, applied in source order; append dial options, replace scalar/shared values, preserve unrelated request fields. NewOption maps to Options::new/default. Native export pd_options owns the API; pd_backoff exposes the already-implemented input policy."
+    },
+    {
+      "owner": "testify, Eventually, goleak",
+      "native": "Original tests run unmodified with Go race/goleak. Native synchronous setters allow immediate deterministic notification assertions; all spawned test threads join, and no implementation worker is spawned. All five shared support sources remain inventoried including Linux/non-Linux variants."
+    }
+  ],
+  "shared_test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "Original Go testutil.Eventually support retained; original goleak TestMain and Linux/non-Linux helpers inventoried. Native synchronous assertions require no polling worker."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "Original Go testutil.Eventually support retained; original goleak TestMain and Linux/non-Linux helpers inventoried. Native synchronous assertions require no polling worker."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "Original Go testutil.Eventually support retained; original goleak TestMain and Linux/non-Linux helpers inventoried. Native synchronous assertions require no polling worker."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "Original Go testutil.Eventually support retained; original goleak TestMain and Linux/non-Linux helpers inventoried. Native synchronous assertions require no polling worker."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "Original Go testutil.Eventually support retained; original goleak TestMain and Linux/non-Linux helpers inventoried. Native synchronous assertions require no polling worker."
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; Cargo.lock unchanged and no new dependencies. Module/toolchain acceptance is not implied."
+    }
+  ],
+  "referenced_caller_inputs": [
+    {
+      "path": "client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "client_test.go",
+      "sha256": "fd91d8c5dceaaaa2d3316dcb1972a11db695be00c605b6e7ebad4d5cfdb4210a",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/metastorage/client.go",
+      "sha256": "4143723d6ca950aa0e86beded2502fff663a74e2986b364da34c47c676099373",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/router/client.go",
+      "sha256": "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/router/client_test.go",
+      "sha256": "ec2a3bd95e24703e21ac9eb8127bb0c41d563fe769a3e9e2e15f1a58769ed1bb",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/router/request.go",
+      "sha256": "22954c3a2823575efea58e0b09b6b4fa38646469db4e3b6fae86000ac19eea80",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "clients/tso/dispatcher_test.go",
+      "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "keyspace_client_test.go",
+      "sha256": "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "meta_storage_client.go",
+      "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "resource_group/controller/global_controller.go",
+      "sha256": "7ef0c95b4f8a23dc2691e7ee869975a9ea03c79040bf793918741eb148747330",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "resource_group/controller/global_controller_test.go",
+      "sha256": "c910d88418c6a809a9636f1710c389325c4dd5ceedaef5de9581db75110d5827",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "resource_manager_client.go",
+      "sha256": "13a8dd3ddfdc589effa83889b95a4539da283998f2dcb33bcda6fab25a062aad",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "resource_manager_client_test.go",
+      "sha256": "a255b8f94daddb5ac20a5a619d1786ee9f42a820e2bd60de7d38f4a0a12067e8",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery_test.go",
+      "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "kind": "parent input, not accepted",
+      "integration": "Whole parent remains open. Default native initialization reads this owner; all scan-options declarations/callers now use GetRegionOp. Router/follower/TSO-concurrency/transport/metrics/root configuration consumers require their complete service owners."
+    }
+  ],
+  "native_artifacts": [
+    "src/pd/opt.rs",
+    "src/pd/opt_tests.rs",
+    "src/pd/mod.rs",
+    "src/pd/retry.rs",
+    "src/pd/cluster.rs",
+    "src/pd/codec.rs",
+    "src/region_cache.rs",
+    "src/lib.rs",
+    "doc/pd-opt-owner.md",
+    "doc/pd-opt-package.json",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "validation": {
+    "status": "original Go and final native package/library/static gates passed; publication/integration pending",
+    "red": "Original-case tests could not compile against the baseline: unresolved crate::pd::opt; /private/tmp/pd-opt-red.log. This records an absent package API, not a passing old implementation or an invented runtime defect.",
+    "unverified": [
+      "Linux execution",
+      "live PD/service topology",
+      "complete parent package behavior",
+      "sysbench/TPC-C/TPC-H/YCSB performance"
+    ],
+    "original": "go test -mod=readonly -race ./opt -count=1: passed, unchanged source and goleak; no opt failpoints",
+    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 103 passed including all eight option tests",
+    "native_library": "cargo test --locked --lib -- --test-threads=1: 1478 passed, 2 pre-existing ignored",
+    "static": "strict Clippy, all-target compilation, formatting, diff and complete inventory/original-source checks passed"
+  }
+}

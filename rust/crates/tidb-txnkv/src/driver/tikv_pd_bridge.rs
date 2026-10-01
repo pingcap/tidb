@@ -287,7 +287,7 @@ impl RetryClientTrait for TidbPdBridge {
                 &ranges,
                 limit,
                 options.need_buckets,
-                options.contain_all_key_range,
+                options.output_must_contain_all_key_range,
             )
         })
         .await

@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, W01 prerequisite) Complete pinned PD `opt`, remove the scan-only options struct and migrate existing native/TiDB callers. All 38 functions, source artifacts, original tests, shared support and 22 caller files are inventoried. Original Go race/goleak, 103 focused PD cases, 1,478 native library tests (two existing ignored), strict Clippy/all targets/formatting pass. Native master publishes df0d4cc; exact TiDB sync, 23 driver/26 PD tests (one existing ignored), all-target compilation, root lint and inventory checks pass. Actual hook and fresh locked server build gate publication. See `parity/current-audit/pd-opt-owner-repair.md`. Parent discovery/root/TSO acceptance remains open.
 - [x] (2026-10-01, W01 prerequisite) Implement complete pinned PD `pkg/retry`, default initialization and bounded membership probes. Both transport regressions fail before repair; original Go race/goleak, 95 focused PD cases, 1,470 library tests (two existing ignored), strict Clippy/all targets/formatting and artifact checks pass. Native master publishes 2fd0ece; exact TiDB sync, 10 bridge/26 PD tests (one existing ignored), affected all-target compilation, root lint and inventory checks pass. Actual hook and fresh locked server builds gate publication. See `parity/current-audit/pd-retry-owner-repair.md`.
 - [x] (2026-10-01, integration merge) Preserve incoming 107e8e2a5d while fixing its TopN candidate loss against current Go master; remove the older competing serial-spill lifecycle and reconnect the existing workers. Red regressions precede each correction; all 53 executor TopN cases pass. The eight-case session suite retains only two EXPLAIN estimate failures reproduced with unchanged HEAD. No sortexec package acceptance or register closure is claimed. Merge hook and fresh locked build still gate publication.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/batch` owner and replace native TSO collection/default admission/completion. Two source wire regressions and callback ordering fail before repair; all 78 focused PD cases and 1,453 native library tests pass (two existing ignored), with original Go race/goleak, strict Clippy/all-targets/formatting. Published native master as bcf74b7; exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked server builds gate TiDB publication; the final response records their results. See `parity/current-audit/pd-batch-owner-repair.md`.
@@ -409,6 +410,11 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+PD opt's production follower-handle setter sends a notification despite the
+original test's contrary comment. Typed atomics must also retain Go's one-CAS
+interval/concurrency behavior, not silently retry until a store wins. The whole
+options package is now covered before activating unfinished discovery modes.
+
 Retry integration's first push encountered incoming configured-TopN commit
 0b2cf64069. It removes an implicit final ordinal tie-break absent from Go; two
 exact source-order expectations fail only with that incoming file, while all
@@ -541,6 +547,12 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): centralize complete PD opt policy, replacing the scan-only
+struct with a type alias to GetRegionOp and migrating every existing caller.
+Represent shared values and notification channels safely in Rust; retain source
+field/default/CAS/notification behavior. Do not claim service behavior merely
+because its setting now exists. Full root/discovery/TSO owners remain open.
 
 Decision (2026-10-01): preserve incoming 0b2cf64069 and retain its two diagnosed
 SQL tie-order failures as an explicit inherited limitation. Go does not add a

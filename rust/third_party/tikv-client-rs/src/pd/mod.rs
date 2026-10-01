@@ -5,6 +5,7 @@ mod cluster;
 mod codec;
 pub mod connectionctx;
 pub mod deadline;
+pub mod opt;
 mod retry;
 mod timestamp;
 

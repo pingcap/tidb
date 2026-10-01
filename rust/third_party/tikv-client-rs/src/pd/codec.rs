@@ -525,7 +525,8 @@ mod tests {
         let original_ranges = ranges.clone();
         let options = RegionScanOptions {
             need_buckets: true,
-            contain_all_key_range: true,
+            output_must_contain_all_key_range: true,
+            ..Default::default()
         };
         let batch = client
             .clone()

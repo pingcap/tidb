@@ -254,6 +254,10 @@ pub use crate::kv::{
     ReplicaReadType,
 };
 #[doc(inline)]
+pub use crate::pd::backoff as pd_backoff;
+#[doc(inline)]
+pub use crate::pd::opt as pd_options;
+#[doc(inline)]
 pub use crate::pd::PdClient;
 #[doc(inline)]
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};

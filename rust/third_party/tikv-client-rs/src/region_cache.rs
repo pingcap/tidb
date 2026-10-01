@@ -2127,7 +2127,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 count,
                 RegionScanOptions {
                     need_buckets,
-                    contain_all_key_range: true,
+                    output_must_contain_all_key_range: true,
+                    ..Default::default()
                 },
             ))
             .await;
@@ -7202,7 +7203,8 @@ mod test {
             client.batch_scan_options.lock().unwrap().as_slice(),
             &[RegionScanOptions {
                 need_buckets: true,
-                contain_all_key_range: true,
+                output_must_contain_all_key_range: true,
+                ..Default::default()
             }]
         );
 

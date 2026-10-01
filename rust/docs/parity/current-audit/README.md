@@ -75,6 +75,14 @@ Both transport regressions fail before repair; original Go race/goleak, 95 PD
 cases and 1,470 native tests pass (two existing ignored). Full discovery/root/
 TSO lifecycle acceptance remains open; P06 and the 77-ID count are unchanged.
 
+The [PD options owner repair](pd-opt-owner-repair.md) covers the complete pinned
+opt package and removes the scan-only options declaration. Original source
+cases and every constructor are mapped; native cache/codec/cluster and TiDB
+bridge callers use the shared region policy. Native master is `df0d4ccc5b595959f496b3cf6e6b87f22b337bf4`;
+original Go race/goleak, native library/static and TiDB adapter/lint checks pass.
+The receipt records locked publication gates. Full discovery/root/TSO acceptance
+and the 77-ID count remain open.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

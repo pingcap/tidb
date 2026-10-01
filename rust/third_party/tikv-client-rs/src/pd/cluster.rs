@@ -144,7 +144,7 @@ impl Cluster {
         req.ranges = ranges;
         req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
         req.need_buckets = options.need_buckets;
-        req.contain_all_key_range = options.contain_all_key_range;
+        req.contain_all_key_range = options.output_must_contain_all_key_range;
         match req.send(&mut self.client, timeout).await {
             Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
                 Err(Error::Unimplemented)

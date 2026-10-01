@@ -178,6 +178,12 @@ deadline. Exponential, fixed-interval, cancellation/error, context and reset
 semantics are covered across the complete package. Root per-RPC retries,
 configurable options, full discovery and close still require their owners.
 
+The complete `opt` dependency is published in native `df0d4ccc5b595959f496b3cf6e6b87f22b337bf4`
+and synchronized into TiDB; see its [repair receipt](pd-opt-owner-repair.md). It centralizes all static/dynamic/request
+options and removes the scan-only policy declaration. Existing native/TiDB
+callers migrate together. Actual follower/router/proxy/concurrency behavior and
+full configurable construction remain part of the open parent owners.
+
 ## Activation and removal order
 
 

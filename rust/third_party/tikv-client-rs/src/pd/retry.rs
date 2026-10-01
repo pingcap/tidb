@@ -31,12 +31,9 @@ const RECONNECT_INTERVAL_SEC: u64 = 1;
 const MAX_REQUEST_COUNT: usize = 5;
 const LEADER_CHANGE_RETRY: usize = 10;
 
-/// Options carried by PD's `BatchScanRegions` request.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RegionScanOptions {
-    pub need_buckets: bool,
-    pub contain_all_key_range: bool,
-}
+/// Compatibility name for the complete Go PD region request options.
+/// Construct with source fields plus `..Default::default()`.
+pub type RegionScanOptions = super::opt::GetRegionOp;
 
 #[async_trait]
 pub trait RetryClientTrait {
@@ -285,15 +282,19 @@ impl RetryClient<Cluster> {
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(security_mgr);
-        // PD serviceDiscovery.initRetry uses the default MaxRetryTimes=100
-        // and a one-second ticker. Keep this policy in the shared retry owner.
+        // Keep the existing explicit timeout API while taking initialization
+        // defaults from PD's shared options owner.
+        let mut options = super::opt::Options::new();
+        super::opt::with_custom_timeout_option(timeout)(&mut options);
         let connected = std::sync::Mutex::new(None);
         super::backoff::retry(
             std::future::pending(),
-            100,
+            usize::try_from(options.max_retry_times).unwrap_or_default(),
             Duration::from_secs(1),
             || async {
-                let cluster = connection.connect_cluster(endpoints, timeout).await?;
+                let cluster = connection
+                    .connect_cluster(endpoints, options.timeout)
+                    .await?;
                 *connected.lock().unwrap() = Some(cluster);
                 Ok(())
             },
