@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -845,6 +846,110 @@ func TestSubstring(t *testing.T) {
 
 	_, err = funcs[ast.Substring].getFunction(ctx, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
+}
+
+func TestLeftRightSubstringBigArgs(t *testing.T) {
+	ctx := createContext(t)
+
+	utf8Tp := types.NewFieldType(mysql.TypeVarchar)
+	utf8Tp.SetCharset(charset.CharsetUTF8MB4)
+	utf8Tp.SetCollate(charset.CollationUTF8MB4)
+	binTp := types.NewFieldType(mysql.TypeVarString)
+	binTp.SetCharset(charset.CharsetBin)
+	binTp.SetCollate(charset.CollationBin)
+	binTp.AddFlag(mysql.BinaryFlag)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+
+	const (
+		maxInt64  = uint64(math.MaxInt64)     // 9223372036854775807
+		minUint63 = uint64(math.MaxInt64) + 1 // 9223372036854775808
+		maxUint64 = uint64(math.MaxUint64)    // 18446744073709551615
+	)
+
+	type arg struct {
+		tp  *types.FieldType
+		str string
+		num uint64
+	}
+	str := func(tp *types.FieldType, s string) arg { return arg{tp: tp, str: s} }
+	num := func(tp *types.FieldType, n uint64) arg { return arg{tp: tp, num: n} }
+
+	// The expected results are what MySQL 8.4 returns for the same expressions.
+	cases := []struct {
+		name string
+		fn   string
+		args []arg
+		res  string
+	}{
+		{"left/maxInt64", ast.Left, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxInt64)}, "abcdef"},
+		{"left/minUint63", ast.Left, []arg{str(utf8Tp, "abcdef"), num(uintTp, minUint63)}, "abcdef"},
+		{"left/maxUint64", ast.Left, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxUint64)}, "abcdef"},
+		{"left/small", ast.Left, []arg{str(utf8Tp, "abcdef"), num(uintTp, 3)}, "abc"},
+		{"left/utf8", ast.Left, []arg{str(utf8Tp, "一二三四"), num(uintTp, maxUint64)}, "一二三四"},
+		{"left/binary", ast.Left, []arg{str(binTp, "abcdef"), num(uintTp, minUint63)}, "abcdef"},
+
+		{"right/minUint63", ast.Right, []arg{str(utf8Tp, "abcdef"), num(uintTp, minUint63)}, "abcdef"},
+		{"right/maxUint64", ast.Right, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxUint64)}, "abcdef"},
+		{"right/small", ast.Right, []arg{str(utf8Tp, "abcdef"), num(uintTp, 2)}, "ef"},
+		{"right/utf8", ast.Right, []arg{str(utf8Tp, "一二三四"), num(uintTp, maxUint64)}, "一二三四"},
+		{"right/binary", ast.Right, []arg{str(binTp, "abcdef"), num(uintTp, maxUint64)}, "abcdef"},
+
+		// A position past the end of the string selects nothing, it must not wrap
+		// into a negative position and count from the end.
+		{"substr2/minUint63", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(uintTp, minUint63)}, ""},
+		{"substr2/maxUint64-1", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxUint64-1)}, ""},
+		{"substr2/maxUint64", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxUint64)}, ""},
+		{"substr2/small", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(uintTp, 2)}, "bcdef"},
+		{"substr2/utf8", ast.Substring, []arg{str(utf8Tp, "一二三四"), num(uintTp, maxUint64)}, ""},
+		{"substr2/binary", ast.Substring, []arg{str(binTp, "abcdef"), num(uintTp, maxUint64)}, ""},
+
+		// pos+len overflows max int64 without any unsigned argument involved.
+		{"substr3/len=maxInt64", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, 2), num(intTp, maxInt64)}, "bcdef"},
+		{"substr3/len=maxInt64/binary", ast.Substring, []arg{str(binTp, "abcdef"), num(intTp, 2), num(intTp, maxInt64)}, "bcdef"},
+		{"substr3/len=maxInt64/utf8", ast.Substring, []arg{str(utf8Tp, "一二三四"), num(intTp, 2), num(intTp, maxInt64)}, "二三四"},
+		{"substr3/len=maxUint64", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, 2), num(uintTp, maxUint64)}, "bcdef"},
+		{"substr3/negative pos, len=maxInt64", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, uint64(math.MaxUint64-2)), num(intTp, maxInt64)}, "def"},
+		{"substr3/pos=maxUint64", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(uintTp, maxUint64), num(intTp, 3)}, ""},
+		{"substr3/negative len", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, 2), num(intTp, uint64(math.MaxUint64))}, ""},
+		{"substr3/zero len", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, 2), num(intTp, 0)}, ""},
+		{"substr3/small", ast.Substring, []arg{str(utf8Tp, "abcdef"), num(intTp, 2), num(intTp, 3)}, "bcd"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tps := make([]*types.FieldType, 0, len(c.args))
+			exprs := make([]Expression, 0, len(c.args))
+			for i, a := range c.args {
+				tps = append(tps, a.tp)
+				exprs = append(exprs, &Column{Index: i, RetType: a.tp})
+			}
+			input := chunk.New(tps, 1, 1)
+			for i, a := range c.args {
+				if a.tp.EvalType() == types.ETString {
+					input.AppendString(i, a.str)
+				} else {
+					input.AppendUint64(i, a.num)
+				}
+			}
+
+			f, err := funcs[c.fn].getFunction(ctx, exprs)
+			require.NoError(t, err)
+
+			got, isNull, err := f.evalString(ctx, input.GetRow(0))
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, c.res, got, "row-at-a-time")
+
+			require.True(t, f.vectorized())
+			require.True(t, f.isChildrenVectorized())
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1)
+			require.NoError(t, f.vecEvalString(ctx, input, result))
+			require.False(t, result.IsNull(0))
+			require.Equal(t, c.res, result.GetString(0), "vectorized")
+		})
+	}
 }
 
 func TestConvert(t *testing.T) {
