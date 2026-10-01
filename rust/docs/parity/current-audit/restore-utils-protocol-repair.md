@@ -1,5 +1,9 @@
 # Restore-utils protocol ownership repair
 
+Follow-up: the [range-tree package repair](rtree-protocol-repair.md) removes the
+generic RangeFile boundary described below. Restore now consumes the concrete
+shared-file Range/RangeStats types; this receipt preserves the earlier evidence.
+
 Reviewed Go master `93a01d31f6da205ae4bf376825293903a6899fdb` and integration
 `aa7b8d864d8568b0546dc580f3cd56357fac9bc0` after a fast-forward pull and master
 fetch. All eight `br/pkg/restore/utils` artifacts are identical between these

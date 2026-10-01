@@ -15,8 +15,10 @@
 //! Go `br/pkg/rtree/rtree.go`: the range trees themselves.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use tidb_codec::table_key::{decode_key_head, KeyHead};
+use tidb_proto::{backup::File, kvrpcpb};
 
 /// Go `rtree.KeyRange`: an origin key range.
 ///
@@ -83,58 +85,16 @@ impl KeyRange {
     }
 }
 
-/// The payload contract of a [`Range`].
-///
-/// Go carries `[]*backuppb.File` here. Restore uses shared handles to the
-/// complete generated file; this trait reads statistics without projecting
-/// away the remaining payload when range containers are cloned.
-pub trait RangeFile: Clone {
-    /// Go `File.GetTotalKvs`.
-    fn total_kvs(&self) -> u64;
-    /// Go `File.GetTotalBytes`.
-    fn total_bytes(&self) -> u64;
-    /// Go `File.GetCrc64Xor`.
-    fn crc64_xor(&self) -> u64;
-}
-
-impl RangeFile for tidb_proto::backup::File {
-    fn total_kvs(&self) -> u64 {
-        self.total_kvs
-    }
-
-    fn total_bytes(&self) -> u64 {
-        self.total_bytes
-    }
-
-    fn crc64_xor(&self) -> u64 {
-        self.crc64xor
-    }
-}
-
-impl<F: RangeFile> RangeFile for std::sync::Arc<F> {
-    fn total_kvs(&self) -> u64 {
-        self.as_ref().total_kvs()
-    }
-
-    fn total_bytes(&self) -> u64 {
-        self.as_ref().total_bytes()
-    }
-
-    fn crc64_xor(&self) -> u64 {
-        self.as_ref().crc64_xor()
-    }
-}
-
 /// Go `rtree.Range`: a backup response.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Range<F> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Range {
     /// Go's embedded `KeyRange`.
     pub key_range: KeyRange,
-    /// Go `Range.Files`.
-    pub files: Vec<F>,
+    /// Go `Range.Files`: shared complete protobuf payloads.
+    pub files: Vec<Arc<File>>,
 }
 
-impl<F> Range<F> {
+impl Range {
     /// Builds a range with no payload.
     #[must_use]
     pub fn new(start_key: impl Into<Vec<u8>>, end_key: impl Into<Vec<u8>>) -> Self {
@@ -149,7 +109,7 @@ impl<F> Range<F> {
     pub fn with_files(
         start_key: impl Into<Vec<u8>>,
         end_key: impl Into<Vec<u8>>,
-        files: Vec<F>,
+        files: Vec<Arc<File>>,
     ) -> Self {
         Self {
             key_range: KeyRange::new(start_key, end_key),
@@ -168,33 +128,31 @@ impl<F> Range<F> {
     pub fn end_key(&self) -> &[u8] {
         &self.key_range.end_key
     }
-}
 
-impl<F: RangeFile> Range<F> {
     /// Go `(*Range).BytesAndKeys`: total bytes and keys in a range.
     pub fn bytes_and_keys(&self) -> (u64, u64) {
         let mut bytes = 0u64;
         let mut keys = 0u64;
         for file in &self.files {
-            bytes += file.total_bytes();
-            keys += file.total_kvs();
+            bytes += file.total_bytes;
+            keys += file.total_kvs;
         }
         (bytes, keys)
     }
 }
 
 /// Go `rtree.RangeStats`: a restore merge result.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RangeStats<F> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct RangeStats {
     /// Go's embedded `Range`.
-    pub range: Range<F>,
+    pub range: Range,
     /// Go `RangeStats.Size`.
     pub size: u64,
     /// Go `RangeStats.Count`.
     pub count: u64,
 }
 
-impl<F> RangeStats<F> {
+impl RangeStats {
     /// Go's promoted `RangeStats.StartKey`.
     #[must_use]
     pub fn start_key(&self) -> &[u8] {
@@ -209,18 +167,18 @@ impl<F> RangeStats<F> {
 
     /// Go's promoted `RangeStats.Files`.
     #[must_use]
-    pub fn files(&self) -> &[F] {
+    pub fn files(&self) -> &[Arc<File>] {
         &self.range.files
     }
 }
 
 /// Go `rtree.RangeStatsTree`.
 #[derive(Clone, Debug)]
-pub struct RangeStatsTree<F> {
-    tree: BTreeMap<Vec<u8>, RangeStats<F>>,
+pub struct RangeStatsTree {
+    tree: BTreeMap<Vec<u8>, RangeStats>,
 }
 
-impl<F> Default for RangeStatsTree<F> {
+impl Default for RangeStatsTree {
     fn default() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -228,7 +186,7 @@ impl<F> Default for RangeStatsTree<F> {
     }
 }
 
-impl<F: RangeFile> RangeStatsTree<F> {
+impl RangeStatsTree {
     /// Go `NewRangeStatsTree`.
     pub fn new() -> Self {
         Self {
@@ -251,10 +209,10 @@ impl<F: RangeFile> RangeStatsTree<F> {
     /// insert overlapped an existing one.
     pub fn insert_range(
         &mut self,
-        rg: &Range<F>,
+        rg: &Range,
         range_size: u64,
         range_count: u64,
-    ) -> Option<RangeStats<F>> {
+    ) -> Option<RangeStats> {
         self.tree.insert(
             rg.key_range.start_key.clone(),
             RangeStats {
@@ -268,9 +226,9 @@ impl<F: RangeFile> RangeStatsTree<F> {
     /// Go `(*RangeStatsTree).MergedRanges`: the sorted ranges after merging
     /// according to `split_size_bytes` and `split_key_count`.
     #[must_use]
-    pub fn merged_ranges(&self, split_size_bytes: u64, split_key_count: u64) -> Vec<RangeStats<F>> {
+    pub fn merged_ranges(&self, split_size_bytes: u64, split_key_count: u64) -> Vec<RangeStats> {
         let mut merge_target_index: Option<usize> = None;
-        let mut sorted_ranges: Vec<RangeStats<F>> = Vec::with_capacity(self.tree.len());
+        let mut sorted_ranges: Vec<RangeStats> = Vec::with_capacity(self.tree.len());
         for rg in self.tree.values() {
             let merge = merge_target_index.is_some_and(|index| {
                 needs_merge(&sorted_ranges[index], rg, split_size_bytes, split_key_count)
@@ -313,9 +271,9 @@ fn decode_keyspace_key(key: &[u8]) -> Option<&[u8]> {
 }
 
 /// Go `NeedsMerge`: whether two adjacent ranges may be fused.
-pub fn needs_merge<F: RangeFile>(
-    left: &RangeStats<F>,
-    right: &RangeStats<F>,
+pub fn needs_merge(
+    left: &RangeStats,
+    right: &RangeStats,
     split_size_bytes: u64,
     split_key_count: u64,
 ) -> bool {
@@ -370,13 +328,13 @@ pub fn needs_merge<F: RangeFile>(
 
 /// Go `rtree.RangeTree`: a sorted tree of non-overlapping [`Range`]s.
 #[derive(Clone, Debug)]
-pub struct RangeTree<F> {
-    tree: BTreeMap<Vec<u8>, Range<F>>,
+pub struct RangeTree {
+    tree: BTreeMap<Vec<u8>, Range>,
     /// Go `RangeTree.PhysicalID`.
     pub physical_id: i64,
 }
 
-impl<F> Default for RangeTree<F> {
+impl Default for RangeTree {
     fn default() -> Self {
         Self {
             tree: BTreeMap::new(),
@@ -385,7 +343,7 @@ impl<F> Default for RangeTree<F> {
     }
 }
 
-impl<F> Default for ProgressRange<F> {
+impl Default for ProgressRange {
     fn default() -> Self {
         Self {
             res: RangeTree::default(),
@@ -394,7 +352,7 @@ impl<F> Default for ProgressRange<F> {
     }
 }
 
-impl<F: RangeFile> RangeTree<F> {
+impl RangeTree {
     /// Go `NewRangeTree`.
     pub fn new() -> Self {
         Self {
@@ -427,12 +385,12 @@ impl<F: RangeFile> RangeTree<F> {
 
     /// Go's promoted `Get`: the range whose start key equals `start_key`.
     #[must_use]
-    pub fn get(&self, start_key: &[u8]) -> Option<&Range<F>> {
+    pub fn get(&self, start_key: &[u8]) -> Option<&Range> {
         self.tree.get(start_key)
     }
 
     /// Go's promoted `Ascend`.
-    pub fn ascend(&self, mut visit: impl FnMut(&Range<F>) -> bool) {
+    pub fn ascend(&self, mut visit: impl FnMut(&Range) -> bool) {
         for item in self.tree.values() {
             if !visit(item) {
                 return;
@@ -442,7 +400,7 @@ impl<F: RangeFile> RangeTree<F> {
 
     /// Go `(*RangeTree).Find`: the item containing the range's start key.
     #[must_use]
-    pub fn find(&self, rg: &Range<F>) -> Option<&Range<F>> {
+    pub fn find(&self, rg: &Range) -> Option<&Range> {
         let ret = self
             .tree
             .range(..=rg.key_range.start_key.clone())
@@ -467,7 +425,7 @@ impl<F: RangeFile> RangeTree<F> {
     ///
     /// `find` returns range `a`, and both the start key of `a` and of `b` are
     /// less than the end key of `d`, so both count as overlapping.
-    fn get_overlaps(&self, rg: &Range<F>) -> Vec<Vec<u8>> {
+    fn get_overlaps(&self, rg: &Range) -> Vec<Vec<u8>> {
         let found = self.find(rg).map_or_else(
             || rg.key_range.start_key.clone(),
             |f| f.start_key().to_vec(),
@@ -485,12 +443,12 @@ impl<F: RangeFile> RangeTree<F> {
     }
 
     /// Go `(*RangeTree).Update`: inserts a range and deletes overlapping ones.
-    pub fn update(&mut self, rg: Range<F>) -> bool {
+    pub fn update(&mut self, rg: Range) -> bool {
         self.update_force(rg, true)
     }
 
     /// Go `(*RangeTree).updateForce`.
-    fn update_force(&mut self, rg: Range<F>, force: bool) -> bool {
+    fn update_force(&mut self, rg: Range, force: bool) -> bool {
         let overlaps = self.get_overlaps(&rg);
         if !force && !overlaps.is_empty() {
             return false;
@@ -504,7 +462,7 @@ impl<F: RangeFile> RangeTree<F> {
     }
 
     /// Go `(*RangeTree).Put`: forms a range and inserts it into the tree.
-    pub fn put(&mut self, start_key: &[u8], end_key: &[u8], files: Vec<F>) {
+    pub fn put(&mut self, start_key: &[u8], end_key: &[u8], files: Vec<Arc<File>>) {
         self.update_force(Range::with_files(start_key, end_key, files), true);
     }
 
@@ -513,30 +471,30 @@ impl<F: RangeFile> RangeTree<F> {
         &mut self,
         start_key: &[u8],
         end_key: &[u8],
-        files: Vec<F>,
+        files: Vec<Arc<File>>,
         force: bool,
     ) -> bool {
         self.update_force(Range::with_files(start_key, end_key, files), force)
     }
 
     /// Go `(*RangeTree).InsertRange`: returns the displaced range, if any.
-    pub fn insert_range(&mut self, rg: Range<F>) -> Option<Range<F>> {
+    pub fn insert_range(&mut self, rg: Range) -> Option<Range> {
         self.tree.insert(rg.key_range.start_key.clone(), rg)
     }
 
     /// Go `(*RangeTree).GetIncompleteRange`: the ranges within
     /// `[start_key, end_key)` that this tree does not yet cover.
     #[must_use]
-    pub fn get_incomplete_range(&self, start_key: &[u8], end_key: &[u8]) -> Vec<KeyRange> {
+    pub fn get_incomplete_range(&self, start_key: &[u8], end_key: &[u8]) -> Vec<kvrpcpb::KeyRange> {
         if !start_key.is_empty() && start_key == end_key {
             return Vec::new();
         }
         // Don't use a large buffer, because it will cause memory issues, and
         // the number of missing ranges is usually small.
-        let mut incomplete: Vec<KeyRange> = Vec::with_capacity(1);
+        let mut incomplete: Vec<kvrpcpb::KeyRange> = Vec::with_capacity(1);
         let request_range = KeyRange::new(start_key, end_key);
         let mut last_end_key = start_key.to_vec();
-        let mut pivot: Range<F> = Range::new(start_key, Vec::<u8>::new());
+        let mut pivot: Range = Range::new(start_key, Vec::<u8>::new());
         if let Some(first) = self.find(&pivot) {
             pivot.key_range.start_key = first.start_key().to_vec();
         }
@@ -547,7 +505,10 @@ impl<F: RangeFile> RangeTree<F> {
             if last_end_key.as_slice() < rg.start_key() {
                 if let Some((start, end)) = request_range.intersect(&last_end_key, rg.start_key()) {
                     // There is a gap between the last item and the current one.
-                    incomplete.push(KeyRange::new(start, end));
+                    incomplete.push(kvrpcpb::KeyRange {
+                        start_key: start,
+                        end_key: end,
+                    });
                 }
             }
             last_end_key = rg.end_key().to_vec();
@@ -563,7 +524,10 @@ impl<F: RangeFile> RangeTree<F> {
                 && (end_key.is_empty() || last_end_key.as_slice() < end_key))
         {
             if let Some((start, end)) = request_range.intersect(&last_end_key, end_key) {
-                incomplete.push(KeyRange::new(start, end));
+                incomplete.push(kvrpcpb::KeyRange {
+                    start_key: start,
+                    end_key: end,
+                });
             }
         }
         incomplete
@@ -586,14 +550,14 @@ pub struct ChecksumStats {
 
 /// Go's `metautil.MetaWriter`, narrowed to the one call this package makes:
 /// `metaWriter.Send(files, metautil.AppendDataFile)`.
-pub trait MetaSink<F> {
+pub trait MetaSink {
     /// Go `(*MetaWriter).Send(files, AppendDataFile)`.
     ///
     /// # Errors
     ///
     /// Returns the error that aborts the enclosing tree walk, exactly as Go's
     /// `rangeAscendErr` does.
-    fn send(&mut self, files: &[F]) -> Result<(), RtreeError>;
+    fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError>;
 }
 
 /// The errors `br/pkg/rtree` raises through `errors.Errorf`/`errors.Trace`.
@@ -621,26 +585,26 @@ impl std::error::Error for RtreeError {}
 
 /// Go `rtree.ProgressRange`.
 #[derive(Clone, Debug)]
-pub struct ProgressRange<F> {
+pub struct ProgressRange {
     /// Go `ProgressRange.Res`.
-    pub res: RangeTree<F>,
+    pub res: RangeTree,
     /// Go `ProgressRange.Origin`.
     pub origin: KeyRange,
 }
 
 /// Go `rtree.ProgressRangeTree`: a sorted tree of non-overlapping
 /// [`ProgressRange`]s.
-pub struct ProgressRangeTree<F> {
-    tree: BTreeMap<Vec<u8>, ProgressRange<F>>,
+pub struct ProgressRangeTree {
+    tree: BTreeMap<Vec<u8>, ProgressRange>,
     checksum_map: BTreeMap<i64, ChecksumStats>,
     skip_checksum: bool,
-    meta_writer: Option<Box<dyn MetaSink<F>>>,
+    meta_writer: Option<Box<dyn MetaSink>>,
     complete_call_back: Box<dyn FnMut()>,
 }
 
-impl<F: RangeFile> ProgressRangeTree<F> {
+impl ProgressRangeTree {
     /// Go `NewProgressRangeTree`.
-    pub fn new(meta_writer: Option<Box<dyn MetaSink<F>>>, skip_checksum: bool) -> Self {
+    pub fn new(meta_writer: Option<Box<dyn MetaSink>>, skip_checksum: bool) -> Self {
         Self {
             tree: BTreeMap::new(),
             checksum_map: BTreeMap::new(),
@@ -691,7 +655,7 @@ impl<F: RangeFile> ProgressRangeTree<F> {
     ///
     /// Returns [`RtreeError::OverlappingRange`] when an existing range already
     /// contains the new range's start key.
-    pub fn insert(&mut self, pr: ProgressRange<F>) -> Result<(), RtreeError> {
+    pub fn insert(&mut self, pr: ProgressRange) -> Result<(), RtreeError> {
         if let Some(overlap_key) = self.find_key(&pr.origin.start_key) {
             let overlap = &self.tree[&overlap_key];
             return Err(RtreeError::OverlappingRange(format!(
@@ -721,7 +685,7 @@ impl<F: RangeFile> ProgressRangeTree<F> {
         &mut self,
         start_key: &[u8],
         end_key: &[u8],
-    ) -> Result<Option<&mut ProgressRange<F>>, RtreeError> {
+    ) -> Result<Option<&mut ProgressRange>, RtreeError> {
         let Some(found_key) = self.find_key(start_key) else {
             // Go logs "Cannot find progress range that contains the start key,
             // maybe the duplicated response" and returns no error.
@@ -748,7 +712,7 @@ impl<F: RangeFile> ProgressRangeTree<F> {
     ///
     /// Propagates the first [`MetaSink`] failure, as Go propagates
     /// `rangeAscendErr`.
-    pub fn get_incomplete_ranges(&mut self) -> Result<Vec<KeyRange>, RtreeError> {
+    pub fn get_incomplete_ranges(&mut self) -> Result<Vec<kvrpcpb::KeyRange>, RtreeError> {
         // About 64 MB of memory if there are one million ranges.
         let mut incomplete_ranges = Vec::with_capacity(self.tree.len());
         // Go's `DeletedRange`: the progress range to drop plus its checksum.
@@ -820,22 +784,22 @@ impl<F: RangeFile> ProgressRangeTree<F> {
 ///
 /// Go additionally feeds `br/pkg/summary`'s global collectors here; that is
 /// process-wide CLI reporting, not part of this package's contract.
-fn summary_files<F: RangeFile>(files: &[F]) -> (u64, u64, u64) {
+fn summary_files(files: &[Arc<File>]) -> (u64, u64, u64) {
     let mut crc = 0u64;
     let mut kvs = 0u64;
     let mut bytes = 0u64;
     for f in files {
-        crc ^= f.crc64_xor();
-        kvs += f.total_kvs();
-        bytes += f.total_bytes();
+        crc ^= f.crc64xor;
+        kvs += f.total_kvs;
+        bytes += f.total_bytes;
     }
     (crc, kvs, bytes)
 }
 
 /// Go `(*ProgressRangeTree).collectRangeFiles`.
-fn collect_range_files<F: RangeFile>(
-    meta_writer: Option<&mut (dyn MetaSink<F> + 'static)>,
-    item: &ProgressRange<F>,
+fn collect_range_files(
+    meta_writer: Option<&mut (dyn MetaSink + 'static)>,
+    item: &ProgressRange,
 ) -> Result<ChecksumStats, RtreeError> {
     let mut checksum = ChecksumStats::default();
     let Some(writer) = meta_writer else {
@@ -866,48 +830,164 @@ mod tests {
 
     use super::*;
 
-    /// The `backuppb.File` fields the `rtree` tests actually set. The full
-    /// generated type is re-exported as [`crate::restore_utils::File`]; these tests only
-    /// need a payload that satisfies [`RangeFile`] plus a name to assert on.
-    #[derive(Clone, Debug, Default, PartialEq, Eq)]
-    struct TestFile {
-        name: String,
-        crc64_xor: u64,
-        total_kvs: u64,
-        total_bytes: u64,
+    #[test]
+    fn missing_ranges_are_generated_rpc_messages() {
+        let mut tree: RangeTree = RangeTree::new();
+        tree.put(b"b", b"c", Vec::new());
+        let ranges: Vec<tidb_proto::kvrpcpb::KeyRange> = tree.get_incomplete_range(b"a", b"d");
+        let expected = vec![
+            tidb_proto::kvrpcpb::KeyRange {
+                start_key: b"a".to_vec(),
+                end_key: b"b".to_vec(),
+            },
+            tidb_proto::kvrpcpb::KeyRange {
+                start_key: b"c".to_vec(),
+                end_key: b"d".to_vec(),
+            },
+        ];
+        assert_eq!(ranges, expected);
+
+        let mut progress = ProgressRangeTree::new(None, false);
+        progress
+            .insert(ProgressRange {
+                res: tree,
+                origin: KeyRange::new(b"a", b"d"),
+            })
+            .unwrap();
+        let ranges: Vec<tidb_proto::kvrpcpb::KeyRange> = progress.get_incomplete_ranges().unwrap();
+        assert_eq!(ranges, expected);
     }
 
-    impl RangeFile for TestFile {
-        fn total_kvs(&self) -> u64 {
-            self.total_kvs
+    #[test]
+    fn complete_files_survive_tree_copies_and_failed_metadata_delivery() {
+        use tidb_proto::backup::TableMeta;
+
+        struct FailSecondSend {
+            sent: Rc<RefCell<Vec<Arc<File>>>>,
         }
-        fn total_bytes(&self) -> u64 {
-            self.total_bytes
+        impl MetaSink for FailSecondSend {
+            fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
+                let mut sent = self.sent.borrow_mut();
+                sent.extend_from_slice(files);
+                if sent.len() == 2 {
+                    return Err(RtreeError::Meta("send failed".into()));
+                }
+                Ok(())
+            }
         }
-        fn crc64_xor(&self) -> u64 {
-            self.crc64_xor
+
+        for skip_checksum in [false, true] {
+            let sent = Rc::new(RefCell::new(Vec::new()));
+            let callbacks = Rc::new(RefCell::new(0));
+            let mut progress = ProgressRangeTree::new(
+                Some(Box::new(FailSecondSend { sent: sent.clone() })),
+                skip_checksum,
+            );
+            let counter = callbacks.clone();
+            progress.set_call_back(move || *counter.borrow_mut() += 1);
+            let mut files = Vec::new();
+            let mut stats = RangeStatsTree::new();
+            for index in 0..2 {
+                let file = Arc::new(File {
+                    name: format!("{index}_write.sst"),
+                    sha256: vec![index as u8; 32],
+                    start_key: encode_record_key(
+                        &gen_table_record_prefix(1),
+                        &RecordHandle::Int(index),
+                    ),
+                    end_key: encode_record_key(
+                        &gen_table_record_prefix(1),
+                        &RecordHandle::Int(index + 1),
+                    ),
+                    start_version: 17,
+                    end_version: 23,
+                    crc64xor: 7 + index as u64,
+                    total_kvs: 11,
+                    total_bytes: 13,
+                    cf: "write".into(),
+                    size: 101,
+                    cipher_iv: vec![index as u8; 16],
+                    table_metas: vec![TableMeta {
+                        physical_id: 1,
+                        ..Default::default()
+                    }],
+                });
+                let range =
+                    Range::with_files(&file.start_key[..], &file.end_key[..], vec![file.clone()]);
+                let mut tree = RangeTree::new_with_physical_id(1);
+                assert!(tree.update(range.clone()));
+                assert!(Arc::ptr_eq(
+                    &tree.clone().get(&file.start_key).unwrap().files[0],
+                    &file
+                ));
+                assert!(stats.insert_range(&range, 13, 11).is_none());
+                progress
+                    .insert(ProgressRange {
+                        res: tree,
+                        origin: range.key_range,
+                    })
+                    .unwrap();
+                files.push(file);
+            }
+            let merged = stats.merged_ranges(100, 100);
+            assert_eq!(merged.len(), 1);
+            assert_eq!(merged[0].range.bytes_and_keys(), (26, 22));
+            assert_eq!((merged[0].size, merged[0].count), (26, 22));
+            for (actual, expected) in merged[0].files().iter().zip(&files) {
+                assert!(Arc::ptr_eq(actual, expected));
+            }
+
+            assert_eq!(
+                progress.get_incomplete_ranges(),
+                Err(RtreeError::Meta("send failed".into()))
+            );
+            assert_eq!(progress.len(), 2);
+            assert!(progress.get_checksum_map().is_empty());
+            // Go calls back after each successful range, before committing
+            // any deletion/checksum; a later failure retains all ranges.
+            assert_eq!(*callbacks.borrow(), 1);
+            assert!(progress.get_incomplete_ranges().unwrap().is_empty());
+            assert!(progress.is_empty());
+            assert_eq!(*callbacks.borrow(), 3);
+            let sent = sent.borrow();
+            assert_eq!(sent.len(), 4);
+            for (index, actual) in sent.iter().enumerate() {
+                assert!(Arc::ptr_eq(actual, &files[index % 2]));
+            }
+            if skip_checksum {
+                assert!(progress.get_checksum_map().is_empty());
+            } else {
+                assert_eq!(
+                    progress.get_checksum_map()[&1],
+                    ChecksumStats {
+                        crc64_xor: 7 ^ 8,
+                        total_kvs: 22,
+                        total_bytes: 26,
+                    }
+                );
+            }
         }
     }
 
-    fn named(name: &str) -> Vec<TestFile> {
-        vec![TestFile {
+    fn named(name: &str) -> Vec<Arc<File>> {
+        vec![Arc::new(File {
             name: name.to_owned(),
-            ..TestFile::default()
-        }]
+            ..File::default()
+        })]
     }
 
-    fn new_range(start: &[u8], end: &[u8]) -> Range<TestFile> {
+    fn new_range(start: &[u8], end: &[u8]) -> Range {
         Range::new(start, end)
     }
 
     /// Go `TestRangeTree` (`rtree_test.go`).
     #[test]
     fn range_tree() {
-        let mut range_tree: RangeTree<TestFile> = RangeTree::new();
+        let mut range_tree: RangeTree = RangeTree::new();
         assert!(range_tree.get(b"").is_none());
 
         fn assert_incomplete(
-            tree: &RangeTree<TestFile>,
+            tree: &RangeTree,
             start_key: &[u8],
             end_key: &[u8],
             ranges: &[KeyRange],
@@ -924,7 +1004,7 @@ mod tests {
             }
         }
 
-        fn assert_all_complete(tree: &RangeTree<TestFile>) {
+        fn assert_all_complete(tree: &RangeTree) {
             for s in 0u16..0xfe {
                 for e in (s + 1)..0xff {
                     let start = [u8::try_from(s).expect("in range")];
@@ -1060,7 +1140,7 @@ mod tests {
     /// Go `TestRangeTreePutForce` (`rtree_test.go`).
     #[test]
     fn range_tree_put_force() {
-        fn check(tree: &RangeTree<TestFile>, expected: &[(&[u8], &[u8], &str)]) {
+        fn check(tree: &RangeTree, expected: &[(&[u8], &[u8], &str)]) {
             assert_eq!(tree.len(), expected.len());
             let mut i = 0;
             tree.ascend(|item| {
@@ -1072,7 +1152,7 @@ mod tests {
             });
         }
 
-        let mut tree: RangeTree<TestFile> = RangeTree::new();
+        let mut tree: RangeTree = RangeTree::new();
         assert!(tree.put_force(b"aa", b"bb", named("1.sst"), true));
         assert!(tree.put_force(b"ff", b"hh", named("2.sst"), false));
         check(&tree, &[(b"aa", b"bb", "1.sst"), (b"ff", b"hh", "2.sst")]);
@@ -1187,11 +1267,25 @@ mod tests {
         assert_eq!(None, rg.key_range.intersect(b"c", b""));
     }
 
-    /// Go `BenchmarkRangeTreeUpdate`: skipped. Benchmarks are a Go `testing`
-    /// harness feature with no assertion to preserve.
+    /// Go `BenchmarkRangeTreeUpdate`, executed for a fixed iteration count.
     #[test]
-    #[ignore = "Go BenchmarkRangeTreeUpdate: benchmark, no assertions"]
-    fn benchmark_range_tree_update() {}
+    #[ignore = "Go BenchmarkRangeTreeUpdate workload; run explicitly"]
+    fn benchmark_range_tree_update() {
+        let mut tree = RangeTree::new();
+        for i in 0..100_000 {
+            assert!(tree.update(Range::new(
+                format!("{i:20}").into_bytes(),
+                format!("{:20}", i + 1).into_bytes()
+            )));
+        }
+        assert_eq!(tree.len(), 100_000);
+        assert!(tree
+            .get_incomplete_range(
+                format!("{:20}", 0).as_bytes(),
+                format!("{:20}", 100_000).as_bytes()
+            )
+            .is_empty());
+    }
 
     fn encode_table_record(prefix: &[u8], row_id: u64) -> Vec<u8> {
         encode_record_key(
@@ -1216,19 +1310,19 @@ mod tests {
             encode_table_record as fn(&[u8], u64) -> Vec<u8>,
             encode_keyspaced_table_record,
         ] {
-            let mut range_tree: RangeStatsTree<TestFile> = RangeStatsTree::new();
+            let mut range_tree: RangeStatsTree = RangeStatsTree::new();
             let table_prefix = gen_table_record_prefix(1);
             for i in 0u64..10000 {
                 range_tree.insert_range(
                     &Range::with_files(
                         encode(&table_prefix, i),
                         encode(&table_prefix, i + 1),
-                        vec![TestFile {
+                        vec![Arc::new(File {
                             name: format!("{i:20}"),
-                            crc64_xor: 0,
                             total_kvs: 1,
                             total_bytes: 1,
-                        }],
+                            ..File::default()
+                        })],
                     ),
                     i,
                     0,
@@ -1263,11 +1357,11 @@ mod tests {
         let base_key_b = encode_index_seek_key(42, 1, &[]);
         let seed_corpus = vec![(base_key_a, base_key_b)];
         for (a, b) in seed_corpus {
-            let one = vec![TestFile {
+            let one = vec![Arc::new(File {
                 total_kvs: 1,
                 total_bytes: 1,
-                ..TestFile::default()
-            }];
+                ..File::default()
+            })];
             let left = RangeStats {
                 range: Range::with_files(a, Vec::<u8>::new(), one.clone()),
                 size: 0,
@@ -1290,35 +1384,42 @@ mod tests {
         key_range.contains(b"a");
         key_range.contains_range(b"a", b"b");
 
-        let left: RangeStats<TestFile> = RangeStats {
+        let left: RangeStats = RangeStats {
             range: Range::new(b"a", b"b"),
             size: 0,
             count: 0,
         };
-        let right: RangeStats<TestFile> = RangeStats {
+        let right: RangeStats = RangeStats {
             range: Range::new(b"b", b"c"),
             size: 0,
             count: 0,
         };
         left.range.bytes_and_keys();
 
-        RangeStatsTree::<TestFile>::new();
-        let stats_tree = RangeStatsTree::<TestFile>::default();
+        RangeStatsTree::new();
+        let stats_tree = RangeStatsTree::default();
         stats_tree.len();
         needs_merge(&left, &right, 1, 1);
 
-        RangeTree::<TestFile>::new();
-        RangeTree::<TestFile>::new_with_physical_id(1);
-        let range_tree = RangeTree::<TestFile>::default();
+        RangeTree::new();
+        RangeTree::new_with_physical_id(1);
+        let range_tree = RangeTree::default();
         range_tree.len();
 
-        ProgressRangeTree::<TestFile>::new(None, false);
-        let progress_tree = ProgressRangeTree::<TestFile>::new(None, false);
+        ProgressRangeTree::new(None, false);
+        let progress_tree = ProgressRangeTree::new(None, false);
         progress_tree.len();
         progress_tree.get_checksum_map();
     }
 
-    fn build_progress_range(start_key: &str, end_key: &str) -> ProgressRange<TestFile> {
+    fn rpc_range(start: &[u8], end: &[u8]) -> kvrpcpb::KeyRange {
+        kvrpcpb::KeyRange {
+            start_key: start.to_vec(),
+            end_key: end.to_vec(),
+        }
+    }
+
+    fn build_progress_range(start_key: &str, end_key: &str) -> ProgressRange {
         ProgressRange {
             res: RangeTree::new(),
             origin: KeyRange::new(start_key.as_bytes(), end_key.as_bytes()),
@@ -1329,7 +1430,7 @@ mod tests {
         start_key: &str,
         end_key: &str,
         physical_id: i64,
-    ) -> ProgressRange<TestFile> {
+    ) -> ProgressRange {
         let mut pr = build_progress_range(start_key, end_key);
         pr.res.physical_id = physical_id;
         pr
@@ -1338,7 +1439,7 @@ mod tests {
     /// Go `TestProgressRangeTree` (`rtree_test.go`).
     #[test]
     fn progress_range_tree() {
-        let mut pr_tree: ProgressRangeTree<TestFile> = ProgressRangeTree::new(None, false);
+        let mut pr_tree: ProgressRangeTree = ProgressRangeTree::new(None, false);
 
         assert!(pr_tree.insert(build_progress_range("aa", "cc")).is_ok());
         assert!(pr_tree.insert(build_progress_range("bb", "cc")).is_err());
@@ -1347,11 +1448,11 @@ mod tests {
         assert!(pr_tree.insert(build_progress_range("ee", "ff")).is_ok());
 
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
-        assert_eq!(KeyRange::new(b"aa".to_vec(), b"cc".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"cc".to_vec(), b"dd".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"ee".to_vec(), b"ff".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"aa", b"cc"), ranges[0]);
+        assert_eq!(rpc_range(b"cc", b"dd"), ranges[1]);
+        assert_eq!(rpc_range(b"ee", b"ff"), ranges[2]);
 
-        let put = |tree: &mut ProgressRangeTree<TestFile>, s: &[u8], e: &[u8]| {
+        let put = |tree: &mut ProgressRangeTree, s: &[u8], e: &[u8]| {
             let pr = tree
                 .find_contained(s, e)
                 .expect("contained")
@@ -1363,9 +1464,9 @@ mod tests {
         put(&mut pr_tree, b"cc", b"dd");
 
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
-        assert_eq!(KeyRange::new(b"aa".to_vec(), b"aaa".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"b".to_vec(), b"cc".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"ee".to_vec(), b"ff".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"aa", b"aaa"), ranges[0]);
+        assert_eq!(rpc_range(b"b", b"cc"), ranges[1]);
+        assert_eq!(rpc_range(b"ee", b"ff"), ranges[2]);
 
         put(&mut pr_tree, b"aa", b"aaa");
         put(&mut pr_tree, b"b", b"cc");
@@ -1382,7 +1483,7 @@ mod tests {
     /// Rust makes that explicit with `detached`.
     #[test]
     fn progress_range_tree_call_back() {
-        let mut pr_tree: ProgressRangeTree<TestFile> = ProgressRangeTree::new(None, false);
+        let mut pr_tree: ProgressRangeTree = ProgressRangeTree::new(None, false);
 
         assert!(pr_tree.insert(build_progress_range("a", "b")).is_ok());
         assert!(pr_tree.insert(build_progress_range("c", "d")).is_ok());
@@ -1400,9 +1501,9 @@ mod tests {
             .put(b"a", b"aa", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(0, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"aa".to_vec(), b"b".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"aa", b"b"), ranges[0]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
         pr_tree
             .find_contained(b"a", b"b")
@@ -1412,9 +1513,9 @@ mod tests {
             .put(b"a", b"ab", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(0, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"ab".to_vec(), b"b".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"ab", b"b"), ranges[0]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
         // This completes "a".."b", so the tree drops it; `detached` is the
         // object Go's `pr` pointer keeps referring to afterwards.
@@ -1428,44 +1529,48 @@ mod tests {
         };
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
         detached.res.put(b"a", b"abc", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
         detached.res.put(b"cc", b"cd", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
     }
 
     /// A [`MetaSink`] that records what a real `metautil.MetaWriter` would have
     /// serialized into object storage.
     #[derive(Default)]
     struct RecordingSink {
-        sent: Rc<RefCell<Vec<Vec<TestFile>>>>,
+        sent: Rc<RefCell<Vec<Vec<Arc<File>>>>>,
     }
 
-    impl MetaSink<TestFile> for RecordingSink {
-        fn send(&mut self, files: &[TestFile]) -> Result<(), RtreeError> {
+    impl MetaSink for RecordingSink {
+        fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
             self.sent.borrow_mut().push(files.to_vec());
             Ok(())
         }
     }
 
-    fn get_files(checksums: &[[u64; 3]]) -> Vec<TestFile> {
+    fn get_files(start_key: &[u8], end_key: &[u8], checksums: &[[u64; 3]]) -> Vec<Arc<File>> {
         checksums
             .iter()
-            .map(|checksum| TestFile {
-                name: String::new(),
-                crc64_xor: checksum[0],
-                total_kvs: checksum[1],
-                total_bytes: checksum[2],
+            .map(|checksum| {
+                Arc::new(File {
+                    start_key: start_key.to_vec(),
+                    end_key: end_key.to_vec(),
+                    crc64xor: checksum[0],
+                    total_kvs: checksum[1],
+                    total_bytes: checksum[2],
+                    ..File::default()
+                })
             })
             .collect()
     }
@@ -1481,8 +1586,7 @@ mod tests {
         let sink = RecordingSink {
             sent: Rc::clone(&sent),
         };
-        let mut pr_tree: ProgressRangeTree<TestFile> =
-            ProgressRangeTree::new(Some(Box::new(sink)), false);
+        let mut pr_tree: ProgressRangeTree = ProgressRangeTree::new(Some(Box::new(sink)), false);
 
         assert!(pr_tree
             .insert(build_progress_range_with_physical_id("a", "b", 1))
@@ -1503,37 +1607,38 @@ mod tests {
             .expect("contained")
             .expect("found")
             .res
-            .put(b"a", b"aa", get_files(&[[1, 1, 1], [2, 2, 2]]));
+            .put(b"a", b"aa", get_files(b"a", b"aa", &[[1, 1, 1], [2, 2, 2]]));
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(0, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"aa".to_vec(), b"b".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"aa", b"b"), ranges[0]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
         pr_tree
             .find_contained(b"a", b"b")
             .expect("contained")
             .expect("found")
             .res
-            .put(b"a", b"ab", get_files(&[[3, 3, 3], [4, 4, 4]]));
+            .put(b"a", b"ab", get_files(b"a", b"ab", &[[3, 3, 3], [4, 4, 4]]));
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(0, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"ab".to_vec(), b"b".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[1]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[2]);
+        assert_eq!(rpc_range(b"ab", b"b"), ranges[0]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
         let mut detached = {
             let pr = pr_tree
                 .find_contained(b"a", b"b")
                 .expect("contained")
                 .expect("found");
-            pr.res.put(b"ab", b"b", get_files(&[[5, 5, 5], [6, 6, 6]]));
+            pr.res
+                .put(b"ab", b"b", get_files(b"ab", b"b", &[[5, 5, 5], [6, 6, 6]]));
             pr.clone()
         };
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
         let cksm = pr_tree.get_checksum_map();
         assert_eq!(1, cksm.len());
         let checksum = cksm[&1];
@@ -1545,14 +1650,14 @@ mod tests {
         detached.res.put(b"a", b"abc", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
         detached.res.put(b"cc", b"cd", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
-        assert_eq!(KeyRange::new(b"c".to_vec(), b"d".to_vec()), ranges[0]);
-        assert_eq!(KeyRange::new(b"e".to_vec(), b"f".to_vec()), ranges[1]);
+        assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
+        assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
     }
 
     /// Go's `encodeTableRecord` helper leans on `codec.EncodeInt`; this keeps

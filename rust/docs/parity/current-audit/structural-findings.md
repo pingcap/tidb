@@ -26,10 +26,12 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **72 tracked findings: 66 unresolved (including E02's
-partial repair) and six repaired ownership/contract findings (C01, E01,
-O12, P01, P02, P04)**. This is not a count of accepted packages. E02 has a runtime
+The register contains **73 tracked findings: 66 unresolved (including E02's
+partial repair) and seven repaired ownership/contract findings (C01, E01,
+O12, P01, P02, P04, P05)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
+P05 was found and repaired during the complete range-tree package follow-up;
+see [its package receipt](rtree-protocol-repair.md).
 The latest 18 additions are Q01, X01, C03, K01–K03, I04, S03–S04, E06–E07,
 N04–N05, O10–O13 and P04; see [the subsystem review](subsystem-structure-review.md).
 The preceding 13 additions are A01–A04, B01–B02, E05, N01–N03 and O07–O09;
@@ -168,6 +170,7 @@ copying that old list into this report.
 | P01 | **Repaired:** PD scope now shares the complete native oneof. Explicit zero, keyspace identity, global-barrier fields and store stats survive encoding. | `rust/crates/tidb-proto/src/lib.rs`, `rust/crates/tidb-pd-client/src/client/requests.rs` | Master's complete native `pdpb` owner; raw-wire regressions failed before removal. The PD mock-RPC test also distinguishes no scope from scope zero. See `complete-protocol-owner-repair.md`. |
 | P02 | **Schema ownership repaired:** all five handwritten projections are removed; the compared 400 omissions are gone. | Native PD/BR re-exports; complete descriptor-derived TiKV service; all pinned etcd API inputs and source gate. | `protocol-contracts-after.json` compares seven protobuf packages with zero omissions/contract differences. All 71 opaque TiKV fields remain separate intentional representations, with presence and zero-copy tests. This does not accept external Go helpers or runtime behavior as complete packages. |
 | P03 | The local PD client only follows PD member leadership and its PD Tso stream. It has no service-mode discovery/switching or independent TSO-service owner. | `rust/crates/tidb-pd-client/src/client/topology.rs:36`, `rust/crates/tidb-pd-client/src/tso.rs:207`, complete PD contract does not supply discovery | Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode. |
+| P05 | **Boundary repaired:** range trees and metadata delivery now require shared complete generated backup files. The generic RangeFile adapter and four-field TestFile are removed; both missing-range APIs return generated RPC KeyRange instead of the local algebra type. A compile-fail regression reproduced both RPC type mismatches; no live data-loss claim is made. | `rust/crates/tidb-br/src/rtree/rtree.rs`; sibling restore callers; original-case fixtures | Current master `93a01d31f6`, complete seven-artifact `br/pkg/rtree` review: [receipt](rtree-protocol-repair.md). All original Go race tests, generated-file identity/failure checks and update/merge workloads pass. Go's distinct local KeyRange remains; metautil, progress-handle aliasing, diagnostics and live BRIE acceptance are separate. |
 
 The historical P01 oneof mismatch was additional to the 400 omissions. The historical declaration audit
 covered all messages, nested messages, enums, fields and service methods in the

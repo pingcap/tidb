@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, rtree follow-up) Review all seven artifacts of `br/pkg/rtree`; remove RangeFile/TestFile, generic file adapters and RPC-range projection; migrate restore callers. Both RPC type regressions, 38 Rust tests, all original Go race tests, update/merge workloads, all-target check and lint pass. Publication requires the hook and fresh pre-push locked build.
+
 - [x] (2026-10-01, P04 repair) Remove both local restore-protocol types and the PITR test projection across the complete eight-artifact `br/pkg/restore/utils` owner; preserve generated payloads/shared references and borrow selected rules. All original Go race tests, 36 Rust tests, five merge workloads, all-target compilation and lint pass. Publication requires both locked-build gates below.
 
 - [x] (2026-10-01, O12 repair) Transcreate the complete `pkg/domain/globalconfigsync` package (all three artifacts), its session metadata/publication and domain keeper integration. Preserve bounded blocking notification, no reload notification, one PD attempt and joined shutdown. Validate original Go cases, SQL regressions and real mock-RPC transport before publication.
@@ -63,6 +65,12 @@ Next reconcile transaction insertion, statement options and operation lifetime w
 Run regressions before production fixes and afterward. Protocol validation uses complete source checks, Rust wire tests, original go-tipb tests, affected consumer tests, and all-target compilation. Whole-repository completion requires all package coverage rows to have current, complete evidence; no keyword search can establish it. Record exact commands and results as work progresses. Publication uses TERM=xterm git -c core.hooksPath=hooks commit, then a separate cd rust && cargo build --locked -p tidb-server before normal push to hparser-integration. Native changes publish to client-rust master before synchronization. No forced pushes or hook bypasses.
 
 ## Surprises & Discoveries
+
+The rtree package still permits arbitrary narrowed file payloads through
+RangeFile, including a four-field TestFile projection in its original-case
+tests. Its missing-range API returns the local algebra KeyRange, while Go
+returns generated kvrpcpb.KeyRange and keeps a distinct local KeyRange for
+containment/intersection/logging. The latter is not a duplicate to delete.
 
 O12's source keeper performs no retry: it logs one PD store failure and moves
 on. Go also notifies before global-variable persistence and ignores this RPC's
@@ -1202,3 +1210,48 @@ response, and must both pass before this repair is pushed.
 Revision note: completed the full restore-utils protocol-consumer review and
 repair rather than adding missing fields to the old projection. Other BR
 packages and live integration remain explicit separate owners.
+
+## Range-tree protocol follow-up plan
+
+
+Starting from integration 566163c58c and Go master 93a01d31f6, review the
+complete seven-artifact br/pkg/rtree package: both production files, original
+tests, TestMain/goleak harness, fuzz input and BUILD.bazel. Keep its own
+KeyRange for algebra/logging, but return generated kvrpcpb.KeyRange from both
+missing-range APIs. Remove RangeFile and generic file parameters throughout
+Range, RangeStats, range/progress trees, checksum collection and MetaSink.
+Use Arc<backup.File> directly, matching Go's generated pointer payloads.
+Migrate the sole sibling restore-utils caller and all original tests; remove
+the handwritten TestFile fixture. This prevents a future caller from
+reintroducing narrowed or deeply cloned protobuf payloads at this boundary.
+
+First reproduce the public RPC type mismatch with a test of both gap APIs.
+Then validate generated-file identity through tree clone, merged ranges and
+the metadata sink, including source error/checksum sequencing. Run all Rust
+crate tests, source benchmark workloads and original Go tests with -race in
+a disposable master checkout. Keep fuzz seeds and record fuzz-runtime limits.
+Run all-target checks, make lint, scoped formatting, the actual commit-hook
+locked server build and a fresh locked build immediately before pushing.
+Clean reference build outputs and archive the temporary checkout.
+
+Decision: remove the generic adapter, rather than adding conversion shims to
+callers. The Go package has one concrete payload owner. Borrowed progress-tree
+access, the metautil sink boundary and local API-V2 decoding remain explicit
+existing integration boundaries; this does not enable live backup/restore or
+accept those dependency packages. Preserve their limits in the final receipt.
+
+Outcome: both missing-range APIs failed the generated-type regression before
+replacement. All 38 active tests pass with concrete generated files, including
+identity through range/tree clones and metadata failure/retry. The source
+checksum/callback ordering remains intact. Both workload tests execute (no
+empty rtree benchmark placeholder remains), and the original Go race suite,
+leak harness and fixed-size update workload pass. The source inventory and
+exact commands are in `parity/current-audit/rtree-protocol-repair.md` and its
+JSON inventory. P05 records this repaired boundary; 66 registered findings
+remain unresolved. Existing progress aliasing, metautil/diagnostic/keyspace
+boundaries and live BRIE are explicitly not accepted as complete.
+
+Revision note: extended concrete generated ownership through the full range
+tree package, eliminating the permissive payload layer beneath the P04 repair.
+Publication still requires the actual hook and fresh pre-push locked builds;
+their results are recorded in the final response.

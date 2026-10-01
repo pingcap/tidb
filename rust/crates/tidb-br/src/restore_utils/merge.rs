@@ -73,7 +73,7 @@ pub fn merge_and_rewrite_file_ranges(
     rewrite_rules: Option<&RewriteRules>,
     split_size_bytes: u64,
     split_key_count: u64,
-) -> Result<(Vec<RangeStats<Arc<File>>>, MergeRangesStat), RestoreError> {
+) -> Result<(Vec<RangeStats>, MergeRangesStat), RestoreError> {
     if files.is_empty() {
         return Ok((Vec::new(), MergeRangesStat::default()));
     }
@@ -119,7 +119,7 @@ pub fn merge_and_rewrite_file_ranges(
     let total_regions = default_cf_file.max(write_cf_file);
 
     // Check whether the files overlap.
-    let mut range_tree: RangeStatsTree<Arc<File>> = RangeStatsTree::new();
+    let mut range_tree: RangeStatsTree = RangeStatsTree::new();
     for grouped in files_map.values() {
         let mut range_size = 0u64;
         let mut range_count = 0u64;

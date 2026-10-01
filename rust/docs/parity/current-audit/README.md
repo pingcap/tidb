@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 72 tracked ownership/contract findings (66 unresolved, six repaired), review candidates and the
+consolidates 73 tracked ownership/contract findings (66 unresolved, seven repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -36,6 +36,12 @@ Go package at master `93a01d31f6`. Complete generated files retain shared identi
 through merging; lookups borrow generated rules. All original Go tests pass with
 the race detector, and Rust tests plus all five source merge workloads pass.
 Live BRIE execution remains open as E07.
+
+The [range-tree protocol repair](rtree-protocol-repair.md) follows across the
+complete seven-artifact `br/pkg/rtree` package. P05 removes generic file payloads,
+the narrowed test fixture and local types at generated RPC boundaries. Original
+Go tests, Rust identity/error-path cases and fixed-size update/merge workloads
+pass. This does not accept metautil, progress-handle aliasing or live BRIE.
 
 The [global-config synchronization repair](global-config-sync-repair.md) implements
 O12's complete three-artifact Go package and its production session/factory/PD

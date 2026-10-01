@@ -5,6 +5,9 @@ master. P04 subsequently found that restore's handwritten File lost metadata.
 The [2026-10-01 repair](parity/current-audit/restore-utils-protocol-repair.md)
 removes both protocol projections and supersedes this audit's protocol claims.
 The other boundary and integration gaps still require current-source review.
+The [range-tree follow-up](parity/current-audit/rtree-protocol-repair.md)
+also removes the generic payload adapter and RPC result projection. Its source
+workload now executes, superseding this audit's benchmark-placeholder account.
 
 Audit of the three Go packages tidb-br claims ported complete —
 `br/pkg/streamhelper/spans`, `br/pkg/rtree`, `br/pkg/restore/utils`

@@ -26,8 +26,8 @@
 //! Every production symbol of each Go package is present, and every Go test
 //! function is ported; the two Go benchmark sets and the one Go fuzz target
 //! are accounted for at their own definition sites (`BenchmarkRangeTreeUpdate`
-//! as a named `#[ignore]` test, `BenchmarkMergeRanges*` as executable workload
-//! cases run explicitly, and `FuzzMerge` as a
+//! and `BenchmarkMergeRanges*` as executable workload cases run explicitly,
+//! and `FuzzMerge` as a
 //! table-driven test over its `f.Add` seed corpus).
 //!
 //! They are one crate because they are one subject and they depend on each
@@ -53,8 +53,9 @@
 //! - kvproto `backup.File` and `import_sstpb.RewriteRule` share the complete
 //!   generated contracts through `tidb-proto`. Restore ranges carry `Arc<File>`
 //!   so merging and cloning containers retain the original file metadata.
-//!   [`rtree::Range`] remains generic over its payload; `kvrpcpb.KeyRange`
-//!   currently maps to [`rtree::KeyRange`], a separate boundary.
+//!   [`rtree::Range`] and the metadata sink use that same concrete owner.
+//!   Missing-range APIs return generated `kvrpcpb.KeyRange`; Go's separate
+//!   local algebra type remains [`rtree::KeyRange`].
 //! - `br/pkg/metautil` (`MetaWriter`, `ChecksumStats`, `Table`) is narrowed to
 //!   the [`rtree::MetaSink`] trait, the flat [`rtree::ChecksumStats`] struct,
 //!   and an opaque payload on [`restore_utils::CreatedTable`].

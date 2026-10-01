@@ -1,0 +1,92 @@
+{
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "original_go_test_revision": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "integration_base": "566163c58cb5ad4f72cd127ebfc421ca83b50273",
+  "package": "br/pkg/rtree",
+  "finding": "P05",
+  "artifacts": [
+    [
+      "br/pkg/rtree/BUILD.bazel",
+      "8b8e0c6507632fa85edf77edf05afe0ba2a133d7"
+    ],
+    [
+      "br/pkg/rtree/logging.go",
+      "9a83de48a72a6185c2dd7a515af5de8245e37f20"
+    ],
+    [
+      "br/pkg/rtree/logging_test.go",
+      "2634d30781c5d40950daa2d3293055ffa3489468"
+    ],
+    [
+      "br/pkg/rtree/main_test.go",
+      "b0ed04a7f30af87ac547dc5c68a213ca05be904a"
+    ],
+    [
+      "br/pkg/rtree/merge_fuzz_test.go",
+      "0a182476c81b4d7247f8df901ddc3916bfcbd004"
+    ],
+    [
+      "br/pkg/rtree/rtree.go",
+      "42e8dd693529794720bae6caad6a1e6262912719"
+    ],
+    [
+      "br/pkg/rtree/rtree_test.go",
+      "7291a7c2da8894bc1d2046d9f0c4e66fe986b612"
+    ]
+  ],
+  "source_membership": "Complete recursive git ls-tree: two production files, four original test/support/benchmark/fuzz files and BUILD.bazel (1,298 lines). No doc.go, generated source/input, platform/build-tag variant, external fixture or checked-in fuzz corpus.",
+  "rust_owner": [
+    "rust/crates/tidb-br/src/rtree.rs",
+    "rust/crates/tidb-br/src/rtree/rtree.rs",
+    "rust/crates/tidb-br/src/rtree/logging.rs"
+  ],
+  "callers": [
+    "rust/crates/tidb-br/src/restore_utils/merge.rs",
+    "rust/crates/tidb-br/src/restore_utils/rewrite_rule.rs"
+  ],
+  "removed_owners": [
+    "RangeFile and all generic payload adapters",
+    "four-field TestFile fixture",
+    "local KeyRange substituted at both generated RPC result boundaries",
+    "empty BenchmarkRangeTreeUpdate placeholder"
+  ],
+  "original_test_mapping": {
+    "TestLogRanges": "tidb-br::rtree::logging::tests::log_ranges",
+    "TestRangeTree": "tidb-br::rtree::rtree::tests::range_tree",
+    "TestRangeTreePutForce": "tidb-br::rtree::rtree::tests::range_tree_put_force",
+    "TestRangeIntersect": "tidb-br::rtree::rtree::tests::range_intersect",
+    "TestRangeTreeMerge": "tidb-br::rtree::rtree::tests::range_tree_merge",
+    "TestProgressRangeTree": "tidb-br::rtree::rtree::tests::progress_range_tree",
+    "TestProgreeRangeTreeCallBack": "tidb-br::rtree::rtree::tests::progress_range_tree_call_back",
+    "TestProgreeRangeTreeCallBack2": "tidb-br::rtree::rtree::tests::progress_range_tree_call_back2"
+  },
+  "original_support_mapping": {
+    "newRange": "rtree::tests::new_range",
+    "TestRangeTree search/assertIncomplete/assertAllComplete": "RangeTree::get and inline assertion helpers; exhaustive original byte-bound ranges retained",
+    "TestRangeTreePutForce expectedRange/check": "inline tuple cases and check helper, all 18 files retained",
+    "encodeTableRecord": "rtree::tests::encode_table_record",
+    "makeEncodeKeyspacedTableRecord/testRangeTreeMerge": "rtree::tests::encode_keyspaced_table_record and range_tree_merge, both classic and V2 subcases with 10,000 ranges each",
+    "buildProgressRange/buildProgressRangeWithPhysicalID": "rtree::tests::build_progress_range/build_progress_range_with_physical_id",
+    "getFiles": "rtree::tests::get_files; full generated files with source bounds and checksums",
+    "metautil.MetaWriter + objstore local fixture": "Original Go case exercised the actual temporary local-storage writer. Rust recording MetaSink covers every source checksum/callback assertion plus shared generated payload identity; actual Rust object storage remains unintegrated.",
+    "TestMain": "Original SetupForCommonTest/goleak harness executed with its five ignores; Rust standard test harness and synchronous bounded test state, no spawned production worker in this package."
+  },
+  "original_benchmark_mapping": {
+    "BenchmarkRangeTreeUpdate": "rtree::tests::benchmark_range_tree_update; source update loop executed for 100,000 iterations, with final length/coverage assertions. Original Go workload run at -benchtime=100000x; no timing equivalence claim."
+  },
+  "original_fuzz_mapping": {
+    "FuzzMerge": "rtree::tests::fuzz_merge_seed_corpus; original single index-key pair preserved. Original Go -race unit run executes its seed. No sustained mutation fuzz campaign or native fuzz harness acceptance claimed."
+  },
+  "build_mapping": "BUILD.bazel library/test targets and eight test shards map to the existing tidb-br Cargo library/inline tests. Shared Cargo manifest/lock unchanged; no feature, build.rs or platform source in tidb-br. Reference Go checkout runs required bazel_prepare before tests; no main-tree Go/Bazel changes.",
+  "dependencies": {
+    "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+    "native_client": "b2b3783 (unchanged)",
+    "generated_owner": "Existing tidb-proto backup and kvrpcpb re-exports; inputs, outputs and all module artifacts in shared-client-contracts-inventory.json, checked by lint.",
+    "google_btree": "Existing BTreeMap native representation; no new acceptance of the external btree module.",
+    "metautil": "MetaSink and ChecksumStats remain explicit dependency boundaries; this repair makes their file payload concrete, without implementing object storage.",
+    "codec_summary_logging": "Existing table-key codec, local V2 decoder and diagnostic/summary integration limits unchanged; those external package owners are not accepted here."
+  },
+  "integration": "Every range/progress tree, metadata sink and restore caller uses Arc<backup.File>; both gap APIs return generated kvrpcpb.KeyRange. Distinct Go-local algebra KeyRange remains. No external production caller or BRIE dispatch exists.",
+  "acceptance_scope": "Complete package review and atomic P05 file/RPC protocol boundary repair. Progress-record retention remains a native borrowed API with detached test snapshots; no claim of complete progress-handle aliasing, live backup/restore, dependency-package or whole-crate acceptance.",
+  "validation_receipt": "rtree-protocol-repair.md"
+}

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `br/pkg/rtree` lands as a complete package: the non-overlapping range
+//! Go `br/pkg/rtree`: the non-overlapping range
 //! trees BR uses to record which key ranges a backup has already covered, to
 //! compute the gaps that still need requesting, and to fuse small adjacent
 //! ranges into region-sized chunks before a restore splits regions.
@@ -23,23 +23,18 @@
 //!
 //! # Narrowings and boundaries
 //!
-//! - Go's `Range` carries `Files []*backuppb.File`, a kvproto
-//!   message. Every use inside this package reads exactly three scalars from
-//!   it (`TotalKvs`, `TotalBytes`, `Crc64Xor`) and otherwise moves the slice
-//!   around untouched. [`Range`] is therefore generic over its payload type
-//!   `F: RangeFile`, and [`RangeFile`] is that three-method contract. Restore
-//!   supplies shared handles to the complete generated [`crate::restore_utils::File`],
-//!   preserving all metadata while containers are cloned.
+//! - Go's `Range` carries `Files []*backuppb.File`. All range/progress trees
+//!   and metadata sinks use `Arc<tidb_proto::backup::File>` directly, preserving
+//!   complete generated metadata and file identity when containers are cloned.
 //! - boundary: `br/pkg/metautil`'s `MetaWriter` reaches object storage and
 //!   serializes backup metafiles — entirely outside this package's subject.
 //!   `ProgressRangeTree` only ever calls `Send(files, AppendDataFile)` on it,
 //!   so it is narrowed to the one-method [`MetaSink`] trait object.
 //!   `metautil.ChecksumStats` is a flat three-`uint64` struct and is declared
 //!   locally as [`ChecksumStats`].
-//! - boundary: `GetIncompleteRange`/`GetIncompleteRanges` return
-//!   `[]*kvrpcpb.KeyRange` in Go — another kvproto message with the same two
-//!   byte fields as this package's own [`KeyRange`]. They return [`KeyRange`]
-//!   here.
+//! - `GetIncompleteRange`/`GetIncompleteRanges` return generated
+//!   `tidb_proto::kvrpcpb::KeyRange` values, matching Go's RPC boundary. The
+//!   distinct local [`KeyRange`] remains the algebra/logging type Go defines.
 //! - boundary: `NeedsMerge` trims an API-V2 keyspace prefix through
 //!   `tikv.DecodeKey` from `client-go`. That call is a four-byte split guarded
 //!   by the mode byte (`'x'` txn / `'r'` raw), which
@@ -63,5 +58,5 @@ pub mod rtree;
 pub use logging::zap_ranges;
 pub use rtree::{
     needs_merge, ChecksumStats, KeyRange, MetaSink, ProgressRange, ProgressRangeTree, Range,
-    RangeFile, RangeStats, RangeStatsTree, RangeTree, RtreeError,
+    RangeStats, RangeStatsTree, RangeTree, RtreeError,
 };

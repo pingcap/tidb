@@ -1,5 +1,9 @@
 # Align Rust return contracts for `br/pkg/rtree`
 
+Historical plan. The [2026-10-01 P05 receipt](../parity/current-audit/rtree-protocol-repair.md)
+supersedes its generic-payload and RPC-boundary claims. The current plan is
+`../full-structural-parity-execplan.md`; broader integration remains open.
+
 This ExecPlan is a living document maintained according to `PLANS.md` at the
 repository root. Keep `Progress`, `Surprises & Discoveries`, `Decision Log`,
 and `Outcomes & Retrospective` current while the rolling audit continues.

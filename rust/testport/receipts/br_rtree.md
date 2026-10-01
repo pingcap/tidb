@@ -1,5 +1,11 @@
 # `br/pkg/rtree` — Rust return-contract alignment
 
+Historical return-contract receipt. The [2026-10-01 package review and P05
+repair](../../docs/parity/current-audit/rtree-protocol-repair.md) supersedes its
+generic-payload and RPC-boundary assumptions. RangeFile/TestFile are removed;
+generated files and RPC ranges now own those boundaries. Broader current-master
+parity, progress-handle aliasing and live backup/restore are not certified here.
+
 Pinned Go inventory evidence is retained in
 `rust/testport/receipts/go-kvproto-client-compatibility.md`: exactly seven
 artifacts and 1,298 lines, comprising `rtree.go`, `logging.go`, four source

@@ -25,7 +25,7 @@ use tidb_util::redact;
 
 use super::misc::{get_index_id_map, get_table_id_map, DEFAULT_CF_NAME, WRITE_CF_NAME};
 use super::{File, RewriteRule};
-use crate::rtree::{Range, RangeFile};
+use crate::rtree::Range;
 
 /// boundary: the `br/pkg/errors` sentinels this package raises.
 ///
@@ -703,10 +703,10 @@ fn replace_prefix(s: &[u8], rewrite_rules: &RewriteRules) -> (Vec<u8>, bool) {
 ///
 /// Returns [`RestoreErrorKind::RestoreTableIdMismatch`] when the two bounds
 /// address different tables.
-pub fn rewrite_range<F: RangeFile>(
-    mut rg: Range<F>,
+pub fn rewrite_range(
+    mut rg: Range,
     rewrite_rules: Option<&RewriteRules>,
-) -> Result<Range<F>, RestoreError> {
+) -> Result<Range, RestoreError> {
     let Some(rules) = rewrite_rules else {
         return Ok(rg);
     };
@@ -955,14 +955,14 @@ mod tests {
         };
 
         // Test case 1: no rewrite rules.
-        let rg: Range<File> = Range::new(b"startKey".to_vec(), b"endKey".to_vec());
+        let rg: Range = Range::new(b"startKey".to_vec(), b"endKey".to_vec());
         assert_eq!(
-            Range::<File>::new(b"startKey".to_vec(), b"endKey".to_vec()),
+            Range::new(b"startKey".to_vec(), b"endKey".to_vec()),
             rewrite_range(rg, None).expect("no rules is a no-op")
         );
 
         // Test case 2: a rewrite rule is found for both bounds.
-        let rg: Range<File> = Range::new(
+        let rg: Range = Range::new(
             with_suffix(gen_table_index_prefix(1), "startKey"),
             with_suffix(gen_table_index_prefix(1), "endKey"),
         );
@@ -971,7 +971,7 @@ mod tests {
             ..RewriteRules::default()
         };
         assert_eq!(
-            Range::<File>::new(
+            Range::new(
                 with_suffix(gen_table_index_prefix(2), "startKey"),
                 with_suffix(gen_table_index_prefix(2), "endKey"),
             ),
@@ -979,7 +979,7 @@ mod tests {
         );
 
         // Test case 3: a rewrite rule is found only for the end key.
-        let rg: Range<File> = Range::new(
+        let rg: Range = Range::new(
             with_suffix(gen_table_index_prefix(1), "startKey"),
             with_suffix(gen_table_index_prefix(1), "endKey"),
         );
@@ -991,7 +991,7 @@ mod tests {
             ..RewriteRules::default()
         };
         assert_eq!(
-            Range::<File>::new(
+            Range::new(
                 with_suffix(gen_table_index_prefix(1), "startKey"),
                 with_suffix(gen_table_index_prefix(2), "newEndKey"),
             ),
@@ -999,7 +999,7 @@ mod tests {
         );
 
         // Test case 4: table ID mismatch.
-        let rg: Range<File> = Range::new(b"t1_startKey".to_vec(), b"t2_endKey".to_vec());
+        let rg: Range = Range::new(b"t1_startKey".to_vec(), b"t2_endKey".to_vec());
         let rules = RewriteRules {
             data: vec![rule(b"t1_startKey".to_vec(), b"t2_newStartKey".to_vec())],
             ..RewriteRules::default()

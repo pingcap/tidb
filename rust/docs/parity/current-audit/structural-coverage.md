@@ -9,6 +9,7 @@ An entrypoint review can establish a finding but cannot clear the rest of its pa
 Every row still requires complete production, generated/platform/build, original-test, fixture and integration validation.
 The complete [globalconfigsync receipt](global-config-sync-repair.md) records one leaf package and its integration; it does not accept its whole parent crate.
 The [restore-utils receipt](restore-utils-protocol-repair.md) records the complete package review and P04 protocol repair; live BRIE and other BR owners remain open.
+The [range-tree receipt](rtree-protocol-repair.md) records the complete package review and P05 protocol boundary repair; dependency and live backup/restore acceptance remain open.
 The exact package/artifact list remains in [package-coverage.json](package-coverage.json); no copy replaces it.
 
 ## Subsystem queues
@@ -25,9 +26,9 @@ The exact package/artifact list remains in [package-coverage.json](package-cover
 | DDL | 32 | 8 | D01–D11, F01–F03 |
 | Statistics | 40 | 19 | O07; cache/loading/analyze have live owners, full contract review remains |
 | Storage and distributed reads | 34 | 5 | T01–T03, C03, M01–M04, O03, O13 |
-| Protocols and external services | 0 | 3 | P03, T02; P01–P02, P04 repaired; other helpers/variants unreviewed |
+| Protocols and external services | 0 | 3 | P03, T02; P01–P02, P04–P05 repaired; other helpers/variants unreviewed |
 | Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O11, O13; O12 repaired |
-| Background jobs and bulk data | 182 | 6 | O04–O06, O10, E05, E07; P04 repaired; other bulk-data packages unreviewed |
+| Background jobs and bulk data | 182 | 6 | O04–O06, O10, E05, E07; P04–P05 repaired; other bulk-data packages unreviewed |
 | Utilities and errors | 137 | 5 | O11; other utility/error contracts unreviewed |
 | Build, tools and test support | 93 | 0 | Original suites/build variants not accepted at current master |
 | Other upstream product surfaces | 28 | 0 | Unreviewed: no inference of absence from missing crate names |
