@@ -650,7 +650,7 @@ func TestGlobalStatsNDV(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
 	}
 	for _, async := range []int{0, 1} {
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_async_merge_global_stats = %d", async))
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
 		tk.MustExec("analyze table tu")
 		var ndvs []string
 		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tu'").Sort().Rows() {

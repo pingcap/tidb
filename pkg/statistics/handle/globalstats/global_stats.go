@@ -343,7 +343,6 @@ func blockingMergePartitionStats2GlobalStats(
 		if globalStats.Hg[i] != nil {
 			if statistics.CanSumPartitionNDV(globalTableInfo, isIndex, histIDs[i]) {
 				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
-
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
