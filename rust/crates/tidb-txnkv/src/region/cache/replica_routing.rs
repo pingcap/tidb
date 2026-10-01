@@ -672,19 +672,10 @@ impl<L> RegionCache<L> {
             }
         }
 
-        let mut best_score = None;
-        let mut best = Vec::new();
+        let mut candidates = Vec::new();
         for peer in &location.peers {
             let is_leader = Some(peer.id) == leader_peer_id;
             if !self.peer_is_candidate(peer, is_leader, true)? {
-                continue;
-            }
-            let max_attempts = if !is_leader && selector.may_retry_data_not_ready(peer.id) {
-                2
-            } else {
-                1
-            };
-            if selector.attempts_for(peer.id) >= max_attempts {
                 continue;
             }
             let store = self
@@ -705,33 +696,24 @@ impl<L> RegionCache<L> {
                 is_leader,
                 is_learner: peer.role == PeerRole::Learner,
                 attempts: selector.attempts_for(peer.id),
+                data_is_not_ready: selector.may_retry_data_not_ready(peer.id),
                 reported_busy: selector.peer_reported_busy(peer.id),
                 health: store.routing_health.health.detail(),
                 load: store.routing_health.load,
             };
-            if !selector.health_policy.is_candidate(facts, now) {
-                continue;
-            }
-            let score = selector.health_policy.score(facts);
-            match best_score {
-                None => {
-                    best_score = Some(score);
-                    best.push(peer.clone());
-                }
-                Some(current) if score > current => {
-                    best_score = Some(score);
-                    best.clear();
-                    best.push(peer.clone());
-                }
-                Some(current) if score == current => best.push(peer.clone()),
-                Some(_) => {}
-            }
+            candidates.push(selector.health_policy.candidate(peer.id, facts, now));
         }
-        if best.is_empty() {
-            return Ok(None);
-        }
-        let index = selector.policy.selection_seed as usize % best.len();
-        Ok(Some(best.swap_remove(index)))
+        Ok(selector
+            .health_policy
+            .selection()
+            .choose(&candidates)
+            .and_then(|selected| {
+                location
+                    .peers
+                    .iter()
+                    .find(|peer| peer.id == selected.peer_id)
+            })
+            .cloned())
     }
 
     fn peer_is_candidate(

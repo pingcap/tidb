@@ -141,6 +141,13 @@ converter and uses Go's configured PD terminal. Read cleanup retains determined
 status even when cancelled, as Go requires. These bounded repairs do not close
 T02's competing routing/cache/RPC ownership or change the package acceptance count.
 
+The [candidate-owner follow-up](replica-selection-owner-repair.md) removes
+TiDB's duplicate candidate attempt/scoring/tie policy and DistSQL's query-wide
+selection seed. Native 5777c01 shares Go's predicate across mixed and idle
+selection, preserving the DataIsNotReady second attempt. Cache metadata,
+health state and broader sender/recovery ownership remain in T02; the package
+acceptance count is unchanged.
+
 The five earlier reviewer defects have their own regression receipts. Retry
 limits, secondary retry history, locked-entry timestamps, mock normal wake-up
 and detached read-resolution fixes are not reopened merely because T02 remains.

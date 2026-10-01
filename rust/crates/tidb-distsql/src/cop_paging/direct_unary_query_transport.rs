@@ -400,7 +400,6 @@ pub struct DirectUnaryQueryTransport<C, L> {
     event_callback: Option<tidb_txnkv::EventCallback>,
     async_begin: Option<AsyncBegin<C>>,
     concurrent_start: Option<super::cop_iterator::ConcurrentStart<DirectUnaryQueryResponse<C, L>>>,
-    replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
 }
 
@@ -432,26 +431,6 @@ where
             call,
         )
         .map(|pending| Box::new(pending) as Box<dyn PendingRequest + Send>))
-}
-
-/// One transport-owned rotating seed source sampled once per lazy response.
-///
-/// One `send` owns one immutable seed across all of its region tasks and region
-/// reloads. Only binding a fresh query advances the transport source.
-#[derive(Debug)]
-struct ReplicaReadSeed {
-    current: u32,
-}
-
-impl ReplicaReadSeed {
-    fn new() -> Self {
-        Self { current: 0 }
-    }
-
-    fn next(&mut self) -> u32 {
-        self.current = self.current.wrapping_add(1);
-        self.current
-    }
 }
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
@@ -553,7 +532,6 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
             event_callback: None,
             async_begin: None,
             concurrent_start: None,
-            replica_read_seed: ReplicaReadSeed::new(),
             config,
         })
     }
@@ -713,7 +691,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             )
             .to_string());
         }
-        let selection_seed = self.replica_read_seed.next();
         let timeout = if metadata.tikv_client_read_timeout_ms > 0 {
             Duration::from_millis(metadata.tikv_client_read_timeout_ms)
         } else {
@@ -737,7 +714,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             cancellation,
             call,
             rpc_timeout: timeout,
-            selection_seed,
             read_policy,
             metadata: Arc::new(metadata.clone()),
             cluster_id,
@@ -794,9 +770,6 @@ fn read_policy_from_metadata(
         },
         stale_read: metadata.is_staleness,
         forwarding: false,
-        // Replaced by the query-scoped seed sampled once in `send` before any
-        // logical selector is created.
-        selection_seed: 0,
     })
 }
 
@@ -887,7 +860,6 @@ pub struct DirectUnaryQueryResponse<C, L> {
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
     rpc_timeout: Duration,
-    selection_seed: u32,
     read_policy: ReadPolicy,
     metadata: Arc<crate::KvRequestMetadata>,
     cluster_id: u64,
@@ -1417,8 +1389,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .get(&logical_task_id)
             .is_none_or(|selector| selector.region() != region);
         if replace_selector {
-            let mut read_policy = self.read_policy;
-            read_policy.selection_seed = self.selection_seed;
+            let read_policy = self.read_policy;
             let mut selector = cache_read_operation(&self.shared_runtime, |region_cache| {
                 region_cache.request_selector(region, read_policy)
             })??;
@@ -2461,7 +2432,6 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> super::cop_iterator:
                     cancellation: Arc::clone(&self.cancellation),
                     call: self.call.clone(),
                     rpc_timeout: self.rpc_timeout,
-                    selection_seed: self.selection_seed,
                     read_policy: self.read_policy,
                     metadata: Arc::clone(&self.metadata),
                     cluster_id: self.cluster_id,

@@ -37,10 +37,4 @@ pub struct ReadPolicy {
     pub stale_read: bool,
     /// Whether request forwarding/proxy selection is enabled.
     pub forwarding: bool,
-    /// Deterministic tie-break seed for equally ranked replicas.
-    ///
-    /// The owner advances this seed at its query/snapshot boundary. The
-    /// request-scoped selector keeps it stable while the not-attempted score
-    /// rotates retries.
-    pub selection_seed: u32,
 }

@@ -599,53 +599,45 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
 fn production_metadata_drives_supported_replica_policies_and_exact_request_flags() {
     struct Case {
         source: ReplicaReadType,
-        address_suffix: &'static str,
+        address_suffixes: &'static [&'static str],
         request_type: ClientReplicaReadType,
-        replica_read: bool,
     }
 
     for case in [
         Case {
             source: ReplicaReadType::Leader,
-            address_suffix: "-leader:20160",
+            address_suffixes: &["-leader:20160"],
             request_type: ClientReplicaReadType::Leader,
-            replica_read: false,
         },
         Case {
             source: ReplicaReadType::Follower,
-            address_suffix: "-learner:20160",
+            address_suffixes: &["-follower:20160", "-learner:20160"],
             request_type: ClientReplicaReadType::Follower,
-            replica_read: true,
         },
         Case {
             source: ReplicaReadType::Mixed,
-            address_suffix: "-follower:20160",
+            address_suffixes: &["-leader:20160", "-follower:20160", "-learner:20160"],
             request_type: ClientReplicaReadType::Mixed,
-            replica_read: true,
         },
         Case {
             source: ReplicaReadType::PreferLeader,
-            address_suffix: "-leader:20160",
+            address_suffixes: &["-leader:20160"],
             request_type: ClientReplicaReadType::PreferLeader,
-            replica_read: false,
         },
         Case {
             source: ReplicaReadType::Learner,
-            address_suffix: "-learner:20160",
+            address_suffixes: &["-learner:20160"],
             request_type: ClientReplicaReadType::Learner,
-            replica_read: true,
         },
         Case {
             source: ReplicaReadType::Closest,
-            address_suffix: "-follower:20160",
+            address_suffixes: &["-leader:20160", "-follower:20160", "-learner:20160"],
             request_type: ClientReplicaReadType::Mixed,
-            replica_read: true,
         },
         Case {
             source: ReplicaReadType::ClosestAdaptive,
-            address_suffix: "-follower:20160",
+            address_suffixes: &["-leader:20160", "-follower:20160", "-learner:20160"],
             request_type: ClientReplicaReadType::Mixed,
-            replica_read: true,
         },
     ] {
         let calls = Arc::new(RwLock::new(Vec::new()));
@@ -662,13 +654,18 @@ fn production_metadata_drives_supported_replica_policies_and_exact_request_flags
         let calls = calls.read().unwrap();
         assert_eq!(calls.len(), 1);
         assert!(
-            calls[0].address.ends_with(case.address_suffix),
+            case.address_suffixes
+                .iter()
+                .any(|suffix| calls[0].address.ends_with(suffix)),
             "{:?} selected {}",
             case.source,
             calls[0].address
         );
         assert_eq!(calls[0].replica_read_type, case.request_type);
-        assert_eq!(calls[0].replica_read, case.replica_read);
+        assert_eq!(
+            calls[0].replica_read,
+            !calls[0].address.ends_with("-leader:20160")
+        );
         assert!(!calls[0].stale_read);
     }
 }

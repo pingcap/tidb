@@ -51,9 +51,8 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let loader_calls = Arc::new(RwLock::new(Vec::new()));
     let retry_control = Arc::new(RecordingRetryControl::default());
-    let mut initial =
+    let initial =
         location_with_second_peer(1, "a", "z", "tikv-leader:20160", "tikv-follower:20160");
-    initial.peers.swap(0, 1);
     let transport = transport_with_loader_calls_and_config(
         Arc::clone(&calls),
         [Ok(data_is_not_ready()), Ok(response(b"fresh"))],
@@ -70,6 +69,14 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Leader;
     request_metadata.is_staleness = true;
+    // Both stores lack this label. Go's mixed policy prefers the leader when
+    // label matching is requested and all candidates have the same match result.
+    request_metadata
+        .match_store_labels
+        .push(tidb_distsql::StoreLabel {
+            key: "zone".to_owned(),
+            value: "test-zone".to_owned(),
+        });
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
@@ -123,11 +130,19 @@ fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_onc
 
     let calls = calls.read().unwrap();
     assert_eq!(calls.len(), 3);
-    assert_eq!(calls[0].address, "tikv-follower:20160");
+    assert!(["tikv-leader:20160", "tikv-follower:20160"].contains(&calls[0].address.as_str()));
     assert!(!calls[0].replica_read);
     assert!(calls[0].stale_read);
-    assert_eq!(calls[1].address, "tikv-leader:20160");
-    assert!(!calls[1].replica_read);
+    let leader_was_attempted = calls[0].address == "tikv-leader:20160";
+    assert_eq!(
+        calls[1].address,
+        if leader_was_attempted {
+            "tikv-follower:20160"
+        } else {
+            "tikv-leader:20160"
+        }
+    );
+    assert_eq!(calls[1].replica_read, leader_was_attempted);
     assert!(!calls[1].stale_read);
     assert_eq!(calls[2].address, "tikv-follower:20160");
     assert!(!calls[2].replica_read);

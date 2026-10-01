@@ -22,9 +22,11 @@ use crate::async_util::Cancellation;
 use crate::common::Error;
 use crate::kv::ReplicaReadType;
 use crate::locate::{
-    HealthStatusDetail, MixedReplicaSelection, ReplicaCandidate, ReplicaFlowsType, ReplicaLiveness,
-    ReplicaSelectorState, StoreHealthStatus,
+    HealthStatusDetail, ReplicaFlowsType, ReplicaSelectorState, StoreHealthStatus,
 };
+// Embedding clients supply store snapshots to the same native selector.
+#[doc(hidden)]
+pub use crate::locate::{MixedReplicaSelection, ReplicaCandidate, ReplicaLiveness};
 use crate::pd::Cluster;
 use crate::pd::RegionScanOptions;
 use crate::pd::RetryClient;
@@ -3429,6 +3431,8 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         },
                         attempts: selector_state.attempts(peer.id),
                         data_is_not_ready: selector_state.data_is_not_ready(peer.id),
+                        reported_busy: selector_state.is_server_busy(peer.id),
+                        estimated_wait: store.estimated_wait(Instant::now()),
                     })
                 })
                 .collect();
@@ -3773,34 +3777,14 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         let candidates = self
             .replica_candidates(region, labels, stores, selector_state)
             .await?;
-        let cached_stores = self.store_cache.read().unwrap();
-        let idle = candidates
-            .into_iter()
-            .filter(|candidate| {
-                let Some(peer) = region
-                    .region
-                    .peers
-                    .iter()
-                    .find(|peer| peer.id == candidate.peer_id)
-                else {
-                    return false;
-                };
-                !candidate.is_leader
-                    && candidate.liveness != ReplicaLiveness::Unreachable
-                    && candidate.attempts == 0
-                    && !selector_state.is_server_busy(candidate.peer_id)
-                    && cached_stores
-                        .get(&peer.store_id)
-                        .is_some_and(|store| store.estimated_wait(Instant::now()) <= busy_threshold)
-            })
-            .collect::<Vec<_>>();
         let Some(selected) = (MixedReplicaSelection {
             read_type: ReplicaReadType::Follower,
             leader_only: false,
             prefer_leader: false,
             labels_requested: !labels.is_empty(),
+            busy_threshold,
         })
-        .choose(&idle) else {
+        .choose(&candidates) else {
             return Ok(None);
         };
         Ok(region
@@ -5944,6 +5928,8 @@ mod test {
                     liveness: ReplicaLiveness::Reachable,
                     attempts: 0,
                     data_is_not_ready: false,
+                    reported_busy: false,
+                    estimated_wait: Duration::ZERO,
                 },
                 ReplicaCandidate {
                     peer_id: 12,
@@ -5954,6 +5940,8 @@ mod test {
                     liveness: ReplicaLiveness::Unreachable,
                     attempts: 1,
                     data_is_not_ready: false,
+                    reported_busy: false,
+                    estimated_wait: Duration::ZERO,
                 },
             ]
         );
@@ -5971,6 +5959,7 @@ mod test {
                     leader_only: false,
                     prefer_leader: false,
                     labels_requested: false,
+                    busy_threshold: Duration::ZERO,
                 },
             )
             .await
@@ -5989,6 +5978,35 @@ mod test {
             .await
             .unwrap();
         assert_eq!(idle, Some(follower.clone()));
+
+        let mut retryable_follower = ReplicaSelectorState::default();
+        retryable_follower.record_attempt(follower.id);
+        retryable_follower.mark_data_is_not_ready(follower.id);
+        let retried_idle = cache
+            .select_idle_replica(
+                &region,
+                &[],
+                &[],
+                &retryable_follower,
+                Duration::from_millis(500),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retried_idle, Some(follower.clone()));
+        retryable_follower.record_attempt(follower.id);
+        assert_eq!(
+            cache
+                .select_idle_replica(
+                    &region,
+                    &[],
+                    &[],
+                    &retryable_follower,
+                    Duration::from_millis(500)
+                )
+                .await
+                .unwrap(),
+            None
+        );
 
         assert!(cache.set_store_liveness(2, StoreLiveness::Unknown));
         let unknown_idle = cache
@@ -6029,6 +6047,7 @@ mod test {
                     leader_only: false,
                     prefer_leader: false,
                     labels_requested: false,
+                    busy_threshold: Duration::ZERO,
                 },
             )
             .await

@@ -299,10 +299,18 @@ fn replica_selection_marks_stale_candidate_store_for_delayed_reload() {
         mode: ReplicaReadMode::Mixed,
         ..ReadPolicy::default()
     };
-    let mut first_selector = cache.request_selector(region, policy).unwrap();
+    let mut first_selector = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::PreferLeader,
+                ..policy
+            },
+        )
+        .unwrap();
     let RequestSelection::Attempt(leader) = cache.select_request(&mut first_selector).unwrap()
     else {
-        panic!("the first mixed read must select the leader")
+        panic!("prefer-leader must select the healthy leader")
     };
     assert!(leader.cached_leader);
     cache

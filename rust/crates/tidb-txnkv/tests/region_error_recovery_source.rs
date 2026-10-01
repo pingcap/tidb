@@ -405,11 +405,15 @@ fn stale_data_not_ready_is_an_exact_single_use_selector_transition() {
             tidb_txnkv::region::ReadPolicy {
                 mode: ReplicaReadMode::Mixed,
                 stale_read: true,
-                selection_seed: 1,
                 ..tidb_txnkv::region::ReadPolicy::default()
             },
         )
         .unwrap();
+    selector.set_health_policy(tidb_txnkv::region::ReplicaHealthPolicy {
+        try_leader: true,
+        stores: vec![102],
+        ..tidb_txnkv::region::ReplicaHealthPolicy::default()
+    });
     let tidb_txnkv::region::RequestSelection::Attempt(stale) =
         cache.select_request(&mut selector).unwrap()
     else {

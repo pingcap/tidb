@@ -16,6 +16,8 @@ use std::time::Duration;
 
 use super::store_health::{HealthInstant, StoreHealthDetail, StoreLoad};
 use crate::StoreLabel;
+use tikv_client::kv::ReplicaReadType;
+use tikv_client::tikv::{MixedReplicaSelection, ReplicaCandidate, ReplicaLiveness};
 
 /// Exact five-bit store-selection score from pinned client-go.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -37,10 +39,6 @@ impl StoreSelectionScore {
     #[must_use]
     pub const fn bits(self) -> u8 {
         self.0
-    }
-
-    fn insert(&mut self, flag: Self) {
-        self.0 |= flag.0;
     }
 }
 
@@ -74,6 +72,8 @@ pub struct ReplicaHealthFacts<'a> {
     pub is_learner: bool,
     /// Number of request-local attempts.
     pub attempts: u8,
+    /// One replica-read retry is allowed after DataIsNotReady.
+    pub data_is_not_ready: bool,
     /// Whether this request observed `ServerIsBusy` from the peer.
     pub reported_busy: bool,
     /// Store-owned health detail.
@@ -83,87 +83,73 @@ pub struct ReplicaHealthFacts<'a> {
 }
 
 impl ReplicaHealthPolicy {
-    /// Selects the highest-scoring candidate with deterministic seeded ties.
-    ///
-    /// The returned index refers to the immutable route snapshot supplied by
-    /// RegionCache. An empty result under a positive busy threshold means the
-    /// caller must clear that request-owned threshold and retry the leader
-    /// without invalidating the region.
+    /// Chooses among the highest-scored eligible replicas with client-go's
+    /// per-selection random tie break.
     #[must_use]
-    pub fn select(
-        &self,
-        replicas: &[ReplicaHealthFacts<'_>],
-        now: HealthInstant,
-        selection_seed: u32,
-    ) -> Option<usize> {
-        let mut best_score = None;
-        let mut best = Vec::new();
-        for (index, facts) in replicas.iter().copied().enumerate() {
-            if !self.is_candidate(facts, now) {
-                continue;
-            }
-            let score = self.score(facts);
-            match best_score {
-                None => {
-                    best_score = Some(score);
-                    best.push(index);
-                }
-                Some(current) if score > current => {
-                    best_score = Some(score);
-                    best.clear();
-                    best.push(index);
-                }
-                Some(current) if score == current => best.push(index),
-                Some(_) => {}
-            }
-        }
-        (!best.is_empty()).then(|| best[selection_seed as usize % best.len()])
+    pub fn select(&self, replicas: &[ReplicaHealthFacts<'_>], now: HealthInstant) -> Option<usize> {
+        let candidates: Vec<_> = replicas
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, facts)| self.candidate(index as u64, facts, now))
+            .collect();
+        self.selection()
+            .choose(&candidates)
+            .map(|candidate| candidate.peer_id as usize)
     }
 
-    /// Whether the candidate survives busy/slow compatibility filters.
+    /// Delegates candidate eligibility to the native client owner.
     #[must_use]
     pub fn is_candidate(&self, facts: ReplicaHealthFacts<'_>, now: HealthInstant) -> bool {
-        if !self.busy_threshold.is_zero()
-            && (facts.load.estimated_wait(now) > self.busy_threshold
-                || facts.reported_busy
-                || facts.is_leader)
-        {
-            return false;
-        }
-        !(self.prefer_leader && facts.health.is_slow() && !facts.is_leader)
+        self.selection()
+            .is_candidate(&self.candidate(0, facts, now))
     }
 
-    /// Calculates the exact ordered five-bit source score.
+    /// Delegates the five-bit score to the native client owner.
     #[must_use]
     pub fn score(&self, facts: ReplicaHealthFacts<'_>) -> StoreSelectionScore {
-        let mut score = StoreSelectionScore::default();
-        if self.matches_store(facts.store_id) && self.matches_labels(facts.labels) {
-            score.insert(StoreSelectionScore::LABEL_MATCHES);
-        }
-        if facts.is_leader {
-            if self.prefer_leader {
-                score.insert(if facts.health.is_slow() {
-                    StoreSelectionScore::NORMAL_PEER
-                } else {
-                    StoreSelectionScore::PREFER_LEADER
-                });
+        StoreSelectionScore(self.selection().calculate_score(&self.candidate(
+            0,
+            facts,
+            Duration::ZERO,
+        )))
+    }
+
+    pub(crate) fn selection(&self) -> MixedReplicaSelection {
+        MixedReplicaSelection {
+            read_type: if self.learner_only {
+                ReplicaReadType::Learner
             } else if self.try_leader {
-                score.insert(if self.labels.is_empty() {
-                    StoreSelectionScore::NORMAL_PEER
-                } else {
-                    StoreSelectionScore::PREFER_LEADER
-                });
-            }
-        } else if !self.learner_only || facts.is_learner {
-            score.insert(StoreSelectionScore::NORMAL_PEER);
+                ReplicaReadType::Mixed
+            } else {
+                ReplicaReadType::Follower
+            },
+            leader_only: false,
+            prefer_leader: self.prefer_leader,
+            labels_requested: !self.labels.is_empty(),
+            busy_threshold: self.busy_threshold,
         }
-        if !facts.health.is_slow() {
-            score.insert(StoreSelectionScore::NOT_SLOW);
+    }
+
+    pub(crate) fn candidate(
+        &self,
+        peer_id: u64,
+        facts: ReplicaHealthFacts<'_>,
+        now: HealthInstant,
+    ) -> ReplicaCandidate {
+        ReplicaCandidate {
+            peer_id,
+            is_leader: facts.is_leader,
+            is_learner: facts.is_learner,
+            label_matches: self.matches_store(facts.store_id) && self.matches_labels(facts.labels),
+            is_slow: facts.health.is_slow(),
+            // Cache metadata validation has already excluded unreachable peers.
+            liveness: ReplicaLiveness::Reachable,
+            attempts: facts.attempts,
+            data_is_not_ready: facts.data_is_not_ready,
+            reported_busy: facts.reported_busy,
+            estimated_wait: facts.load.estimated_wait(now),
         }
-        if facts.attempts == 0 {
-            score.insert(StoreSelectionScore::NOT_ATTEMPTED);
-        }
-        score
     }
 
     fn matches_store(&self, store_id: u64) -> bool {

@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use tidb_txnkv::region::{
     LeaderRequest, Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader,
-    RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, Store,
-    StoreLiveness, MAX_REPLICA_ATTEMPTS,
+    RegionLocation, RegionRouteError, RegionVerId, ReplicaHealthPolicy, ReplicaReadMode,
+    RequestSelection, Store, StoreLiveness, MAX_REPLICA_ATTEMPTS,
 };
 
 struct Loader(Option<RegionLocation>);
@@ -165,14 +165,19 @@ fn follower_policy_visits_nonleaders_before_leader_with_replica_flags() {
         .request_selector(region, policy(ReplicaReadMode::Follower))
         .unwrap();
 
-    for (peer_id, role) in [
-        (12, PeerRole::Voter),
-        (13, PeerRole::Voter),
-        (14, PeerRole::Learner),
-    ] {
+    let mut visited = std::collections::BTreeSet::new();
+    for _ in 0..3 {
         let request = select(&mut cache, &mut selector);
-        assert_eq!(request.attempt.peer_id, peer_id);
-        assert_eq!(request.role, role);
+        assert!([12, 13, 14].contains(&request.attempt.peer_id));
+        assert!(visited.insert(request.attempt.peer_id));
+        assert_eq!(
+            request.role,
+            if request.attempt.peer_id == 14 {
+                PeerRole::Learner
+            } else {
+                PeerRole::Voter
+            }
+        );
         assert!(request.replica_read);
         assert!(!request.stale_read);
         complete(&mut selector, &request);
@@ -183,18 +188,6 @@ fn follower_policy_visits_nonleaders_before_leader_with_replica_flags() {
     assert!(!leader.replica_read);
     assert!(!leader.stale_read);
 
-    let mut rotated = cache
-        .request_selector(
-            region,
-            ReadPolicy {
-                mode: ReplicaReadMode::Follower,
-                selection_seed: 1,
-                ..ReadPolicy::default()
-            },
-        )
-        .unwrap();
-    assert_eq!(select(&mut cache, &mut rotated).attempt.peer_id, 13);
-
     complete(&mut selector, &leader);
     assert_eq!(
         cache.select_request(&mut selector).unwrap(),
@@ -203,31 +196,25 @@ fn follower_policy_visits_nonleaders_before_leader_with_replica_flags() {
 }
 
 #[test]
-fn mixed_policy_treats_leader_and_replicas_as_equal_seeded_candidates() {
+fn mixed_policy_treats_leader_and_replicas_as_equal_candidates() {
     let mut cache = cache();
     let region = location().region;
-    let mut leader_first = cache
+    let mut selector = cache
         .request_selector(region, policy(ReplicaReadMode::Mixed))
         .unwrap();
-    let leader = select(&mut cache, &mut leader_first);
-    assert_eq!(leader.attempt.peer_id, 11);
-    assert!(!leader.replica_read);
-    assert!(!leader.stale_read);
-
-    let mut follower_first = cache
-        .request_selector(
-            region,
-            ReadPolicy {
-                mode: ReplicaReadMode::Mixed,
-                selection_seed: 1,
-                ..ReadPolicy::default()
-            },
-        )
-        .unwrap();
-    let follower = select(&mut cache, &mut follower_first);
-    assert_eq!(follower.attempt.peer_id, 12);
-    assert!(follower.replica_read);
-    assert!(!follower.stale_read);
+    let mut visited = std::collections::BTreeSet::new();
+    for _ in 0..4 {
+        let request = select(&mut cache, &mut selector);
+        assert!([11, 12, 13, 14].contains(&request.attempt.peer_id));
+        assert!(visited.insert(request.attempt.peer_id));
+        assert_eq!(request.replica_read, request.attempt.peer_id != 11);
+        assert!(!request.stale_read);
+        complete(&mut selector, &request);
+    }
+    assert_eq!(
+        cache.select_request(&mut selector).unwrap(),
+        RequestSelection::ReloadRegion { region }
+    );
 }
 
 #[test]
@@ -239,7 +226,6 @@ fn prefer_leader_falls_back_to_replica_after_leader_rejection() {
             region,
             ReadPolicy {
                 mode: ReplicaReadMode::PreferLeader,
-                selection_seed: 2,
                 ..ReadPolicy::default()
             },
         )
@@ -252,7 +238,7 @@ fn prefer_leader_falls_back_to_replica_after_leader_rejection() {
     selector.reject_peer(leader.attempt.peer_id);
 
     let fallback = select(&mut cache, &mut selector);
-    assert_eq!(fallback.attempt.peer_id, 14);
+    assert!([12, 13, 14].contains(&fallback.attempt.peer_id));
     assert!(fallback.replica_read);
     assert!(!fallback.stale_read);
 }
@@ -273,9 +259,9 @@ fn learner_policy_prefers_learner_then_falls_back_to_voter() {
     selector.reject_peer(learner.attempt.peer_id);
 
     let fallback = select(&mut cache, &mut selector);
-    assert_eq!(fallback.attempt.peer_id, 11);
-    assert!(fallback.cached_leader);
-    assert!(!fallback.replica_read);
+    assert!([11, 12, 13].contains(&fallback.attempt.peer_id));
+    assert_eq!(fallback.cached_leader, fallback.attempt.peer_id == 11);
+    assert_eq!(fallback.replica_read, fallback.attempt.peer_id != 11);
 }
 
 #[test]
@@ -288,14 +274,19 @@ fn stale_policy_marks_cached_leader_then_uses_ordinary_replica_reads() {
             ReadPolicy {
                 mode: ReplicaReadMode::Mixed,
                 stale_read: true,
-                selection_seed: 1,
                 ..ReadPolicy::default()
             },
         )
         .unwrap();
+    // Prefer followers for the initial stale read without prescribing a tied peer.
+    selector.set_health_policy(ReplicaHealthPolicy {
+        try_leader: true,
+        stores: vec![102, 103, 104],
+        ..ReplicaHealthPolicy::default()
+    });
 
     let stale = select(&mut cache, &mut selector);
-    assert_eq!(stale.attempt.peer_id, 12);
+    assert!([12, 13, 14].contains(&stale.attempt.peer_id));
     assert!(!stale.replica_read);
     assert!(stale.stale_read);
     complete(&mut selector, &stale);
@@ -325,14 +316,19 @@ fn data_is_not_ready_allows_one_deferred_retry_after_unattempted_peers() {
             ReadPolicy {
                 mode: ReplicaReadMode::Mixed,
                 stale_read: true,
-                selection_seed: 1,
                 ..ReadPolicy::default()
             },
         )
         .unwrap();
+    // Prefer followers for the initial stale read without prescribing a tied peer.
+    selector.set_health_policy(ReplicaHealthPolicy {
+        try_leader: true,
+        stores: vec![102, 103, 104],
+        ..ReplicaHealthPolicy::default()
+    });
 
     let stale = select(&mut cache, &mut selector);
-    assert_eq!(stale.attempt.peer_id, 12);
+    assert!([12, 13, 14].contains(&stale.attempt.peer_id));
     complete(&mut selector, &stale);
     assert!(selector.record_data_not_ready(&stale.attempt));
     assert!(!selector.record_data_not_ready(&stale.attempt));
@@ -343,11 +339,11 @@ fn data_is_not_ready_allows_one_deferred_retry_after_unattempted_peers() {
 
     for _ in 0..2 {
         let unattempted = select(&mut cache, &mut selector);
-        assert_ne!(unattempted.attempt.peer_id, 12);
+        assert_ne!(unattempted.attempt.peer_id, stale.attempt.peer_id);
         complete(&mut selector, &unattempted);
     }
     let retry = select(&mut cache, &mut selector);
-    assert_eq!(retry.attempt.peer_id, 12);
+    assert_eq!(retry.attempt.peer_id, stale.attempt.peer_id);
     assert!(retry.replica_read);
     assert!(!retry.stale_read);
 }
@@ -360,7 +356,7 @@ fn unreachable_replica_is_excluded_from_a_fresh_request_selector() {
         .request_selector(region, policy(ReplicaReadMode::Follower))
         .unwrap();
     let failed = select(&mut cache, &mut first);
-    assert_eq!(failed.attempt.peer_id, 12);
+    assert!([12, 13, 14].contains(&failed.attempt.peer_id));
     complete(&mut first, &failed);
     cache
         .on_send_failure(&failed.attempt, StoreLiveness::Unreachable)
@@ -370,7 +366,7 @@ fn unreachable_replica_is_excluded_from_a_fresh_request_selector() {
         .request_selector(region, policy(ReplicaReadMode::Follower))
         .unwrap();
     let selected = select(&mut cache, &mut later);
-    assert_eq!(selected.attempt.peer_id, 13);
+    assert!([12, 13, 14].contains(&selected.attempt.peer_id));
     assert_ne!(selected.attempt.store_id, failed.attempt.store_id);
     assert!(selected.replica_read);
 }

@@ -41,6 +41,7 @@ fn facts<'a>(
         is_leader,
         is_learner,
         attempts,
+        data_is_not_ready: false,
         reported_busy: false,
         health: StoreHealthDetail {
             client_side_slow_score: if slow { 80 } else { 1 },
@@ -274,6 +275,7 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
         is_leader: index == 0,
         is_learner: false,
         attempts: 0,
+        data_is_not_ready: false,
         reported_busy: busy,
         health: StoreHealthDetail {
             client_side_slow_score: 1,
@@ -290,7 +292,7 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
         make_facts(1, false, &loads),
         make_facts(2, false, &loads),
     ];
-    assert_eq!(policy.select(&first, now, 0), Some(1));
+    assert!(matches!(policy.select(&first, now), Some(1 | 2)));
 
     // Source case 2: a 500 ms leader estimate and 800 ms first-follower
     // estimate rotate to the other follower without backoff.
@@ -301,7 +303,7 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
         make_facts(1, true, &loads),
         make_facts(2, false, &loads),
     ];
-    assert_eq!(policy.select(&second, now, 0), Some(2));
+    assert_eq!(policy.select(&second, now), Some(2));
 
     // Source case 3: after the final 150 ms estimate every replica is busy.
     // Returning None is the typed no-idle result; RegionCache remains valid.
@@ -311,7 +313,7 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
         make_facts(1, true, &loads),
         make_facts(2, true, &loads),
     ];
-    assert_eq!(policy.select(&all_busy, now, 0), None);
+    assert_eq!(policy.select(&all_busy, now), None);
 
     // Source cases 4 and 5 vary leader changes/errors, but retain the same
     // invariant: no-idle is not region exhaustion, and clearing the threshold
@@ -324,7 +326,7 @@ fn five_idle_replica_source_cases_preserve_no_invalidation_fallback() {
         make_facts(1, false, &loads),
         make_facts(2, false, &loads),
     ];
-    assert_eq!(policy.select(&fresh_request, later, 0), Some(2));
+    assert_eq!(policy.select(&fresh_request, later), Some(2));
 }
 
 #[test]
@@ -402,4 +404,21 @@ fn prefer_leader_filters_slow_followers_but_not_slow_leader() {
     };
     assert!(!policy.is_candidate(facts(&[], false, false, 0, true), Duration::ZERO));
     assert!(policy.is_candidate(facts(&[], true, false, 0, true), Duration::ZERO));
+}
+
+#[test]
+fn shared_candidate_owner_applies_attempt_budget_to_idle_retries() {
+    let policy = ReplicaHealthPolicy {
+        busy_threshold: Duration::from_millis(50),
+        ..Default::default()
+    };
+    let mut follower = facts(&[], false, false, 1, false);
+    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
+    follower.data_is_not_ready = true;
+    assert_eq!(policy.select(&[follower], Duration::ZERO), Some(0));
+    follower.reported_busy = true;
+    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
+    follower.reported_busy = false;
+    follower.attempts = 2;
+    assert_eq!(policy.select(&[follower], Duration::ZERO), None);
 }

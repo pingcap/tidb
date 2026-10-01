@@ -984,6 +984,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                                 leader_only: false,
                                 prefer_leader: false,
                                 labels_requested: !config.labels.is_empty(),
+                                busy_threshold: Duration::ZERO,
                             },
                         )
                         .await?
@@ -1103,6 +1104,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                                 leader_only: false,
                                 prefer_leader: false,
                                 labels_requested: !config.labels.is_empty(),
+                                busy_threshold: Duration::ZERO,
                             },
                         )
                         .await?
@@ -1152,6 +1154,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
                     leader_only: config.leader_only,
                     prefer_leader: config.effective_prefer_leader(),
                     labels_requested: !config.labels.is_empty(),
+                    busy_threshold: Duration::ZERO,
                 },
             )
             .await?

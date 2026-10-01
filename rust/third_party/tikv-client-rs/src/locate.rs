@@ -379,22 +379,26 @@ const SCORE_NOT_SLOW: u8 = 1 << 4;
 /// resolution supplies these facts; keeping it value-based lets selection stay
 /// deterministic and independent from cache locks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ReplicaLiveness {
+#[doc(hidden)]
+pub enum ReplicaLiveness {
     Reachable,
     Unreachable,
     Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ReplicaCandidate {
-    pub(crate) peer_id: u64,
-    pub(crate) is_leader: bool,
-    pub(crate) is_learner: bool,
-    pub(crate) label_matches: bool,
-    pub(crate) is_slow: bool,
-    pub(crate) liveness: ReplicaLiveness,
-    pub(crate) attempts: u8,
-    pub(crate) data_is_not_ready: bool,
+#[doc(hidden)]
+pub struct ReplicaCandidate {
+    pub peer_id: u64,
+    pub is_leader: bool,
+    pub is_learner: bool,
+    pub label_matches: bool,
+    pub is_slow: bool,
+    pub liveness: ReplicaLiveness,
+    pub attempts: u8,
+    pub data_is_not_ready: bool,
+    pub reported_busy: bool,
+    pub estimated_wait: Duration,
 }
 
 /// Per-request state kept by client-go's `replicaSelector`. It is distinct
@@ -663,11 +667,13 @@ impl ReplicaSelectorState {
 
 /// Pure source scoring policy for follower/mixed/prefer-leader reads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct MixedReplicaSelection {
-    pub(crate) read_type: ReplicaReadType,
-    pub(crate) leader_only: bool,
-    pub(crate) prefer_leader: bool,
-    pub(crate) labels_requested: bool,
+#[doc(hidden)]
+pub struct MixedReplicaSelection {
+    pub read_type: ReplicaReadType,
+    pub leader_only: bool,
+    pub prefer_leader: bool,
+    pub labels_requested: bool,
+    pub busy_threshold: Duration,
 }
 
 impl MixedReplicaSelection {
@@ -697,12 +703,18 @@ impl MixedReplicaSelection {
 
     /// Source `ReplicaSelectMixedStrategy.next` tie behavior. The source
     /// deliberately randomizes only candidates with the same highest score.
-    pub(crate) fn choose(self, replicas: &[ReplicaCandidate]) -> Option<ReplicaCandidate> {
+    pub fn choose(self, replicas: &[ReplicaCandidate]) -> Option<ReplicaCandidate> {
         let (_, tied) = self.highest_scored(replicas);
         tied.choose(&mut rand::thread_rng()).copied().copied()
     }
 
     fn score(self, replica: &ReplicaCandidate) -> Option<u8> {
+        self.is_candidate(replica)
+            .then(|| self.calculate_score(replica))
+    }
+
+    /// Source candidate eligibility, including the one DataIsNotReady retry.
+    pub fn is_candidate(self, replica: &ReplicaCandidate) -> bool {
         let max_attempts = if replica.data_is_not_ready && !replica.is_leader {
             2
         } else {
@@ -712,13 +724,25 @@ impl MixedReplicaSelection {
             || replica.attempts >= max_attempts
             || (self.leader_only && !replica.is_leader)
         {
-            return None;
+            return false;
         }
         // Source's prefer-leader compatibility rule excludes slow followers.
         if self.prefer_leader && !replica.is_leader && replica.is_slow {
-            return None;
+            return false;
         }
 
+        if !self.busy_threshold.is_zero()
+            && (replica.is_leader
+                || replica.reported_busy
+                || replica.estimated_wait > self.busy_threshold)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Source five-bit score, independently of candidate eligibility.
+    pub fn calculate_score(self, replica: &ReplicaCandidate) -> u8 {
         let mut score = 0;
         if replica.label_matches {
             score |= SCORE_LABEL_MATCHES;
@@ -749,7 +773,7 @@ impl MixedReplicaSelection {
         if replica.attempts == 0 {
             score |= SCORE_NOT_ATTEMPTED;
         }
-        Some(score)
+        score
     }
 }
 
@@ -1021,6 +1045,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let local_follower = ReplicaCandidate {
             peer_id: 2,
@@ -1033,6 +1059,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         let candidates = [leader, local_follower];
         let (_, selected) = selection.highest_scored(&candidates);
@@ -1058,6 +1085,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let failed = ReplicaCandidate {
             peer_id: 2,
@@ -1075,6 +1104,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(
             selection.choose(&[leader, failed, fallback]),
@@ -1094,6 +1124,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 1,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let follower = ReplicaCandidate {
             peer_id: 2,
@@ -1106,6 +1138,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[leader, follower]), Some(follower));
     }
@@ -1165,6 +1198,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let learner = ReplicaCandidate {
             peer_id: 2,
@@ -1176,6 +1211,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[voter, learner]), Some(learner));
     }
@@ -1192,6 +1228,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let follower = ReplicaCandidate {
             peer_id: 2,
@@ -1203,6 +1241,7 @@ mod tests {
             leader_only: false,
             prefer_leader: true,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[leader, follower]), Some(leader));
 
@@ -1240,6 +1279,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let idle_follower = ReplicaCandidate {
             peer_id: 2,
@@ -1252,6 +1293,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(
             selection.choose(&[busy_leader, idle_follower]),
@@ -1281,6 +1323,8 @@ mod tests {
             liveness: ReplicaLiveness::Unreachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let leader = ReplicaCandidate {
             peer_id: 2,
@@ -1294,6 +1338,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[down, leader]), Some(leader));
     }
@@ -1310,6 +1355,8 @@ mod tests {
             liveness: ReplicaLiveness::Unreachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let local_follower = ReplicaCandidate {
             peer_id: 2,
@@ -1323,6 +1370,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(
             selection.choose(&[leader, local_follower]),
@@ -1347,12 +1395,15 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let selection = MixedReplicaSelection {
             read_type: ReplicaReadType::Mixed,
             leader_only: false,
             prefer_leader: false,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[follower]), Some(follower));
     }
@@ -1396,6 +1447,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let matching_follower = ReplicaCandidate {
             peer_id: 2,
@@ -1413,6 +1466,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         let candidates = [leader, matching_follower, attempted_match];
         let (score, selected) = selection.highest_scored(&candidates);
@@ -1455,6 +1509,7 @@ mod tests {
                 leader_only: matches!(read_type, ReplicaReadType::Leader),
                 prefer_leader: false,
                 labels_requested: false,
+                busy_threshold: Duration::ZERO,
             };
             let leader = ReplicaCandidate {
                 peer_id: 1,
@@ -1465,6 +1520,8 @@ mod tests {
                 liveness: ReplicaLiveness::Reachable,
                 attempts: 0,
                 data_is_not_ready: false,
+                reported_busy: false,
+                estimated_wait: Duration::ZERO,
             };
             assert!(selection.choose(&[leader]).is_some());
         }
@@ -1485,12 +1542,15 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: state.attempts(2),
             data_is_not_ready: state.data_is_not_ready(2),
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let selection = MixedReplicaSelection {
             read_type: ReplicaReadType::Follower,
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[retryable]), Some(retryable));
         state.record_attempt(2);
@@ -1543,6 +1603,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let unknown = ReplicaCandidate {
             peer_id: 2,
@@ -1561,6 +1623,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         let candidates = [reachable, unknown, unreachable];
         let (_, selected) = selection.highest_scored(&candidates);
@@ -1579,12 +1642,15 @@ mod tests {
             liveness: ReplicaLiveness::Unknown,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let selection = MixedReplicaSelection {
             read_type: ReplicaReadType::Follower,
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[unknown]), Some(unknown));
         assert_eq!(
@@ -1639,6 +1705,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let failed = ReplicaCandidate {
             peer_id: 2,
@@ -1656,6 +1724,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[leader, failed, next]), Some(next));
     }
@@ -1683,6 +1752,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let follower = ReplicaCandidate {
             peer_id: 2,
@@ -1698,6 +1769,7 @@ mod tests {
                 leader_only: false,
                 prefer_leader,
                 labels_requested: false,
+                busy_threshold: Duration::ZERO,
             };
             if prefer_leader {
                 assert_eq!(selection.choose(&[leader, follower]), Some(leader));
@@ -1722,6 +1794,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let leader = ReplicaCandidate {
             peer_id: 1,
@@ -1735,6 +1809,7 @@ mod tests {
             leader_only: false,
             prefer_leader: true,
             labels_requested: true,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(selection.choose(&[slow_follower, leader]), Some(leader));
     }
@@ -1776,6 +1851,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let learner = ReplicaCandidate {
             peer_id: 2,
@@ -1792,6 +1869,7 @@ mod tests {
             leader_only: false,
             prefer_leader: false,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(
             selection.choose(&[voter, learner, down_learner]),
@@ -1811,6 +1889,8 @@ mod tests {
             liveness: ReplicaLiveness::Reachable,
             attempts: 0,
             data_is_not_ready: false,
+            reported_busy: false,
+            estimated_wait: Duration::ZERO,
         };
         let healthy_follower = ReplicaCandidate {
             peer_id: 3,
@@ -1822,6 +1902,7 @@ mod tests {
             leader_only: false,
             prefer_leader: true,
             labels_requested: false,
+            busy_threshold: Duration::ZERO,
         };
         assert_eq!(
             selection.choose(&[slow_follower, healthy_follower]),

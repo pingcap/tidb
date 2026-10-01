@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The per-query transport seed: one query advances it exactly once, every
-//! logical task in that query shares the seed it was bound to, a region reload
-//! reuses it rather than taking a new one, and the first real unary response
-//! replaces it before any continuation is sent.
+//! Replica candidates are selected independently for every task and reload.
+//! Read-byte estimation and result caching retain their own observation state.
 
 #![allow(missing_docs)]
 
 use crate::direct_unary_client_fixture::*;
 
 #[test]
-fn fresh_queries_advance_the_transport_seed_once_each() {
+fn fresh_queries_select_eligible_replicas_when_dispatched() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
@@ -54,15 +52,19 @@ fn fresh_queries_advance_the_transport_seed_once_each() {
         .iter()
         .map(|call| call.address.clone())
         .collect();
-    assert_eq!(
-        addresses,
-        ["tikv-learner:20160", "tikv-follower:20160"],
-        "fresh query bindings must rotate before either response is pulled"
-    );
+    assert_eq!(addresses.len(), 2);
+    for address in addresses {
+        assert!([
+            "tikv-leader:20160",
+            "tikv-follower:20160",
+            "tikv-learner:20160"
+        ]
+        .contains(&address.as_str()));
+    }
 }
 
 #[test]
-fn logical_tasks_in_one_query_share_the_bound_seed() {
+fn logical_tasks_select_from_their_own_region_candidates() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
@@ -85,15 +87,16 @@ fn logical_tasks_in_one_query_share_the_bound_seed() {
         .iter()
         .map(|call| call.address.clone())
         .collect();
-    assert_eq!(
-        addresses,
-        ["left-follower:20160", "right-follower:20160"],
-        "all logical tasks in one query must use the same immutable seed"
-    );
+    assert_eq!(addresses.len(), 2);
+    for (address, prefix) in addresses.iter().zip(["left", "right"]) {
+        assert!(["leader", "follower", "learner"]
+            .iter()
+            .any(|role| address == &format!("{prefix}-{role}:20160")));
+    }
 }
 
 #[test]
-fn region_reload_reuses_the_bound_query_seed() {
+fn region_reload_selects_from_fresh_region_candidates() {
     let calls = Arc::new(RwLock::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.replica_read = ReplicaReadType::Mixed;
@@ -115,11 +118,12 @@ fn region_reload_reuses_the_bound_query_seed() {
         .iter()
         .map(|call| call.address.clone())
         .collect();
-    assert_eq!(
-        addresses,
-        ["old-follower:20160", "new-follower:20160"],
-        "a rebuilt selector must retain the response-bound seed"
-    );
+    assert_eq!(addresses.len(), 2);
+    for (address, prefix) in addresses.iter().zip(["old", "new"]) {
+        assert!(["leader", "follower", "learner"]
+            .iter()
+            .any(|role| address == &format!("{prefix}-{role}:20160")));
+    }
 }
 
 #[test]
