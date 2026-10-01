@@ -168,6 +168,14 @@ original cases and Rust ownership adapters. Native TSO now uses source default
 and recycles buffers. Dynamic concurrency/pacing, full request/error/options and
 router/PD parent ownership remain open. All 77 IDs retain their assignment.
 
+The complete `pkg/retry` prerequisite is implemented in native
+`2fd0ecebadf0e8274a2b10ebfed729b03284a52b`; see its
+[repair receipt](pd-retry-owner-repair.md). Default initialization uses source
+100-attempt/one-second ticker policy and membership probes share an absolute
+deadline. Exponential, fixed-interval, cancellation/error, context and reset
+semantics are covered across the complete package. Root per-RPC retries,
+configurable options, full discovery and close still require their owners.
+
 ## Activation and removal order
 
 

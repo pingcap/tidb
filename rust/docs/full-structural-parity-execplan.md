@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, W01 prerequisite) Implement complete pinned PD `pkg/retry`, default initialization and bounded membership probes. Both transport regressions fail before repair; original Go race/goleak, 95 focused PD cases, 1,470 library tests (two existing ignored), strict Clippy/all targets/formatting and artifact checks pass. Native master publishes 2fd0ece; exact TiDB sync, 10 bridge/26 PD tests (one existing ignored), affected all-target compilation, root lint and inventory checks pass. Actual hook and fresh locked server builds gate publication. See `parity/current-audit/pd-retry-owner-repair.md`.
 - [x] (2026-10-01, integration merge) Preserve incoming 107e8e2a5d while fixing its TopN candidate loss against current Go master; remove the older competing serial-spill lifecycle and reconnect the existing workers. Red regressions precede each correction; all 53 executor TopN cases pass. The eight-case session suite retains only two EXPLAIN estimate failures reproduced with unchanged HEAD. No sortexec package acceptance or register closure is claimed. Merge hook and fresh locked build still gate publication.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/batch` owner and replace native TSO collection/default admission/completion. Two source wire regressions and callback ordering fail before repair; all 78 focused PD cases and 1,453 native library tests pass (two existing ignored), with original Go race/goleak, strict Clippy/all-targets/formatting. Published native master as bcf74b7; exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked server builds gate TiDB publication; the final response records their results. See `parity/current-audit/pd-batch-owner-repair.md`.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/connectionctx` owner and native single-leader integration. Reproduce same-URL healthy-stream replacement before edits; preserve URL-keyed ownership, rejected candidates, cancellation and retained handles. Original Go race/goleak tests and 1,435 native tests pass (two pre-existing ignored). Native strict Clippy/all-targets/formatting, master publication as 4e3169e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked builds gate TiDB publication; see `parity/current-audit/pd-connectionctx-owner-repair.md` and the final publication response.
@@ -408,6 +409,14 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+The next PD prerequisite reveals first-error initialization and an ignored
+membership timeout. A retry policy alone cannot recover a stalled probe.
+Source exponential and fixed helpers also intentionally return different errors
+on cancellation and account time differently; their full shared owner replaces
+ad hoc initializer behavior while retaining explicit parent obligations.
+Self-review also fixes eager exponential timer construction and Tokio's short-
+interval catch-up tolerance; red regressions pin both source timing contracts.
+
 During batch publication, the integration remote advanced to 107e8e2a5d. Its
 TopN chunk truncation loses candidates: ascending LIMIT 1 on [3, 0, 1] returns
 3. Fresh Go master keeps complete chunks and trims the heap. Broader testing
@@ -524,6 +533,12 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): complete the pinned PD retry dependency and integrate its
+source default initialization policy with one absolute member-probe deadline.
+Reuse existing TraceContext, native errors and monotonic timers. Do not fold
+client-go's distinct KV retry budget into PD or claim the legacy per-RPC/root
+reconnect loop accepted before the entire discovery/root migration.
 
 Decision (2026-10-01): correct incoming TopN candidate loss before publishing
 the batch integration merge, and reconnect Go's post-spill worker transition.
@@ -694,6 +709,13 @@ Inventory coverage explicitly and implement package-sized owner corrections. Do 
 
 ## Outcomes & Retrospective
 
+
+Native 2fd0ece supplies the complete retry prerequisite and fixes initialization
+and membership timeout regressions. Original and native validation pass. TiDB synchronization, adapter tests,
+affected all-target compilation and root lint pass; publication follows the
+actual hook and separate fresh locked server build gates. The receipt covers
+every artifact and language adapter. W01 parent ownership and all 77 known open
+findings remain explicit; no benchmark result is inferred from retry tests.
 
 The complete batch leaf replaces native TSO's private drain loop and default
 outstanding-RPC policy. Source and native package tests, fail-before behavior
@@ -2026,3 +2048,11 @@ Implemented the complete W01 deadline leaf with native batch/retirement callers
 and the required cancellation adapter correction. Recorded native publication,
 TiDB synchronization and validation in the linked receipt. Preserved the open
 parent-package obligations and current 77-finding assignment.
+
+
+## Revision note — 2026-10-01 PD retry prerequisite
+
+
+Executed the next complete native dependency from the approved sequence, with
+source-pinned inventory, initialization/timeout red regressions, original tests
+and native publication. Parent discovery/TSO/root acceptance remains open.

@@ -26,6 +26,9 @@ enum Reply {
 struct PdServer {
     endpoint: String,
     leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
+    member_failures: Arc<AtomicUsize>,
+    member_requests: Arc<AtomicUsize>,
+    stall_members: Arc<std::sync::atomic::AtomicBool>,
     reply: Reply,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -89,6 +92,24 @@ impl tonic::server::UnaryService<GetMembersRequest> for PdServer {
     type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
 
     fn call(&mut self, _: tonic::Request<GetMembersRequest>) -> Self::Future {
+        self.member_requests.fetch_add(1, Ordering::SeqCst);
+        if self.stall_members.load(Ordering::SeqCst) {
+            return Box::pin(std::future::pending());
+        }
+        let mut remaining = self.member_failures.load(Ordering::SeqCst);
+        while remaining > 0 {
+            match self.member_failures.compare_exchange(
+                remaining,
+                remaining - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    return Box::pin(async { Err(tonic::Status::unavailable("PD is starting")) })
+                }
+                Err(actual) => remaining = actual,
+            }
+        }
         let member = Member {
             member_id: 1,
             client_urls: vec![self.endpoint.clone()],
@@ -192,6 +213,9 @@ impl Server {
         let service = PdServer {
             endpoint: endpoint.clone(),
             leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint])),
+            member_failures: Arc::new(AtomicUsize::new(0)),
+            member_requests: Arc::new(AtomicUsize::new(0)),
+            stall_members: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             reply,
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
@@ -697,4 +721,43 @@ async fn source_batch_completed_controller_reuses_its_buffer_without_old_senders
     assert_eq!(batch.get_collected_requests().as_ptr(), allocation);
     assert_eq!(batch.get_collected_request_count(), 0);
     assert!(pool.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn source_retry_initialization_recovers_from_a_failed_member_probe() {
+    let server = Server::start(Reply::Timestamp).await;
+    server.service.member_failures.store(1, Ordering::SeqCst);
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        crate::pd::RetryClient::connect(
+            &[server.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_millis(100),
+        ),
+    )
+    .await
+    .expect("initialization retries must remain bounded");
+    assert!(
+        result.is_ok(),
+        "Go retries initialization: {:?}",
+        result.err()
+    );
+    assert!(server.service.member_requests.load(Ordering::SeqCst) >= 2);
+}
+
+#[tokio::test]
+async fn source_retry_member_probe_honors_its_timeout() {
+    let server = Server::start(Reply::Timestamp).await;
+    server.service.stall_members.store(true, Ordering::SeqCst);
+    let result = tokio::time::timeout(Duration::from_millis(500), async {
+        Connection::new(Arc::new(SecurityManager::default()))
+            .connect_cluster(
+                &[server.service.endpoint.clone()],
+                Duration::from_millis(50),
+            )
+            .await
+    })
+    .await
+    .expect("GetMembers must honor the PD timeout");
+    assert!(result.is_err());
 }

@@ -1,3 +1,4 @@
+pub mod backoff;
 pub mod batch;
 mod client;
 mod cluster;

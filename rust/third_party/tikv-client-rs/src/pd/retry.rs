@@ -285,8 +285,25 @@ impl RetryClient<Cluster> {
         timeout: Duration,
     ) -> Result<RetryClient> {
         let connection = Connection::new(security_mgr);
+        // PD serviceDiscovery.initRetry uses the default MaxRetryTimes=100
+        // and a one-second ticker. Keep this policy in the shared retry owner.
+        let connected = std::sync::Mutex::new(None);
+        super::backoff::retry(
+            std::future::pending(),
+            100,
+            Duration::from_secs(1),
+            || async {
+                let cluster = connection.connect_cluster(endpoints, timeout).await?;
+                *connected.lock().unwrap() = Some(cluster);
+                Ok(())
+            },
+        )
+        .await?;
         let cluster = RwLock::new((
-            connection.connect_cluster(endpoints, timeout).await?,
+            connected
+                .into_inner()
+                .unwrap()
+                .expect("successful PD initialization"),
             Instant::now(),
         ));
         Ok(RetryClient {

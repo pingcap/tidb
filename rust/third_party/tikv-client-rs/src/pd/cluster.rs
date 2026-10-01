@@ -450,7 +450,28 @@ impl Connection {
     async fn connect(
         &self,
         addr: &str,
-        _timeout: Duration,
+        timeout: Duration,
+    ) -> Result<(
+        pdpb::pd_client::PdClient<Channel>,
+        keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+        pdpb::GetMembersResponse,
+    )> {
+        // Go's membership RPC context bounds dialing and the response. A
+        // stalled probe must return so the retry owner can make progress.
+        let deadline = tokio::time::Instant::now() + timeout;
+        tokio::time::timeout_at(deadline, self.connect_member(addr, deadline))
+            .await
+            .map_err(|_| {
+                Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                    "PD membership probe timed out",
+                ))
+            })?
+    }
+
+    async fn connect_member(
+        &self,
+        addr: &str,
+        deadline: tokio::time::Instant,
     ) -> Result<(
         pdpb::pd_client::PdClient<Channel>,
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
@@ -467,10 +488,9 @@ impl Connection {
                 keyspacepb::keyspace_client::KeyspaceClient::<Channel>::new,
             )
             .await?;
-        let resp: pdpb::GetMembersResponse = client
-            .get_members(pdpb::GetMembersRequest::default())
-            .await?
-            .into_inner();
+        let mut request = pdpb::GetMembersRequest::default().into_request();
+        request.set_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        let resp: pdpb::GetMembersResponse = client.get_members(request).await?.into_inner();
         if let Some(err) = resp
             .header
             .as_ref()

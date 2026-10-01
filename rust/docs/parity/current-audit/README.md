@@ -68,6 +68,13 @@ token ownership and buffer reuse. Native master is
 and public close/discovery/concurrency obligations remain open. This is another
 complete prerequisite, not closure of P06 or all 77 unresolved findings.
 
+The [PD retry-owner repair](pd-retry-owner-repair.md) implements the complete
+pinned retry package and migrates native default initialization through it,
+with bounded membership probes. Native master is `2fd0ecebadf0e8274a2b10ebfed729b03284a52b`.
+Both transport regressions fail before repair; original Go race/goleak, 95 PD
+cases and 1,470 native tests pass (two existing ignored). Full discovery/root/
+TSO lifecycle acceptance remains open; P06 and the 77-ID count are unchanged.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

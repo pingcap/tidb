@@ -1,0 +1,241 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/retry"
+  },
+  "native_baseline": "bcf74b7282b01372f93fb814ba601eb4c22b5d12",
+  "claim": "Complete pkg/retry implementation, artifact inventory and original-case validation, with native default PD initialization integration. No PD root, service discovery, opt or TSO parent acceptance.",
+  "package_artifacts": [
+    {
+      "path": "pkg/retry/backoff.go",
+      "sha256": "7e8933434ddf483e6a8777c22aebfdb2aa619e690e9bc49c8603ff0dfcc02c80",
+      "kind": "production",
+      "integration": "src/pd/backoff.rs: constructor normalization, checker replacement, exponential wait/budget, warning cadence/name/attempt, deferred reset, context metadata, source failpoint probe; contextual cancellation error supplied by a future using existing native ownership primitives."
+    },
+    {
+      "path": "pkg/retry/backoff_test.go",
+      "sha256": "0c40ec1d5bbd6acd4f577d2e6e35c6cc3c7f7b0972bbf4419f2c643b876ba1c6",
+      "kind": "original test/support",
+      "integration": "src/pd/backoff_tests.rs: original TestBackoffer and TestBackofferWithLog assertions, isolated logger adapter and paused-time tests; original race/goleak run uses unchanged source with scoped failpoint instrumentation."
+    },
+    {
+      "path": "pkg/retry/interval_retry.go",
+      "sha256": "4df997fea114ee60cfabd333c04f7bc58913c6c5fb05449de554643bb456bf86",
+      "kind": "production",
+      "integration": "src/pd/backoff.rs: Retry and WithConfig, phase-based ticker with skipped missed ticks, final failure wait, last-error cancellation and zero-attempt/invalid-interval behavior."
+    }
+  ],
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_tests": [
+      "TestBackoffer",
+      "TestBackofferWithLog"
+    ],
+    "test_harness": [
+      "TestMain"
+    ],
+    "failpoints": [
+      "backOffExecute"
+    ],
+    "native_failpoint_build": "Existing fail dependency, test/dev failpoints feature; production feature-off eval remains inactive."
+  },
+  "dependency_decisions": [
+    {
+      "owner": "context cancellation and deadline identity",
+      "native": "An owning context-done future yields the existing native Error unchanged. Backoffer returns that context error; interval retry preserves the last operation error. Operations still run before cancellation checks, and are not interrupted by this package. Dropping exec resets mutable state and releases all local timer/closure resources."
+    },
+    {
+      "owner": "context.WithValue, FromContext and WithBackoffer",
+      "native": "Reuse immutable type-keyed TraceContext and Arc<tokio::sync::Mutex<Backoffer>>. Optional absent context and nil backoffer map to None. Derivation preserves trace/other values and Arc identity without mutating the parent; no duplicate context implementation."
+    },
+    {
+      "owner": "time.Duration, Timer and Ticker",
+      "native": "Lazily initialize and reuse one pinned Tokio Sleep for exponential waits. Fixed retry uses one reusable Sleep and Go runtime ticker phase arithmetic without Tokio Interval's five-millisecond burst tolerance. Duration::ZERO total is unbounded; negative durations/counts have no unsigned representation. Saturating doubling prevents Rust overflow."
+    },
+    {
+      "owner": "runtime function names and logging",
+      "native": "Static typed Rust function name replaces Go runtime reflection; Rust closure/function-pointer names follow Rust type naming. Same warning text, fn-name/retry-time/error fields and cadence use existing log facade. Isolated test logger avoids process-global interference."
+    },
+    {
+      "owner": "errors.Trace and errors.WithStack",
+      "native": "Preserve owned native error variants and sources; no conversion to strings or invented universal retry error. Rust does not add Go stack wrappers."
+    },
+    {
+      "owner": "test support and goleak",
+      "native": "All five source support files inventoried; this package owns no worker, and timer/operation drop tests verify resource release. Original unchanged source runs under Go race/goleak with failpoint enable/disable. Linux execution is not claimed."
+    }
+  ],
+  "test_support": [
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "test support",
+      "integration": "Shared TestMain LeakOptions; retain Linux/non-Linux variants and all helpers; only LeakOptions used by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "test support",
+      "integration": "Shared TestMain LeakOptions; retain Linux/non-Linux variants and all helpers; only LeakOptions used by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "test support",
+      "integration": "Shared TestMain LeakOptions; retain Linux/non-Linux variants and all helpers; only LeakOptions used by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "test support",
+      "integration": "Shared TestMain LeakOptions; retain Linux/non-Linux variants and all helpers; only LeakOptions used by this package."
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "test support",
+      "integration": "Shared TestMain LeakOptions; retain Linux/non-Linux variants and all helpers; only LeakOptions used by this package."
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; required validation recorded in receipt. No whole module/build-tool acceptance."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; required validation recorded in receipt. No whole module/build-tool acceptance."
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; required validation recorded in receipt. No whole module/build-tool acceptance."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module/build/license input",
+      "integration": "Source provenance; required validation recorded in receipt. No whole module/build-tool acceptance."
+    }
+  ],
+  "referenced_caller_inputs": [
+    {
+      "path": "clients/router/client.go",
+      "sha256": "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "clients/tso/dispatcher_test.go",
+      "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "http/client.go",
+      "sha256": "0384ace37a36ffc3565f78bb0699797c655f26d6f368eab50887e92bf07c69b7",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "http/client_test.go",
+      "sha256": "0d2d022614e0e0eea4c9d991d8e05734eb42113d4ffb464cd19da71b74e7b40c",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "http/interface.go",
+      "sha256": "d69729c79133e07d9d161fea2e8011a6c335fb5061d1fdc525fcc735f84e14d5",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "http/request_info.go",
+      "sha256": "ebc30eb8d1e2824d5a563ce4bc39373324028e7a375fd4a0e3ec1e7a4f170a14",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "opt/option.go",
+      "sha256": "4799581c1573b9ec7dab1daab437146452e2ee3e1e33d26ece2d5e7727f272c1",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "kind": "parent input, not accepted",
+      "integration": "initRetry fixed ticker and membership RPC context establish native constructor retry/timeout integration. Complete discovery remains open."
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "kind": "parent input, not accepted",
+      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+    }
+  ],
+  "native_artifacts": [
+    "src/pd/backoff.rs",
+    "src/pd/backoff_tests.rs",
+    "src/pd/mod.rs",
+    "src/pd/retry.rs",
+    "src/pd/cluster.rs",
+    "src/pd/timestamp_tests.rs",
+    "doc/pd-retry-owner.md",
+    "doc/pd-retry-package.json",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "validation": {
+    "status": "original, final native and timer self-review gates passed; TiDB integration publication pending",
+    "red": "source_retry_ on unchanged native production: two regressions fail (first-error initialization and ignored GetMembers timeout), existing retry-config control passes; /private/tmp/pd-retry-red.log",
+    "original": "go test -mod=readonly -race ./pkg/retry -count=1: passed with isolated failpoint enable/disable and all source bytes restored",
+    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 95 passed",
+    "native_library": "cargo test --locked --lib -- --test-threads=1: 1470 passed, 2 existing ignored",
+    "static": "cargo clippy --locked --lib -- -D warnings; cargo check --locked --all-targets; cargo fmt --all --check; git diff --check: passed",
+    "unverified": [
+      "Linux execution",
+      "live PD/microservice topology",
+      "full parent package acceptance",
+      "sysbench/TPC-C/TPC-H/YCSB performance"
+    ],
+    "self_review_red": "Immediate success without a Tokio driver panicked before lazy timer allocation; a 1ms ticker with a 3ms operation completed three failed attempts at 3ms instead of Go phase 5ms before explicit missed-tick scheduling. Both fail before and pass after repair; /private/tmp/pd-retry-lazy-timer-red.log and /private/tmp/pd-retry-ticker-red.log."
+  }
+}
