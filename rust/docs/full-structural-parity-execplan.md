@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, concurrent integration) Preserve incoming 32666fbaf0 while removing its Go-absent TopN heap dump. A new virtual-row regression fails on its assumed column zero before removal; all 54 executor TopN cases, all targets, affected-file formatting and merged-tree lint pass. No whole sortexec acceptance is claimed. The merge still uses the actual hook and fresh locked build; see `parity/current-audit/pd-opt-owner-repair.md`.
 - [x] (2026-10-01, W01 prerequisite) Complete pinned PD `opt`, remove the scan-only options struct and migrate existing native/TiDB callers. All 38 functions, source artifacts, original tests, shared support and 22 caller files are inventoried. Original Go race/goleak, 103 focused PD cases, 1,478 native library tests (two existing ignored), strict Clippy/all targets/formatting pass. Native master publishes df0d4cc; exact TiDB sync, 23 driver/26 PD tests (one existing ignored), all-target compilation, root lint and inventory checks pass. Actual hook and fresh locked server build gate publication. See `parity/current-audit/pd-opt-owner-repair.md`. Parent discovery/root/TSO acceptance remains open.
 - [x] (2026-10-01, W01 prerequisite) Implement complete pinned PD `pkg/retry`, default initialization and bounded membership probes. Both transport regressions fail before repair; original Go race/goleak, 95 focused PD cases, 1,470 library tests (two existing ignored), strict Clippy/all targets/formatting and artifact checks pass. Native master publishes 2fd0ece; exact TiDB sync, 10 bridge/26 PD tests (one existing ignored), affected all-target compilation, root lint and inventory checks pass. Actual hook and fresh locked server builds gate publication. See `parity/current-audit/pd-retry-owner-repair.md`.
 - [x] (2026-10-01, integration merge) Preserve incoming 107e8e2a5d while fixing its TopN candidate loss against current Go master; remove the older competing serial-spill lifecycle and reconnect the existing workers. Red regressions precede each correction; all 53 executor TopN cases pass. The eight-case session suite retains only two EXPLAIN estimate failures reproduced with unchanged HEAD. No sortexec package acceptance or register closure is claimed. Merge hook and fresh locked build still gate publication.
@@ -409,6 +410,11 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 
 ## Surprises & Discoveries
 
+
+Incoming 32666fbaf0 adds a TopN column-zero debug read despite a removal title.
+The diff, not the title, reveals the behavior. Three virtual rows without payload
+columns reproduce a bounds panic; removing the Go-absent probe restores the
+existing generic spill path. Preserve history and retain the new regression.
 
 PD opt's production follower-handle setter sends a notification despite the
 original test's contrary comment. Typed atomics must also retain Go's one-CAS

@@ -141,3 +141,43 @@ No Linux, live PD/service topology or sysbench/TPC-C/TPC-H/YCSB benchmark was ru
 and no performance improvement is claimed. The two inherited configured-TopN
 tie-order failures recorded in the preceding retry receipt are outside this
 package; no assertion or SQL implementation is changed here.
+
+## Concurrent merge and invalid TopN diagnostic
+
+
+The initial integration commit `35af3b4971` passes its actual locked server hook
+(26.70s), but a refresh finds remote `32666fbaf0` ahead. Its title says it removes
+heap probes, while its actual diff adds an unconditional stderr dump of column
+zero interpreted as a string in `spill_parallel_worker_heap`. A normal merge
+preserves that commit's history; the invalid probe is removed before publication.
+
+The added `topn::spill_tests::parallel_spill_preserves_rows_without_payload_columns`
+regression supplies three valid virtual rows with no payload columns. It fails
+on the incoming code with a column-zero bounds panic, then passes after removing
+the seven-line diagnostic loop. The fixed path spills all three rows and removes
+its files on close. Fresh Go master `pkg/executor/sortexec/topn_spill.go::spillHeap`
+copies complete rows and contains no such column assumption or data dump.
+This restores the pre-merge production implementation and adds a regression;
+it does not accept the whole sortexec package or close W03.
+
+The first exact-filter invocation selected zero tests; it is not counted as
+validation. The corrected single-filter command selects one test and records the
+failure in `/private/tmp/pd-opt-merge-red.log`. From rust/:
+
+    cargo test --locked -p tidb-executor --lib parallel_spill_preserves_rows_without_payload_columns -- --test-threads=1
+    cargo test --locked -p tidb-executor --lib topn -- --test-threads=1
+    cargo check --locked -p tidb-executor --all-targets
+    rustfmt --check --edition 2021 crates/tidb-executor/src/topn.rs
+
+All **54 executor TopN cases** pass after removal, as do executor all-target
+compilation and the affected-file formatting check. Root `make lint` also passes
+on the merged code. Native/adapter sources are unchanged from their passing
+checks. The earlier configured-TopN tie-order failures concern another crate and
+remain explicitly open; this merge changes none of those assertions.
+
+The final merge uses the actual hook and fresh post-commit locked build:
+
+    TERM=xterm git -c core.hooksPath=hooks commit -m 'Merge integration and remove invalid TopN debug probe'
+    (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
+
+The publication response records both build outcomes and the final revision.

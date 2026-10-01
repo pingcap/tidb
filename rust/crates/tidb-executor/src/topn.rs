@@ -2358,6 +2358,38 @@ mod spill_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn parallel_spill_preserves_rows_without_payload_columns() {
+        // Go spillHeap copies complete rows without assuming a payload type
+        // or a column at index zero. Virtual rows still count as input rows.
+        let dir = scratch_temp_dir("topn-virtual-worker-spill");
+        let memory = StatementMemory::default().with_spill_storage(test_storage(&dir));
+        let mut heap = TopNChunkHeap::new();
+        heap.init(Vec::new(), Vec::new(), 4, 4, 3, 0);
+        let mut input = Chunk::new(&[], 4, 4);
+        input.set_num_virtual_rows(3);
+        heap.add_chunk(input, vec![Vec::new(); 3]);
+        let disk_tracker = tidb_util::disk::new_tracker(0, -1);
+        let mut runs = Vec::new();
+        spill_parallel_worker_heap(
+            &mut heap,
+            &[],
+            2,
+            &disk_tracker,
+            &memory,
+            memory.session_tracker(),
+            &mut 0,
+            &mut runs,
+        )
+        .unwrap();
+        assert!(heap.is_empty());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].num_rows(), 3);
+        runs[0].close();
+        assert!(spill_files_in(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Go's `fetchChunksFromChild` checks the shared spill flag after each
     /// dispatched chunk and `topNSpillHelper.spill` drains every worker heap
     /// before fetching more input. A trigger that arrives during the
