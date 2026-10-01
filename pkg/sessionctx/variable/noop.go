@@ -493,7 +493,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "profiling_history_size", Value: "15"},
 	{Scope: vardef.ScopeNone, Name: "have_symlink", Value: "YES"},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "storage_engine", Value: "InnoDB"},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "sql_log_off", Value: "0"},
 	// In MySQL, the default value of `explicit_defaults_for_timestamp` is `0`.
 	// But In TiDB, it's set to `1` to be consistent with TiDB timestamp behavior.
 	// See: https://github.com/pingcap/tidb/pull/6068 for details
