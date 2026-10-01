@@ -6675,12 +6675,12 @@ mod test {
         tokio::time::advance(Duration::from_secs(2)).await;
         assert!(matches!(
             breaker.execute(|| (false, Ok(()))),
-            Err(Error::CircuitBreakerOpen)
+            Err(Error::Pd(error)) if error.definition() == crate::pd::errs::ERR_CIRCUIT_BREAKER_OPEN
         ));
         tokio::time::advance(Duration::from_millis(500)).await;
         assert!(matches!(
             breaker.execute(|| (false, Ok(()))),
-            Err(Error::CircuitBreakerOpen)
+            Err(Error::Pd(error)) if error.definition() == crate::pd::errs::ERR_CIRCUIT_BREAKER_OPEN
         ));
         tokio::time::advance(Duration::from_millis(1_500)).await;
         // Both probes must succeed before the next request closes the breaker.

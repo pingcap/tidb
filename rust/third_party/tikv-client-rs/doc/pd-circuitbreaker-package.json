@@ -150,25 +150,25 @@
       "path": "errs/errno.go",
       "sha256": "32fc4ed013f6d810b7d19d3de4634a83faff48359b7e3fcb25ff76633e84fbe2",
       "kind": "dependency, not new package claim",
-      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+      "integration": "Shared pd::errs error definitions and accepted PD/resource-group metric lifecycle. Complete errs acceptance is recorded in pd-errors-package.json."
     },
     {
       "path": "errs/errs.go",
       "sha256": "e3af949b6f5db4c8751ed914d77c54d9665babe8b56efe288e83d72e3a64352a",
       "kind": "dependency, not new package claim",
-      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+      "integration": "Shared pd::errs error definitions and accepted PD/resource-group metric lifecycle. Complete errs acceptance is recorded in pd-errors-package.json."
     },
     {
       "path": "metrics/metrics.go",
       "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
       "kind": "dependency, not new package claim",
-      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+      "integration": "Shared pd::errs error definitions and accepted PD/resource-group metric lifecycle. Complete errs acceptance is recorded in pd-errors-package.json."
     },
     {
       "path": "resource_group/controller/metrics/metrics.go",
       "sha256": "f45e77d16ca904ac6dd34eb5e91cdf7d966f57d6d6c0efe141441b2e6e7053dd",
       "kind": "dependency, not new package claim",
-      "integration": "Existing Error::CircuitBreakerOpen category and already accepted shared PD/resource-group metric lifecycle. Parent errs package is not accepted."
+      "integration": "Shared pd::errs error definitions and accepted PD/resource-group metric lifecycle. Complete errs acceptance is recorded in pd-errors-package.json."
     }
   ],
   "dependency_decisions": [
@@ -194,7 +194,7 @@
     },
     {
       "owner": "errs/log/zap",
-      "native": "Reuse Error::CircuitBreakerOpen typed category and exact message. Native enum identity replaces Go normalized singleton/RFC error identity; whole errs package is not part of this claim. Standard log facade emits source transition levels/text and name/settings/rate without a second logger."
+      "native": "Shared pd::errs::ERR_CIRCUIT_BREAKER_OPEN preserves the source PD code and diagnostic. The later whole errs receipt corrects the former uncoded enum substitution. Standard log facade still owns transition diagnostics."
     }
   ],
   "source_callers": [

@@ -520,3 +520,9 @@ Rust needed shared callback identity with independent scalar state, signed timin
 arithmetic and reusable constructor options. The entire retry package and source
 support are revalidated before implementing grpcutil. Parent ownership and
 finding counts remain open and unchanged.
+
+
+The [complete PD error owner](pd-errors-owner-repair.md) supplies all source
+definitions, codes, cause chains and classification/logging helpers before the
+grpcutil migration. It removes the uncoded breaker enum and duplicate native TSO
+EOF/count diagnostics. Parent transport/lifecycle and all 77 findings remain open.

@@ -145,3 +145,12 @@ lifecycle and sysbench/TPC-C/TPC-H/YCSB benchmarks were not run. No performance
 improvement is claimed. The unrelated configured TopN stable-tie failure recorded
 in the previous metrics receipt remains open; no configured SQL code or assertion
 is changed by this dependency migration.
+
+
+## Later error dependency completion — 2026-10-01
+
+
+The original circuit-breaker receipt retained a native uncoded error adapter.
+The [whole errs package repair](pd-errors-owner-repair.md) removes that restriction
+and the Error::CircuitBreakerOpen enum, preserving the source code and diagnostic.
+The new runtime regression verifies this difference before and after replacement.

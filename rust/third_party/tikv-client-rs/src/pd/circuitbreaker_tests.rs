@@ -1,6 +1,7 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::*;
+use crate::Error;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -45,7 +46,7 @@ fn succeeds(cb: &CircuitBreaker) {
 fn fast_fail(cb: &CircuitBreaker) {
     assert!(matches!(
         cb.execute::<()>(|| panic!("open breaker must not invoke call")),
-        Err(Error::CircuitBreakerOpen)
+        Err(Error::Pd(error)) if error.definition() == crate::pd::errs::ERR_CIRCUIT_BREAKER_OPEN
     ));
 }
 fn open_expired() -> Arc<CircuitBreaker> {
@@ -243,7 +244,7 @@ fn source_boundaries_disabling_and_zero_probe_count() {
     );
     assert!(matches!(
         cb.on_request(|| end + Duration::from_nanos(1)),
-        Err(Error::CircuitBreakerOpen)
+        Err(Error::Pd(error)) if error.definition() == crate::pd::errs::ERR_CIRCUIT_BREAKER_OPEN
     ));
     let end = {
         let handle = state(&cb);
@@ -252,7 +253,7 @@ fn source_boundaries_disabling_and_zero_probe_count() {
     };
     assert!(matches!(
         cb.on_request(|| end),
-        Err(Error::CircuitBreakerOpen)
+        Err(Error::Pd(error)) if error.definition() == crate::pd::errs::ERR_CIRCUIT_BREAKER_OPEN
     ));
     cb.change_settings(|s| s.error_rate_threshold_pct = 0);
     succeeds(&cb);
@@ -485,4 +486,18 @@ fn signed_windows_and_cooldowns_preserve_source_duration_domain() {
     assert!(!s.expired(s.started));
     s.interval = i64::MIN;
     assert!(s.expired(s.started));
+}
+
+#[test]
+fn source_open_breaker_error_retains_pd_code() {
+    let cb = breaker(SETTINGS);
+    drive(&cb, MIN_COUNT, YES);
+    expire(&cb);
+    let error = cb
+        .execute::<()>(|| panic!("open breaker must not call RPC"))
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "[PD:client:ErrCircuitBreakerOpen]circuit breaker is open"
+    );
 }

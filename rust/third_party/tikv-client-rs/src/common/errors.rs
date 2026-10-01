@@ -124,10 +124,12 @@ pub enum Error {
     /// A logical TiKV store has reached the configured in-flight request limit.
     #[error(transparent)]
     TokenLimit(#[from] crate::error::TokenLimitError),
-    /// PD's circuit breaker is open and rejects this request
-    /// without contacting PD.
-    #[error("circuit breaker is open")]
-    CircuitBreakerOpen,
+    /// Shared PD error identity and its original cause.
+    #[error("{0}")]
+    Pd(#[from] crate::pd::errs::PdError),
+    /// A failed PD resource-group lookup with its independent diagnostic cause.
+    #[error("{0}")]
+    PdResourceGroup(#[from] crate::pd::errs::ClientGetResourceGroupError),
     #[error("There is no current_regions in the EpochNotMatch error")]
     NoCurrentRegions,
     #[error("The specified entry is not found in the region cache")]

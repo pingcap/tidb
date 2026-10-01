@@ -12,7 +12,7 @@ use tokio::time::Instant;
 
 use super::metrics;
 use crate::trace::TraceContext;
-use crate::{Error, Result};
+use crate::Result;
 
 /// Overload classification is independent of whether an operation failed.
 pub type Overloading = bool;
@@ -266,7 +266,7 @@ impl CircuitBreaker {
                 log::info!("circuit breaker cooldown period is over. Transitioning to half-open state to test the service: name={} config={:?}", self.name, settings);
                 Some((StateType::HALF_OPEN, true))
             }
-            StateType::OPEN => return Err(Error::CircuitBreakerOpen),
+            StateType::OPEN => return Err(super::errs::ERR_CIRCUIT_BREAKER_OPEN.error().into()),
             StateType::HALF_OPEN if settings.error_rate_threshold_pct == 0 => {
                 Some((StateType::CLOSED, true))
             }
@@ -282,14 +282,16 @@ impl CircuitBreaker {
                 state.pending_count = state.pending_count.wrapping_add(1);
                 None
             }
-            StateType::HALF_OPEN => return Err(Error::CircuitBreakerOpen),
+            StateType::HALF_OPEN => {
+                return Err(super::errs::ERR_CIRCUIT_BREAKER_OPEN.error().into())
+            }
             _ => panic!("unknown state"),
         };
         drop(state);
         if let Some((kind, allowed)) = transition {
             inner.state = Arc::new(Mutex::new(State::new(now, kind, &settings)));
             if !allowed {
-                return Err(Error::CircuitBreakerOpen);
+                return Err(super::errs::ERR_CIRCUIT_BREAKER_OPEN.error().into());
             }
         }
         Ok(inner.state.clone())

@@ -20,6 +20,7 @@ enum Reply {
     Timestamp,
     StallBody,
     StallHeaders,
+    End,
 }
 
 #[derive(Clone)]
@@ -155,6 +156,9 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
             let responses = futures::stream::unfold(
                 (requests, first, active, 0_i64, service),
                 |(mut requests, first, active, mut logical, service)| async move {
+                    if matches!(service.reply, Reply::End) {
+                        return None;
+                    }
                     if matches!(service.reply, Reply::StallBody) {
                         futures::future::pending::<()>().await;
                     }
@@ -760,4 +764,82 @@ async fn source_retry_member_probe_honors_its_timeout() {
     .await
     .expect("GetMembers must honor the PD timeout");
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn source_pd_error_owner_reports_stream_eof() {
+    let server = Server::start(Reply::End).await;
+    let channel = Channel::from_shared(server.service.endpoint.clone())
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let (tx, rx) = mpsc::channel(1);
+    let (request, _response) = oneshot::channel();
+    tx.send(request).await.unwrap();
+    let error = tokio::time::timeout(
+        Duration::from_secs(5),
+        run_tso(
+            42,
+            PdClient::new(channel),
+            rx,
+            Duration::from_secs(2),
+            Cancellation::default(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "[PD:client:ErrClientTSOStreamClosed]encountered TSO stream being closed unexpectedly"
+    );
+    assert!(
+        matches!(error, Error::Pd(ref owner) if owner.definition() == crate::pd::errs::ERR_CLIENT_TSO_STREAM_CLOSED && owner.backtrace().is_some())
+    );
+    assert!(
+        !crate::pd::errs::is_leader_change(Some(&error)),
+        "Go's EOF path adds a stack wrapper; the helper compares the direct sentinel"
+    );
+}
+
+#[tokio::test]
+async fn source_pd_error_owner_reports_tso_length() {
+    let (tx, rx) = mpsc::channel(1);
+    let (request, _response) = oneshot::channel();
+    tx.send(request).await.unwrap();
+    let cancellation = Cancellation::default();
+    let watcher = Watcher::new(&cancellation, 1, "source-errs-test");
+    let pending = Arc::new(Mutex::new(VecDeque::new()));
+    let stream = request_stream(
+        42,
+        rx,
+        pending.clone(),
+        watcher.clone(),
+        Duration::from_secs(5),
+        cancellation,
+    );
+    tokio::pin!(stream);
+    assert_eq!(stream.next().await.unwrap().count, 1);
+    let error = allocate_timestamps(
+        &TsoResponse {
+            count: 2,
+            timestamp: Some(Timestamp {
+                physical: 1,
+                logical: 2,
+                suffix_bits: 0,
+            }),
+            ..Default::default()
+        },
+        &mut *pending.lock().await,
+    )
+    .unwrap_err();
+    watcher.close().await;
+    assert_eq!(
+        error.to_string(),
+        "[pd] tso length in rpc response is incorrect"
+    );
+    assert!(
+        matches!(error, Error::Pd(owner) if owner.definition() == crate::pd::errs::ERR_TSO_LENGTH && owner.backtrace().is_some())
+    );
 }

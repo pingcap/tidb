@@ -44,7 +44,8 @@ extreme values. Compare elapsed monotonic nanoseconds against the signed interva
 instead of adding platform-limited durations to Instant. Duration fields in the
 old public alias consequently require migration from Duration to signed nanoseconds. Context helpers reuse
 TraceContext's typed values and preserve nil/missing/wrong-type and Arc identity.
-Expose the package as pd_circuitbreaker, reusing existing Error::CircuitBreakerOpen.
+Expose the shared circuitbreaker package and use pd::errs::ERR_CIRCUIT_BREAKER_OPEN.
+The later complete errs prerequisite replaces the original uncoded enum adapter.
 
 Preserve strict expiration, request-time transitions, wrapping u32 counts/products,
 current settings at evaluation, exact half-open success equality, bounded probe
@@ -147,3 +148,12 @@ The owner mutex serializes request transitions, settings changes and result
 accounting as in Go. A generation handle retains late completion identity;
 its internal guard never replaces the owner lifecycle. Clock sampling occurs
 after acquiring the owner lock. No transport wait holds either lock.
+
+
+## Later dependency completion — 2026-10-01
+
+
+The complete errs owner removes the original uncoded breaker enum and preserves
+Go RFC error identity and Display. The old error-adapter restriction was not
+whole-PD error parity. See pd-errors-owner.md and pd-errors-package.json for the
+whole source package, red/green error regression and integration evidence.

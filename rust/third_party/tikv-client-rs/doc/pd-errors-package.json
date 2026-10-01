@@ -1,0 +1,690 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "selected_by_tidb_go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "errs"
+  },
+  "native_baseline": "69877b9cc651c07d0643c968c194bd8ced88daba",
+  "claim": "Complete errs package: all 36 error definitions, six constants, four helpers, the resource-group type and both methods; existing breaker/TSO producers migrated. grpcutil, root/discovery/TSO and whole locate remain unaccepted.",
+  "package_artifacts": [
+    {
+      "path": "errs/errno.go",
+      "sha256": "32fc4ed013f6d810b7d19d3de4634a83faff48359b7e3fcb25ff76633e84fbe2",
+      "kind": "production",
+      "integration": "src/pd/errs.rs and complete Go oracle"
+    },
+    {
+      "path": "errs/errs.go",
+      "sha256": "e3af949b6f5db4c8751ed914d77c54d9665babe8b56efe288e83d72e3a64352a",
+      "kind": "production",
+      "integration": "src/pd/errs.rs and complete Go oracle"
+    }
+  ],
+  "package_variants": {
+    "doc_go": null,
+    "generated_sources": [],
+    "generation_inputs": [],
+    "build_tags": [],
+    "platform_sources": [],
+    "fixtures": [],
+    "package_build_files": [],
+    "original_test_sources": [],
+    "original_test_support": []
+  },
+  "original_test_mapping": {},
+  "source_validation": "Upstream errs has no tests. Added independent TestNativeCompleteErrorOracle executes every definition/helper/type method, checks Go AST registry completeness, identity, nils, cause wrapping and typed formatting. Run with -race under both PD-own and TiDB-selected error/zap versions; outputs must match exactly. No source failpoints/imported failpoint behavior applies to errs.",
+  "declaration_mapping": {
+    "IsLeaderChange": "is_leader_change: direct sentinel identity before exact case-sensitive source substrings; no source-chain search",
+    "IsCalleeMismatch": "is_callee_mismatch",
+    "IsNetworkError": "is_network_error, all 17 gRPC codes oracle",
+    "ZapError": "zap_error returns None/structured ErrorField, direct normalized test, first cause, typed nil, foreign/generated reference identity",
+    "ErrClientGetResourceGroup.Error": "ClientGetResourceGroupError Display, explicit cause > underlying message > unknown",
+    "ErrClientGetResourceGroup.Unwrap": "std::error::Error::source, preserves cause even when explicit text wins"
+  },
+  "type_and_field_mapping": {
+    "ErrClientGetResourceGroup": "ClientGetResourceGroupError",
+    "ResourceGroupName": "resource_group_name:String",
+    "Cause": "cause:String",
+    "Err": "error:Option<Arc<dyn Error+Send+Sync>>"
+  },
+  "constant_mapping": {
+    "NoLeaderErr": "NO_LEADER_ERR",
+    "NotLeaderErr": "NOT_LEADER_ERR",
+    "NotServedErr": "NOT_SERVED_ERR",
+    "RetryTimeoutErr": "RETRY_TIMEOUT_ERR",
+    "NotPrimaryErr": "NOT_PRIMARY_ERR",
+    "MismatchCalleeIDErr": "MISMATCH_CALLEE_ID_ERR"
+  },
+  "global_mapping": [
+    {
+      "name": "ErrUnmatchedClusterID",
+      "rust": "ERR_UNMATCHED_CLUSTER_ID",
+      "message": "[pd] unmatched cluster id",
+      "code": null
+    },
+    {
+      "name": "ErrFailInitClusterID",
+      "rust": "ERR_FAIL_INIT_CLUSTER_ID",
+      "message": "[pd] failed to get cluster id",
+      "code": null
+    },
+    {
+      "name": "ErrClosing",
+      "rust": "ERR_CLOSING",
+      "message": "[pd] closing",
+      "code": null
+    },
+    {
+      "name": "ErrTSOLength",
+      "rust": "ERR_TSO_LENGTH",
+      "message": "[pd] tso length in rpc response is incorrect",
+      "code": null
+    },
+    {
+      "name": "ErrNoServiceModeReturned",
+      "rust": "ERR_NO_SERVICE_MODE_RETURNED",
+      "message": "[pd] no service mode returned",
+      "code": null
+    },
+    {
+      "name": "ErrClientGetProtoClient",
+      "rust": "ERR_CLIENT_GET_PROTO_CLIENT",
+      "message": "failed to get proto client",
+      "code": "PD:client:ErrClientGetProtoClient"
+    },
+    {
+      "name": "ErrClientGetMetaStorageClient",
+      "rust": "ERR_CLIENT_GET_META_STORAGE_CLIENT",
+      "message": "failed to get meta storage client",
+      "code": "PD:client:ErrClientGetMetaStorageClient"
+    },
+    {
+      "name": "ErrClientCreateTSOStream",
+      "rust": "ERR_CLIENT_CREATE_TSO_STREAM",
+      "message": "create TSO stream failed, %s",
+      "code": "PD:client:ErrClientCreateTSOStream"
+    },
+    {
+      "name": "ErrClientTSOStreamClosed",
+      "rust": "ERR_CLIENT_TSO_STREAM_CLOSED",
+      "message": "encountered TSO stream being closed unexpectedly",
+      "code": "PD:client:ErrClientTSOStreamClosed"
+    },
+    {
+      "name": "ErrClientGetTSO",
+      "rust": "ERR_CLIENT_GET_TSO",
+      "message": "get TSO failed, %v",
+      "code": "PD:client:ErrClientGetTSO"
+    },
+    {
+      "name": "ErrClientGetMinTSO",
+      "rust": "ERR_CLIENT_GET_MIN_TSO",
+      "message": "get min TSO failed, %v",
+      "code": "PD:client:ErrClientGetMinTSO"
+    },
+    {
+      "name": "ErrClientGetLeader",
+      "rust": "ERR_CLIENT_GET_LEADER",
+      "message": "get leader failed, %v",
+      "code": "PD:client:ErrClientGetLeader"
+    },
+    {
+      "name": "ErrClientGetMember",
+      "rust": "ERR_CLIENT_GET_MEMBER",
+      "message": "get member failed",
+      "code": "PD:client:ErrClientGetMember"
+    },
+    {
+      "name": "ErrClientGetClusterInfo",
+      "rust": "ERR_CLIENT_GET_CLUSTER_INFO",
+      "message": "get cluster info failed",
+      "code": "PD:client:ErrClientGetClusterInfo"
+    },
+    {
+      "name": "ErrClientUpdateMember",
+      "rust": "ERR_CLIENT_UPDATE_MEMBER",
+      "message": "update member failed, %v",
+      "code": "PD:client:ErrUpdateMember"
+    },
+    {
+      "name": "ErrClientNoAvailableMember",
+      "rust": "ERR_CLIENT_NO_AVAILABLE_MEMBER",
+      "message": "no available member",
+      "code": "PD:client:ErrClientNoAvailableMember"
+    },
+    {
+      "name": "ErrClientNoTargetMember",
+      "rust": "ERR_CLIENT_NO_TARGET_MEMBER",
+      "message": "no target member",
+      "code": "PD:client:ErrClientNoTargetMember"
+    },
+    {
+      "name": "ErrClientProtoUnmarshal",
+      "rust": "ERR_CLIENT_PROTO_UNMARSHAL",
+      "message": "failed to unmarshal proto",
+      "code": "PD:proto:ErrClientProtoUnmarshal"
+    },
+    {
+      "name": "ErrClientGetMultiResponse",
+      "rust": "ERR_CLIENT_GET_MULTI_RESPONSE",
+      "message": "get invalid value response %v, must only one",
+      "code": "PD:client:ErrClientGetMultiResponse"
+    },
+    {
+      "name": "ErrClientGetServingEndpoint",
+      "rust": "ERR_CLIENT_GET_SERVING_ENDPOINT",
+      "message": "get serving endpoint failed",
+      "code": "PD:client:ErrClientGetServingEndpoint"
+    },
+    {
+      "name": "ErrClientFindGroupByKeyspaceID",
+      "rust": "ERR_CLIENT_FIND_GROUP_BY_KEYSPACE_ID",
+      "message": "can't find keyspace group by keyspace id",
+      "code": "PD:client:ErrClientFindGroupByKeyspaceID"
+    },
+    {
+      "name": "ErrClientWatchGCSafePointV2Stream",
+      "rust": "ERR_CLIENT_WATCH_GC_SAFE_POINT_V2_STREAM",
+      "message": "watch gc safe point v2 stream failed",
+      "code": "PD:client:ErrClientWatchGCSafePointV2Stream"
+    },
+    {
+      "name": "ErrCircuitBreakerOpen",
+      "rust": "ERR_CIRCUIT_BREAKER_OPEN",
+      "message": "circuit breaker is open",
+      "code": "PD:client:ErrCircuitBreakerOpen"
+    },
+    {
+      "name": "ErrClientRouterConnectionTimeout",
+      "rust": "ERR_CLIENT_ROUTER_CONNECTION_TIMEOUT",
+      "message": "router connection is not ready until timeout",
+      "code": "PD:client:ErrClientRouterConnectionTimeout"
+    },
+    {
+      "name": "ErrSecurityConfig",
+      "rust": "ERR_SECURITY_CONFIG",
+      "message": "security config error: %s",
+      "code": "PD:grpcutil:ErrSecurityConfig"
+    },
+    {
+      "name": "ErrTLSConfig",
+      "rust": "ERR_TLS_CONFIG",
+      "message": "TLS config error",
+      "code": "PD:grpcutil:ErrTLSConfig"
+    },
+    {
+      "name": "ErrURLParse",
+      "rust": "ERR_URL_PARSE",
+      "message": "parse url error",
+      "code": "PD:url:ErrURLParse"
+    },
+    {
+      "name": "ErrGRPCDial",
+      "rust": "ERR_GRPC_DIAL",
+      "message": "dial error",
+      "code": "PD:grpc:ErrGRPCDial"
+    },
+    {
+      "name": "ErrCloseGRPCConn",
+      "rust": "ERR_CLOSE_GRPC_CONN",
+      "message": "close gRPC connection failed",
+      "code": "PD:grpc:ErrCloseGRPCConn"
+    },
+    {
+      "name": "ErrCryptoX509KeyPair",
+      "rust": "ERR_CRYPTO_X509_KEY_PAIR",
+      "message": "x509 keypair error",
+      "code": "PD:crypto:ErrCryptoX509KeyPair"
+    },
+    {
+      "name": "ErrCryptoAppendCertsFromPEM",
+      "rust": "ERR_CRYPTO_APPEND_CERTS_FROM_PEM",
+      "message": "cert pool append certs error",
+      "code": "PD:crypto:ErrCryptoAppendCertsFromPEM"
+    },
+    {
+      "name": "ErrClientListResourceGroup",
+      "rust": "ERR_CLIENT_LIST_RESOURCE_GROUP",
+      "message": "get all resource group failed, %v",
+      "code": "PD:client:ErrClientListResourceGroup"
+    },
+    {
+      "name": "ErrClientResourceGroupConfigUnavailable",
+      "rust": "ERR_CLIENT_RESOURCE_GROUP_CONFIG_UNAVAILABLE",
+      "message": "resource group config is unavailable, %v",
+      "code": "PD:client:ErrClientResourceGroupConfigUnavailable"
+    },
+    {
+      "name": "ErrClientResourceGroupThrottled",
+      "rust": "ERR_CLIENT_RESOURCE_GROUP_THROTTLED",
+      "message": "exceeded resource group quota limitation, estimated wait time %s, ltb state is %.2f:%.2f",
+      "code": "PD:client:ErrClientResourceGroupThrottled"
+    },
+    {
+      "name": "ErrClientPutResourceGroupMismatchKeyspaceID",
+      "rust": "ERR_CLIENT_PUT_RESOURCE_GROUP_MISMATCH_KEYSPACE_ID",
+      "message": "resource group keyspace ID %d does not match inner client keyspace ID %d",
+      "code": "PD:client:ErrClientPutResourceGroupMismatchKeyspaceID"
+    },
+    {
+      "name": "ErrSchedulerConfigUnavailable",
+      "rust": "ERR_SCHEDULER_CONFIG_UNAVAILABLE",
+      "message": "scheduler config is unavailable, %v",
+      "code": "PD:client:ErrSchedulerConfigUnavailable"
+    }
+  ],
+  "shared_build_inputs": [
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module/build/license input",
+      "integration": "Unchanged source pins and license; Cargo manifest/lockfile unchanged."
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module/build/license input",
+      "integration": "Unchanged source pins and license; Cargo manifest/lockfile unchanged."
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module/build/license input",
+      "integration": "Unchanged source pins and license; Cargo manifest/lockfile unchanged."
+    }
+  ],
+  "source_consumers": [
+    {
+      "path": "client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetMinTSO",
+        "ErrClientGetProtoClient",
+        "ErrClientGetTSO",
+        "IsCalleeMismatch",
+        "IsLeaderChange",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "client_test.go",
+      "sha256": "fd91d8c5dceaaaa2d3316dcb1972a11db695be00c605b6e7ebad4d5cfdb4210a",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "MismatchCalleeIDErr",
+        "NotLeaderErr"
+      ]
+    },
+    {
+      "path": "clients/metastorage/client.go",
+      "sha256": "4143723d6ca950aa0e86beded2502fff663a74e2986b364da34c47c676099373",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetMetaStorageClient",
+        "ErrClientGetProtoClient"
+      ]
+    },
+    {
+      "path": "clients/router/client.go",
+      "sha256": "738cc8541c72a664d093e0c7f7a65144fa32597972c0f356d0a48141eb3421d2",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientRouterConnectionTimeout",
+        "IsLeaderChange",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetTSO",
+        "IsNetworkError",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientCreateTSOStream",
+        "ErrClientGetTSO",
+        "ErrClosing",
+        "IsCalleeMismatch",
+        "IsLeaderChange",
+        "RetryTimeoutErr",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "clients/tso/dispatcher_test.go",
+      "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "MismatchCalleeIDErr"
+      ]
+    },
+    {
+      "path": "clients/tso/stream.go",
+      "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientTSOStreamClosed",
+        "ErrTSOLength"
+      ]
+    },
+    {
+      "path": "clients/tso/stream_test.go",
+      "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientTSOStreamClosed"
+      ]
+    },
+    {
+      "path": "gc_client.go",
+      "sha256": "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetProtoClient"
+      ]
+    },
+    {
+      "path": "http/client.go",
+      "sha256": "0384ace37a36ffc3565f78bb0699797c655f26d6f368eab50887e92bf07c69b7",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientNoAvailableMember",
+        "ErrClientNoTargetMember",
+        "IsLeaderChange"
+      ]
+    },
+    {
+      "path": "http/client_test.go",
+      "sha256": "0d2d022614e0e0eea4c9d991d8e05734eb42113d4ffb464cd19da71b74e7b40c",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientNoTargetMember"
+      ]
+    },
+    {
+      "path": "inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetTSO",
+        "ErrClosing",
+        "IsLeaderChange",
+        "IsNetworkError"
+      ]
+    },
+    {
+      "path": "keyspace_client.go",
+      "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetProtoClient"
+      ]
+    },
+    {
+      "path": "keyspace_client_test.go",
+      "sha256": "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetProtoClient"
+      ]
+    },
+    {
+      "path": "meta_storage_client.go",
+      "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetMetaStorageClient"
+      ]
+    },
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker.go",
+      "sha256": "f5364cc36beec2eb3921520ba33d430642d011316fad598b080b011ba63dbb92",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrCircuitBreakerOpen"
+      ]
+    },
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker_test.go",
+      "sha256": "7cc3d6082f522f32886e43085d658b583a8f4e4ca4214d01e3194262671eddac",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrCircuitBreakerOpen"
+      ]
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrGRPCDial",
+        "ErrURLParse"
+      ]
+    },
+    {
+      "path": "pkg/utils/tlsutil/tlsconfig.go",
+      "sha256": "507b668defc5ae363d6491cc15cd7463958f1ebc8f965317597ab2a19bf13bc3",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrCryptoAppendCertsFromPEM",
+        "ErrCryptoX509KeyPair",
+        "ErrTLSConfig"
+      ]
+    },
+    {
+      "path": "resource_group/controller/global_controller.go",
+      "sha256": "7ef0c95b4f8a23dc2691e7ee869975a9ea03c79040bf793918741eb148747330",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetResourceGroup",
+        "IsLeaderChange"
+      ]
+    },
+    {
+      "path": "resource_group/controller/global_controller_test.go",
+      "sha256": "c910d88418c6a809a9636f1710c389325c4dd5ceedaef5de9581db75110d5827",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetResourceGroup"
+      ]
+    },
+    {
+      "path": "resource_group/controller/group_controller.go",
+      "sha256": "dba05d0269f179a1b5c47184787f076532d4b764c9de83dc3d017ad0bdb403fc",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientResourceGroupConfigUnavailable",
+        "ErrClientResourceGroupThrottled"
+      ]
+    },
+    {
+      "path": "resource_group/controller/group_controller_test.go",
+      "sha256": "5c3539a37029e9782ee8d04b485476393ae2daf76a03dd013aca3c5577e6a4f8",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientResourceGroupThrottled"
+      ]
+    },
+    {
+      "path": "resource_group/controller/limiter.go",
+      "sha256": "3e08e99b23b8070e14b21f6c6117701f3604fdea1da66144269452137e24bc0e",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientResourceGroupThrottled"
+      ]
+    },
+    {
+      "path": "resource_group/controller/request_source_metrics_test.go",
+      "sha256": "d6f221a6468c107635e8bbcf848f3ef7b360b9492c8ca77d535788602945290f",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientResourceGroupThrottled"
+      ]
+    },
+    {
+      "path": "resource_manager_client.go",
+      "sha256": "13a8dd3ddfdc589effa83889b95a4539da283998f2dcb33bcda6fab25a062aad",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetResourceGroup",
+        "ErrClientListResourceGroup",
+        "ErrClientPutResourceGroupMismatchKeyspaceID",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetMultiResponse",
+        "ErrClientGetServingEndpoint",
+        "ErrClientProtoUnmarshal"
+      ]
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetMetaStorageClient",
+        "ErrClientGetProtoClient",
+        "ErrCloseGRPCConn",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientGetClusterInfo",
+        "ErrClientGetLeader",
+        "ErrClientGetMember",
+        "ErrClientUpdateMember",
+        "ErrCloseGRPCConn",
+        "ErrFailInitClusterID",
+        "ErrNoServiceModeReturned",
+        "ErrUnmatchedClusterID",
+        "IsNetworkError",
+        "NoLeaderErr",
+        "ZapError"
+      ]
+    },
+    {
+      "path": "servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "NotLeaderErr"
+      ]
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "kind": "source consumer (parent package not accepted)",
+      "integration": "All imported error references are mapped to the shared owner; parent implementation remains separately tracked.",
+      "symbols": [
+        "ErrClientFindGroupByKeyspaceID",
+        "ErrClientGetMultiResponse",
+        "ErrClientGetServingEndpoint",
+        "ErrClientProtoUnmarshal",
+        "ErrCloseGRPCConn",
+        "MismatchCalleeIDErr",
+        "ZapError"
+      ]
+    }
+  ],
+  "dependency_adapters": [
+    {
+      "owner": "github.com/pingcap/errors",
+      "native": "Definition/PdError: prototype/code/message/cause separation, native stacks and typed constructors for all 12 formatted templates. This is an adapter for errno.go definitions and errs.go type assertions, not a claim to port the external errors library or Go arbitrary printf/reflection. Private Definition fields prevent constructing a second apparent singleton from equal text/code. Clone corresponds to copying a Go error interface, not copying the pointed-to struct. Rust Display adapts %v; f64 formatting preserves signed zero, infinities, NaN and source precision. All existing keyspace-ID callers supply uint32."
+    },
+    {
+      "owner": "go.uber.org/zap/zapcore",
+      "native": "ErrorField carries key=error and borrowed/owned error identity; None is Skip. Native logger/stack representation is retained. Go oracle compares basic field values; Go stack-frame text, ErrorVerbose formatting and complete zap encoder are external dependency behavior, not new logging policy."
+    },
+    {
+      "owner": "Go error globals",
+      "native": "Immutable private-field definitions are handles to the named source prototypes. Source consumers do not reassign these globals. Native enum envelope retains the typed owner in source(), while classifiers see through only this native envelope. No message-based error-code selection."
+    }
+  ],
+  "integration_decision": {
+    "remove": "Error::CircuitBreakerOpen and duplicate TSO EOF/count diagnostics",
+    "migrate": "All three circuitbreaker rejection sites, their tests/region-cache assertion, native run_tso EOF and allocate_timestamps count failure. New Error::Pd and PdResourceGroup envelopes retain both concrete owner and cause. No partial grpcutil implementation is activated.",
+    "open": "TSO pending-request error delivery/cancellation, root discovery and physical-RPC interceptor/connection lifecycle are parent-package work; existing behavior is not accepted by these three producer migrations."
+  },
+  "native_artifacts": [
+    "src/pd/errs.rs",
+    "src/pd/errs_tests.rs",
+    "src/pd/mod.rs",
+    "src/common/errors.rs",
+    "src/pd/circuitbreaker.rs",
+    "src/pd/circuitbreaker_tests.rs",
+    "src/pd/timestamp.rs",
+    "src/pd/timestamp_tests.rs",
+    "src/region_cache.rs",
+    "doc/pd-errors-owner.md",
+    "doc/pd-errors-package.json",
+    "doc/pd-errors-oracle/oracle_test.go.txt",
+    "doc/pd-errors-oracle/errors.json",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "compatibility": "Rust Error::CircuitBreakerOpen is replaced by Error::Pd(ERR_CIRCUIT_BREAKER_OPEN); code comparisons use the shared definition. Display now includes the source PD code. TSO EOF/count diagnostics follow Go. Normal request/connection/retry/TSO scheduling is unchanged. No new dependency or worker.",
+  "validation": {
+    "red": "source_open_breaker_error_retains_pd_code failed on unchanged production; two source_pd_error_owner_reports_ cases failed with original TSO producer bodies restored in isolation. Logs /private/tmp/pd-errs-red.log and /private/tmp/pd-errs-tso-red.log.",
+    "go": "Independent all-definition/helper oracle passes under PD-own and TiDB-master error/zap versions with race; byte-identical generated output.",
+    "native": "147 focused PD cases and 1,523 native library cases pass (two existing ignored). The last change only encapsulates Definition fields; focused tests and all-target compilation revalidate that final API.",
+    "unverified": [
+      "Linux execution",
+      "native ThreadSanitizer",
+      "live PD/TiKV cluster topology",
+      "complete external errors/zap library portability",
+      "sysbench/TPC-C/TPC-H/YCSB benchmarks"
+    ],
+    "static": "cargo clippy --locked --lib -- -D warnings; cargo check --locked --all-targets; cargo fmt --all --check; git diff --check: pass.",
+    "publication": "Native and TiDB publication use the ExecPlan gates; final TiDB receipt records the native revision and integration outcomes."
+  }
+}

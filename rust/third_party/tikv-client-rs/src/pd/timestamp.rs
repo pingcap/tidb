@@ -133,7 +133,7 @@ async fn run_tso(
             while let Some(response) = responses.message().await? {
                 allocate_timestamps(&response, &mut *pending_requests.lock().await)?;
             }
-            Err(internal_err!("TSO stream terminated"))
+            Err(super::errs::ERR_CLIENT_TSO_STREAM_CLOSED.error().with_stack().into())
         } => result,
     };
     cancellation.cancel();
@@ -288,9 +288,7 @@ fn allocate_timestamps(
         .as_ref()
         .ok_or_else(|| internal_err!("No timestamp in TsoResponse"))?;
     if count != resp.count {
-        return Err(internal_err!(
-            "PD gives different number of timestamps than expected"
-        ));
+        return Err(super::errs::ERR_TSO_LENGTH.error().with_stack().into());
     }
     // Go doneCollectedRequests returns the token before request callbacks.
     drop(_permit);

@@ -1,0 +1,361 @@
+{
+  "classifiers": {
+    "callee": true,
+    "direct_stream": true,
+    "fake_stream": false,
+    "generated_stream": false,
+    "leader_is not served": true,
+    "leader_mismatch callee id": false,
+    "leader_no leader": true,
+    "leader_not leader": true,
+    "leader_not primary": true,
+    "leader_retry timeout": false,
+    "nil_callee": false,
+    "nil_leader": false,
+    "stack_stream": false,
+    "wrapped_not_leader": true,
+    "wrapped_stream": false,
+    "wrong_case": false
+  },
+  "definitions": [
+    {
+      "name": "ErrUnmatchedClusterID",
+      "code": "",
+      "message": "[pd] unmatched cluster id",
+      "display": "[pd] unmatched cluster id",
+      "wrapped": "",
+      "by_cause": ""
+    },
+    {
+      "name": "ErrFailInitClusterID",
+      "code": "",
+      "message": "[pd] failed to get cluster id",
+      "display": "[pd] failed to get cluster id",
+      "wrapped": "",
+      "by_cause": ""
+    },
+    {
+      "name": "ErrClosing",
+      "code": "",
+      "message": "[pd] closing",
+      "display": "[pd] closing",
+      "wrapped": "",
+      "by_cause": ""
+    },
+    {
+      "name": "ErrTSOLength",
+      "code": "",
+      "message": "[pd] tso length in rpc response is incorrect",
+      "display": "[pd] tso length in rpc response is incorrect",
+      "wrapped": "",
+      "by_cause": ""
+    },
+    {
+      "name": "ErrNoServiceModeReturned",
+      "code": "",
+      "message": "[pd] no service mode returned",
+      "display": "[pd] no service mode returned",
+      "wrapped": "",
+      "by_cause": ""
+    },
+    {
+      "name": "ErrClientGetProtoClient",
+      "code": "PD:client:ErrClientGetProtoClient",
+      "message": "failed to get proto client",
+      "display": "[PD:client:ErrClientGetProtoClient]failed to get proto client",
+      "wrapped": "[PD:client:ErrClientGetProtoClient]failed to get proto client: underlying",
+      "by_cause": "[PD:client:ErrClientGetProtoClient]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetMetaStorageClient",
+      "code": "PD:client:ErrClientGetMetaStorageClient",
+      "message": "failed to get meta storage client",
+      "display": "[PD:client:ErrClientGetMetaStorageClient]failed to get meta storage client",
+      "wrapped": "[PD:client:ErrClientGetMetaStorageClient]failed to get meta storage client: underlying",
+      "by_cause": "[PD:client:ErrClientGetMetaStorageClient]underlying: underlying"
+    },
+    {
+      "name": "ErrClientCreateTSOStream",
+      "code": "PD:client:ErrClientCreateTSOStream",
+      "message": "create TSO stream failed, %s",
+      "display": "[PD:client:ErrClientCreateTSOStream]create TSO stream failed, %s",
+      "wrapped": "[PD:client:ErrClientCreateTSOStream]create TSO stream failed, %s: underlying",
+      "by_cause": "[PD:client:ErrClientCreateTSOStream]underlying: underlying"
+    },
+    {
+      "name": "ErrClientTSOStreamClosed",
+      "code": "PD:client:ErrClientTSOStreamClosed",
+      "message": "encountered TSO stream being closed unexpectedly",
+      "display": "[PD:client:ErrClientTSOStreamClosed]encountered TSO stream being closed unexpectedly",
+      "wrapped": "[PD:client:ErrClientTSOStreamClosed]encountered TSO stream being closed unexpectedly: underlying",
+      "by_cause": "[PD:client:ErrClientTSOStreamClosed]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetTSO",
+      "code": "PD:client:ErrClientGetTSO",
+      "message": "get TSO failed, %v",
+      "display": "[PD:client:ErrClientGetTSO]get TSO failed, %v",
+      "wrapped": "[PD:client:ErrClientGetTSO]get TSO failed, %v: underlying",
+      "by_cause": "[PD:client:ErrClientGetTSO]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetMinTSO",
+      "code": "PD:client:ErrClientGetMinTSO",
+      "message": "get min TSO failed, %v",
+      "display": "[PD:client:ErrClientGetMinTSO]get min TSO failed, %v",
+      "wrapped": "[PD:client:ErrClientGetMinTSO]get min TSO failed, %v: underlying",
+      "by_cause": "[PD:client:ErrClientGetMinTSO]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetLeader",
+      "code": "PD:client:ErrClientGetLeader",
+      "message": "get leader failed, %v",
+      "display": "[PD:client:ErrClientGetLeader]get leader failed, %v",
+      "wrapped": "[PD:client:ErrClientGetLeader]get leader failed, %v: underlying",
+      "by_cause": "[PD:client:ErrClientGetLeader]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetMember",
+      "code": "PD:client:ErrClientGetMember",
+      "message": "get member failed",
+      "display": "[PD:client:ErrClientGetMember]get member failed",
+      "wrapped": "[PD:client:ErrClientGetMember]get member failed: underlying",
+      "by_cause": "[PD:client:ErrClientGetMember]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetClusterInfo",
+      "code": "PD:client:ErrClientGetClusterInfo",
+      "message": "get cluster info failed",
+      "display": "[PD:client:ErrClientGetClusterInfo]get cluster info failed",
+      "wrapped": "[PD:client:ErrClientGetClusterInfo]get cluster info failed: underlying",
+      "by_cause": "[PD:client:ErrClientGetClusterInfo]underlying: underlying"
+    },
+    {
+      "name": "ErrClientUpdateMember",
+      "code": "PD:client:ErrUpdateMember",
+      "message": "update member failed, %v",
+      "display": "[PD:client:ErrUpdateMember]update member failed, %v",
+      "wrapped": "[PD:client:ErrUpdateMember]update member failed, %v: underlying",
+      "by_cause": "[PD:client:ErrUpdateMember]underlying: underlying"
+    },
+    {
+      "name": "ErrClientNoAvailableMember",
+      "code": "PD:client:ErrClientNoAvailableMember",
+      "message": "no available member",
+      "display": "[PD:client:ErrClientNoAvailableMember]no available member",
+      "wrapped": "[PD:client:ErrClientNoAvailableMember]no available member: underlying",
+      "by_cause": "[PD:client:ErrClientNoAvailableMember]underlying: underlying"
+    },
+    {
+      "name": "ErrClientNoTargetMember",
+      "code": "PD:client:ErrClientNoTargetMember",
+      "message": "no target member",
+      "display": "[PD:client:ErrClientNoTargetMember]no target member",
+      "wrapped": "[PD:client:ErrClientNoTargetMember]no target member: underlying",
+      "by_cause": "[PD:client:ErrClientNoTargetMember]underlying: underlying"
+    },
+    {
+      "name": "ErrClientProtoUnmarshal",
+      "code": "PD:proto:ErrClientProtoUnmarshal",
+      "message": "failed to unmarshal proto",
+      "display": "[PD:proto:ErrClientProtoUnmarshal]failed to unmarshal proto",
+      "wrapped": "[PD:proto:ErrClientProtoUnmarshal]failed to unmarshal proto: underlying",
+      "by_cause": "[PD:proto:ErrClientProtoUnmarshal]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetMultiResponse",
+      "code": "PD:client:ErrClientGetMultiResponse",
+      "message": "get invalid value response %v, must only one",
+      "display": "[PD:client:ErrClientGetMultiResponse]get invalid value response %v, must only one",
+      "wrapped": "[PD:client:ErrClientGetMultiResponse]get invalid value response %v, must only one: underlying",
+      "by_cause": "[PD:client:ErrClientGetMultiResponse]underlying: underlying"
+    },
+    {
+      "name": "ErrClientGetServingEndpoint",
+      "code": "PD:client:ErrClientGetServingEndpoint",
+      "message": "get serving endpoint failed",
+      "display": "[PD:client:ErrClientGetServingEndpoint]get serving endpoint failed",
+      "wrapped": "[PD:client:ErrClientGetServingEndpoint]get serving endpoint failed: underlying",
+      "by_cause": "[PD:client:ErrClientGetServingEndpoint]underlying: underlying"
+    },
+    {
+      "name": "ErrClientFindGroupByKeyspaceID",
+      "code": "PD:client:ErrClientFindGroupByKeyspaceID",
+      "message": "can't find keyspace group by keyspace id",
+      "display": "[PD:client:ErrClientFindGroupByKeyspaceID]can't find keyspace group by keyspace id",
+      "wrapped": "[PD:client:ErrClientFindGroupByKeyspaceID]can't find keyspace group by keyspace id: underlying",
+      "by_cause": "[PD:client:ErrClientFindGroupByKeyspaceID]underlying: underlying"
+    },
+    {
+      "name": "ErrClientWatchGCSafePointV2Stream",
+      "code": "PD:client:ErrClientWatchGCSafePointV2Stream",
+      "message": "watch gc safe point v2 stream failed",
+      "display": "[PD:client:ErrClientWatchGCSafePointV2Stream]watch gc safe point v2 stream failed",
+      "wrapped": "[PD:client:ErrClientWatchGCSafePointV2Stream]watch gc safe point v2 stream failed: underlying",
+      "by_cause": "[PD:client:ErrClientWatchGCSafePointV2Stream]underlying: underlying"
+    },
+    {
+      "name": "ErrCircuitBreakerOpen",
+      "code": "PD:client:ErrCircuitBreakerOpen",
+      "message": "circuit breaker is open",
+      "display": "[PD:client:ErrCircuitBreakerOpen]circuit breaker is open",
+      "wrapped": "[PD:client:ErrCircuitBreakerOpen]circuit breaker is open: underlying",
+      "by_cause": "[PD:client:ErrCircuitBreakerOpen]underlying: underlying"
+    },
+    {
+      "name": "ErrClientRouterConnectionTimeout",
+      "code": "PD:client:ErrClientRouterConnectionTimeout",
+      "message": "router connection is not ready until timeout",
+      "display": "[PD:client:ErrClientRouterConnectionTimeout]router connection is not ready until timeout",
+      "wrapped": "[PD:client:ErrClientRouterConnectionTimeout]router connection is not ready until timeout: underlying",
+      "by_cause": "[PD:client:ErrClientRouterConnectionTimeout]underlying: underlying"
+    },
+    {
+      "name": "ErrSecurityConfig",
+      "code": "PD:grpcutil:ErrSecurityConfig",
+      "message": "security config error: %s",
+      "display": "[PD:grpcutil:ErrSecurityConfig]security config error: %s",
+      "wrapped": "[PD:grpcutil:ErrSecurityConfig]security config error: %s: underlying",
+      "by_cause": "[PD:grpcutil:ErrSecurityConfig]underlying: underlying"
+    },
+    {
+      "name": "ErrTLSConfig",
+      "code": "PD:grpcutil:ErrTLSConfig",
+      "message": "TLS config error",
+      "display": "[PD:grpcutil:ErrTLSConfig]TLS config error",
+      "wrapped": "[PD:grpcutil:ErrTLSConfig]TLS config error: underlying",
+      "by_cause": "[PD:grpcutil:ErrTLSConfig]underlying: underlying"
+    },
+    {
+      "name": "ErrURLParse",
+      "code": "PD:url:ErrURLParse",
+      "message": "parse url error",
+      "display": "[PD:url:ErrURLParse]parse url error",
+      "wrapped": "[PD:url:ErrURLParse]parse url error: underlying",
+      "by_cause": "[PD:url:ErrURLParse]underlying: underlying"
+    },
+    {
+      "name": "ErrGRPCDial",
+      "code": "PD:grpc:ErrGRPCDial",
+      "message": "dial error",
+      "display": "[PD:grpc:ErrGRPCDial]dial error",
+      "wrapped": "[PD:grpc:ErrGRPCDial]dial error: underlying",
+      "by_cause": "[PD:grpc:ErrGRPCDial]underlying: underlying"
+    },
+    {
+      "name": "ErrCloseGRPCConn",
+      "code": "PD:grpc:ErrCloseGRPCConn",
+      "message": "close gRPC connection failed",
+      "display": "[PD:grpc:ErrCloseGRPCConn]close gRPC connection failed",
+      "wrapped": "[PD:grpc:ErrCloseGRPCConn]close gRPC connection failed: underlying",
+      "by_cause": "[PD:grpc:ErrCloseGRPCConn]underlying: underlying"
+    },
+    {
+      "name": "ErrCryptoX509KeyPair",
+      "code": "PD:crypto:ErrCryptoX509KeyPair",
+      "message": "x509 keypair error",
+      "display": "[PD:crypto:ErrCryptoX509KeyPair]x509 keypair error",
+      "wrapped": "[PD:crypto:ErrCryptoX509KeyPair]x509 keypair error: underlying",
+      "by_cause": "[PD:crypto:ErrCryptoX509KeyPair]underlying: underlying"
+    },
+    {
+      "name": "ErrCryptoAppendCertsFromPEM",
+      "code": "PD:crypto:ErrCryptoAppendCertsFromPEM",
+      "message": "cert pool append certs error",
+      "display": "[PD:crypto:ErrCryptoAppendCertsFromPEM]cert pool append certs error",
+      "wrapped": "[PD:crypto:ErrCryptoAppendCertsFromPEM]cert pool append certs error: underlying",
+      "by_cause": "[PD:crypto:ErrCryptoAppendCertsFromPEM]underlying: underlying"
+    },
+    {
+      "name": "ErrClientListResourceGroup",
+      "code": "PD:client:ErrClientListResourceGroup",
+      "message": "get all resource group failed, %v",
+      "display": "[PD:client:ErrClientListResourceGroup]get all resource group failed, %v",
+      "wrapped": "[PD:client:ErrClientListResourceGroup]get all resource group failed, %v: underlying",
+      "by_cause": "[PD:client:ErrClientListResourceGroup]underlying: underlying"
+    },
+    {
+      "name": "ErrClientResourceGroupConfigUnavailable",
+      "code": "PD:client:ErrClientResourceGroupConfigUnavailable",
+      "message": "resource group config is unavailable, %v",
+      "display": "[PD:client:ErrClientResourceGroupConfigUnavailable]resource group config is unavailable, %v",
+      "wrapped": "[PD:client:ErrClientResourceGroupConfigUnavailable]resource group config is unavailable, %v: underlying",
+      "by_cause": "[PD:client:ErrClientResourceGroupConfigUnavailable]underlying: underlying"
+    },
+    {
+      "name": "ErrClientResourceGroupThrottled",
+      "code": "PD:client:ErrClientResourceGroupThrottled",
+      "message": "exceeded resource group quota limitation, estimated wait time %s, ltb state is %.2f:%.2f",
+      "display": "[PD:client:ErrClientResourceGroupThrottled]exceeded resource group quota limitation, estimated wait time %s, ltb state is %.2f:%.2f",
+      "wrapped": "[PD:client:ErrClientResourceGroupThrottled]exceeded resource group quota limitation, estimated wait time %s, ltb state is %.2f:%.2f: underlying",
+      "by_cause": "[PD:client:ErrClientResourceGroupThrottled]underlying: underlying"
+    },
+    {
+      "name": "ErrClientPutResourceGroupMismatchKeyspaceID",
+      "code": "PD:client:ErrClientPutResourceGroupMismatchKeyspaceID",
+      "message": "resource group keyspace ID %d does not match inner client keyspace ID %d",
+      "display": "[PD:client:ErrClientPutResourceGroupMismatchKeyspaceID]resource group keyspace ID %d does not match inner client keyspace ID %d",
+      "wrapped": "[PD:client:ErrClientPutResourceGroupMismatchKeyspaceID]resource group keyspace ID %d does not match inner client keyspace ID %d: underlying",
+      "by_cause": "[PD:client:ErrClientPutResourceGroupMismatchKeyspaceID]underlying: underlying"
+    },
+    {
+      "name": "ErrSchedulerConfigUnavailable",
+      "code": "PD:client:ErrSchedulerConfigUnavailable",
+      "message": "scheduler config is unavailable, %v",
+      "display": "[PD:client:ErrSchedulerConfigUnavailable]scheduler config is unavailable, %v",
+      "wrapped": "[PD:client:ErrSchedulerConfigUnavailable]scheduler config is unavailable, %v: underlying",
+      "by_cause": "[PD:client:ErrSchedulerConfigUnavailable]underlying: underlying"
+    }
+  ],
+  "formatted": [
+    "[PD:client:ErrClientCreateTSOStream]create TSO stream failed, input",
+    "[PD:client:ErrClientGetTSO]get TSO failed, input",
+    "[PD:client:ErrClientGetMinTSO]get min TSO failed, input",
+    "[PD:client:ErrClientGetLeader]get leader failed, input",
+    "[PD:client:ErrUpdateMember]update member failed, input",
+    "[PD:client:ErrClientGetMultiResponse]get invalid value response input, must only one",
+    "[PD:grpcutil:ErrSecurityConfig]security config error: input",
+    "[PD:client:ErrClientListResourceGroup]get all resource group failed, input",
+    "[PD:client:ErrClientResourceGroupConfigUnavailable]resource group config is unavailable, input",
+    "[PD:client:ErrSchedulerConfigUnavailable]scheduler config is unavailable, input",
+    "[PD:client:ErrClientResourceGroupThrottled]exceeded resource group quota limitation, estimated wait time 25ms, ltb state is 1.12:-2.50",
+    "[PD:client:ErrClientResourceGroupThrottled]exceeded resource group quota limitation, estimated wait time 25ms, ltb state is +Inf:-Inf",
+    "[PD:client:ErrClientResourceGroupThrottled]exceeded resource group quota limitation, estimated wait time 25ms, ltb state is NaN:-0.00",
+    "[PD:client:ErrClientPutResourceGroupMismatchKeyspaceID]resource group keyspace ID 0 does not match inner client keyspace ID 4294967295"
+  ],
+  "logging": {
+    "foreign": "underlying",
+    "generated": "[PD:client:ErrClientGetTSO]get TSO failed, original",
+    "nil": null,
+    "nil_cause": "\u003cnil\u003e",
+    "prototype": "[PD:client:ErrClientGetTSO]get TSO failed, %v",
+    "static": "[pd] closing",
+    "wrapped": "[PD:client:ErrClientGetTSO]get TSO failed, %v: underlying"
+  },
+  "network_codes": [
+    false,
+    false,
+    false,
+    false,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+    false,
+    false
+  ],
+  "resource_group": [
+    "get resource group  failed, unknown error",
+    "get resource group group failed, unknown error",
+    "get resource group group failed, underlying",
+    "get resource group group failed, explicit",
+    "get resource group group failed, unknown error"
+  ]
+}

@@ -1,0 +1,191 @@
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
+package errs
+
+import (
+	"encoding/json"
+	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"math"
+	"os"
+	"path/filepath"
+	"testing"
+
+	perrors "github.com/pingcap/errors"
+	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/codes"
+)
+
+func TestNativeCompleteErrorOracle(t *testing.T) {
+	type row struct {
+		Name    string `json:"name"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Display string `json:"display"`
+		Wrapped string `json:"wrapped"`
+		ByCause string `json:"by_cause"`
+	}
+	definitions := []struct {
+		name  string
+		value error
+	}{
+		{"ErrUnmatchedClusterID", ErrUnmatchedClusterID},
+		{"ErrFailInitClusterID", ErrFailInitClusterID},
+		{"ErrClosing", ErrClosing},
+		{"ErrTSOLength", ErrTSOLength},
+		{"ErrNoServiceModeReturned", ErrNoServiceModeReturned},
+		{"ErrClientGetProtoClient", ErrClientGetProtoClient},
+		{"ErrClientGetMetaStorageClient", ErrClientGetMetaStorageClient},
+		{"ErrClientCreateTSOStream", ErrClientCreateTSOStream},
+		{"ErrClientTSOStreamClosed", ErrClientTSOStreamClosed},
+		{"ErrClientGetTSO", ErrClientGetTSO},
+		{"ErrClientGetMinTSO", ErrClientGetMinTSO},
+		{"ErrClientGetLeader", ErrClientGetLeader},
+		{"ErrClientGetMember", ErrClientGetMember},
+		{"ErrClientGetClusterInfo", ErrClientGetClusterInfo},
+		{"ErrClientUpdateMember", ErrClientUpdateMember},
+		{"ErrClientNoAvailableMember", ErrClientNoAvailableMember},
+		{"ErrClientNoTargetMember", ErrClientNoTargetMember},
+		{"ErrClientProtoUnmarshal", ErrClientProtoUnmarshal},
+		{"ErrClientGetMultiResponse", ErrClientGetMultiResponse},
+		{"ErrClientGetServingEndpoint", ErrClientGetServingEndpoint},
+		{"ErrClientFindGroupByKeyspaceID", ErrClientFindGroupByKeyspaceID},
+		{"ErrClientWatchGCSafePointV2Stream", ErrClientWatchGCSafePointV2Stream},
+		{"ErrCircuitBreakerOpen", ErrCircuitBreakerOpen},
+		{"ErrClientRouterConnectionTimeout", ErrClientRouterConnectionTimeout},
+		{"ErrSecurityConfig", ErrSecurityConfig},
+		{"ErrTLSConfig", ErrTLSConfig},
+		{"ErrURLParse", ErrURLParse},
+		{"ErrGRPCDial", ErrGRPCDial},
+		{"ErrCloseGRPCConn", ErrCloseGRPCConn},
+		{"ErrCryptoX509KeyPair", ErrCryptoX509KeyPair},
+		{"ErrCryptoAppendCertsFromPEM", ErrCryptoAppendCertsFromPEM},
+		{"ErrClientListResourceGroup", ErrClientListResourceGroup},
+		{"ErrClientResourceGroupConfigUnavailable", ErrClientResourceGroupConfigUnavailable},
+		{"ErrClientResourceGroupThrottled", ErrClientResourceGroupThrottled},
+		{"ErrClientPutResourceGroupMismatchKeyspaceID", ErrClientPutResourceGroupMismatchKeyspaceID},
+		{"ErrSchedulerConfigUnavailable", ErrSchedulerConfigUnavailable},
+	}
+	// Fail when an upstream error definition is added without an oracle entry.
+	file, err := parser.ParseFile(token.NewFileSet(), "errno.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+			for _, spec := range gen.Specs {
+				for _, name := range spec.(*ast.ValueSpec).Names {
+					names[name.Name] = true
+				}
+			}
+		}
+	}
+	if len(names) != len(definitions) {
+		t.Fatalf("definition coverage %d != %d", len(names), len(definitions))
+	}
+	rows := []row{}
+	cause := errors.New("underlying")
+	for _, definition := range definitions {
+		if !names[definition.name] {
+			t.Fatal(definition.name)
+		}
+		delete(names, definition.name)
+		value := row{Name: definition.name, Display: definition.value.Error(), Message: definition.value.Error()}
+		if normalized, ok := definition.value.(*perrors.Error); ok {
+			value.Code = string(normalized.RFCCode())
+			value.Message = normalized.MessageTemplate()
+			wrapped := normalized.Wrap(cause)
+			if errors.Unwrap(wrapped) != cause {
+				t.Fatal("cause lost")
+			}
+			value.Wrapped = wrapped.Error()
+			value.ByCause = wrapped.GenWithStackByCause().Error()
+			if normalized.Wrap(nil) != nil {
+				t.Fatal("nil wrap")
+			}
+			if !errors.Is(normalized.FastGenByArgs(), normalized) {
+				t.Fatal("code identity")
+			}
+		}
+		rows = append(rows, value)
+	}
+	checks := map[string]bool{
+		"nil_leader":         IsLeaderChange(nil),
+		"direct_stream":      IsLeaderChange(ErrClientTSOStreamClosed),
+		"stack_stream":       IsLeaderChange(perrors.WithStack(ErrClientTSOStreamClosed)),
+		"generated_stream":   IsLeaderChange(ErrClientTSOStreamClosed.FastGenByArgs()),
+		"wrapped_stream":     IsLeaderChange(ErrClientTSOStreamClosed.Wrap(cause)),
+		"fake_stream":        IsLeaderChange(errors.New(ErrClientTSOStreamClosed.Error())),
+		"wrapped_not_leader": IsLeaderChange(perrors.Annotate(errors.New("server is not leader now"), "RPC")),
+		"nil_callee":         IsCalleeMismatch(nil),
+		"callee":             IsCalleeMismatch(errors.New("server mismatch callee id")),
+		"wrong_case":         IsCalleeMismatch(errors.New("Mismatch callee id")),
+	}
+	for _, message := range []string{NoLeaderErr, NotLeaderErr, NotServedErr, NotPrimaryErr, RetryTimeoutErr, MismatchCalleeIDErr} {
+		checks["leader_"+message] = IsLeaderChange(errors.New("before " + message + " after"))
+	}
+	networks := []bool{}
+	for code := codes.OK; code <= codes.Unauthenticated; code++ {
+		networks = append(networks, IsNetworkError(code))
+	}
+	logs := map[string]any{}
+	addLog := func(name string, e error, causes ...error) {
+		field := ZapError(e, causes...)
+		encoder := zapcore.NewMapObjectEncoder()
+		field.AddTo(encoder)
+		// Stack/verbose diagnostics are runtime-specific. Preserve the actual error
+		// interface separately; all basic field text is compared with Rust.
+		logs[name] = encoder.Fields["error"]
+	}
+	addLog("nil", nil, cause)
+	addLog("prototype", ErrClientGetTSO)
+	addLog("wrapped", ErrClientGetTSO, cause, errors.New("ignored"))
+	addLog("nil_cause", ErrClientGetTSO, nil)
+	addLog("foreign", cause, errors.New("ignored"))
+	generated := ErrClientGetTSO.FastGenByArgs("original")
+	field := ZapError(generated, cause)
+	if field.Interface != generated {
+		t.Fatal("generated error replaced")
+	}
+	addLog("generated", generated, cause)
+	addLog("static", ErrClosing, cause)
+	resource := []string{}
+	for _, e := range []*ErrClientGetResourceGroup{
+		{}, {ResourceGroupName: "group"}, {ResourceGroupName: "group", Err: cause},
+		{ResourceGroupName: "group", Cause: "explicit", Err: cause},
+		{ResourceGroupName: "group", Err: errors.New("")},
+	} {
+		resource = append(resource, e.Error())
+		if errors.Unwrap(e) != e.Err {
+			t.Fatal("resource cause lost")
+		}
+	}
+	formatted := []string{
+		ErrClientCreateTSOStream.FastGenByArgs("input").Error(),
+		ErrClientGetTSO.FastGenByArgs("input").Error(),
+		ErrClientGetMinTSO.FastGenByArgs("input").Error(),
+		ErrClientGetLeader.FastGenByArgs("input").Error(),
+		ErrClientUpdateMember.FastGenByArgs("input").Error(),
+		ErrClientGetMultiResponse.FastGenByArgs("input").Error(),
+		ErrSecurityConfig.FastGenByArgs("input").Error(),
+		ErrClientListResourceGroup.FastGenByArgs("input").Error(),
+		ErrClientResourceGroupConfigUnavailable.FastGenByArgs("input").Error(),
+		ErrSchedulerConfigUnavailable.FastGenByArgs("input").Error(),
+		ErrClientResourceGroupThrottled.FastGenByArgs("25ms", 1.125, -2.5).Error(),
+		ErrClientResourceGroupThrottled.FastGenByArgs("25ms", math.Inf(1), math.Inf(-1)).Error(),
+		ErrClientResourceGroupThrottled.FastGenByArgs("25ms", math.NaN(), math.Copysign(0, -1)).Error(),
+		ErrClientPutResourceGroupMismatchKeyspaceID.FastGenByArgs(uint32(0), uint32(math.MaxUint32)).Error(),
+	}
+	output := map[string]any{"definitions": rows, "classifiers": checks, "network_codes": networks, "logging": logs, "resource_group": resource, "formatted": formatted}
+	data, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir := os.Getenv("PD_ERRS_ORACLE"); dir != "" {
+		if err = os.WriteFile(filepath.Join(dir, "errors.json"), append(data, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
