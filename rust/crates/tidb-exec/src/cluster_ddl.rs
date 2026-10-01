@@ -6273,7 +6273,13 @@ fn apply_partition_change(
     table: &str,
     sql: &str,
     repartitioning: bool,
-) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
+) -> Result<
+    (
+        tidb_executor::partition_routing::PartitionSpec,
+        tidb_executor::ddl::StoredPartitionMetadata,
+    ),
+    DdlPlanError,
+> {
     use tidb_executor::ddl::StoredPartitionDefinition;
     use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
 
@@ -6388,10 +6394,15 @@ fn apply_partition_change(
     let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
         unreachable!("the temporary partition catalog retains its table")
     };
-    Ok(table
-        .partition()
-        .expect("ALTER ADD/DROP PARTITION retains partitioning")
-        .clone())
+    let (spec, metadata) = (
+        table
+            .partition()
+            .expect("ALTER ADD/DROP PARTITION retains partitioning")
+            .clone(),
+        tidb_executor::ddl::last_built_partition_metadata()
+            .expect("ALTER PARTITION BY built partition metadata"),
+    );
+    Ok((spec, metadata))
 }
 
 /// `ALTER TABLE ... PARTITION BY ...` on an existing table: builds the new
@@ -6404,7 +6415,13 @@ fn apply_repartition_change(
     schema: &str,
     table: &str,
     sql: &str,
-) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
+) -> Result<
+    (
+        tidb_executor::partition_routing::PartitionSpec,
+        tidb_executor::ddl::StoredPartitionMetadata,
+    ),
+    DdlPlanError,
+> {
     use tidb_executor::ddl::StoredPartitionDefinition;
     use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
 
@@ -6445,10 +6462,16 @@ fn apply_repartition_change(
     let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
         unreachable!("the temporary repartition catalog retains its table")
     };
-    Ok(table
+    // The routing spec AND the stored metadata both feed the plan's meta
+    // writes: the spec re-folds bounds for row routing, the metadata carries
+    // the type/expr/columns the TableInfo JSON serializes.
+    let spec = table
         .partition()
         .expect("ALTER PARTITION BY retains partitioning")
-        .clone())
+        .clone();
+    let metadata = tidb_executor::ddl::last_built_partition_metadata()
+        .expect("ALTER PARTITION BY built partition metadata");
+    Ok((spec, metadata))
 }
 
 fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
@@ -7776,7 +7799,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let repartitioning =
                 matches!(statement, DdlStatement::RepartitionPartitions { .. });
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let transformed = apply_partition_change(stored, schema, table, sql, repartitioning)?;
+            let (transformed, repartition_metadata) = apply_partition_change(stored, schema, table, sql, repartitioning)?;
             let old_names = stored
                 .partition
                 .as_ref()
@@ -8154,7 +8177,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         }
         DdlStatement::TruncatePartitions { schema, table, sql } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let transformed = apply_partition_change(stored, schema, table, sql, false)?;
+            let (transformed, _metadata) = apply_partition_change(stored, schema, table, sql, false)?;
             let old_ids = stored
                 .partition
                 .as_ref()
