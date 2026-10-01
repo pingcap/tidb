@@ -38,6 +38,13 @@ The [review follow-up](lfu-review-followup.md) closes two missed shutdown paths,
 isolates the admission mismatch with a paused worker, and inventories all 91
 artifacts of the pinned external module. Both dependency probes remain red.
 
+The [shared cache ownership review](shared-cache-owner-review.md) traces all
+four Ristretto consumers on current Go master, including inference, which is
+absent from the integration Go checkout. It joins the B01/B02, C03 and C04
+dependency work while preserving separate consumer lifetimes and acceptance
+gates. Replacing storage alone leaves binding reload and coprocessor
+configuration mismatches. This is a design checkpoint, not a runtime repair.
+
 The [restore-utils protocol repair](restore-utils-protocol-repair.md) removes
 P04's two handwritten protocol owners after reviewing the complete eight-artifact
 Go package at master `93a01d31f6`. Complete generated files retain shared identity

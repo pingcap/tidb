@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, shared cache design review) Refresh integration/master; trace all four production Ristretto importers, their configuration and owning lifetimes. Recheck 98 consumer/subpackage artifacts against the existing inventory. Include inference, which is absent from this branch's Go checkout. Record the shared dependency and consumer retirement sequence in `parity/current-audit/shared-cache-owner-review.md`; no runtime/package acceptance is claimed.
+- [ ] Implement and validate the complete pinned Ristretto root package before consumer migration. Remove Stretto and both private FIFO stores only as their whole Go owners and production callers acquire equivalent validated behavior. Keep B01/B02, C03, C04 and inference acceptance separate.
 - [x] (2026-10-01, LFU review follow-up) Recheck all five LFU artifacts and inventory all 91 artifacts of pinned Ristretto v0.1.1. Reproduce unguarded public eviction lifetime and fix TriggerEvict/SetCapacity; both are exercised by the passing regression. Add a deterministic primary-admission failure and restore the pressure test's Go Get observation path (still fails). Native owner/parent suites pass 33 tests; two dependency probes remain ignored and unaccepted. The original 10 LFU and 73 Ristretto tests pass with race detection. All-target compilation, lint, formatting and inventory checks pass. Both locked publication builds remain required.
 - [x] (2026-10-01, LFU owner review/native repair) Review all five artifacts at current master; reproduce and repair premature Close, fake-table/negative-key classification, and signed-shard drift; remove the exclusive per-access primary mutex/clones and synthetic trigger tables. Map all ten original tests; 19 LFU and 13 parent tests, original Go race suite, all-target compilation and lint pass. Publication still requires both locked server builds.
 - [ ] (2026-10-01, C04 external boundary) Replace or accept the complete pinned Ristretto dependency owner. The original low-capacity concurrent workload retains full payloads in Stretto after Wait; its failing native reproduction is explicitly ignored, not accepted. Policy-metric assertions also remain unavailable in its synchronous public API. Do not claim complete LFU package parity.
@@ -59,6 +61,36 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 ## Milestones and design
 
 
+The current cache milestone follows the complete dependency/consumer design in
+`parity/current-audit/shared-cache-owner-review.md`. Implement pinned Ristretto
+v0.1.1 as one native generic crate, `rust/crates/tidb-ristretto`, preserving all
+six root source responsibilities, 73 original tests, five benchmarks and the
+91-artifact module inventory's dependency/platform decisions. Admission,
+buffering, callbacks, metrics, TTL, hashing and lifetime belong together. The
+crate must have no SQL or transaction dependency. The path is a design target;
+this review has not created or accepted that implementation.
+
+Next migrate the complete statistics LFU owner and parent callers; then the
+complete binding owner with live incremental reload/Domain maintenance; then
+the complete coprocessor owner with effective nullable configuration and store
+shutdown. Each package retains an atomic inventory/receipt and acceptance gate,
+even when multiple Rust crates change. Remove Stretto, CostLruStore/the narrowed
+BindingStore, and the coprocessor FIFO only after replacement responsibility
+and every production call path are verified. Merely substituting storage would
+leave binding access history reset on reload and the coprocessor hardcoded
+enabled-cache requirement unresolved. The inference root package is a fourth
+consumer requiring the same shared core; its absent provider/Domain/expression
+runtime remains a separate complete-package milestone.
+
+Run the original and native package suites plus fail-before/pass-after lifecycle
+regressions for each milestone. The shared core must make both retained C04
+probes pass without suppressing source cases or compensating inside the LFU
+wrapper. Validate configured constructors and worker shutdown, not just direct
+cache operations. Follow each package receipt's exact commands, root lint,
+the commit-hook locked server build and the fresh pre-push locked server build.
+Benchmark only after correctness; retain comparable workload/configuration
+baselines before attributing a sysbench/TPC-C/TPC-H/YCSB gain to this change.
+
 First produce a machine-readable package coverage inventory and a searchable candidate list. Candidate strings such as unsupported or go-parity-gap include valid Go errors and historical comments; they are evidence to review, never an automatic defect count. Keep confirmed findings with concrete Go/Rust source and validation evidence. Historical receipts cannot certify current master without rechecking changed package inputs.
 
 The first complete dependency boundary is github.com/pingcap/tipb/go-tipb. Current Rust duplicates selected messages in four local files and compares them to this branch's older June go.mod. Master pins September fed7bc47c39d; missing messages and fields escape the one-sided comparison. Replace those inputs with the complete upstream proto/include files and generate from them. A single synchronization/check command selects the dependency from an explicit Go master revision, records the complete package and generation inputs, and verifies all source bytes/file membership. Generation remains offline from checked-in source. Do not fix only ExecType or keep a second hand-maintained enum list. Preserve native Bytes ownership and protobuf presence semantics at consumers. Translate the upstream package's original wire tests and retain existing Rust wire vectors. Any consumer changes must be mechanical adaptations to complete generated contracts, with no new executor support invented.
@@ -71,6 +103,14 @@ Next reconcile transaction insertion, statement options and operation lifetime w
 Run regressions before production fixes and afterward. Protocol validation uses complete source checks, Rust wire tests, original go-tipb tests, affected consumer tests, and all-target compilation. Whole-repository completion requires all package coverage rows to have current, complete evidence; no keyword search can establish it. Record exact commands and results as work progresses. Publication uses TERM=xterm git -c core.hooksPath=hooks commit, then a separate cd rust && cargo build --locked -p tidb-server before normal push to hparser-integration. Native changes publish to client-rust master before synchronization. No forced pushes or hook bypasses.
 
 ## Surprises & Discoveries
+
+The wider cache scan found four production Ristretto consumers on Go master,
+not three: `pkg/inference/sqlembed.go` is absent from this integration branch's
+Go checkout. Rust has an explicit inference boundary, not an implemented fourth
+cache. All 98 artifacts in the four consumer directories match the existing
+inventory. A source-membership recheck is not semantic acceptance. Binding
+full-image reload would also reset a new LFU engine's history on every refresh;
+coprocessor storage replacement alone would retain its hardcoded configuration.
 
 The LFU shutdown review found two public paths outside the new lifetime gate:
 TriggerEvict and SetCapacity's final trigger. State's Weak upgrade can keep the
@@ -133,6 +173,15 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+- Decision: Follow the complete shared Ristretto dependency and all four Go
+  consumers, with separate cache instances and consumer-specific lifetimes.
+  Rationale: Wrapper patches cannot repair eager publication, write-queue,
+  callback and metrics differences; engine substitution alone cannot repair
+  binding reload or coprocessor configuration. Keep necessary side indexes and
+  unrelated Go LRU owners. Native Rust representation must preserve ownership
+  and observable behavior without copying Go runtime internals mechanically.
+  Date/Author: 2026-10-01 / Codex, full-picture follow-Go review.
 
 For the LFU review, retain the existing shared owner and cover both missing
 public accesses with its guard. Do not add another close flag, counter or
@@ -235,6 +284,11 @@ schema publication or require another action tick.
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
+
+The shared-cache review establishes a complete direct-importer map and a root
+repair sequence, including the previously omitted inference consumer. It changes
+no production code and closes no open finding. The dependency core, consumer
+migrations, original-case validation and SQL benchmark measurements remain work.
 
 The LFU review repaired the missed public trigger/capacity lifetime without
 adding another shutdown owner. A paused-worker comparison now proves the

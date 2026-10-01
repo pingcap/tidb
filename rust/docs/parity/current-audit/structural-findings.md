@@ -55,10 +55,15 @@ integration differences with unmeasured runtime consequences.
 
 ## Binding cache and maintenance
 
+The [shared cache review](shared-cache-owner-review.md) connects B01/B02, C03
+and C04 to the same pinned dependency. Go master has a fourth consumer,
+inference, already recorded as an unimplemented boundary. Cache core acceptance
+will not close the consumers' reload, configuration or lifecycle gaps.
+
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
 | B01 | **P2; source-confirmed:** live BindingCache uses an insertion-order CostLruStore; reads never influence admission/eviction. Every fitting insertion is admitted. Go's Ristretto cache has frequency admission and asynchronous Set/Wait. This can retain different hints under pressure, affecting chosen plans. | `rust/crates/tidb-session/src/binding_cache.rs:283`, `:313`, `:317`, `:413`; cluster binding image publication | `pkg/bindinfo/binding_cache.go::newBindingCache`, `GetBinding`, `SetBinding`. Preserve the complete admission, access, replacement, accounting and publication contract. No particular probabilistic Go victim or measured workload slowdown is claimed. |
-| B02 | **P2; source-confirmed:** the binding worker rebuilds the full table image every lease; it has no incremental watermark, binding owner GC timer or usage persistence loop. Tombstone GC instead runs on subsequent global-binding writes; usage helper code has no production caller. | `rust/crates/tidb-server/src/cluster_binding_seam.rs:76`, `:169`; `rust/crates/tidb-session/src/binding_arm.rs:684`; `binding_utils.rs:459` | `pkg/bindinfo/binding_cache.go::LoadFromStorageToCache`, `UpdateBindingUsageInfoToStorage`, `pkg/domain/domain.go::globalBindHandleWorkerLoop`. Keep the existing independent global-binding writer; migrate refresh/GC/usage scheduling to the shared owner before deleting write-triggered GC. |
+| B02 | **P2; source-confirmed:** the binding worker rebuilds the full table/cache image every lease; it has no incremental watermark, binding owner GC timer or usage persistence loop. A new cache on every reload would discard access history even after replacing the FIFO engine. Tombstone GC instead runs on subsequent global-binding writes; usage helper code has no production caller. | `rust/crates/tidb-server/src/cluster_binding_seam.rs:76`, `:169`; `rust/crates/tidb-session/src/binding_arm.rs:684`; `binding_utils.rs:459` | `pkg/bindinfo/binding_cache.go::LoadFromStorageToCache`, `UpdateBindingUsageInfoToStorage`, `pkg/domain/domain.go::globalBindHandleWorkerLoop`. Keep the existing independent global-binding writer; migrate refresh/GC/usage scheduling to the shared owner before deleting write-triggered GC. |
 
 ## Wire and server admission/configuration
 
