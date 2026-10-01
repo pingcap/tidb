@@ -36,6 +36,15 @@ SQL probe, and corrects stale T03 status. [Machine-readable findings](structural
 and [source continuity](structural-source-continuity.json) retain every ID and current source pin.
 No production code was repaired by this review.
 
+The [full-picture repair sequence](repair-sequence.md) starts from the published
+integration audit `4285385fad20855487ec1d8ff113290d48f949a5` and maps all 77 open
+IDs exactly once into 12 workstreams. It identifies complete source owners,
+caller migrations, removal gates and acceptance behavior. The
+[living ExecPlan](../../full-structural-parity-execplan.md) sets the next native
+PD package closure, coupled schema/DDL/GC sequence, independent correctness
+work, benchmark method and publication gates. Workstreams are not partial
+package completion claims; no production code changes in this planning update.
+
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,

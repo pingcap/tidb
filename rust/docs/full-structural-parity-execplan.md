@@ -5,17 +5,51 @@ This is a living ExecPlan under root PLANS.md. Maintain Progress, Surprises & Di
 ## Purpose and acceptance
 
 
-The user requests every mismatch to be listed and removed, following TiDB Go master and its pinned client-go. Exhaustive coverage means every production source, platform/build variant, generated input, original test, fixture and support/build artifact in each owning Go package. A search hit or passing subset is not package acceptance. The rolling source starts at master 6b2781326b722f217a61852ab403350858549bd0 and integration 5503f8860883c6cd80bdd0d487d34c53787daf24. Native client-rust master is 884589f0365053c0f5bd300209751187a4811782. No new SQL features absent from Go are authorized.
+Make Rust TiDB and native client-rust follow the production owners, state
+transitions and observable behavior of current TiDB Go master and its pinned
+client-go. SQL results, warnings/errors, authorization, isolation, failure
+recovery, configuration and lifecycle behavior must match. Improve
+sysbench/TPC-C/TPC-H/YCSB through source-compatible implementations; neither
+extra features nor reduced correctness are acceptable ways to improve results.
+Rust representation, ownership and crate boundaries should remain native.
 
-The latest system-level review compares integration
-`82c40b63c371cf7ab2e776c9e92bbb058a83457c` with freshly fetched Go master
-`93a01d31f6da205ae4bf376825293903a6899fdb`. Earlier revision identifiers above
-and in receipts are historical baselines. The objective is equivalent Go
-ownership and state transitions throughout production, including failure,
-retry, cancellation and shutdown. Native Rust types and crate boundaries may
-differ. A correct helper bypassed by a live entrypoint does not satisfy parity.
+The current plan starts at integration
+`4285385fad20855487ec1d8ff113290d48f949a5`, freshly fetched Go master
+`93a01d31f6da205ae4bf376825293903a6899fdb`, and native client-rust
+`6f663b396552eec6d1bfad76b65f813e317884a4`. Normative external pins come from
+that master's go.mod, not this integration branch's older Go checkout.
+The [repair sequence](parity/current-audit/repair-sequence.md) records those
+pins and assigns all 77 known open findings to 12 related workstreams. Eight
+other findings retain their repair receipts. Finding counts are not proof that
+every semantic mismatch has been discovered.
+
+One complete Go package or pinned external-module package is the minimum
+implementation and acceptance unit, including every production source,
+build/platform/generated variant and input, original test/support artifact,
+fixture and required validation gate. A package may map to multiple Rust crates,
+but retains one atomic inventory, integration decision and receipt. Findings
+and workstreams are planning aids, not partial port dispatch units. A correct
+helper bypassed by a live entrypoint does not qualify. A Go package spanning
+multiple workstreams remains open until all its obligations are met.
+
+The active design and validation sections below supersede old priorities in
+chronological receipts. Earlier revisions, counts, pending-work descriptions
+and validation results in those receipts apply only to their recorded point
+in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+
+- [x] (2026-10-01, full-picture plan) Pull both implementation branches, fetch Go master, reconcile the current 85-record register and assign all 77 open findings exactly once. Replace stale active TiPB and background-lifetime work with the current dependency and removal gates. No production code or finding status changes.
+- [ ] Establish the next complete PD root/TSO/discovery package closure, original-case mapping and fail-before lifecycle/transport probes (W01). Preserve all other root APIs, variants and dependencies in its acceptance scope.
+- [ ] Migrate complete native routing owners and every TiDB storage consumer before retiring competing TiDB algorithms (W02); retain the MPP transport retirement dependency.
+- [ ] Complete the coupled shared session/table, versioned schema/identity and durable DDL migrations (W03–W05). Prove min-start-TS reporting before GC activation.
+- [ ] Complete ready independent account/charset/configuration and cache packages (W06/W07), then their full parent-package integration obligations.
+- [ ] Complete shared optimization/typed execution, MPP, Domain job services, runtime information and inference (W08–W12), gathering overlapping Go-package obligations into one claim.
+- [ ] Establish comparable workload baselines before relevant runtime changes; validate all four benchmark families without suppressing errors or unsupported cases.
+- [ ] Complete the remaining source/test/variant coverage queue beyond known findings. Audit closure requires current evidence for every package, not only an empty finding list.
+
+The entries below preserve earlier completed work and still-open obligations.
 
 - [x] (2026-10-01, A01 runtime follow-up) Refresh master/integration. Reproduce the ordinary and prepared joined UPDATE privilege bypass before edits; verify Go master rejects it and re-resolves targets after DDL. Disprove the column-only SELECT allegation with a Go oracle.
 - [x] Complete A01 runtime regression validation and correct the audit: 20 table-privilege tests and the Go oracle pass; five fail-before regressions are repaired. Broad grant/prepared/EXPLAIN suites have no new failures versus HEAD (31/1/12 remain). All-target compilation and root lint pass. Publication uses both locked build gates; full planner/session package acceptance remains open.
@@ -72,118 +106,308 @@ differ. A correct helper bypassed by a live entrypoint does not satisfy parity.
 ## System ownership and repair order
 
 
-The principal execution chain is server protocol to Session, then preprocessing
-and resolved planning, then executor construction and Open/Next/Close. Table
-mutation and distributed reads branch from that execution layer into the KV
-driver/native client. Domain supplies shared schema, statistics, privileges,
-bindings and service lifetimes. SQL DDL submits persisted jobs and waits for
-their owning worker; the worker performs metadata transactions and schema
-synchronization. These are cooperating owners, not one global object.
+The execution chain is server protocol to Session, then preprocessing/resolved
+planning, then executor construction and Open/Next/Close. Table mutation and
+distributed reads call the KV driver and native client. Domain owns shared
+schema, statistics, privileges, bindings and service lifetimes. SQL DDL submits
+persisted jobs and waits; workers own metadata transactions, reorganization
+and schema synchronization. An owner here means the code responsible for state,
+its transitions and its lifetime, not necessarily one struct or crate.
 
-Go `pkg/session/session.go::executeStmtImpl` establishes transaction and
-statement context before compilation. `pkg/executor/compiler.go::Compile`
-preprocesses with the transaction context provider, obtains its InfoSchema,
-then calls the optimizer. `pkg/sessiontxn/interface.go` retains separate
-statement timestamps, initialization, retry, commit and rollback hooks.
-Preserve these responsibilities across text, prepared, internal-session and
-point-get paths, including Go's legitimate specialized fast paths. A second
-SQL interpreter selected by storage mode or table count is a different design.
+Go `pkg/session/session.go::executeStmtImpl` establishes transaction/statement
+context before `pkg/executor/compiler.go::Compile` preprocesses with the
+transaction context provider and optimizes against its InfoSchema.
+`pkg/sessiontxn/interface.go` keeps separate statement timestamp, initialization,
+retry, commit and rollback hooks. Preserve these responsibilities across text,
+prepared, internal-session and specialized fast paths. Replace table-count or
+storage-mode SQL interpreters with storage adapters to this common execution
+chain. Preserve Go's shared candidate lifecycle in merge planning; whole
+planner acceptance includes its other candidate rules and original tests.
 
-| Ownership correction | Existing findings and migration scope |
-| --- | --- |
-| Shared SQL session and resolved plan | S01/S02, A01, E02/E03, Q01 and X01: replace selectable configured planners/interpreters through the ordinary session and storage adapters; retain resolved column/handle/FK metadata and active expression/write context into execution. Preserve Go's shared candidate lifecycle in merge planning. Name resolution owns privilege requests; downstream executors must not guess them from unresolved AST qualifiers. |
-| SQL transaction policy and native KV execution | T01–T03, S04 and K03: keep the session transaction provider distinct from the client transaction implementation. Table/index code selects uniqueness/assertion and conversion policy; the buffer transports it. Native client-rust must supply client-go's routing, RPC recovery, lock resolution and retry-budget/lifetime contracts to every TiDB consumer before competing TiDB algorithms are retired. |
-| Domain state and durable schema work | O01/O02, I04, D01/D02 and K02: compose identity, bootstrap/upgrade, versioned schema and lease owners; submit DDL through persisted jobs and migrate backfill/cancel/recovery together. Keep metadata transaction helpers used by workers; retire direct SQL publication after all relevant callers migrate. |
-| Process/domain services and resource lifetime | O03–O06, O10/O11/O13 and E04/E06: compose Go's actual configured service owners and executor workers with startup, cancellation, completion and shutdown. Registered variables, metrics or unused helpers do not prove that a service runs. Preserve Go's role/configuration gates. |
-| Shared dependencies and consumer-specific caches | B01/B02, C02–C04 and inference: implement the selected dependency once, preserving each consumer's identity, budget and lifetime. Session and instance plan caches retain their distinct Go contracts. The Ristretto work below is one dependency milestone, not the definition of the full project. |
+The full finding/owner/removal/acceptance mapping is in
+[repair-sequence.md](parity/current-audit/repair-sequence.md). Use its W01–W12
+labels only to discuss dependencies. Build the actual package dependency closure
+from pinned source before implementation; the map is not an invented import
+DAG. Runtime activation can be cyclic even when imports are acyclic. In
+particular, schema, SQL transaction context, DDL jobs and GC need coordinated
+integration rather than another fallback owner.
 
-The present source verifies why these boundaries matter. In
-`rust/crates/tidb-server/src/lib.rs`, startup still chooses separate one/two-table
-sessions when cluster-session mode is disabled; `real_tikv_node/mod.rs` retains
-static descriptors on its two-table route. `cluster_session_node/boot.rs` even
-supplies an inert ConfiguredTable to a process authority whose constructor
-still requires a bounded-read table. Remove that coupling when separating
-process storage construction from SQL session construction, rather than adding
-another placeholder table. This is evidence within S01, not a new finding.
+Keep Go's distinct SQL TxnManager, native KV transaction, table/index assertion
+policy, distributed task planning and per-consumer cache ownership. Remove only
+the competing implementation whose responsibility and all callers have moved.
+The following current paths illustrate the coupling: server startup still
+selects one/two-table sessions; `real_tikv_node/mod.rs` retains the two-table
+static catalog; cluster boot supplies an inert ConfiguredTable to process
+construction; `physical_builder.rs::execute_dml_source` fully drains children;
+`RealClusterDdl::execute` routes non-CHECK statements to direct metadata work;
+and `client_bridge.rs::ClientPd` routes native lookups back through TiDB.
+Changing one helper beneath these entrypoints leaves the structure incomplete.
 
-`rust/crates/tidb-executor/src/driver/physical_builder.rs::execute_dml_source`
-drains its child into all rows, while Go `UpdateExec.updateRows` consumes and
-accounts for chunks. `cluster_session_node/ddl.rs::RealClusterDdl::execute`
-submits CHECK operations to the persisted worker but sends other statements
-through direct publication. `tidb-txnkv/src/driver/client_bridge.rs::ClientPd`
-routes native lookups back into the TiDB backend. These call paths must migrate
-with their owners; changing the implementation behind one method is incomplete.
-
-Select the next complete package by correctness risk and prerequisite closure.
-The reproduced privilege bypass (A01), account-policy gaps (A02/A04), generated
-column conversion error (K03) and other data-integrity findings must not wait
-for an unrelated cache optimization. Determine each fix from its resolved
-plan, policy and state owner; do not repair only the SQL example that exposed
-it. Shared schema/transaction contracts and native-client dependencies precede
-the consumers that need them. Independent complete leaf repairs can proceed
-without waiting for every parent package, with their integration limits stated.
-
-For each selected package, retain the complete source/test/variant inventory,
-map every production caller, demonstrate the relevant regression before repair,
-migrate the owning state machine and callers, and remove the displaced
-implementation in the same reviewed change. Test successful execution and
-the source's error/retry/cancel/close paths through real entrypoints. A layer
-with required SQL policy is not redundant merely because another layer also
-has a transaction or cache type. Completion and publication remain atomic per
-Go package, even when the edit crosses Rust crates.
-
-Performance work follows these correctness boundaries: remove unnecessary full
-materialization and copying, restore typed vector execution, shared admission
-and Go's allowed concurrency, and measure equivalent sysbench/TPC-C/TPC-H/YCSB
-workloads. Do not enlarge retry budgets, weaken validation, force cache hits or
-add benchmark-specific execution modes to obtain a better number. This review
-does not establish benchmark results or semantic coverage of every package.
+Independent complete correctness repairs can proceed once their prerequisites
+are available. Account-policy loss, charset corruption and generated-column
+conversion must not wait for unrelated cache optimization. Broad package
+completion still gathers every obligation: for example, executor acceptance
+includes account statements, DML, parallel workers, IMPORT/BRIE and runtime
+producers; Domain acceptance includes all enabled service lifecycles.
 
 ## Milestones and design
 
 
-The current cache milestone follows the complete dependency/consumer design in
-`parity/current-audit/shared-cache-owner-review.md`. Implement pinned Ristretto
-v0.1.1 as one native generic crate, `rust/crates/tidb-ristretto`, preserving all
-six root source responsibilities, 73 original tests, five benchmarks and the
-91-artifact module inventory's dependency/platform decisions. Admission,
-buffering, callbacks, metrics, TTL, hashing and lifetime belong together. The
-crate must have no SQL or transaction dependency. The path is a design target;
-this review has not created or accepted that implementation.
+### 0. Freeze evidence and form complete package units
 
-Next migrate the complete statistics LFU owner and parent callers; then the
-complete binding owner with live incremental reload/Domain maintenance; then
-the complete coprocessor owner with effective nullable configuration and store
-shutdown. Each package retains an atomic inventory/receipt and acceptance gate,
-even when multiple Rust crates change. Remove Stretto, CostLruStore/the narrowed
-BindingStore, and the coprocessor FIFO only after replacement responsibility
-and every production call path are verified. Merely substituting storage would
-leave binding access history reset on reload and the coprocessor hardcoded
-enabled-cache requirement unresolved. The inference root package is a fourth
-consumer requiring the same shared core; its absent provider/Domain/expression
-runtime remains a separate complete-package milestone.
 
-Run the original and native package suites plus fail-before/pass-after lifecycle
-regressions for each milestone. The shared core must make both retained C04
-probes pass without suppressing source cases or compensating inside the LFU
-wrapper. Validate configured constructors and worker shutdown, not just direct
-cache operations. Follow each package receipt's exact commands, root lint,
-the commit-hook locked server build and the fresh pre-push locked server build.
-Benchmark only after correctness; retain comparable workload/configuration
-baselines before attributing a sysbench/TPC-C/TPC-H/YCSB gain to this change.
+Refresh integration, Go master and native master. Record exact revisions and
+source module pins, then use the existing inventory and coverage generators.
+For each selected package, read doc.go if present and account for every artifact,
+original case, production caller and dependency. Classify existing code as
+reusable, needing replacement, or explicit unaccepted seed. Record changed-input
+receipt invalidation; never relabel old partial receipts as current acceptance.
+Keep all 969 inventoried package directories and 83 Rust crates in the review
+queue. Inventory additional external dependencies when reached.
 
-First produce a machine-readable package coverage inventory and a searchable candidate list. Candidate strings such as unsupported or go-parity-gap include valid Go errors and historical comments; they are evidence to review, never an automatic defect count. Keep confirmed findings with concrete Go/Rust source and validation evidence. Historical receipts cannot certify current master without rechecking changed package inputs.
+Use the 77-finding assignment as the known defect queue. Add newly proved gaps
+with source evidence; reject stale keyword matches. Recheck broad baseline test
+failures by exact test/source owner. Include master's range-count variable,
+skyline policy and bootstrap-upgrade delta within complete affected packages.
+The repaired TiPB/native protocol generation remains the source of declarations:
+select pins from master, regenerate from full inputs and run drift checks;
+do not introduce handwritten projections or edit generated outputs.
 
-The first complete dependency boundary is github.com/pingcap/tipb/go-tipb. Current Rust duplicates selected messages in four local files and compares them to this branch's older June go.mod. Master pins September fed7bc47c39d; missing messages and fields escape the one-sided comparison. Replace those inputs with the complete upstream proto/include files and generate from them. A single synchronization/check command selects the dependency from an explicit Go master revision, records the complete package and generation inputs, and verifies all source bytes/file membership. Generation remains offline from checked-in source. Do not fix only ExecType or keep a second hand-maintained enum list. Preserve native Bytes ownership and protobuf presence semantics at consumers. Translate the upstream package's original wire tests and retain existing Rust wire vectors. Any consumer changes must be mechanical adaptations to complete generated contracts, with no new executor support invented.
+### 1. Complete native PD and storage ownership
 
-Next reconcile transaction insertion, statement options and operation lifetime with the actual Go owners; remove only policies whose responsibility has moved to the authoritative owner. Review all routing/cache/transport consumers before changing ownership. The previously rejected /private/tmp/client-rust-background-lifetimes.patch stays unapplied without the specifically requested authorization. Other independently authorized repairs continue.
+
+Start with W01: the pinned PD root, `clients/tso`, `servicediscovery` and their
+required complete dependency packages. Current inventory starts with 13, seven
+and nine artifacts respectively, including original tests; these counts do not
+bound the dependency closure. Review all root APIs as well as the three findings.
+In native `src/pd/{client,retry,timestamp}.rs`, make request connections live
+outside short metadata synchronization, retain the TSO worker completion owner,
+apply source deadlines and propagate close through pending work and streams.
+Implement source service-mode discovery and fallback through that same owner.
+Validate stalled stream, concurrent metadata, leader change, close/reconnect and
+mode-transition behavior before accepting it. Do not patch P07's lock in isolation
+and report a complete PD port.
+
+Then W02 supplies the complete client-go routing/RPC/transaction owners to
+TiDB. Inventory `internal/locate`, `internal/client`, `tikvrpc`, `tikv` and
+transaction/snapshot dependencies, preserve explicit retry limits and operation
+lifetimes, and wire TiDB's latency/health/tick events to native state. Migrate
+all TiDB consumers of competing routing/transport methods. Distributed task
+planning remains in TiDB. Final removal of a transport still used by MPP waits
+for W09. Publish accepted native packages to client-rust master, synchronize
+TiDB using the existing script, and validate the integrated callers.
+
+### 2. Unify SQL/table, schema and durable DDL lifecycles
+
+
+W03 removes alternate interpreters and narrowed execution handoffs by moving
+all entrypoints to the ordinary session/compiler/executor and table owners.
+Resolved privileges, FK plans, handle positions, mutation context and chunk
+accounting survive planning through execution. Table/index callers choose
+assertions and auto-ID mode. The buffer transports those decisions. Session
+migration and historical queries use source state/timestamp/schema providers.
+
+W04 supplies leased server identity, versioned bootstrap/upgrade and
+InfoSchema, cached-table leases and min-active-start-TS reporting. First prove
+that active transactions, cursors and required internal sessions protect their
+timestamps, including with a Go peer already running GC. Only then activate the
+Rust server's GC worker. Complete durable delete-range registration in W05 and
+its consumption before enabling corresponding cleanup. Numeric server identity
+also gates global KILL and distributed task identity.
+
+W05 moves every SQL DDL caller to durable submission and completion. Complete
+scheduler dependencies, pause/cancel/error/rollback transitions and schema
+barriers before online reorganization or currently disabled MV seeds can become
+live. Preserve both MDL and lease modes, partition identity and multi-action
+atomicity. Move classic TiFlash rule creation to DDL and retired-table cleanup
+to GC, keeping NextGen refresh where Go defines it. Compose progress/backoff,
+PD HTTP security/discovery and affinity under their existing source owners.
+DXF-backed reorganization requires W10. Delete the displaced SQL publisher,
+private reorganization shortcuts and poller policies only with caller migration.
+
+### 3. Complete independent policy and shared dependencies
+
+
+W06 repairs complete account/security, charset and configuration owners with
+their server/executor callers. Preserve durable epochs/policy fields, certificate
+verification/reload, password history and input bytes. Connect command admission,
+remote KILL and admin APIs to validated source configuration; accepting ignored
+settings is not equivalent. Ready independent packages may precede milestone 2;
+remote KILL and runtime administration wait for their actual shared providers.
+
+W07 follows the [cache design](parity/current-audit/shared-cache-owner-review.md).
+Implement the full pinned Ristretto root and dependency decisions, then complete
+LFU/parent, binding and coprocessor consumer packages. Admission, publication,
+queues, TTL, callbacks, metrics and close belong together. Both red C04 probes
+must pass without compensating wrapper policy. The proposed
+`rust/crates/tidb-ristretto` is a design target, not an existing accepted crate.
+Keep four independent cache instances/budgets/lifetimes including W12 inference.
+Migrate binding refresh/GC/usage persistence and effective coprocessor config
+along with storage. Remove Stretto and private FIFO stores when callers migrate.
+C02 instead follows Go's instance plan cache/cloning; preserve the session LRU.
+
+### 4. Complete shared planning, execution and runtime composition
+
+
+W08 completes optimizer selection, candidate lifecycles, typed SQL/PB expression
+construction/vector execution, parallel Apply and projection close/join. W09
+uses those contracts and W02's storage owner for MPP fragments/tasks, exact range
+splitting, incremental tracked responses and remote cancellation. Compose
+TiFlash Compute topology and supported dispatch modes. Remove the private
+scan-only planner, range envelope, full-stream materialization and plaintext
+MPP transport only with their complete replacements.
+
+W10 composes TTL, resource/runaway control, RU history, statistics GC, DXF,
+cross-keyspace runtimes, IMPORT and BRIE as complete source packages become
+ready. Preserve role/configuration gates, recovery and joined shutdown. W11
+connects live virtual tables/discovery/fanout, summaries, statistics metrics,
+plan replay, TopSQL, learning, telemetry and AZ policy to production events and
+readers. An injectable test provider or registered metric does not prove this
+integration. Go's current telemetry logs reports; no new uploader is needed.
+W12 integrates the complete inference/provider/batcher closure, shared cache
+and Domain lifetime through typed expressions. Do not invent provider modes.
+
+These are integration gates, not instructions to defer every service until the
+end. Ready leaf owners land with required callers; overlapping parent packages
+retain one open acceptance claim until their complete source obligations pass.
+
+### 5. Close coverage and validate workload performance
+
+
+Recheck every inventoried package, original test and generated/build/platform
+variant, including packages without known findings. A zero count in the known
+register is insufficient. Trace each live entrypoint through owner construction,
+config gates, success/failure, retry/cancel, persistence and close. Compare
+mixed Go/Rust and Rust-only clusters for authorization, schema/DDL, timestamp
+protection, owner failover, routing and configured services. Do not let a Go peer
+mask a missing Rust background responsibility.
+
+Measure performance before and after each relevant accepted owner change, not
+only after the entire migration. Use matched Go/previous-Rust/new-Rust builds,
+release profiles, hardware, storage topology, dataset, statistics, cache state,
+security, isolation, quotas and concurrency. Preserve tool versions, seeds and
+workload mixes. Capture throughput, latency distributions, CPU/RSS, errors,
+retries and relevant network/first-row/memory behavior. Use repeated baseline
+runs to quantify noise; investigate regressions instead of choosing favorable
+samples or changing defaults. Historical benchmark reports are not current
+baselines. No speedup is promised before measurement.
 
 ## Validation and commands
 
 
-Run regressions before production fixes and afterward. Protocol validation uses complete source checks, Rust wire tests, original go-tipb tests, affected consumer tests, and all-target compilation. Whole-repository completion requires all package coverage rows to have current, complete evidence; no keyword search can establish it. Record exact commands and results as work progresses. Publication uses TERM=xterm git -c core.hooksPath=hooks commit, then a separate cd rust && cargo build --locked -p tidb-server before normal push to hparser-integration. Native changes publish to client-rust master before synchronization. No forced pushes or hook bypasses.
+### Per-package development and acceptance
+
+
+From `/Users/qiliu/projects/tidb`, refresh the existing source accounting:
+
+    python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master
+    python3 rust/scripts/build-structural-coverage.py
+    git diff --check
+
+Review generator diffs; generation cannot certify semantics. Use a separate
+checkout at the exact Go master pin for original Go tests, rather than the
+integration branch's older Go files. External original tests use the selected
+module version in a writable test checkout, never mutate the Go module cache.
+Read `docs/agents/testing-flow.md`; apply the Bazel prerequisite gate only when
+its source/import/module/build/test-target triggers apply. For a selected package
+and test, substitute the recorded names in these command templates:
+
+    ./tools/check/failpoint-go-test.sh pkg/<package> -run <TestName> -count=1
+    go test -run <TestName> -tags=intest,deadlock ./pkg/<package>
+    cargo test --locked --manifest-path rust/Cargo.toml -p <crate> --lib <filter>
+    cargo test --locked --manifest-path rust/Cargo.toml -p <crate> --test all <filter>
+    cargo check --locked --manifest-path rust/Cargo.toml -p <crate> --all-targets
+
+Use the first Go command where failpoints require it, otherwise the second;
+choose actual Rust test targets from that crate. Run targeted cases during
+development and the complete original-package case/variant acceptance set
+before claiming the package. A regression must fail before the fix and pass
+afterward. Include failures after partial work, ambiguous RPC completion,
+explicit exhausted retries, cancellation, close and restart where applicable.
+Keep test results with exact commands/source pins. Ignored cases, untested
+platforms and baseline failures remain explicit open obligations.
+
+For native changes in `/Users/qiliu/projects/client-rust`, include appropriate
+original client-go/PD cases, transport regressions and:
+
+    cargo test --locked --lib -- --test-threads=1
+    cargo clippy --locked --lib -- -D warnings
+    cargo fmt --all --check
+
+Unit success alone does not replace the complete package test/integration map.
+Real TiKV and SQL integration follow the repository's playground and recording
+workflows, with cleanup. At code completion in TiDB run `make lint`, then review
+the diff for unrelated edits, duplicated policy and generated-source violations.
+
+### Workload commands and interpretation
+
+
+The existing sysbench harness assumes separately prepared comparable servers
+and data. It does not create or restore the dataset. Use supported workload
+names or Lua scripts and record all substituted values:
+
+    python3 rust/scripts/compare-sysbench.py --server go:<port> --server before:<port> --server after:<port> --database <db> --workload <workload> --threads <n> --seconds 30 --rounds 3 --table-size <rows> --tables <n> --ps-mode auto --output <path>
+
+TPC-C uses a pinned go-tpc tool with the repository's input-seed/measurement
+patches. Verify the tool's actual supported options. Use identical restored
+initial data for mutating samples; a fixed seed does not reset the database.
+The current harness does not restore data between warmup/rounds. Before treating
+mutating rounds as independent samples, add or reuse explicit dataset-restore
+orchestration around each sample and verify it. The existing command below is
+the execution interface, not evidence that those reset gates are implemented:
+
+    python3 rust/scripts/compare-tpcc.py --tool <pinned-go-tpc> --server before:<port> --server after:<port> --server go:<port> --database <db> --warehouses <n> --threads 2 8 --count 10000 --warmup-count 1000 --rounds 4 --seed 1 --output <directory>
+
+For TPC-H, re-establish a baseline for all 22 queries and compare result rows
+before timing. The old SF50 report has stale pins and a q15 view-lifecycle race;
+reuse its query artifacts only after isolating setup/cleanup per sample.
+For YCSB, first pin an available tool and its SQL binding, schema, operation mix,
+key distribution and seeds; no checked-in runnable harness was found in this
+review. Record the resulting exact invocation before measuring. Raw KV numbers
+do not establish TiDB SQL performance. Missing tools or unsupported queries
+remain visible gaps; do not invent an invocation or silently omit failed runs.
+
+### Publication and recovery
+
+
+Native package changes publish first with normal `git push origin HEAD:master`
+from `/Users/qiliu/projects/client-rust`. Then, from TiDB root, synchronize using:
+
+    bash rust/scripts/sync-tikv-client-rs.sh
+
+Inspect the recorded source SHA, applied compatibility patches and regenerated
+outputs. If master advanced beyond the reviewed commit, review the delta before
+acceptance. Do not edit the vendored/generated copy to bypass native ownership.
+Re-run affected consumer gates, update receipts, and stage only reviewed files.
+For every commit touching `rust/`, including plan-only changes, use the actual
+pre-commit hook and confirm its locked server build succeeded:
+
+    TERM=xterm git -c core.hooksPath=hooks commit -m '<package and behavior>'
+
+After the final commit or amend, immediately before pushing, run a fresh locked
+server build and only push on success:
+
+    (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
+
+Do not bypass failed hooks, force-push, or present an incomplete package as
+transcreated. If a package is unfinished, keep its implementation as explicit
+local seed evidence and its acceptance open. Preserve user edits. Inventory
+checks are rerunnable; synchronization must be inspected for source advancement.
+Use disposable benchmark/test datasets and repository-prescribed cleanup;
+never reclaim disk by deleting uncommitted work or the sole source of evidence.
+If validation fails, retain the failure/log and repair its source owner before
+publication. Recover a published bad change with a reviewed revert, not history
+rewriting; test durable schema/state compatibility before reverting runtime work.
 
 ## Surprises & Discoveries
+
+
+The current 77 open findings span shared broad packages, so assigning each ID
+to an independent patch would fragment the very owners being restored. PD
+shutdown/discovery/concurrency belong to one lifecycle; DDL, schema protection
+and GC require coordinated activation; MPP retains a dependency on native
+transport retirement. The 969-package inventory is broader than the finding
+register and remains an independent completion obligation.
 
 The full-picture follow-up confirms that dependency correctness alone cannot
 repair live callers which bypass their intended owners. The default cluster
@@ -261,6 +485,27 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+
+- Decision: Start implementation with the complete pinned PD root/TSO/discovery
+  closure, then native routing and TiDB consumers; allow ready independent
+  correctness packages without waiting for unrelated performance work.
+  Rationale: Discovery, deadlines, synchronization and shutdown share state;
+  migrating consumers before deleting competing owners prevents new bypasses.
+  Date/Author: 2026-10-01 / Codex, full-picture execution plan.
+
+- Decision: Preserve atomic Go-package acceptance across the 12 workstreams,
+  and gate GC on min-start-TS protection and durable delete-range integration.
+  Rationale: Finding-level closure cannot certify a broad source package, and
+  safe deletion depends on active readers as well as worker implementation.
+  Date/Author: 2026-10-01 / Codex, full-picture execution plan.
+
+- Decision: Replace stale active milestones for protocol generation and the
+  cleanup-lifetime approval block with their current repaired status; retain
+  historical receipts as historical evidence.
+  Rationale: Current planning must not redispatch repaired work or request
+  authorization that has already been resolved.
+  Date/Author: 2026-10-01 / Codex, full-picture execution plan.
 
 - Decision: Order work by Go's system ownership, correctness risk and complete
   package prerequisites; retain the cache design as one bounded milestone.
@@ -380,6 +625,23 @@ schema publication or require another action tick.
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
+
+
+The full-picture planning revision maps every known open finding, identifies
+coupled activation/removal gates, selects the next complete native owner and
+specifies original-case, distributed, performance and publication evidence.
+It changes three documentation files only: this ExecPlan, the current-audit
+README and the new repair sequence. No production fix, dependency update,
+package acceptance or benchmark result is claimed. Planning validation passed:
+`python3 /private/tmp/check-full-parity-plan.py` verified all 77 unique
+assignments, the eight excluded repaired IDs, source revisions, six module pins,
+five inventory sizes, initial PD artifact counts and 31 documentation links.
+`python3 rust/scripts/compare-sysbench.py --help`,
+`python3 rust/scripts/compare-tpcc.py --help` and `git diff --check` passed.
+Publication still requires the actual hook build and a fresh locked pre-push
+build; final tool results determine whether those gates pass. Runtime suites,
+`make lint` and benchmarks are not rerun for this documentation-only revision.
+The chronological outcomes below retain their own scope.
 
 The system-wide follow-up changes repair prioritization and the evidence needed
 for removal. No production code, dependency pin or finding status changes in
@@ -1648,3 +1910,13 @@ Native validation passes 1,405 library tests with two ignored and strict Clippy.
 Native 6f663b3 is published and synchronized. TiDB removes its separate slow-score and feedback/decay implementations and uses the native StoreLoadStats with monotonic Instants. Its topology copies retain an Arc to native StoreHealthStatus. Native score reads are atomic and feedback/decay writes skip contention. Both the lost shared-health identity regression and held-lock feedback regression fail before repair and pass after it.
 
 The native library passes 1,406 tests/two ignored with strict Clippy. TiDB transaction/region/DistSQL validation passes 886 tests/14 ignored; root lint passes. The actual pre-commit locked server build passed; the final publication command reruns the locked build after the receipt amendment and pushes only on success. See store-health-owner-execplan.md and parity/current-audit/store-health-owner-repair.md. Production TiDB latency/feedback/tick wiring, broader T02 ownership and complete-package acceptance remain open.
+
+
+## Revision note — 2026-10-01 full-picture plan
+
+
+Replaced active stale priorities with a complete finding-to-owner work map,
+source-pinned package acceptance units, dependency/activation/removal gates,
+concrete validation/publication steps and ongoing workload measurement. Preserved
+historical receipts and repaired findings. The next implementation unit is the
+native PD root/TSO/discovery closure; this revision performs planning only.
