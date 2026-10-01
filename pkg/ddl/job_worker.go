@@ -140,6 +140,9 @@ type jobContext struct {
 	deferStorageClassTransitionStaging bool
 	pendingStorageClassTransitions     []pendingStorageClassTransition
 	sharedMultiSchemaVersion           int64
+	// rollbackResourceGroupAlter restores the PD resource-group state when an
+	// ALTER RESOURCE GROUP step does not commit its metadata transaction.
+	rollbackResourceGroupAlter func()
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -700,6 +703,13 @@ func (w *worker) transitOneJobStep(
 	defer r.End()
 
 	job := jobW.Job
+	jobCtx.rollbackResourceGroupAlter = nil
+	commitStarted := false
+	defer func() {
+		if !commitStarted {
+			jobCtx.compensateResourceGroupAlter()
+		}
+	}()
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
@@ -795,6 +805,7 @@ func (w *worker) transitOneJobStep(
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
+		jobCtx.compensateResourceGroupAlter()
 		if isRollbackTxnError(runJobErr) {
 			w.sess.Rollback()
 			txn, txnErr := w.prepareTxn(job)
@@ -824,6 +835,9 @@ func (w *worker) transitOneJobStep(
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
+	if err != nil {
+		jobCtx.compensateResourceGroupAlter()
+	}
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -831,11 +845,22 @@ func (w *worker) transitOneJobStep(
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+	commitStarted = true
 	err = w.sess.Commit(w.workCtx)
 	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
+		// A retryable commit error guarantees that this transaction was not
+		// committed, so it is safe to restore the external PD state. For an
+		// undetermined commit result, compensating could instead undo metadata
+		// that was committed successfully.
+		if kv.IsTxnRetryableError(err) {
+			jobCtx.compensateResourceGroupAlter()
+		} else {
+			jobCtx.rollbackResourceGroupAlter = nil
+		}
 		return 0, err
 	}
+	jobCtx.rollbackResourceGroupAlter = nil
 	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
