@@ -32,6 +32,7 @@ import (
 	mockScheduler "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -284,6 +285,9 @@ func TestExpiredFileCleanLoopEnabled(t *testing.T) {
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetCleanupTasks(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetTopUnfinishedTasks(gomock.Any()).Return(nil, nil).AnyTimes()
+	// The NextGen cleanup loop triggers the orphan data monitor on startup.
+	// Returning a task keeps the monitor from reaching the real object store.
+	taskMgr.EXPECT().GetAllTasks(gomock.Any()).Return([]*proto.TaskBase{{ID: 1}}, nil).AnyTimes()
 
 	cleanupCalled := make(chan struct{}, 1)
 	cleaner := mock.NewMockExpiredFileCleaner(ctrl)
@@ -317,6 +321,20 @@ func TestExpiredFileCleanLoopEnabled(t *testing.T) {
 		t.Fatal("expired file cleanup loop was started in a classic build")
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+func TestStopResetsOrphanDataGauge(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := NewManager(context.Background(), nil, mock.NewMockTaskManager(ctrl), "1", proto.NodeResourceForTest)
+	t.Cleanup(func() { metrics.GlobalSortOrphanDataSize.Set(0) })
+
+	metrics.GlobalSortOrphanDataSize.Set(42)
+	mgr.Stop()
+
+	metric := &dto.Metric{}
+	require.NoError(t, metrics.GlobalSortOrphanDataSize.Write(metric))
+	require.Zero(t, metric.GetGauge().GetValue())
 }
 
 func (s *storeWithKS) GetKeyspace() string {
@@ -522,17 +540,25 @@ func TestSchedulerCleanTask(t *testing.T) {
 	})
 
 	t.Run("runs cleanup immediately on startup", func(t *testing.T) {
+		setCloudStorageURIForTest(t, "s3://bucket")
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		loopCtx, cancel := context.WithCancel(context.Background())
 		mgr := NewManager(loopCtx, nil, taskMgr, "1", proto.NodeResourceForTest)
 		cleanupStarted := make(chan struct{})
+		monitorStarted := make(chan struct{})
 		loopDone := make(chan struct{})
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.Task, error) {
 			close(cleanupStarted)
 			return nil, nil
 		})
+		if kerneltype.IsNextGen() {
+			taskMgr.EXPECT().GetAllTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.TaskBase, error) {
+				close(monitorStarted)
+				return []*proto.TaskBase{{ID: 1}}, nil
+			})
+		}
 		go func() {
 			defer close(loopDone)
 			mgr.cleanTaskLoop()
@@ -542,6 +568,13 @@ func TestSchedulerCleanTask(t *testing.T) {
 		case <-cleanupStarted:
 		case <-time.After(3 * time.Second):
 			t.Fatal("cleanup task loop did not run immediately")
+		}
+		if kerneltype.IsNextGen() {
+			select {
+			case <-monitorStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("cleanup task loop did not request the orphan data monitor")
+			}
 		}
 		cancel()
 		select {

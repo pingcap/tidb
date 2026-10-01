@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -100,6 +102,24 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return slices.Clone(sm.mu.schedulers)
+}
+
+type orphanDataMonitor interface {
+	Trigger(context.Context)
+}
+
+// noopOrphanDataMonitor is used when orphan data monitoring is not enabled.
+type noopOrphanDataMonitor struct{}
+
+func (noopOrphanDataMonitor) Trigger(context.Context) {}
+
+type orphanDataActiveProducerChecker struct {
+	taskMgr TaskManager
+}
+
+func (c orphanDataActiveProducerChecker) HasActiveProducers(ctx context.Context) (bool, error) {
+	tasks, err := c.taskMgr.GetAllTasks(ctx)
+	return len(tasks) > 0, err
 }
 
 // Manager manage a bunch of schedulers.
@@ -210,6 +230,10 @@ func (sm *Manager) Stop() {
 	// clear existing counters on owner change
 	dxfmetric.WorkerCount.Reset()
 	dxfmetric.FinishedTaskCounter.Reset()
+	// The orphan data gauge is only meaningful while this node owns the
+	// scheduler. Reset it on owner change, otherwise a former owner keeps
+	// exporting the last value it observed.
+	metrics.GlobalSortOrphanDataSize.Set(0)
 }
 
 // Initialized check the manager initialized.
@@ -410,7 +434,19 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
+	// Orphan global-sort data only exists in the NextGen kernel, where cloud
+	// storage is the shared spill area.
+	var monitor orphanDataMonitor = noopOrphanDataMonitor{}
+	if kerneltype.IsNextGen() {
+		monitor = orphandata.NewMonitor(orphandata.Config{
+			ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
+			GetStorageURI:         func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
+			Logger:                sm.logger,
+			RetainedPrefixes:      []string{conflictpath.StoragePrefix},
+		})
+	}
 	sm.drainCleanTaskBatches()
+	monitor.Trigger(sm.ctx)
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -422,6 +458,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
+			monitor.Trigger(sm.ctx)
 		}
 	}
 }
