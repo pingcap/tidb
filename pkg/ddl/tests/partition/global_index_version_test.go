@@ -16,13 +16,16 @@ package partition
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -451,6 +454,87 @@ func TestGlobalIndexTruncateAndDropPartition(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM tp_null USE INDEX(idx_c)").Check(testkit.Rows("2"))
 	tk.MustQuery("SELECT count(*) FROM tp_null IGNORE INDEX(idx_c)").Check(testkit.Rows("2"))
 	tk.MustExec("ADMIN CHECK TABLE tp_null")
+}
+
+// TestGlobalIndexTruncatePartitionMVIndexKeepTakeoverEntry reproduces issue #71286.
+//
+// While a partition is being truncated, a concurrent write may legitimately take over an
+// element key that the truncated partition used to own, and then `Delete` must not remove it.
+// The cleanup used to derive its check key with `GenIndexKey`, which encodes a multi-valued
+// index column as the whole array instead of one key per element. `BatchGet` therefore never
+// found the entry, the partition-owner check was skipped, and `Delete` removed the element key
+// that the new row owns. A second element of the same old row, which nobody took over, still
+// has to be cleaned up, so the decision must be made per element rather than per row.
+func TestGlobalIndexTruncatePartitionMVIndexKeepTakeoverEntry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		p INT PRIMARY KEY,
+		j JSON,
+		UNIQUE KEY m ((CAST(j AS UNSIGNED ARRAY))) GLOBAL
+	) PARTITION BY RANGE (p) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t VALUES (1, '[100]')")   // p0, only here to give p0 a row to clean first
+	tk.MustExec("INSERT INTO t VALUES (11, '[7, 8]')") // p1, owns elements 7 and 8
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	// `MockDMLExecution` runs between the cleanup of p0 and the cleanup of p1, which is the
+	// window in which a real concurrent write can take over element 7. Element 8 is left
+	// alone on purpose so that the cleanup still has to remove it.
+	var hookRan atomic.Bool
+	ddl.MockDMLExecution = func() {
+		hookRan.Store(true)
+		_, err := tk1.Exec("INSERT INTO t VALUES (21, '[7]')")
+		assert.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		assert.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+		ddl.MockDMLExecution = nil
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	tk.MustExec("ALTER TABLE t TRUNCATE PARTITION p0, p1")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+	ddl.MockDMLExecution = nil
+	require.True(t, hookRan.Load(), "mockDMLExecution never fired, the test premise is broken")
+
+	// The row inserted during the DDL must keep its global index entry.
+	tk.MustQuery("SELECT p FROM t ORDER BY p").Check(testkit.Rows("21"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+	tk.MustQuery("SELECT p FROM t WHERE 7 MEMBER OF (j)").Check(testkit.Rows("21"))
+
+	// The UNIQUE constraint must still hold for the taken-over element.
+	err := tk.ExecToErr("INSERT INTO t VALUES (22, '[7]')")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Duplicate entry")
+
+	// Element 8 was owned only by the truncated partition, so it must be reusable.
+	tk.MustExec("INSERT INTO t VALUES (23, '[8]')")
+	tk.MustQuery("SELECT p FROM t WHERE 8 MEMBER OF (j)").Check(testkit.Rows("23"))
+	tk.MustExec("ADMIN CHECK TABLE t")
+
+	// Empty arrays must not shift the record-to-index mapping. Exercise a
+	// composite MV index alongside another global index, including NULL and
+	// repeated elements, whose expansion must match ordinary index writes.
+	tk.MustExec(`CREATE TABLE t_cleanup (
+		p INT PRIMARY KEY, c INT, j JSON,
+		UNIQUE KEY m (c, (CAST(j AS UNSIGNED ARRAY))) GLOBAL,
+		UNIQUE KEY g (c) GLOBAL
+	) PARTITION BY RANGE (p) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t_cleanup VALUES (1, 1, '[]'), (2, 2, NULL), (3, 3, '[7, 7, 8]'), (11, 4, '[9]')")
+	tk.MustExec("ALTER TABLE t_cleanup TRUNCATE PARTITION p0")
+	tk.MustExec("ADMIN CHECK TABLE t_cleanup")
+	tk.MustQuery("SELECT p FROM t_cleanup USE INDEX(g)").Check(testkit.Rows("11"))
+	tk.MustExec("INSERT INTO t_cleanup VALUES (12, 1, '[]'), (13, 2, NULL), (14, 3, '[7, 8]')")
+	tk.MustQuery("SELECT p FROM t_cleanup WHERE c = 3 AND 7 MEMBER OF (j)").Check(testkit.Rows("14"))
+	tk.MustExec("ADMIN CHECK TABLE t_cleanup")
 }
 
 // TestUpdateIndexesResetsGlobalIndexVersion verifies that UPDATE INDEXES resets
