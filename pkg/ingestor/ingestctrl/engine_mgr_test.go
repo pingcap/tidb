@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -90,6 +91,32 @@ func TestEngineManager(t *testing.T) {
 
 	require.NoError(t, em.closeEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 0, int(em.getImportedKVCount(engine1ID)))
+	local := &Backend{
+		engineMgr: em,
+		pdCli:     &mockPdClient{tsErrors: []error{context.DeadlineExceeded}},
+	}
+	require.NoError(t, local.SetTSBeforeImportEngine(ctx, engine1ID, 0))
+	require.Equal(t, int64(2), local.pdCli.(*mockPdClient).tsCalls.Load())
+	persistentPDCli := &mockPdClient{tsErrors: make([]error, maxRetryTimes)}
+	for i := range persistentPDCli.tsErrors {
+		persistentPDCli.tsErrors[i] = context.DeadlineExceeded
+	}
+	local.pdCli = persistentPDCli
+	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	require.Equal(t, int64(maxRetryTimes), persistentPDCli.tsCalls.Load())
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	local.pdCli = &mockPdClient{tsErrors: []error{context.DeadlineExceeded}}
+	err = local.SetTSBeforeImportEngine(canceledCtx, engine1ID, 0)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	nonRetryablePDCli := &mockPdClient{tsErrors: []error{errors.New("invalid TSO request")}}
+	local.pdCli = nonRetryablePDCli
+	err = local.SetTSBeforeImportEngine(ctx, engine1ID, 0)
+	require.ErrorIs(t, err, errdef.ErrSetTSBeforeImport)
+	require.ErrorContains(t, err, "after 1 attempts")
+	require.Equal(t, int64(1), nonRetryablePDCli.tsCalls.Load())
 	// close non-existent engine
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
