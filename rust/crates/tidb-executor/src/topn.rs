@@ -814,6 +814,15 @@ where
                 self.child.max_chunk_size(),
             );
             self.child.next(&mut chunk)?;
+            // go's TableReader honors RequiredRows, so the fill holds EXACTLY
+            // the remaining capacity; a child that returns a longer chunk
+            // overfills and the Pop-based trim resolves boundary ties by
+            // heap shape instead of by scan order (oracle g-collation: the
+            // LIMIT-3 tie order within the equal-weight group).
+            chunk.truncate_to(
+                ((self.total_limit.saturating_sub(self.stored_len() as u64)) as usize)
+                    .min(chunk.num_rows()),
+            );
             if chunk.num_rows() == 0 {
                 break;
             }
