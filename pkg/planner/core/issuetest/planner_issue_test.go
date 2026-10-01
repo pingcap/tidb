@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -29,6 +30,65 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIssue70053ReferentialConstraintsJoinPredicates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (" +
+		"id int primary key, pid int, " +
+		"constraint fk_child foreign key (pid) references parent (id))")
+
+	query := `SELECT A.REFERENCED_TABLE_NAME
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE A
+JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS B
+USING (CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_NAME)
+JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS R ON (
+	R.CONSTRAINT_NAME = B.CONSTRAINT_NAME
+	AND R.TABLE_NAME = B.TABLE_NAME
+	AND R.CONSTRAINT_SCHEMA = B.TABLE_SCHEMA)
+WHERE B.CONSTRAINT_TYPE = 'FOREIGN KEY'
+	AND A.TABLE_SCHEMA = 'test'
+	AND A.TABLE_NAME = 'child'
+	AND A.REFERENCED_TABLE_SCHEMA IS NOT NULL`
+
+	rows := tk.MustQuery("explain format = 'brief' " + query).Rows()
+	var referentialConstraintsInfo string
+	for _, row := range rows {
+		if strings.Contains(fmt.Sprint(row[3]), "REFERENTIAL_CONSTRAINTS") {
+			referentialConstraintsInfo = fmt.Sprint(row[4])
+			break
+		}
+	}
+	require.Contains(t, referentialConstraintsInfo, `table_name:["child"]`)
+	require.NotContains(t, referentialConstraintsInfo, "constraint_schema:")
+	tk.MustQuery(query).Check(testkit.Rows("parent"))
+}
+
+func TestNestedInnerJoinPredicatePropagationSkipsUnaryFilters(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t43fc4f8a (
+		col_48 date NOT NULL DEFAULT '1991-09-25',
+		col_49 smallint unsigned NOT NULL DEFAULT '14803',
+		col_50 char(87) COLLATE utf8mb4_unicode_ci DEFAULT 'GhnCJw~(RZ!i#ZxgC',
+		col_51 date DEFAULT NULL,
+		UNIQUE KEY idx_7 (col_51)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+	PARTITION BY LIST COLUMNS(col_51)
+	(PARTITION p0 VALUES IN ('1970-09-10','1982-04-21','1990-08-27','1990-10-22','1996-02-27','2018-06-05','2027-05-18'),
+	 PARTITION p1 VALUES IN ('1972-01-21','1974-11-21','1994-02-23','1996-11-08','2000-04-05','2000-09-01','2005-12-17','2014-09-24','2016-12-01','2024-07-27','2025-02-14','2029-06-22','2036-04-30'))`)
+	tk.MustExec(`CREATE TABLE tlcf30036b (
+		col_71 varbinary(257) NOT NULL,
+		col_72 timestamp NULL DEFAULT NULL,
+		col_73 time NOT NULL,
+		PRIMARY KEY (col_71(2)) /*T![clustered_index] CLUSTERED */,
+		UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
+	) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci`)
+	tk.MustQuery(`explain format='plan_tree' select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04','1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838`)
+}
 
 func TestPlannerIssueRegressions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
