@@ -2018,9 +2018,22 @@ func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop 
 		strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
 }
 
-func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
+// areFullPointGetRanges also guards cache rebuilds against NULLs and partial keys.
+func areFullPointGetRanges(ctx base.PlanContext, ranges ranger.Ranges, keyLen int) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	for _, ran := range ranges {
+		if len(ran.LowVal) != keyLen || len(ran.HighVal) != keyLen || !ran.IsPointNonNullable(ctx.GetSessionVars().StmtCtx.TypeCtx()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPointGetConvertableSchema(ds *logicalop.DataSource, batch bool) bool {
 	for _, col := range ds.Columns {
-		if col.Name.L == model.ExtraHandleName.L {
+		if col.ID == model.ExtraHandleID || (batch && col.ID == model.ExtraPhysTblID) {
 			continue
 		}
 
@@ -2205,7 +2218,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			return t, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds)
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) > 1)
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
@@ -2227,30 +2240,8 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 		}
 		if canConvertPointGet && ds.Table.Meta().GetPartitionInfo() != nil {
-			// partition table with dynamic prune not support batchPointGet
-			// Due to sorting?
-			// Please make sure handle `where _tidb_rowid in (xx, xx)` correctly when delete this if statements.
-			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-				canConvertPointGet = false
-			}
-			if canConvertPointGet && len(path.Ranges) > 1 {
-				// if LIST COLUMNS/RANGE COLUMNS partitioned, and any of the partitioning columns are string based
-				// and having non-binary collations, then we currently cannot support BatchPointGet,
-				// since the candidate.path.Ranges already have been converted to SortKey, meaning we cannot use it
-				// for PartitionLookup/PartitionPruning currently.
-
-				// TODO: This is now implemented, but to decrease
-				// the impact of supporting plan cache for patitioning,
-				// this is not yet enabled.
-				// TODO: just remove this if block and update/add tests...
-				// We can only build batch point get for hash partitions on a simple column now. This is
-				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
-				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
-				// BatchPointGet plan for more cases.
-				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.Table.Meta())
-				if hashPartColName == nil {
-					canConvertPointGet = false
-				}
+			if len(path.Ranges) > 1 {
+				canConvertPointGet = canUsePartitionBatchPointGet(ds.SCtx(), ds.Table.Meta(), path.Index)
 			}
 			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
 			if canConvertPointGet && path.IsIntHandlePath && !ds.Table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
@@ -2258,16 +2249,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 		}
 		if canConvertPointGet {
-			allRangeIsPoint := true
-			tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
-			for _, ran := range path.Ranges {
-				if !ran.IsPointNonNullable(tc) {
-					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
-					allRangeIsPoint = false
-					break
-				}
+			keyLen := 1
+			if !path.IsIntHandlePath {
+				keyLen = len(path.Index.Columns)
 			}
-			if allRangeIsPoint {
+			if areFullPointGetRanges(ds.SCtx(), path.Ranges, keyLen) {
 				var pointGetTask base.Task
 				if len(path.Ranges) == 1 {
 					pointGetTask = convertToPointGet(ds, prop, candidate)
@@ -3102,6 +3088,11 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 }
 
 func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
+	if ds.TableInfo.GetPartitionInfo() != nil && ds.PartitionDefIdx == nil && !prop.IsSortItemEmpty() {
+		// TODO: Support ordered reads across partitions by sorting handles together with
+		// their physical IDs, and comparing local index keys without the partition prefix.
+		return base.InvalidTask
+	}
 	// For batch point get, we don't try to satisfy the sort property with an extra merge sort,
 	// so only PropMatched is allowed.
 	if !prop.IsSortItemEmpty() && candidate.matchPropResult != property.PropMatched {
@@ -3125,6 +3116,20 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	if ds.PartitionDefIdx != nil {
 		batchPointGetPlan.SinglePartition = true
 		batchPointGetPlan.PartitionIdxs = []int{*ds.PartitionDefIdx}
+	}
+	if candidate.path.IsIntHandlePath && !ds.TableInfo.PKIsHandle && ds.TableInfo.GetPartitionInfo() != nil {
+		if !batchPointGetPlan.SinglePartition {
+			for i, def := range ds.TableInfo.Partition.Definitions {
+				if len(ds.PartitionNames) == 1 && def.Name.L == ds.PartitionNames[0].L {
+					batchPointGetPlan.SinglePartition = true
+					batchPointGetPlan.PartitionIdxs = []int{i}
+					break
+				}
+			}
+		}
+		if !batchPointGetPlan.SinglePartition {
+			return base.InvalidTask
+		}
 	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
