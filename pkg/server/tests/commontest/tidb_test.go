@@ -3507,6 +3507,109 @@ func TestIssue57531(t *testing.T) {
 	}
 }
 
+func TestClientDisconnectBeforeAutocommit(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	for _, protocol := range []string{"query", "prepared", "execute"} {
+		for _, statement := range []struct {
+			name string
+			sql  string
+			rows string
+		}{
+			{"insert", "insert into disconnect_short values (3, 30), (4, 40)", "1 10\n2 20\n3 30\n4 40"},
+			{"update", "update disconnect_short set v = v + 1", "1 11\n2 21"},
+			{"delete", "delete from disconnect_short", ""},
+		} {
+			for _, disconnect := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/disconnect=%t", protocol, statement.name, disconnect), func(t *testing.T) {
+					ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+						dbt.MustExec("drop table if exists disconnect_short")
+						dbt.MustExec("create table disconnect_short (id int primary key, v int)")
+						dbt.MustExec("insert into disconnect_short values (1, 10), (2, 20)")
+						conn, err := dbt.GetDB().Conn(context.Background())
+						require.NoError(t, err)
+						defer conn.Close()
+						var connID uint64
+						require.NoError(t, conn.QueryRowContext(context.Background(), "select connection_id()").Scan(&connID))
+						netConn := getRawNetConn(t, conn)
+						execSQL := statement.sql
+						var prepared *sql.Stmt
+						if protocol == "prepared" {
+							prepared, err = conn.PrepareContext(context.Background(), execSQL)
+							require.NoError(t, err)
+							defer prepared.Close()
+						} else if protocol == "execute" {
+							_, err = conn.ExecContext(context.Background(), "prepare short_dml from '"+execSQL+"'")
+							require.NoError(t, err)
+							execSQL = "execute short_dml"
+						}
+
+						paused := make(chan *variable.SessionVars, 1)
+						resume := make(chan struct{})
+						var resumeOnce sync.Once
+						release := func() { resumeOnce.Do(func() { close(resume) }) }
+						defer release()
+						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/beforeCheckConnectionAlive", func(vars *variable.SessionVars) {
+							if vars.ConnectionID == connID {
+								paused <- vars
+								<-resume
+								// Isolate the precommit check from both scheduler delays and
+								// the shorter periodic SQLKiller interval in intest builds.
+								vars.StartTime = time.Now()
+							}
+						})
+						done := make(chan error, 1)
+						go func() {
+							var execErr error
+							if prepared != nil {
+								_, execErr = prepared.ExecContext(context.Background())
+							} else {
+								_, execErr = conn.ExecContext(context.Background(), execSQL)
+							}
+							done <- execErr
+						}()
+						var vars *variable.SessionVars
+						select {
+						case vars = <-paused:
+						case <-time.After(10 * time.Second):
+							t.Fatal("DML did not reach the precommit checkpoint")
+						}
+						if disconnect {
+							require.NoError(t, netConn.Close())
+							alive := vars.SQLKiller.IsConnectionAlive.Load()
+							require.NotNil(t, alive)
+							// Observe the socket shutdown without setting a kill signal.
+							require.Eventually(t, func() bool { return !(*alive)() }, 5*time.Second, time.Millisecond)
+						}
+						release()
+						select {
+						case execErr := <-done:
+							if disconnect {
+								require.Error(t, execErr)
+							} else {
+								require.NoError(t, execErr)
+							}
+						case <-time.After(10 * time.Second):
+							t.Fatal("DML did not finish")
+						}
+						expected := statement.rows
+						if disconnect {
+							// The client can report EOF before the server finishes. Wait
+							// for session cleanup before asserting the committed data.
+							require.Eventually(t, func() bool {
+								var count int
+								err := dbt.GetDB().QueryRow("select count(*) from information_schema.processlist where id = ?", connID).Scan(&count)
+								return err == nil && count == 0
+							}, 5*time.Second, time.Millisecond)
+							expected = "1 10\n2 20"
+						}
+						ts.CheckRows(t, dbt.MustQuery("select * from disconnect_short order by id"), expected)
+					})
+				})
+			}
+		}
+	}
+}
+
 func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
