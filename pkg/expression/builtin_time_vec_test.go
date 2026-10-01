@@ -572,6 +572,33 @@ func TestVectorizedBuiltinTimeFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
+func TestVectorizedFromDaysBoundary(t *testing.T) {
+	ctx := createContext(t)
+	argType := types.NewFieldType(mysql.TypeLonglong)
+	f, err := funcs[ast.FromDays].getFunction(ctx, []Expression{&Column{RetType: argType, Index: 0}})
+	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+	values := []int64{-1, 0, 365, 366, 3652424, 3652425, 3652426, math.MaxInt64}
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{argType}, len(values)+1)
+	for _, value := range values {
+		input.AppendInt64(0, value)
+	}
+	input.AppendNull(0)
+	result := chunk.NewColumn(types.NewFieldType(mysql.TypeDate), len(values)+1)
+	require.NoError(t, vecEvalType(ctx, f, types.ETDatetime, input, result))
+	for i, value := range values {
+		want, isNull, err := f.evalTime(ctx, input.GetRow(i))
+		require.NoError(t, err)
+		require.Equal(t, isNull, result.IsNull(i), "FROM_DAYS(%d)", value)
+		if !isNull {
+			require.Equal(t, want, result.Times()[i], "FROM_DAYS(%d)", value)
+		}
+	}
+	require.Equal(t, "9999-12-31", result.Times()[4].String())
+	require.True(t, result.IsNull(5))
+	require.True(t, result.IsNull(len(values)))
+}
+
 func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
 	ctx := createContext(t)
 

@@ -924,6 +924,9 @@ func (b *builtinFromDaysSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, re
 			continue
 		}
 		ts[i] = types.TimeFromDays(i64s[i])
+		if ts[i].Year() > 9999 {
+			result.SetNull(i, true)
+		}
 	}
 	return nil
 }
