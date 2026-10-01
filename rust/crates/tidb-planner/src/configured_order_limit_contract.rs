@@ -59,15 +59,24 @@ impl ConfiguredOrderDirection {
 pub struct ConfiguredOrderKey {
     full_offset: usize,
     direction: ConfiguredOrderDirection,
+    /// The ORDER BY item's own collation when the item carried an explicit
+    /// `COLLATE` clause: go orders the key under the item's collation (the
+    /// explicit one wins over the column's), not the stored datum's.
+    explicit_collation: Option<tidb_datatype::Collation>,
 }
 
 impl ConfiguredOrderKey {
     /// Creates a key from a checked physical FullSchema offset and direction.
     #[must_use]
-    pub const fn new(full_offset: usize, direction: ConfiguredOrderDirection) -> Self {
+    pub fn new(
+        full_offset: usize,
+        direction: ConfiguredOrderDirection,
+        explicit_collation: Option<tidb_datatype::Collation>,
+    ) -> Self {
         Self {
             full_offset,
             direction,
+            explicit_collation,
         }
     }
 
@@ -81,6 +90,12 @@ impl ConfiguredOrderKey {
     #[must_use]
     pub const fn direction(&self) -> ConfiguredOrderDirection {
         self.direction
+    }
+
+    /// The item's explicit `COLLATE`, when it wrote one.
+    #[must_use]
+    pub const fn explicit_collation(&self) -> Option<tidb_datatype::Collation> {
+        self.explicit_collation
     }
 }
 

@@ -189,9 +189,8 @@ impl ConfiguredTopN {
     /// Finalizes the heap in canonical output order and applies the offset.
     #[must_use]
     pub fn finish(mut self) -> Vec<Row> {
-        let keys = self.spec.order_keys();
         self.candidates.sort_by(|left, right| {
-            compare_configured_rows(&left.row, &right.row, keys)
+            compare_configured_rows(&left.row, &right.row, self.spec.order_keys())
                 .then_with(|| left.source_ordinal.cmp(&right.source_ordinal))
         });
         let limit = self.spec.limit();

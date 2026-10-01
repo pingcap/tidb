@@ -219,10 +219,22 @@ fn bind_order_item(
     item: &OrderItem,
     tree: &ConfiguredRelationTree,
 ) -> Result<ConfiguredOrderKey, ConfiguredOrderLimitError> {
-    let full_offset = bind_order_expression(&item.expr, tree)?;
+    // An explicit `ORDER BY c COLLATE x` orders the key under x: strip the
+    // wrapper and carry the collation to the executor (go's sort compares
+    // the by-item under its own RetType collation, which the COLLATE wrote).
+    let (expression, explicit_collation) = match strip_parens(&item.expr) {
+        Expr::Collate { expr, collation } => {
+            let collation = tidb_datatype::Collation::from_name(&collation.to_ascii_lowercase())
+                .ok_or(ConfiguredOrderLimitError::InvalidOrderOrdinal)?;
+            (expr.as_ref(), Some(collation))
+        }
+        other => (other, None),
+    };
+    let full_offset = bind_order_expression(expression, tree)?;
     Ok(ConfiguredOrderKey::new(
         full_offset,
         ConfiguredOrderDirection::from_descending(item.desc),
+        explicit_collation,
     ))
 }
 

@@ -33,9 +33,11 @@ use crate::Row;
 /// authority. Callers that restrict their datum domain must validate it before
 /// invoking this function; comparison itself remains shared with every other
 /// `ORDER BY` path.
-fn cmp_key_pairs<'a>(pairs: impl IntoIterator<Item = (&'a Datum, &'a Datum, bool)>) -> Ordering {
-    for (av, bv, desc) in pairs {
-        let ord = sort_value_cmp(av, bv);
+fn cmp_key_pairs<'a>(
+    pairs: impl IntoIterator<Item = (&'a Datum, &'a Datum, bool, Option<tidb_datatype::Collation>)>,
+) -> Ordering {
+    for (av, bv, desc, explicit_collation) in pairs {
+        let ord = sort_value_cmp(av, bv, explicit_collation);
         if ord != Ordering::Equal {
             return if desc { ord.reverse() } else { ord };
         }
@@ -186,6 +188,7 @@ pub fn compare_configured_rows(left: &Row, right: &Row, keys: &[ConfiguredOrderK
             &left[key.full_offset()],
             &right[key.full_offset()],
             key.direction().is_descending(),
+            key.explicit_collation(),
         )
     }))
 }
@@ -348,7 +351,7 @@ fn compare_prepared_rows(left: &Row, right: &Row, keys: &[PreparedOrderColumn]) 
         let offset = key.output_offset();
         let ordering = match (&left[offset], &right[offset]) {
             (Datum::Bytes(a), Datum::Bytes(b)) => Collation::Utf8Mb4Bin.compare(a, b),
-            (a, b) => sort_value_cmp(a, b),
+            (a, b) => sort_value_cmp(a, b, None),
         };
         if ordering != Ordering::Equal {
             return if key.direction().is_descending() {
@@ -383,7 +386,7 @@ pub fn stable_order_prepared_rows(
 /// signed value precedes UInt, while nonnegative signed values compare by
 /// magnitude. This matters for real `INT UNSIGNED`/`BIGINT UNSIGNED` storage,
 /// not merely unsigned literal expressions.
-fn sort_value_cmp(a: &Datum, b: &Datum) -> Ordering {
+fn sort_value_cmp(a: &Datum, b: &Datum, explicit_collation: Option<tidb_datatype::Collation>) -> Ordering {
     if let Some(ordering) = a.compare_sentinel_order(b) {
         return ordering;
     }
@@ -400,7 +403,14 @@ fn sort_value_cmp(a: &Datum, b: &Datum) -> Ordering {
         // Strings sort under the collation the datum carries (go derives the
         // collator from the value's FieldType): a utf8mb4_general_ci column
         // folds case and accents in ORDER BY, not raw bytes.
-        (Datum::String(x), Datum::String(y)) => x.collation().compare(x.bytes(), y.bytes()),
+        // The ORDER BY item's explicit COLLATE wins over the datum's own
+        // collation: go compares the sort key under the by-item's RetType
+        // collation (oracle g-collation: ORDER BY a COLLATE general_ci over
+        // a utf8mb4_bin column orders 'Ä' with the a-group weights).
+        (Datum::String(x), Datum::String(y)) => match explicit_collation {
+            Some(collation) => collation.compare(x.bytes(), y.bytes()),
+            None => x.collation().compare(x.bytes(), y.bytes()),
+        },
         (Datum::Bytes(x), Datum::Bytes(y)) => x.cmp(y),
         (Datum::Decimal(x), Datum::Decimal(y)) => x.cmp(y),
         (Datum::Time(x), Datum::Time(y)) => x.compare(*y),

@@ -3725,7 +3725,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut by_items = Vec::with_capacity(items.len());
         for item in items {
             let scratch = Self::clause_scratch(&item.expr);
-            let built = match Self::order_by_position(&scratch) {
+            let mut built = match Self::order_by_position(&scratch) {
                 Some(position) => {
                     let column = position
                         .checked_sub(1)
@@ -3742,6 +3742,42 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 None => self.rewrite_scalar_with_plan(&scratch, &plan, markers)?,
             };
+            // go's ORDER BY rewrite keeps the explicit COLLATE on the by-item's
+            // RetType: the sort compares the key under the item's own
+            // collation, which the COLLATE wrote (oracle g-collation: ORDER
+            // BY a COLLATE utf8mb4_general_ci over a utf8mb4_bin column
+            // orders 'Ä' with the a-group weights). The rewrite's marker
+            // substitution can replace the by-item with a schema-column
+            // reference whose RetType is the column's own (binary) — re-apply
+            // the item's explicit collation on the built expression.
+            let mut unwrapped = &item.expr;
+            while let Expr::Paren(inner) = unwrapped {
+                unwrapped = inner;
+            }
+            if let Expr::Collate { collation, .. } = unwrapped {
+                if let Some(collation) =
+                    tidb_datatype::Collation::from_name(&collation.to_ascii_lowercase())
+                {
+                    match &mut built {
+                        Expression::Column(column) => {
+                            let ft = column
+                                .ret_type
+                                .get_or_insert_with(|| {
+                                    tidb_datatype::FieldType::new(
+                                        tidb_datatype::FieldTypeCode::VarString,
+                                    )
+                                });
+                            ft.set_charset_name(
+                                tidb_expr::collation_derive::charset_of_collation(collation),
+                            );
+                            ft.set_collation_name(collation.name());
+                        }
+                        other => tidb_expr::collation_derive::set_explicit_collation(
+                            other, collation,
+                        ),
+                    }
+                }
+            }
             by_items.push(ByItems::new(built, item.desc));
         }
 
@@ -3773,7 +3809,47 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         plan: LogicalPlan,
         limit: &Limit,
     ) -> Result<LogicalPlan, PlanError> {
-        self.opt_flag |= flags::PUSH_DOWN_TOPN;
+        // go pushes the TopN down and the coprocessor sorts each by-item
+        // under the by-item's OWN RetType collation -- the explicit COLLATE
+        // rides. The in-process cop sort reads the scan column's collation
+        // instead, so an ORDER BY whose by-item collation differs from the
+        // scan column's keeps the sort at the root, whose comparator is
+        // collation-aware (oracle g-collation: ORDER BY a COLLATE
+        // utf8mb4_general_ci LIMIT 3 over a utf8mb4_bin column orders 'Ä'
+        // with the a-group weights, not the raw-byte order that puts it
+        // after 'b').
+        let collate_blocked = match &plan {
+            crate::logical::LogicalPlan::Sort(sort) => {
+                let Some(child) = sort.base.children().first() else {
+                    return Err(PlanError::internal("a sort has no child"));
+                };
+                sort.by_items.iter().any(|item| match &item.expr {
+                    tidb_expr::expression::Expression::Column(column) => {
+                        let by_collation = column
+                            .ret_type
+                            .as_ref()
+                            .map(|ft| ft.collation_name().to_ascii_lowercase());
+                        let child_collation = child
+                            .schema()
+                            .and_then(|schema| {
+                                schema
+                                    .columns
+                                    .iter()
+                                    .find(|candidate| candidate.unique_id == column.unique_id)
+                                    .cloned()
+                            })
+                            .and_then(|candidate| candidate.ret_type)
+                            .map(|ft| ft.collation_name().to_ascii_lowercase());
+                        by_collation.is_some() && by_collation != child_collation
+                    }
+                    _ => false,
+                })
+            }
+            _ => false,
+        };
+        if !collate_blocked {
+            self.opt_flag |= flags::PUSH_DOWN_TOPN;
+        }
         let offset = match &limit.offset {
             Some(expr) => Self::limit_value(expr)?,
             None => 0,
