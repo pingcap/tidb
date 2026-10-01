@@ -413,13 +413,17 @@ type multipartWriter struct {
 	createOutput  *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
 	s3Compatible  bool
+	writeErr      error
 }
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
 // and call CompleteMultipartUpload to finish it.
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
+	if u.writeErr != nil {
+		return 0, u.writeErr
+	}
 	if len(u.completeParts)+1 > storeapi.MaxUploadParts {
-		return 0, errors.Trace(storeapi.ErrExceedMaxUploadParts)
+		return 0, u.failUpload(ctx, storeapi.ErrExceedMaxUploadParts)
 	}
 	partInput := &s3.UploadPartInput{
 		Body:          bytes.NewReader(data),
@@ -436,7 +440,7 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	}
 	uploadResult, err := u.svc.UploadPart(ctx, partInput, optFns...)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, u.failUpload(ctx, err)
 	}
 	u.completeParts = append(u.completeParts, types.CompletedPart{
 		ETag:       uploadResult.ETag,
@@ -445,8 +449,27 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Close complete multi upload request.
+// failUpload makes a failed part terminal: completing the successful prefix
+// would publish a truncated object. Abort here because a buffered writer may
+// return a final-flush error without calling this writer's Close.
+func (u *multipartWriter) failUpload(ctx context.Context, err error) error {
+	u.writeErr = errors.Trace(err)
+	_, abortErr := u.svc.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   u.createOutput.Bucket,
+		Key:      u.createOutput.Key,
+		UploadId: u.createOutput.UploadId,
+	})
+	if abortErr != nil {
+		log.Warn("failed to abort multipart upload after write failure", zap.Error(abortErr))
+	}
+	return u.writeErr
+}
+
+// Close completes a successful multipart upload request.
 func (u *multipartWriter) Close(ctx context.Context) error {
+	if u.writeErr != nil {
+		return u.writeErr
+	}
 	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:   u.createOutput.Bucket,
 		Key:      u.createOutput.Key,
