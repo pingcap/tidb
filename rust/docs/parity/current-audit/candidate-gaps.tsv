@@ -57,10 +57,10 @@ rust/crates/tidb-executor/src/ddl/table_partition.rs	691	"this partition express
 rust/crates/tidb-executor/src/ddl.rs	501	"FORCE AUTO_INCREMENT is not supported yet",
 rust/crates/tidb-executor/src/ddl.rs	1080	//       p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 rust/crates/tidb-executor/src/ddl.rs	1092	"'CREATE TABLE ... SELECT' is not implemented yet",
-rust/crates/tidb-executor/src/driver/dml.rs	335	"multi-table UPDATE plans are not supported yet",
-rust/crates/tidb-executor/src/driver/dml.rs	358	"multi-table DELETE plans are not supported yet",
-rust/crates/tidb-executor/src/driver/dml.rs	538	return Err(DriverError::unsupported("partitions are not supported yet"));
-rust/crates/tidb-executor/src/driver/dml.rs	3039	"UPDATE of _tidb_rowid moves the row, which is not supported yet",
+rust/crates/tidb-executor/src/driver/dml.rs	339	"multi-table UPDATE plans are not supported yet",
+rust/crates/tidb-executor/src/driver/dml.rs	362	"multi-table DELETE plans are not supported yet",
+rust/crates/tidb-executor/src/driver/dml.rs	542	return Err(DriverError::unsupported("partitions are not supported yet"));
+rust/crates/tidb-executor/src/driver/dml.rs	2992	"UPDATE of _tidb_rowid moves the row, which is not supported yet",
 rust/crates/tidb-executor/src/driver/errors/exec.rs	278	"a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
 rust/crates/tidb-executor/src/driver/errors/exec.rs	434	"a binary operation between a Float32 and a Json value is not supported yet"
 rust/crates/tidb-executor/src/driver/physical_builder.rs	5265	"physical executor construction for {} is not implemented",
@@ -68,7 +68,7 @@ rust/crates/tidb-executor/src/driver/set_opr.rs	187	"plan-only metadata for a se
 rust/crates/tidb-executor/src/driver/subquery.rs	527	"a scalar subquery selecting several columns is not supported yet",
 rust/crates/tidb-executor/src/driver/subquery.rs	582	"an ANY/ALL subquery selecting several columns is not supported yet",
 rust/crates/tidb-executor/src/driver/subquery.rs	899	"a scalar subquery selecting several columns is not supported yet",
-rust/crates/tidb-executor/src/driver.rs	939	"this subquery result kind is not supported yet",
+rust/crates/tidb-executor/src/driver.rs	940	"this subquery result kind is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	378	"a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	584	"this expression index's expression is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	642	"an expression index over an expression with no static type is not supported yet",
@@ -1553,11 +1553,8 @@ rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	244	#[ignore 
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	251	#[ignore = "go-parity-gap: same session+executor boundary, plus Go's kerneltype.IsClassic gate has no Rust counterpart"]
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	259	#[ignore = "go-parity-gap: cross-session pessimistic lock ordering needs transactional execution"]
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	266	#[ignore = "go-parity-gap: statement-hint application writes StmtCtx fields that no Rust surface carries yet"]
-rust/crates/tidb-proto/src/lib.rs	105	/// TikvServer are not implemented. Construct `Server` based on
-rust/crates/tidb-proto/src/lib.rs	112	/// to is defined once, here, with the exact `"method <Rpc> not implemented"`
-rust/crates/tidb-proto/src/lib.rs	129	tonic::Status::unimplemented(format!("method {rpc} not implemented"))
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
-rust/crates/tidb-server/src/cluster_session_node/mod.rs	6850	"{feature} is not supported yet"
+rust/crates/tidb-server/src/cluster_session_node/mod.rs	6854	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
 rust/crates/tidb-server/tests/auth_exchange_source.rs	95	// and is intentionally not implemented by this transport leaf.
 rust/crates/tidb-server/tests/auth_token_source.rs	78	// claims owner are deliberately not implemented here.
@@ -1581,11 +1578,11 @@ rust/crates/tidb-session/src/explain_arm.rs	146	"EXPLAIN ANALYZE of {} is not su
 rust/crates/tidb-session/src/explain_arm.rs	153	"EXPLAIN ANALYZE of {} is not supported yet",
 rust/crates/tidb-session/src/explain_arm.rs	186	"EXPLAIN of {} is not supported yet",
 rust/crates/tidb-session/src/explain_arm.rs	193	"EXPLAIN of {} is not supported yet",
-rust/crates/tidb-session/src/show.rs	885	"EXPLAIN FOR CONNECTION over a live statement is not supported yet",
-rust/crates/tidb-session/src/show.rs	1472	"SHOW WARNINGS filters are not supported yet",
-rust/crates/tidb-session/src/show.rs	1480	"SHOW ERRORS filters are not supported yet",
-rust/crates/tidb-session/src/show.rs	1566	"SHOW PROCESSLIST filters are not supported yet",
-rust/crates/tidb-session/src/show.rs	1805	"SHOW EXTENDED COLUMNS is not supported yet",
+rust/crates/tidb-session/src/show.rs	889	"EXPLAIN FOR CONNECTION over a live statement is not supported yet",
+rust/crates/tidb-session/src/show.rs	1476	"SHOW WARNINGS filters are not supported yet",
+rust/crates/tidb-session/src/show.rs	1484	"SHOW ERRORS filters are not supported yet",
+rust/crates/tidb-session/src/show.rs	1570	"SHOW PROCESSLIST filters are not supported yet",
+rust/crates/tidb-session/src/show.rs	1809	"SHOW EXTENDED COLUMNS is not supported yet",
 rust/crates/tidb-session/src/tests_core/ddl.rs	1488	///   ERR code=1105 msg='CREATE TABLE ... SELECT' is not implemented yet
 rust/crates/tidb-session/src/tests_core/ddl.rs	1490	///   ERR code=1105 msg='CREATE TABLE ... SELECT' is not implemented yet
 rust/crates/tidb-session/src/tests_core/ddl.rs	1512	error.message, "'CREATE TABLE ... SELECT' is not implemented yet",

@@ -10,8 +10,8 @@ It is not a claim that every semantic mismatch has been discovered or removed.
 The coverage inventories enumerate every tracked artifact in 856 TiDB, 41 client-go,
 41 kvproto, 24 PD-client and 7 etcd-API package directories, with 83 Rust crates
 awaiting current-master acceptance. Original tests, generated/build/platform inputs, fixtures and
-unassigned root artifacts are retained. The 2,050 candidate lines are search
-evidence, not 2,050 defects. Some are errors Go intentionally returns.
+unassigned root artifacts are retained. The 2,047 candidate lines are search
+evidence, not 2,047 defects. Some are errors Go intentionally returns.
 
 Reproduce the inventory from the repository root with
 `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`.
@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 41 tracked ownership/contract findings, review candidates and the
+consolidates 54 tracked ownership/contract findings (50 unresolved, four repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -29,6 +29,14 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [expanded production-owner review](expanded-ownership-review.md) compares
+integration `13689e0b13` with the same current master and adds 13 findings in
+privilege/account policy, binding ownership, import, wire/config/admission and
+domain workers. Retained SQL and loopback-wire probes reproduce six finding
+groups, including unauthorized joined UPDATE, ignored password history/import
+options and changed Latin-1 bytes. Passing controls exclude stale keyword
+matches. No production behavior or package acceptance is changed.
 
 The [session/executor follow-up](session-ownership-review.md) adds 12 findings
 against integration `960fa95b48` and the same Go master. Its retained SQL probe

@@ -9,6 +9,9 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-09-30, expanded review) Refresh integration/master and verify native master; add 13 source-confirmed findings with six groups of executable observations and passing controls. The consolidated register has 54 tracked findings, 50 unresolved. No production repair or complete-package acceptance is claimed.
+- [x] Validate expanded audit evidence: both retained probes complete, 54 unique IDs and receipt links checked, diagnostic source formatted, root lint passes. Publish through the mandatory hook build and fresh pre-push locked build; the publication response records their results.
+
 - [x] (2026-09-30) Remove C01's per-statement physical vectors and DML-only metadata LRU; integrate the shared session owner, close policy, flush and server lifetime/response paths.
 - [x] Reproduce four session ownership failures and LRU replacement pressure on baseline; 128 session prepared tests, 9 LRU tests, 31 server prepared tests and both new server regressions pass. Three broader-suite failures reproduce unchanged and remain open.
 - [x] Complete the C01 all-target check and root lint. Publication uses the mandatory hook build and a fresh pre-push build; commands/results/limits are in `parity/current-audit/shared-session-plan-cache-repair.md` and the publication response.
@@ -54,6 +57,14 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 ## Surprises & Discoveries
 
 
+The expanded owner review reproduces an unqualified joined UPDATE succeeding
+for a SELECT-only user while the qualified control is denied. PASSWORD HISTORY
+is accepted without enforcement; IMPORT INTO ignores skip_rows; raw Latin-1
+E9 becomes C3A9 on the wire. The durable account image omits connection and
+password policy, independently of the TLS transport gap. Keyword-only review
+would have incorrectly reported absent column GRANT, privilege reload,
+auto-analyze workers and resource-manager startup: these do have live callers.
+
 The session follow-up reproduces lost writes across aliases of one row and
 multi-update FK bypass, although ordinary single-table FK and multi-DELETE
 checks work. A failed in-process multi-action ALTER leaks its first column
@@ -79,6 +90,13 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Keep this continuation an audit. Record all established ownership mismatches
+in one stable-ID register and retain executable diagnostic outputs without
+asserting that wrong behavior is correct. Review production callers and Go
+master before promoting a candidate. Preserve repaired statuses and separate
+unreviewed package coverage from known defects. Do not apply isolated fixes to
+privilege qualifiers, import options or HEX; each needs its complete Go owner.
 
 The C01 continuation repairs the shared physical-entry owner: remove
 PreparedSelectPlan/PreparedDmlPlan's private vectors and move every prepared
@@ -974,3 +992,27 @@ Three broader checks still fail on unchanged integration: filtered-IN access
 path selection, an index-join parameter rebuild and MySQL grants quoting.
 No assertion was disabled. C02, exact native retained-heap accounting, workload
 benchmarks and complete package acceptance remain outside this repair.
+
+## Expanded production-owner review outcome
+
+Integration 13689e0b13 and master e953a09d9d5e29e60c62f42d3aacebb819af49a5
+were current. Native master remains b2b3783. The refreshed inventory covers
+856 TiDB and 113 recorded external-module package directories and 83 Rust
+manifests; it does not accept these packages. Thirteen additional findings
+bring the consolidated register to 54 records, with 50 unresolved. The
+new receipt is `parity/current-audit/expanded-ownership-review.md`.
+
+Both diagnostic programs completed with six finding groups reproduced through
+SQL, public configuration APIs and an ephemeral loopback MySQL connection.
+The register excludes disproved candidates and retains source-only limits.
+No runtime code or dependency was changed. Root `make lint` succeeded after
+the initial sandbox attempt could not resolve the Go module proxy. Formatting,
+Python syntax, receipt links, ID uniqueness and temporary-source cleanup were
+checked. Publication must use the actual locked-build hook followed by a fresh
+locked server build; never bypass these gates for documentation under rust/.
+Full package/source/test/variant acceptance, the other unresolved findings,
+distributed failure tests and all four workload benchmarks remain unfinished.
+
+Revision note: expanded the audit beyond session cache ownership into
+privilege policy, import, binding maintenance, wire/configuration and domain
+worker composition; retained executable observations and their controls.
