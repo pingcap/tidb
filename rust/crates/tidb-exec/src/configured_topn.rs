@@ -205,8 +205,11 @@ impl ConfiguredTopN {
     }
 
     fn compare_candidates(&self, left: &Candidate, right: &Candidate) -> Ordering {
+        // go's topNChunkHeap comparison carries NO tie-break: the ordinal
+        // tie-break here prevented equal-weight streaming evictions, keeping
+        // the earliest rows instead of the go-faithful heap-order rows
+        // (oracle g-collation: ORDER BY a COLLATE general_ci LIMIT 3).
         compare_configured_rows(&left.row, &right.row, self.spec.order_keys())
-            .then_with(|| left.source_ordinal.cmp(&right.source_ordinal))
     }
 
     fn sift_up(&mut self, mut child: usize) {
