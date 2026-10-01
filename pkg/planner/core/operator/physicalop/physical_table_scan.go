@@ -1007,6 +1007,17 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 	if handleCols == nil {
 		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
 			handleCols = ds.UnMutableHandleCols
+		} else if ds.TableInfo.PKIsHandle {
+			// Column pruning may clear both handle-column references. Reconstruct the
+			// clustered integer primary-key handle from the table columns instead of
+			// treating the table as if it had an implicit _tidb_rowid handle.
+			pkCol := expression.ColInfo2Col(ts.TblCols, ds.TableInfo.GetPkColInfo())
+			if pkCol == nil {
+				pkCol = expression.ColInfo2Col(ts.Schema().Columns, ds.TableInfo.GetPkColInfo())
+			}
+			if pkCol != nil {
+				handleCols = util.NewIntHandleCols(pkCol)
+			}
 		} else if ds.Table.Type().IsClusterTable() {
 			// For cluster tables without handles, ts.HandleCols remains nil.
 			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.

@@ -980,6 +980,39 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// clustered-pk-index-merge-in-subquery
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec(`CREATE TABLE tab2 (
+  pk INTEGER PRIMARY KEY,
+  col0 INTEGER,
+  col1 FLOAT,
+  col3 INTEGER,
+  col4 FLOAT
+)`)
+		tk.MustExec("CREATE INDEX idx_tab2_0 ON tab2 (col1, col0)")
+		tk.MustExec("CREATE UNIQUE INDEX idx_tab2_1 ON tab2 (col4)")
+		tk.MustExec("CREATE INDEX idx_tab2_4 ON tab2 (col1 DESC, col3 DESC)")
+		tk.MustExec("INSERT INTO tab2 VALUES (0, 22, 43.96, 0, 80.14)")
+
+		tk.MustQuery(`SELECT pk
+FROM tab2
+WHERE col4 IN (
+  SELECT col1
+  FROM tab2
+  WHERE (col1 > 13.14)
+    AND (col3 < 54 AND col0 = 24)
+     OR (
+       col1 < 65.83
+       OR (
+         col1 BETWEEN 55.69 AND 90.94
+         AND col3 = 81
+         AND col3 > 78
+       )
+     )
+)`).Check(testkit.Rows())
+	}
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
