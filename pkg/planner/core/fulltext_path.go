@@ -15,6 +15,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
@@ -68,18 +70,23 @@ import (
 // and is not narrowed, so with such a search the conditions also stay on the
 // table side.
 //
-// When such a path exists it replaces every other path, as the columnar
-// full-text path does. The alternative is to tokenize every document of the
-// table to evaluate the MATCH, which the cost model does not see: it charges a
-// filter one constant per row, and the index has no statistics from which to
-// tell a rare term from a common one. Several MATCH conjuncts still compete on
-// cost. USE INDEX and IGNORE INDEX hints are honoured, so a scan can be forced.
+// The path competes on cost with every other path. Reading the index costs
+// the posting entries the search reads, since each posting list it opens is
+// read in full: for every term, the rows containing it within the rows the
+// key and handle conditions select, estimated with the ILIKE form of the term
+// (see estimateFullTextPostingRows). Every other path evaluates the MATCH by
+// analyzing each document it returns, which the Selection's cost charges by
+// the document's size. A poorly filtering search can therefore lose to a scan,
+// and a selective condition on another index can win over the search. USE
+// INDEX and FORCE INDEX naming the index force the path; IGNORE INDEX forbids
+// it.
 func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 	if ds.TableInfo == nil || ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
 	}
 	sessVars := ds.SCtx().GetSessionVars()
 	var paths []*util.AccessPath
+	forced := false
 	for _, idx := range ds.TableInfo.Indices {
 		textCol := idx.TiKVFullTextColumn()
 		if textCol == nil || idx.State != model.StatePublic {
@@ -104,12 +111,33 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 			}
 			if path != nil {
 				paths = append(paths, path)
+				forced = forced || fullTextIndexNamedByHints(ds, idx)
 			}
 		}
 	}
-	if len(paths) > 0 {
-		ds.PossibleAccessPaths = paths
+	if len(paths) == 0 {
+		return nil
 	}
+	if !forced && pointPathSelectedByHeuristics(ds) {
+		// A point lookup reads at most a row per point, which no posting scan
+		// can beat; the heuristics that chose it pruned every other path, and
+		// an ordinary IndexMerge path is not generated beside it either.
+		return nil
+	}
+	if forced {
+		// The hinted indexes compete among themselves. The other paths may be
+		// there only because no hinted index offered an ordinary path, in
+		// which case the hints were set aside; they are dropped unless a hint
+		// names them.
+		kept := ds.PossibleAccessPaths[:0]
+		for _, path := range ds.PossibleAccessPaths {
+			if accessPathNamedByHints(ds, path) {
+				kept = append(kept, path)
+			}
+		}
+		ds.PossibleAccessPaths = kept
+	}
+	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, paths...)
 	return nil
 }
 
@@ -117,30 +145,8 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 // source let the index be used: it must be named by every USE INDEX or FORCE
 // INDEX hint and by no IGNORE INDEX hint.
 func fullTextIndexAllowedByHints(ds *logicalop.DataSource, idx *model.IndexInfo) bool {
-	// Hints come in two forms: the SQL syntax on the table reference, and
-	// comment-style hints, which name the table they apply to.
-	hints := make([]*ast.IndexHint, 0, len(ds.AstIndexHints)+len(ds.IndexHints))
-	hints = append(hints, ds.AstIndexHints...)
-	tblName := ds.TableInfo.Name
-	if ds.TableAsName != nil && ds.TableAsName.L != "" {
-		tblName = *ds.TableAsName
-	}
-	for _, hint := range ds.IndexHints {
-		if hint.Match(ds.DBName, tblName) {
-			hints = append(hints, hint.IndexHint)
-		}
-	}
-	for _, hint := range hints {
-		if hint == nil || hint.HintScope != ast.HintForScan {
-			continue
-		}
-		named := false
-		for _, name := range hint.IndexNames {
-			if name.L == idx.Name.L {
-				named = true
-				break
-			}
-		}
+	for _, hint := range scanIndexHints(ds) {
+		named := indexHintNames(hint, idx)
 		switch hint.HintType {
 		case ast.HintIgnore:
 			if named {
@@ -153,6 +159,75 @@ func fullTextIndexAllowedByHints(ds *logicalop.DataSource, idx *model.IndexInfo)
 		}
 	}
 	return true
+}
+
+// fullTextIndexNamedByHints reports whether a USE INDEX or FORCE INDEX hint
+// on the data source names the index.
+func fullTextIndexNamedByHints(ds *logicalop.DataSource, idx *model.IndexInfo) bool {
+	for _, hint := range scanIndexHints(ds) {
+		if (hint.HintType == ast.HintUse || hint.HintType == ast.HintForce) && indexHintNames(hint, idx) {
+			return true
+		}
+	}
+	return false
+}
+
+// accessPathNamedByHints reports whether a USE INDEX or FORCE INDEX hint on
+// the data source names the index a path reads, or the primary key for a
+// table path.
+func accessPathNamedByHints(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	name := "primary"
+	switch {
+	case path.Index != nil && !path.IsTablePath():
+		name = path.Index.Name.L
+	case !path.IsTablePath():
+		// An IndexMerge path names several indexes; none is hinted alone.
+		return false
+	}
+	for _, hint := range scanIndexHints(ds) {
+		if hint.HintType != ast.HintUse && hint.HintType != ast.HintForce {
+			continue
+		}
+		for _, hinted := range hint.IndexNames {
+			if hinted.L == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func indexHintNames(hint *ast.IndexHint, idx *model.IndexInfo) bool {
+	for _, name := range hint.IndexNames {
+		if name.L == idx.Name.L {
+			return true
+		}
+	}
+	return false
+}
+
+// scanIndexHints returns the index hints for scanning that apply to the data
+// source. Hints come in two forms: the SQL syntax on the table reference, and
+// comment-style hints, which name the table they apply to.
+func scanIndexHints(ds *logicalop.DataSource) []*ast.IndexHint {
+	hints := make([]*ast.IndexHint, 0, len(ds.AstIndexHints)+len(ds.IndexHints))
+	hints = append(hints, ds.AstIndexHints...)
+	tblName := ds.TableInfo.Name
+	if ds.TableAsName != nil && ds.TableAsName.L != "" {
+		tblName = *ds.TableAsName
+	}
+	for _, hint := range ds.IndexHints {
+		if hint.Match(ds.DBName, tblName) {
+			hints = append(hints, hint.IndexHint)
+		}
+	}
+	scan := hints[:0]
+	for _, hint := range hints {
+		if hint != nil && hint.HintScope == ast.HintForScan {
+			scan = append(scan, hint)
+		}
+	}
+	return scan
 }
 
 // fullTextMatchOnColumn reports whether cond is a locally evaluated
@@ -237,6 +312,9 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		partial.IsDNFCond = res.IsDNFCond
 		tableFilters = res.RemainedConds
 	}
+	keyConds := partial.AccessConds
+	var handleConds []expression.Expression
+	handleRanges := 0
 
 	// Conditions on a leading prefix of the clustered handle columns, which
 	// end every entry of the index, narrow each exact term's posting scan to
@@ -251,7 +329,9 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		}
 		if len(res.AccessConds) > 0 && len(res.Ranges) > 0 {
 			partial.Ranges = fullTextHandleRanges(partial.Ranges, res.Ranges)
-			partial.AccessConds = append(partial.AccessConds, res.AccessConds...)
+			partial.AccessConds = append(slices.Clip(partial.AccessConds), res.AccessConds...)
+			handleConds = res.AccessConds
+			handleRanges = len(res.Ranges)
 			if !query.UsesPrefixPostings() {
 				tableFilters = res.RemainedConds
 			}
@@ -272,6 +352,11 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 	count := ds.TableStats.RowCount * selectivity
 	partial.CountAfterAccess = count
 	partial.CountAfterIndex = count
+	partial.FullText.PostingRows, err = estimateFullTextPostingRows(ds, match, query, keyConds, handleConds)
+	if err != nil {
+		return nil, err
+	}
+	partial.FullText.PostingScans = countFullTextPostingScans(query, handleRanges)
 	return &util.AccessPath{
 		PartialIndexPaths: []*util.AccessPath{partial},
 		TableFilters:      tableFilters,
@@ -304,4 +389,100 @@ func fullTextHandleRanges(keyRanges, handleRanges ranger.Ranges) ranger.Ranges {
 		ranges = append(ranges, ran)
 	}
 	return ranges
+}
+
+// estimateFullTextPostingRows estimates the posting entries a search reads.
+// Each posting list the search opens is read in full: an exact term's within
+// the rows the key-column point and the handle ranges select, a prefix's
+// within the key-column point alone, since handle ranges do not narrow it.
+// The postings of a term are the rows containing it, which is what the ILIKE
+// form of the term selects; its estimate comes from the column's statistics
+// as for any string match, or is the default string-match selectivity when
+// the statistics cannot evaluate it.
+func estimateFullTextPostingRows(ds *logicalop.DataSource, match *expression.ScalarFunction, query *fulltext.Query,
+	keyConds, handleConds []expression.Expression) (float64, error) {
+	reads := query.PostingReads()
+	if len(reads) == 0 {
+		return 0, nil
+	}
+	selectivity := func(conds []expression.Expression) (float64, error) {
+		if len(conds) == 0 {
+			return 1, nil
+		}
+		sel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, nil)
+		return sel, errors.Trace(err)
+	}
+	keySel, err := selectivity(keyConds)
+	if err != nil {
+		return 0, err
+	}
+	handleSel, err := selectivity(handleConds)
+	if err != nil {
+		return 0, err
+	}
+	column := match.GetArgs()[1]
+	defaultSel := ds.SCtx().GetSessionVars().GetStrMatchDefaultSelectivity()
+	rows := 0.0
+	for _, read := range reads {
+		// Without statistics every condition is given the generic
+		// selectivity, which for a term would mean one in nearly every row;
+		// the string-match default is the better guess.
+		termSel := defaultSel
+		if !ds.TableStats.HistColl.Pseudo {
+			if like, err := expression.BuildFTSTermILikePredicate(ds.SCtx().GetExprCtx(), column, read.Term); err == nil {
+				if termSel, err = selectivity([]expression.Expression{like}); err != nil {
+					return 0, err
+				}
+			}
+		}
+		scope := ds.TableStats.RowCount * keySel
+		if !read.Prefix {
+			scope *= handleSel
+		}
+		rows += scope * termSel
+	}
+	return rows, nil
+}
+
+// countFullTextPostingScans counts the posting scans a search opens: an exact
+// term is read within each handle range in turn, a prefix in one scan.
+func countFullTextPostingScans(query *fulltext.Query, handleRanges int) float64 {
+	scans := 0
+	for _, read := range query.PostingReads() {
+		if read.Prefix {
+			scans++
+		} else {
+			scans += max(1, handleRanges)
+		}
+	}
+	return float64(scans)
+}
+
+// pointPathSelectedByHeuristics reports whether derivePathStatsAndTryHeuristics
+// chose a path that only reads points, or none at all, and pruned the others:
+// an empty range, points of the handle or of a unique index, or a covering
+// index preferred to such points.
+func pointPathSelectedByHeuristics(ds *logicalop.DataSource) bool {
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+	for _, path := range ds.PossibleAccessPaths {
+		if len(path.PartialIndexPaths) > 0 || path.StoreType == kv.TiFlash {
+			continue
+		}
+		if len(path.Ranges) == 0 {
+			return true
+		}
+		if !path.OnlyPointRange(tc) {
+			continue
+		}
+		if path.IsTablePath() || path.Index.Unique || (len(ds.PossibleAccessPaths) == 1 && path.IsSingleScan) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFullTextIndexPath reports whether path is the IndexMerge path that reads a
+// FULLTEXT index built in TiKV.
+func isFullTextIndexPath(path *util.AccessPath) bool {
+	return len(path.PartialIndexPaths) == 1 && path.PartialIndexPaths[0].FullText != nil
 }

@@ -71,7 +71,9 @@ select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(bod
 explain format = 'brief' select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
 select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode) order by id;
 # A prefix search cannot be confined, so the equality is also checked on the rows.
+# Reading the prefix across every tenant costs more than scanning the tenant.
 explain format = 'brief' select id from clustered_docs where tenant_id = 2 and match(body) against('distrib*' in boolean mode);
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('distrib*' in boolean mode);
 select id from clustered_docs where tenant_id = 2 and match(body) against('distrib*' in boolean mode) order by id;
 # A condition on a later column of the key alone confines nothing.
 explain format = 'brief' select tenant_id from clustered_docs where id = 1 and match(body) against('+distributed' in boolean mode);

@@ -122,6 +122,11 @@ type FullTextScanInfo struct {
 	// Search is the constant boolean-mode search string, compiled at execution
 	// time with the analyzer frozen in the index.
 	Search string
+	// PostingRows estimates the posting entries the search reads, which is
+	// what the scan costs; see util.FullTextAccessInfo.
+	PostingRows float64
+	// PostingScans is the number of posting scans the search opens.
+	PostingScans float64
 }
 
 // FullRange represent used all partitions.
@@ -750,7 +755,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 // against the index and yields the matching handles.
 func ConvertToFullTextIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath) *PhysicalIndexScan {
 	is := GetOriginalPhysicalIndexScan(ds, prop, path, false, false)
-	is.FullText = &FullTextScanInfo{Search: path.FullText.Search}
+	is.FullText = &FullTextScanInfo{Search: path.FullText.Search, PostingRows: path.FullText.PostingRows, PostingScans: path.FullText.PostingScans}
 	// The search string is baked into the plan, so a cached plan would answer
 	// a different parameter with the wrong rows.
 	is.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("fulltext index scan")
