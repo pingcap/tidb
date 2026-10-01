@@ -44,7 +44,8 @@ It is saved as text and is not part of either production build.
   and unary interceptor ordering, alongside original cases and goleak.
 - [x] Finish repeatable harness, 29 PD inputs, 12 native inputs, exact backend-source
   inventory and TiDB error/zap dependency-selection validation.
-- [ ] Publish the contract review after required hook and fresh locked server builds.
+- [x] Publish the contract review as `a8c256a78c` after the actual hook build
+  (0.69s) and a fresh post-commit locked server build (16.04s); remote branch agrees.
 - [ ] Select a transport adapter that passes the entire lifecycle acceptance set.
 - [ ] Implement all eleven functions and three constants as one owner, migrate
   every existing native caller, and remove their displaced policies atomically.
@@ -241,8 +242,12 @@ identical; `observations.json` is copied from that run, not manually authored.
 The native temporary example is removed and native git status remains clean.
 The package inventory is checked before execution, including newly added files.
 Root `make lint`, `git diff --check`, `gofmt -s -d` for the oracle, Rust probe
-formatting and Python syntax/provenance checks pass. Both mandatory server-build
-publication gates remain required for this commit.
+formatting and Python syntax/provenance checks pass. The actual hook and a fresh post-commit `cargo build --locked -p tidb-server`
+both passed, and `a8c256a78c4c5c72415e517c2ba9ef9e695f0749` is published on
+`hparser-integration`. The optional goword executable was absent; no spelling
+validation is claimed. Native master remains `6163ecf` and both working trees
+were clean after publication. This evidence-only receipt update repeats both
+mandatory Rust build gates before its own publication.
 
 Disk maintenance: with no active Go/Rust compiler found, verified and removed
 446 ignored TiDB incremental-cache directories whose newest files were older
