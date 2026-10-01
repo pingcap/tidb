@@ -212,3 +212,26 @@ func (idx *Index) GetTopN() *TopN {
 func (idx *Index) IsAnalyzed() bool {
 	return IsAnalyzed(idx.StatsVer)
 }
+
+// IsColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
+// single-column unique index whose only column has the given offset.
+func IsColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if IsSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSingleColNonPrefixUniqueIndex returns true if the index is public, unique
+// (or primary), has exactly one column, and uses neither a prefix nor a
+// partial-index condition.
+func IsSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
+	return idx.State == model.StatePublic &&
+		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
+		!idx.HasPrefixIndex() && !idx.HasCondition()
+}
