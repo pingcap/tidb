@@ -12,6 +12,7 @@
 * [Detailed Design](#detailed-design)
     * [Types and storage](#types-and-storage)
     * [SRID model](#srid-model)
+    * [Reference surface](#reference-surface)
     * [Function set](#function-set)
     * [Geometry engine](#geometry-engine)
     * [Type plumbing](#type-plumbing)
@@ -95,10 +96,10 @@ application.
 | [SRID](https://dev.mysql.com/doc/refman/8.4/en/spatial-reference-systems.html) | Spatial Reference System Identifier, the integer naming an SRS. v1 supports 0 and 4326; see [SRID model](#srid-model). |
 | [EPSG](https://epsg.org/) | The EPSG Geodetic Parameter Dataset, published by IOGP, which assigns SRIDs. |
 | [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | World Geodetic System 1984, the datum and reference ellipsoid used by GPS, whose geographic coordinate system is EPSG:4326. |
-| Reference surface | What a measurement or an edge is drawn on: the flat *plane*, a *sphere* of one constant radius, or the oblate WGS 84 *ellipsoid*. SRS class decides whether it is the plane or a curved surface; the function decides which curved surface. See [SRID model](#srid-model). |
+| Reference surface | What a measurement or an edge is drawn on: the flat *plane*, a *sphere* of one constant radius, or the oblate WGS 84 *ellipsoid*. SRS class decides whether it is the plane or a curved surface; the function decides which curved surface. See [Reference surface](#reference-surface). |
 | Geodesic | The locally shortest path along a curved reference surface, and equivalently the path that never turns sideways: whatever bending it does is forced on it by the surface, so it is the shape a string stretched between its two ends on that surface would take. Always along the surface, never the straight chord through the interior. |
 | Great circle | The geodesic of a *sphere*, and the constructive way to say it: where a plane through the two endpoints and the centre cuts the surface. The contrast that matters here is that a great circle lies in a plane and an ellipsoidal geodesic in general lies in no plane, so the two are different curves rather than the same curve computed to different precision. A plane through the centre of an ellipsoid cuts it in a central ellipse, which is a third curve again. |
-| Andoyer | The spherical law of cosines with a first-order flattening correction, approximating the ellipsoidal geodesic without iterating. MySQL uses it for every ellipsoidal computation, measurement and predicate alike; see [SRID model](#srid-model). |
+| Andoyer | The spherical law of cosines with a first-order flattening correction, approximating the ellipsoidal geodesic without iterating. MySQL uses it for every ellipsoidal computation, measurement and predicate alike; see [Reference surface](#reference-surface). |
 | [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates. |
 | [GeoJSON](https://datatracker.ietf.org/doc/html/rfc7946) | JSON geometry encoding (RFC 7946), the third I/O format. |
 | MBR | Minimum Bounding Rectangle; basis of MySQL's `MBR*` predicates (deferred). |
@@ -112,12 +113,8 @@ deliberately asymmetric:
 
 - **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates and option values MySQL
   rejects are accepted, and the storage layer keeps them losslessly. Accepting more cannot
-  break a query that works on MySQL. An SRID outside 0 and 4326 is accepted wherever no
-  SRS axis order has to be applied: the bare path, `ST_GeomFromEWKB`,
-  `ST_GeomFromGeoJSON`, and WKT or WKB given `axis-order=long-lat`. Its coordinates are
-  not range-checked, since the SRS class is unknown. WKT and WKB under `srid-defined` or
-  `lat-long` reject it, since both depend on the SRS: MySQL swaps only on a geographic
-  one.
+  break a query that works on MySQL. SRIDs outside 0 and 4326 are the exception; see
+  *Extended data* in [Types and storage](#types-and-storage).
 - **`ST_As*` emits what MySQL emits.** It errors where MySQL cannot express a value,
   because changing the bytes a client receives is where compatibility actually breaks.
   Emitting Z/M is a later extension, and then only behind an explicit option.
@@ -192,6 +189,12 @@ and those that would error. Storing it is the contract, since it is what lets 3D
 and the wider SRS catalog arrive later as functions over data written today rather than as
 a migration.
 
+An SRID outside 0 and 4326 is accepted wherever no SRS axis order has to be applied: the
+bare path, `ST_GeomFromEWKB`, `ST_GeomFromGeoJSON`, and WKT or WKB given
+`axis-order=long-lat`. Its coordinates are not range-checked, since the SRS class is
+unknown. WKT and WKB under `srid-defined` or `lat-long` reject it, since both depend on
+the SRS: MySQL swaps only on a geographic one.
+
 One asymmetry is load-bearing rather than incidental. MySQL is 2D, so a Z/M value has no
 MySQL form and cannot come back on the bare path, while a value whose only extension is its
 SRID does, because MySQL represents any SRID in its own binary format. That is what keeps
@@ -227,7 +230,7 @@ Why EWKB rather than the alternatives:
 | Coordinate system | abstract Cartesian plane, unitless X/Y | WGS 84 geographic, latitude/longitude |
 | Bounds | none, the full finite IEEE-754 double range, as MySQL | latitude `[-90, 90]`, longitude `[-180, 180]`, except `(-180, 180]` through GeoJSON, as MySQL |
 | Rejected on ingest | Inf/NaN, `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
-| Measurement | planar (Cartesian) | Andoyer on the WGS 84 ellipsoid for distance and length, as MySQL; stated per operation in *Reference surface* below |
+| Measurement | planar (Cartesian) | Andoyer on the WGS 84 ellipsoid for distance and length, as MySQL; stated per operation in [Reference surface](#reference-surface) |
 
 Codes and wording are matched as closely as possible on every ingest path:
 `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`, and the MySQL-specific
@@ -243,8 +246,23 @@ Planar versus curved follows the **SRS class** (SRID 0 and projected are Cartesi
 geographic is curved), as in MySQL. Adding SRIDs later therefore adds catalog rows and
 per-class parameters, not code paths.
 
-**Reference surface.** SRS class decides *whether* a computation is planar. On a curved
-surface two independent choices remain, and separating them is what keeps 4326 coherent:
+**Catalog.** `information_schema.st_spatial_reference_systems` returns exactly two rows,
+SRID 0 and 4326, with MySQL's columns and the values MySQL gives for them; no dataset is
+imported. It is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected and deferred to
+[Future extensions](#future-extensions). DDL validates `SRID n` against the catalog rather
+than against a hardcoded pair, so asking a server which SRIDs it supports is a query rather
+than an unknown-table error. Row contents are in
+[the appendix](#appendix-srs-catalog).
+
+**Axis order.** Stored longitude first on a geographic SRS, as in MySQL and PostGIS.
+
+DDL restricts the `SRID n` attribute to 0 or 4326. An unrestricted `GEOMETRY` column may
+still hold values of any SRID (see [Types and storage](#types-and-storage)).
+
+### Reference surface
+
+SRS class decides *whether* a computation is planar. On a curved surface two independent
+choices remain, and separating them is what keeps 4326 coherent:
 
 - The **edge model** is what curve joins two vertices. It decides all topology: inside or
   outside, whether two edges cross, which edge is nearest.
@@ -270,16 +288,16 @@ MySQL does or not at all; predicates would otherwise be the one surface shipping
 the operand set is not: widening the operands only makes rejected queries answer, while
 another edge model would flip booleans between releases.
 
-Matching MySQL is affordable on the half that matters. Boost decides which side of a segment
-a point falls on by comparing azimuths from the inverse solution, so a point-in-polygon
-crossing test needs only the inverse with azimuths: closed form, and an extension of the
-Andoyer inverse the proof of concept already carries. The expensive half is a predicate
-between two extended geometries, which needs geodesic segment intersection feeding a
-9-intersection matrix. **v1 therefore restricts the predicates to pairs with a point
-operand**, meaning a `POINT` or `MULTIPOINT`, and defers the rest
-([Future extensions](#future-extensions)).
-Dropping those pairs to a cheaper surface instead would break the invariant above, so the
-lever is the operand type rather than the surface. The measurements behind this are in
+Matching MySQL is affordable on the half that matters. Boost decides which side of a
+segment a point falls on by comparing azimuths from the inverse solution, so a
+point-in-polygon crossing test needs only the inverse with azimuths: closed form, and an
+extension of the Andoyer inverse the proof of concept already carries. The expensive half
+is a predicate between two extended geometries, which needs geodesic segment intersection
+feeding a 9-intersection matrix. **v1 therefore restricts the predicates to pairs with a
+point operand**, meaning a `POINT` or `MULTIPOINT`, and defers the rest
+([Future extensions](#future-extensions)). Dropping those pairs to a cheaper surface
+instead would break the invariant above, so the lever is the operand type rather than the
+surface. The rejected edge models and the measurements behind this are in
 [Investigation & Alternatives](#investigation--alternatives).
 
 | 4326 operation | Needs | v1 | MySQL |
@@ -304,34 +322,6 @@ much:
 | 10 km | -12 to +8 cm |
 | 9,810 km | -66 to +6.5 m |
 | near-antipodal | up to +5,973 m |
-
-**The alternatives, and why not.**
-
-- **Exact geodesic edges (Karney).** Being more exact than MySQL costs compatibility: 8.5 m
-  from MySQL against 7,797 m for a sphere on a continental polygon. Its inverse iterates
-  where Andoyer's is closed form, so it is not the cheaper option either.
-- **Great-circle edges on a sphere.** What PostGIS `geography` ships. It would buy a wider
-  operand set for a boundary 7,797 m away along the meridian on that polygon, so
-  `ST_Intersects` on the same point is true in MySQL and false in PostGIS.
-- **The plane.** Not a candidate: its error does not shrink with polygon size the way the
-  curved options do, and whole regions flip rather than boundary cases.
-
-No Go library implements Andoyer or geodesic topology. The C++ ones do: Boost.Geometry,
-which MySQL runs, and GeographicLib's `Intersect` for exact geodesic segment intersection.
-So TiDB writes its own.
-
-**Catalog.** `information_schema.st_spatial_reference_systems` returns exactly two rows,
-SRID 0 and 4326, with MySQL's columns and the values MySQL gives for them; no dataset is
-imported. It is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected and deferred to
-[Future extensions](#future-extensions). DDL validates `SRID n` against the catalog rather
-than against a hardcoded pair, so asking a server which SRIDs it supports is a query rather
-than an unknown-table error. Row contents are in
-[the appendix](#appendix-srs-catalog).
-
-**Axis order.** Stored longitude first on a geographic SRS, as in MySQL and PostGIS.
-
-DDL restricts the `SRID n` attribute to 0 or 4326. An unrestricted `GEOMETRY` column may
-still hold values of any SRID (see [Types and storage](#types-and-storage)).
 
 ### Function set
 
@@ -397,13 +387,13 @@ spatial is an unknown function until a later milestone adds it.
   operands MySQL restricts to points and multipoints, raising `ERROR 3618` otherwise. The
   default radius is derived from the SRS, and is 6,370,986.0 m on SRID 0, which has none.
 - **Predicates (DE-9IM):** `ST_Within`, `ST_Contains`, `ST_Intersects`, `ST_Equals`,
-  `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`. On SRID 0 they take any operand
-  pair. On 4326 v1 takes only pairs with a point operand, and raises `ERROR 3618` naming
-  the pair for the rest, as MySQL does for `ST_Distance_Sphere(POLYGON, POINT)`. The check
-  is on each row's values, not the column type: on an unrestricted `GEOMETRY` column a
-  statement fails at the first row it evaluates without a point operand, as it does in
-  MySQL. See [Reference surface](#srid-model) for why the operand type is the lever and
-  [Future extensions](#future-extensions) for what that defers.
+  `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`. On SRID 0 they take any
+  operand pair. On 4326 v1 takes only pairs with a point operand, and raises `ERROR 3618`
+  naming the pair for the rest, as MySQL does for `ST_Distance_Sphere(POLYGON, POINT)`.
+  The check is on each row's values, not the column type: on an unrestricted `GEOMETRY`
+  column a statement fails at the first row it evaluates without a point operand, as it
+  does in MySQL. See [Reference surface](#reference-surface) for why the operand type is
+  the lever and [Future extensions](#future-extensions) for what that defers.
 
 **SRID handling** differs by direction, and a round-trip hides it:
 
@@ -437,9 +427,6 @@ follow MySQL, verified on 8.4.6 and 9.7.2:
 Round-trips are not idempotent: a FeatureCollection returns from `ST_AsGeoJSON` as a
 GeometryCollection.
 
-Every geometry-returning builtin is typed `GEOMETRY`, so a plain B-tree functional index
-over such an expression is rejected.
-
 ### Geometry engine
 
 Pure Go, no cgo, so the stack builds with `CGO_ENABLED=0` and needs no libgeos in the
@@ -448,8 +435,9 @@ Bazel/CI sandbox; the only Bazel work is adding `DEPS.bzl` proxy-fetch entries.
 - `github.com/peterstace/simplefeatures`: OGC/DE-9IM model, WKT/WKB/GeoJSON I/O, and the
   planar predicates and measurement SRID 0 uses. Validated byte-identical to MySQL in the
   PoC.
-- Andoyer for 4326, in-tree or as a new Go library, since no Go library implements it
-  ([Reference surface](#srid-model)). Ellipsoidal distance and length, which the proof of
+- Andoyer for 4326, in-tree or as a new Go library: no Go library implements Andoyer or
+  geodesic topology, and the libraries that do are C++ (Boost.Geometry, which MySQL runs,
+  and GeographicLib's `Intersect`). Ellipsoidal distance and length, which the proof of
   concept already carries, plus the inverse problem with azimuths and a crossing test over
   it for the predicates.
 
@@ -558,7 +546,7 @@ Out of scope here, each with a home:
 | Area | Effect |
 | --- | --- |
 | Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
-| Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. |
+| Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. A functional index over a geometry-valued expression is rejected too, as in MySQL. |
 | Generated columns | No `ST_*` function is allowed in a virtual or stored generated column expression in v1. Nothing structural stops them, since they are deterministic scalars, but each one has to be shown useful and correct there rather than assumed, and that is per function. This costs work rather than saving it: `pkg/ddl/generated_column.go` gates generated columns with a blocklist (`expression.IllegalFunctions4GeneratedColumns`) plus a "is it a registered builtin" check, so every `ST_*` name has to be added to that blocklist explicitly, otherwise registering the builtin already admits it. Functions can be taken off the list one at a time later. The separate `GAFunction4ExpressionIndex` allowlist applies to expression indexes only, which v1 does not have. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
@@ -737,11 +725,17 @@ Risks:
 
   The sphere and MySQL rows are measured where each engine's predicate flips: PostGIS
   `geography` between 45.0000 and 45.0001, and MySQL at 45.070159, bisected to 1e-9. So
-  `ST_Intersects` on `POINT(45.035 70)` is true in MySQL and false in PostGIS. The gap
-  between a great circle and an ellipsoidal geodesic grows with edge length: 4 mm over an
-  8 km city edge, 10 m over 394 km, and 3.1 km over 6,690 km. Planar edges are wrong at
-  any size: for `POLYGON((0 0, 0 80, 60 0, 0 0))`, MySQL 8.4.6 answers `ST_Within` true
-  for `(30 40)`, `(33 40)`, `(36 40)` and `(40 40)`, and planar false for all four.
+  `ST_Intersects` on `POINT(45.035 70)` is true in MySQL and false in PostGIS. Against
+  Andoyer edges:
+
+  - **Exact geodesic edges (Karney)** are 8.5 m from MySQL here, so being more exact costs
+    compatibility, and Karney's inverse iterates where Andoyer's is closed form.
+  - **Great-circle edges on a sphere**, what PostGIS `geography` ships, would buy a wider
+    operand set for a boundary 7,797 m away. The gap grows with edge length: 4 mm over an
+    8 km city edge, 10 m over 394 km, and 3.1 km over 6,690 km.
+  - **The plane** is wrong at any size: for `POLYGON((0 0, 0 80, 60 0, 0 0))`, MySQL 8.4.6
+    answers `ST_Within` true for `(30 40)`, `(33 40)`, `(36 40)` and `(40 40)`, and planar
+    false for all four. Whole regions flip, not boundary cases.
 - **Erroring on large geometries instead of answering.** Rejected: it needs an arbitrary
   size limit, and the error is itself a difference from MySQL, which answers. The operand
   restriction has no threshold and never returns a boolean MySQL would not.
@@ -765,13 +759,13 @@ and no stored value has to be rewritten.
 | User-defined SRSs through `CREATE [OR REPLACE] SPATIAL REFERENCE SYSTEM` and `DROP SPATIAL REFERENCE SYSTEM`, which MySQL also has (there is no `ALTER`; modification is `CREATE OR REPLACE`) | bigger: a writable catalog, a WKT SRS parser, and catalog changes that have to replicate |
 
 **Predicates between two extended geometries.** v1 answers the eight DE-9IM predicates on
-4326 only for pairs with a point operand ([Reference surface](#srid-model)). Widening that
-to line and polygon pairs needs geodesic segment intersection over Andoyer edges,
-assembled into a 9-intersection matrix. `ST_IsValid` on 4326 polygons waits on it too, and
-`ST_Distance` to a line or polygon lands in the same step, since it needs the nearest
-point on an Andoyer edge. All are additive for users, since they only make queries that
-were rejected start answering, and none needs a format change. Karney's intersection and
-point-to-line work supplies the algorithms.
+4326 only for pairs with a point operand ([Reference surface](#reference-surface)).
+Widening that to line and polygon pairs needs geodesic segment intersection over Andoyer
+edges, assembled into a 9-intersection matrix. `ST_IsValid` on 4326 polygons waits on it
+too, and `ST_Distance` to a line or polygon lands in the same step, since it needs the
+nearest point on an Andoyer edge. All are additive for users, since they only make queries
+that were rejected start answering, and none needs a format change. Karney's intersection
+and point-to-line work supplies the algorithms.
 
 `ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth
 adding once the spatial index lands. Other functions outside MySQL's set follow the same
@@ -822,7 +816,8 @@ the mapping is not type name to type name:
   does planar arithmetic on degrees, and no TiDB spelling reproduces that, by choice: it is
   the footgun the SRS-class model does not have.
 
-Per operation on 4326, extending the v1 and MySQL columns in [SRID model](#srid-model):
+Per operation on 4326, extending the v1 and MySQL columns in
+[Reference surface](#reference-surface):
 
 | 4326 operation | PostGIS `geometry` | PostGIS `geography` |
 | --- | --- | --- |
@@ -847,7 +842,7 @@ second codec and no migration.
 great-circle edges with a spheroidal metric: the sphere decides containment and which points
 get measured, and Karney converts that pair into metres. Matching PostGIS therefore means
 reproducing that split rather than being as exact as possible, and it stays within the
-consistency invariant in [Reference surface](#srid-model), since one edge model still
+consistency invariant in [Reference surface](#reference-surface), since one edge model still
 decides all topology. So one engine could cover all three audiences:
 
 | Spelling | Edge model | Metric | Matches |
@@ -870,9 +865,9 @@ becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the 
 
 | Area | PostGIS | This design |
 | --- | --- | --- |
-| Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [SRID model](#srid-model)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
+| Metric accuracy | Karney via PROJ's `geodesic.c`, exact to round-off and convergent near antipodes | Andoyer, because MySQL is Andoyer (see [Reference surface](#reference-surface)). Both are "ellipsoidal", so a PostGIS user should still expect differences: centimetres at 10 km, kilometres near antipodes |
 | Edge model | Great circle on a sphere for all `geography` topology, so both the predicates and the edges `ST_Distance` measures to are spherical | Andoyer, matching MySQL, which puts TiDB further from PostGIS: the boundaries are 7,797 m apart along the meridian on a continental polygon, enough to flip `ST_Intersects` on the same point. This is the larger of the two deltas, against centimetres for the metric |
-| Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#srid-model)). `ST_Distance` takes only point operands. SRID 0 is unrestricted |
+| Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#reference-surface)). `ST_Distance` takes only point operands. SRID 0 is unrestricted |
 | Axis order | Longitude first everywhere | Stored longitude first, as PostGIS; WKT, WKB and `ST_X`/`ST_Y` latitude first on a geographic SRS, as MySQL |
 | SRID / CRS | Full EPSG catalog in `spatial_ref_sys`, on-the-fly `ST_Transform` | SRID 0 and 4326 only; other codes rejected by DDL but storable in an unrestricted column; no `ST_Transform`. Both are in [Future extensions](#future-extensions) |
 | Function breadth | 300+ `ST_*` | The v1 allowlist, then MySQL's ~75. Absent even from MySQL's set: spatial clustering, `ST_MakeValid`, and the `ST_AsMVT`/KML/GML/SVG output formats |
