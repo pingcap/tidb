@@ -1425,22 +1425,10 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, partitio
 	if pos < 0 || pos >= length {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		var valueMsg string
-		// TODO: Test with ALTER TABLE t PARTITION BY with a different expression / type
-		if t.meta.Partition.Expr != "" {
-			e, err := expression.ParseSimpleExprWithTableInfo(ctx, t.meta.Partition.Expr, t.meta)
-			if err == nil {
-				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-				if err == nil {
-					if unsigned {
-						valueMsg = fmt.Sprintf("%d", uint64(val))
-					} else {
-						valueMsg = fmt.Sprintf("%d", val)
-					}
-				}
-			}
+		if unsigned {
+			valueMsg = fmt.Sprintf("%d", uint64(ret))
 		} else {
-			// When the table is partitioned by range columns.
-			valueMsg = "from column_list"
+			valueMsg = fmt.Sprintf("%d", ret)
 		}
 		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}

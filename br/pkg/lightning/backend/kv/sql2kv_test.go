@@ -77,6 +77,38 @@ func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...tabl
 }
 
 func TestEncode(t *testing.T) {
+	t.Run("out of range partition", func(t *testing.T) {
+		for _, tc := range []struct {
+			definition string
+			value      types.Datum
+			message    string
+		}{
+			{"a int primary key) partition by range(a) (partition p0 values less than(10))", types.NewIntDatum(100), "100"},
+			{"a int primary key) partition by range(a+1) (partition p0 values less than(10))", types.NewIntDatum(10), "11"},
+			{"a bigint unsigned primary key) partition by range(a) (partition p0 values less than(10))", types.NewUintDatum(^uint64(0)), "18446744073709551615"},
+		} {
+			node, err := parser.New().ParseOneStmt("create table t ("+tc.definition, "", "")
+			require.NoError(t, err)
+			info, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+			require.NoError(t, err)
+			info.ID, info.State = 1, model.StatePublic
+			require.NotNil(t, info.GetPartitionInfo())
+			info.Partition.Definitions[0].ID = 2
+			tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
+			require.NoError(t, err)
+			encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+				Table: tbl, Logger: log.L(),
+				SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables, Timestamp: 1234567890},
+			}, nil)
+			require.NoError(t, err)
+			t.Cleanup(encoder.Close)
+			_, err = encoder.Encode([]types.Datum{tc.value}, 1, []int{0}, 0)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "Table has no partition for value "+tc.message)
+			_, err = encoder.Encode([]types.Datum{types.NewIntDatum(1)}, 2, []int{0}, 0)
+			require.NoError(t, err)
+		}
+	})
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
