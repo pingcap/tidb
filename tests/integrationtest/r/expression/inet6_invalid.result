@@ -1,0 +1,35 @@
+use test;
+drop table if exists inet6_invalid,t0;
+create table inet6_invalid(id int primary key,s varchar(64));
+insert into inet6_invalid values (1,'10.0.5.9'),(2,'bad'),(3,''),(4,null),(5,'::1');
+set tidb_enable_vectorized_expression=0;
+select id,hex(inet6_aton(s)) from inet6_invalid order by id;
+id	hex(inet6_aton(s))
+1	0A000509
+2	NULL
+3	NULL
+4	NULL
+5	00000000000000000000000000000001
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+Warning	1411	Incorrect string value: '' for function inet6_aton
+set tidb_enable_vectorized_expression=1;
+select id,hex(inet6_aton(s)) from inet6_invalid order by id;
+id	hex(inet6_aton(s))
+1	0A000509
+2	NULL
+3	NULL
+4	NULL
+5	00000000000000000000000000000001
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+Warning	1411	Incorrect string value: '' for function inet6_aton
+create table t0(c0 text(97));
+replace into t0 values ('+%o');
+select ref0 from (select concat(t0.c0,inet6_aton(char(0.10720270255669206)) and (case ((t0.c0)<<(-638857355)) when (case t0.c0 when 1056566955 then -2046596771 else '9+*H2lg' end) then 'e' when t0.c0 then ((t0.c0)|(t0.c0)) else t0.c0 end)) as ref0,(not ('0')) as ref1 from t0) as s where ref1;
+ref0
++%o0
+drop table inet6_invalid,t0;
+set tidb_enable_vectorized_expression=default;
