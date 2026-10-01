@@ -143,8 +143,9 @@ no generated-file or Cargo.lock diff. **10 bridge tests** and **26 PD tests**
 pass, with one pre-existing ignored live-PD test. Affected transaction-crate
 all-target compilation, root `make lint`, artifact/hash checks, documentation
 links and exact native/vendor identity pass. The actual hook and fresh pre-push
-locked server builds still gate publication; the final response records their
-results and the published TiDB commit.
+locked server builds passed for local integration commit b41949f774, but its push
+was rejected because the remote advanced. The merge described below repeats
+both gates before publication; the final response records the published commit.
 
 The register remains **85 tracked / 77 unresolved / eight repaired**. P06 is
 partial. Default batch collection is repaired, but public PD close, full
@@ -159,3 +160,69 @@ confirming that no cargo/rustc process was active. Every entry was older than
 24 hours; the directories measured **3.88 GiB** before deletion. Sources,
 final binaries, logs and uncommitted work were preserved. The deletion manifest
 is `/private/tmp/pd-batch-cache-candidates.json`.
+
+## Incoming TopN integration regression
+
+
+The remote advanced to `107e8e2a5d1c314172bd8a5efcfbafcd335c0c14` during
+publication. Its added truncation discards candidates beyond the initial LIMIT.
+Two existing executor tests fail on that code, and the new
+`topn_keeps_candidates_beyond_the_limit_in_the_first_child_chunk` regression
+fails before repair: input [3, 0, 1] with ascending LIMIT 1 returns 3 instead of
+0. Descending order is a control. The merge preserves the remote commit while
+removing its truncation and the older limit-derived RequiredRows request.
+
+Fresh master `pkg/executor/sortexec/topn.go::loadChunksUntilTotalLimit` explicitly
+keeps complete child chunks to avoid smaller TiKV batches; `executeTopN` trims
+the initialized heap afterward. The full focused suite also exposes a
+pre-existing disconnected post-spill worker path: 49d7ed0fca removed its caller.
+Go `executeTopNWhenSpillTriggered` spills the first heap then starts its workers.
+Rust now makes that same transition, removes the repeated serial-segment loop,
+and reuses the existing worker implementation even for concurrency one. The
+worker regression was expanded to one and more-than-CPU-count workers and fails
+before this change, then passes afterward. No assertions were suppressed.
+
+Only the existing Rust TopN owner and its nearest tests change. This is a
+regression repair during integration, not transcreation or acceptance of the
+whole `sortexec` Go package. Its complete source/test/platform/build inventory
+and original Go package validation remain outside this batch receipt.
+
+Commands from `rust/` (the first two preserve failing evidence before repair):
+
+    cargo test --locked -p tidb-executor --lib topn_keeps_candidates_beyond_the_limit_in_the_first_child_chunk -- --test-threads=1
+    cargo test --locked -p tidb-executor --lib spilled_topn_uses_parallel_workers_and_preserves_the_answer -- --test-threads=1
+    cargo test --locked -p tidb-executor --lib topn -- --test-threads=1
+    cargo test --locked -p tidb-session --lib tests_topn:: -- --test-threads=1
+    cargo check --locked -p tidb-executor --all-targets
+    rustfmt --edition 2021 --check crates/tidb-executor/src/topn.rs
+
+Commands from repository root:
+
+    make lint
+    python3 /private/tmp/check-pd-batch.py --synced
+    git diff --check
+    git diff --cached --check
+    TERM=xterm git -c core.hooksPath=hooks commit -m 'Merge integration and restore Go TopN chunk and spill ownership'
+    (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration
+
+All **53 executor TopN tests** pass, including independent Go heap survivors,
+Sort-plus-Limit comparisons, RankTopN, one/multiple workers, repeated spills,
+output-stage spills, cancellation and file cleanup. Executor all-target
+compilation passes, and the changed file passes Rust 2021 formatting. A broader
+`cargo fmt -p tidb-executor --check` reports
+pre-existing formatting differences in unrelated files; no formatting churn is
+included. The first sandboxed lint attempt could not resolve proxy.golang.org;
+the network-enabled rerun passes. Logs are `/private/tmp/pd-batch-merge-*.log`.
+
+The session suite has **six passing cases and two pre-existing EXPLAIN failures**:
+`a_group_by_pipeline_fuses_above_the_aggregate` and
+`select_distinct_fuses_above_aggregation_and_keeps_gos_rows`. Both expect HashAgg
+row estimates of 8000 while this branch returns 1000. Replacing only topn.rs
+with unchanged b41949f774's version, running the identical session command, and
+restoring the reviewed file reproduces precisely those two failures and the
+same six successes. The baseline log is
+`/private/tmp/pd-batch-merge-topn-session-baseline.log`; the fixed run is
+`/private/tmp/pd-batch-merge-topn-session.log`. This repair does not change planner
+estimates or accept those failing expectations. Original Go sortexec tests,
+live TiKV spill behavior and performance benchmarks were not run for this
+integration repair. Full sortexec and planner acceptance remain open.

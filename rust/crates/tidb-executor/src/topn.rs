@@ -588,18 +588,7 @@ where
         self.memory.check()
     }
 
-    /// Go `loadChunksUntilTotalLimit` + `executeTopNWhenNoSpillTriggered` +
-    /// `executeTopN` + the ascending sort of `generateTopNResults`, run as
-    /// SEGMENTS: a segment ends when the child is exhausted, or when the spill
-    /// action says the store has to go to disk.
-    ///
-    /// One segment with no spill is the whole in-memory operator, unchanged.
-    /// Each spill turns the segment's heap into one sorted run
-    /// (`executeTopNWhenSpillTriggered` -> `spillHeap`) and the next segment
-    /// starts from an empty heap over the rest of the child. This handles the
-    /// initial in-memory segment. After the first spill,
-    /// [`Self::fetch_parallel_remainder`] distributes later chunks across
-    /// `Concurrency` workers, matching Go's post-spill worker boundary.
+    /// Go RankTopN retains the boundary prefix group before sorting results.
     fn fetch_rank_topn(&mut self) -> Result<(), ExecError> {
         self.ensure_heap_init();
         let mut boundary_prefix: Option<Vec<Datum>> = None;
@@ -634,9 +623,8 @@ where
         self.sort_survivors_ascending()
     }
 
-    /// Go `loadChunksUntilTotalLimit` + `executeTopNWhenNoSpillTriggered` +
-    /// `executeTopN`, run as SEGMENTS: a segment ends when the child is
-    /// exhausted, or when the spill action says the store has to go to disk.
+    /// Go `executeTopN` keeps the initial heap in memory until input ends or
+    /// spilling starts, then hands remaining input to the spill workers.
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
@@ -651,22 +639,9 @@ where
             return self.fetch_rank_topn();
         }
 
-        loop {
-            let exhausted = self.run_one_segment()?;
-            if exhausted {
-                break;
-            }
+        if !self.run_one_segment()? {
             self.spill_heap()?;
-        }
-
-        // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
-        // still in the heap have to join them on disk, or the merge would not
-        // see them at all.
-        if !self.runs.is_empty() && !self.heap.is_empty() {
-            self.spill_heap()?;
-        }
-        if !self.runs.is_empty() {
-            return Ok(());
+            return self.fetch_parallel_remainder();
         }
 
         self.sort_survivors_ascending()
@@ -799,20 +774,11 @@ where
     fn run_one_segment(&mut self) -> Result<bool, ExecError> {
         self.ensure_heap_init();
 
-        // Phase 1: fill the store to `totalLimit` rows. Go caps each fetch's
-        // required rows at the remaining capacity (`loadChunksUntilTotalLimit`:
-        // `srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())))`),
-        // so the store first holds EXACTLY `totalLimit` rows and every later
-        // row goes through `processChk`'s strict no-evict-on-tie admission. A
-        // full-chunk fill would instead overflow into `heap.Pop` trimming,
-        // whose pop-on-tie picks by heap shape and can evict the wrong tied
-        // row (go keeps the EARLIEST of a tie).
+        // Go `loadChunksUntilTotalLimit` keeps complete child chunks and does
+        // not limit RequiredRows: smaller child batches can cause more TiKV
+        // requests. The heap then trims all collected candidates to totalLimit.
         while (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
-            chunk.set_required_rows(
-                (self.total_limit.saturating_sub(self.stored_len() as u64)) as isize,
-                self.child.max_chunk_size(),
-            );
             self.child.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
                 break;
@@ -1666,6 +1632,23 @@ mod tests {
     }
 
     #[test]
+    fn topn_keeps_candidates_beyond_the_limit_in_the_first_child_chunk() {
+        let rows = vec![vec![Some(3)], vec![Some(0)], vec![Some(1)]];
+        for (descending, expected) in [(false, 0), (true, 3)] {
+            let mut top = topn_over(
+                &rows,
+                1,
+                rows.len(),
+                &[(0, descending)],
+                0,
+                1,
+                StatementMemory::default(),
+            );
+            assert_eq!(drain(&mut top), vec![vec![Some(expected)]]);
+        }
+    }
+
+    #[test]
     fn topn_returns_what_sort_then_limit_returns() {
         // Keys are drawn from a small domain so ties are the common case, not
         // the exception -- ties are exactly where a bounded heap can diverge
@@ -2350,25 +2333,28 @@ mod spill_tests {
         // Go workers may outnumber runnable CPU threads. Waiting for input
         // must not occupy the pool and prevent later workers from starting.
         let concurrency = std::thread::available_parallelism().map_or(4, usize::from) + 1;
-        let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(concurrency);
-        exec.set_spill_chunk_size_for_test(64);
-        let got = drain(&mut exec);
+        // One worker uses the same post-spill lifecycle as multiple workers.
+        for concurrency in [1, concurrency] {
+            let mut exec = topn(&rows, &items, 37, 300, tight(&dir)).with_parallelism(concurrency);
+            exec.set_spill_chunk_size_for_test(64);
+            let got = drain(&mut exec);
 
-        assert_eq!(got, expected);
-        assert!(
-            exec.num_spilled_runs() > 1,
-            "the worker runs must be merged"
-        );
-        assert!(
-            exec.parallel_worker_chunks()
-                .iter()
-                .filter(|&&chunks| chunks > 0)
-                .count()
-                > 1,
-            "post-spill input was not distributed: {:?}",
-            exec.parallel_worker_chunks()
-        );
-        assert!(spill_files_in(&dir).is_empty(), "close leaked worker runs");
+            assert_eq!(got, expected);
+            assert!(
+                exec.num_spilled_runs() > 1,
+                "the worker runs must be merged"
+            );
+            assert!(
+                exec.parallel_worker_chunks()
+                    .iter()
+                    .filter(|&&chunks| chunks > 0)
+                    .count()
+                    >= concurrency.min(2),
+                "post-spill input was not distributed: {:?}",
+                exec.parallel_worker_chunks()
+            );
+            assert!(spill_files_in(&dir).is_empty(), "close leaked worker runs");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

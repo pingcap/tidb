@@ -40,6 +40,7 @@ in time. This revision is a plan; it closes no production finding.
 ## Progress
 
 
+- [x] (2026-10-01, integration merge) Preserve incoming 107e8e2a5d while fixing its TopN candidate loss against current Go master; remove the older competing serial-spill lifecycle and reconnect the existing workers. Red regressions precede each correction; all 53 executor TopN cases pass. The eight-case session suite retains only two EXPLAIN estimate failures reproduced with unchanged HEAD. No sortexec package acceptance or register closure is claimed. Merge hook and fresh locked build still gate publication.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/batch` owner and replace native TSO collection/default admission/completion. Two source wire regressions and callback ordering fail before repair; all 78 focused PD cases and 1,453 native library tests pass (two existing ignored), with original Go race/goleak, strict Clippy/all-targets/formatting. Published native master as bcf74b7; exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked server builds gate TiDB publication; the final response records their results. See `parity/current-audit/pd-batch-owner-repair.md`.
 - [x] (2026-10-01, W01 prerequisite) Implement the complete pinned PD `pkg/connectionctx` owner and native single-leader integration. Reproduce same-URL healthy-stream replacement before edits; preserve URL-keyed ownership, rejected candidates, cancellation and retained handles. Original Go race/goleak tests and 1,435 native tests pass (two pre-existing ignored). Native strict Clippy/all-targets/formatting, master publication as 4e3169e, exact TiDB synchronization, 10 bridge tests, 26 PD tests (one existing ignored), affected all-target compilation and root lint pass. The actual hook and fresh pre-push locked builds gate TiDB publication; see `parity/current-audit/pd-connectionctx-owner-repair.md` and the final publication response.
 - [x] (2026-10-01, W01 prerequisite) Inventory and implement the complete pinned PD `pkg/deadline` package plus its native TSO caller integration. Reproduce missing response/body deadlines, completed-result loss on retirement, and a lost wakeup in the existing cancellation adapter. Complete-package evidence is the deadline leaf only; parent PD/TSO/discovery acceptance and P03/P06/P07 remain open.
@@ -407,6 +408,16 @@ rewriting; test durable schema/state compatibility before reverting runtime work
 ## Surprises & Discoveries
 
 
+During batch publication, the integration remote advanced to 107e8e2a5d. Its
+TopN chunk truncation loses candidates: ascending LIMIT 1 on [3, 0, 1] returns
+3. Fresh Go master keeps complete chunks and trims the heap. Broader testing
+also finds the pre-existing disconnected spill-worker path; 49d7ed0fca removed
+the production call while leaving the workers and their failing test in place.
+The merge repair preserves both histories, removes the limit-derived child
+request/truncation and repeated serial-spill loop, and uses the existing worker
+lifecycle for one or multiple workers. All 53 focused TopN cases pass. This is
+maintenance of the existing sort port, not whole-sortexec acceptance.
+
 Native TSO retained a private 64-request collector and 65,536-outstanding-batch
 policy despite Go default 20,000-entry collection and a single RPC token. Both
 wire regressions fail before the full batch dependency migration. A separate
@@ -513,6 +524,14 @@ The old testport manifest contains only 45 package mappings and does not describ
 
 ## Decision Log
 
+
+Decision (2026-10-01): correct incoming TopN candidate loss before publishing
+the batch integration merge, and reconnect Go's post-spill worker transition.
+Source `loadChunksUntilTotalLimit` explicitly avoids limit-derived RequiredRows;
+`executeTopNWhenSpillTriggered` starts workers after spilling the initial heap.
+The alternative of preserving the serial fallback retains two lifecycles and
+fails the existing worker test. Preserve original tests and incoming history;
+record the focused repair separately from complete Go package acceptance.
 
 Decision (2026-10-01): migrate the complete PD batch dependency plus required
 default TSO queue/token/completion call sites. A size-constant edit would retain
@@ -681,6 +700,12 @@ outstanding-RPC policy. Source and native package tests, fail-before behavior
 and buffer lifetime are recorded in the batch receipt. P06 remains partial;
 public PD close, discovery, metadata serialization and complete parent policy
 remain open, with the same 77 known unresolved findings.
+
+The integration merge also repairs TopN candidate loss and disconnected spill
+workers, with 53 passing focused cases. Session comparisons reproduce two
+existing planner-estimate expectation failures and six passing cases on both
+baseline and repaired code. The batch receipt records exact commands and red
+evidence; this maintenance does not certify full sortexec transcreation.
 
 The complete connectionctx leaf removes unconditional healthy-stream replacement
 and provides shared cancellation/retention ownership in native client-rust.
