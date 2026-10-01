@@ -175,25 +175,54 @@ func replaceEqCondtionWithTrue(ctx BuildContext, src *Column, tgt *Column, cond 
 	evalCtx := ctx.GetEvalCtx()
 	switch sf.FuncName.L {
 	case ast.In:
-		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
-			// It is duo to ```CheckAndDeriveCollationFromExprs``` in the ```deriveCollation```.
-			// If we have an expression a in (b,c,d) with each column which has difference collation, the expression's
-			// return type is decided by ```CheckAndDeriveCollationFromExprs```. it will get diffence return type.
-			// So when encountering a string type, we can just return it directly.
-			return cond, false
-		}
 		// for 'a in (b, c, d)', if a = b or a = c or a = d, we can replace it with true
 		constTrue := false
-		switch {
-		case args[0].Equal(ctx.GetEvalCtx(), src):
-			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
-				return arg.Equal(ctx.GetEvalCtx(), tgt)
-			})
-		case args[0].Equal(ctx.GetEvalCtx(), tgt):
-			constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
-				return arg.Equal(ctx.GetEvalCtx(), src)
-			})
+
+		// For string types, we need to use the IN expression's collation for comparison
+		// to ensure consistency with runtime evaluation.
+		if src.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString || tgt.GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
+			// Get the IN expression's collation (determined by coercibility rules)
+			_, collation := sf.CharsetAndCollation()
+			collator := collate.GetCollator(collation)
+
+			switch {
+			case args[0].Equal(ctx.GetEvalCtx(), src):
+				constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+					// Compare using the IN expression's collation
+					if argConst, ok := arg.(*Constant); ok {
+						if tgtConst, ok := tgt.(*Constant); ok {
+							cmp, err := argConst.Value.Compare(ctx.GetEvalCtx().TypeCtx(), &tgtConst.Value, collator)
+							return err == nil && cmp == 0
+						}
+					}
+					return arg.Equal(ctx.GetEvalCtx(), tgt)
+				})
+			case args[0].Equal(ctx.GetEvalCtx(), tgt):
+				constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+					// Compare using the IN expression's collation
+					if argConst, ok := arg.(*Constant); ok {
+						if srcConst, ok := src.(*Constant); ok {
+							cmp, err := argConst.Value.Compare(ctx.GetEvalCtx().TypeCtx(), &srcConst.Value, collator)
+							return err == nil && cmp == 0
+						}
+					}
+					return arg.Equal(ctx.GetEvalCtx(), src)
+				})
+			}
+		} else {
+			// For non-string types, use the original logic
+			switch {
+			case args[0].Equal(ctx.GetEvalCtx(), src):
+				constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+					return arg.Equal(ctx.GetEvalCtx(), tgt)
+				})
+			case args[0].Equal(ctx.GetEvalCtx(), tgt):
+				constTrue = slices.ContainsFunc(args[1:], func(arg Expression) bool {
+					return arg.Equal(ctx.GetEvalCtx(), src)
+				})
+			}
 		}
+
 		if constTrue {
 			return &Constant{
 				Value:   types.NewDatum(true),
