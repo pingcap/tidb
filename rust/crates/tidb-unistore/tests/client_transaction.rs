@@ -21,10 +21,11 @@ use std::sync::{
 use std::time::Duration;
 use tidb_txnkv::{
     driver::client_bridge::ClientPd, lock::TimestampSource, region::RegionCache, Key,
-    SharedReadRuntime, TikvTransactionDriver, UnaryCallContext,
+    SharedReadRuntime, TikvInProcessSource, TikvTransactionDriver, TikvTransactionOpener,
+    UnaryCallContext,
 };
 use tidb_unistore::{client::InProcessClient, region_loader::InProcessRegionLoader};
-use tikv_client::{PdClient, Transaction, TransactionOptions};
+use tikv_client::PdClient;
 
 #[derive(Debug, Clone)]
 struct Oracle(Arc<tidb_unistore::tso::Tso>);
@@ -66,22 +67,15 @@ impl Store {
         }
     }
     fn begin(&self, pessimistic: bool) -> TikvTransactionDriver<ClientPd> {
-        let timestamp = self
-            .runtime
-            .block_on(self.pd.clone().get_timestamp())
-            .unwrap();
-        let options = if pessimistic {
-            TransactionOptions::new_pessimistic()
-        } else {
-            TransactionOptions::new_optimistic()
-        };
-        let transaction = Transaction::new(
-            timestamp,
-            self.pd.clone(),
-            options,
-            tikv_client::request::Keyspace::Disable,
+        let opener = TikvTransactionOpener::new(
+            TikvInProcessSource::new(self.pd.clone(), self.runtime.clone()),
+            self.runtime.clone(),
         );
-        TikvTransactionDriver::new(transaction, self.runtime.clone())
+        if pessimistic {
+            opener.begin_pessimistic().unwrap()
+        } else {
+            opener.begin().unwrap()
+        }
     }
     fn facade(
         &self,

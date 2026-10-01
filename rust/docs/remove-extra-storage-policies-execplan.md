@@ -30,7 +30,7 @@ Production transactions must have one native transaction engine, MemDB and lock 
 - [x] Validate the retry-policy repair with targeted regressions, root lint and the locked server build; publication uses the mandatory hook and fresh pre-push build gates.
 - [x] Remove special SQL parsing and execute supported storage SET assignments through the normal parser/session-variable path.
 - [x] Publish native cancellation/lifetime fixes and synchronize TiDB to client-rust 884589f.
-- [ ] Complete remaining background lifetime scopes; concrete patch awaits user approval after automatic review rejection.
+- [x] Replace the listed native completion lifetime gaps and bridge heartbeat/client-mode heuristics under the renewed request (2026-10-01); preserve Go's separate Begin, foreground and background owners. Broader context capture/shutdown audit remains open.
 - [ ] Consolidate remaining retry/cache/RPC implementations with native owners and retain TiDB-owned adapters.
 - [ ] Verify affected packages, regression behavior, required lint and locked server builds; commit and push.
 
@@ -398,3 +398,41 @@ Changed files in this activation repair:
     rust/docs/remove-extra-storage-policies-execplan.md
 
 Publication requires `TERM=xterm git -c core.hooksPath=hooks commit` (the hook must pass `cd rust && cargo build --locked -p tidb-server`), followed by a separate fresh `cd rust && cargo build --locked -p tidb-server` and normal `git push origin HEAD:hparser-integration`. Gate evidence is recorded in `/private/tmp/tidb-activation-commit.log`, `-prepush.log`, and `-push.log`; publication remains pending until these gates succeed.
+
+## Explicit native operation lifetimes (2026-10-01 continuation)
+
+The user renewed the instruction to remove the extra owners and follow Go in
+client-rust as well. Both repository branches were pulled before edits; TiDB
+master still pins client-go 8edb23f6c7ee. Native baseline is b2b3783 and TiDB
+baseline is 0546934c77. This is maintenance of the existing transaction package,
+not a new transcreation acceptance claim. No Go/Bazel inputs change.
+
+Do not apply the old saved patch wholesale. The complete production spawn and
+cleanup call-site review distinguishes Go's store-owned secondary/failed-commit
+cleanup, independent explicit rollback, TTL manager, and caller-owned mutation
+initialization rollback. The latter is asyncPessimisticRollback(ctx) in txn.go
+and must not inherit the explicit Rollback background policy. Transaction-file
+primary failure cleanup uses txnFileCleanupContext(store.Ctx(), ctx), as do its
+asynchronous secondary operations. Retry backoffers must retain the selected
+owner too. Ordinary region/store task fan-out already propagates explicit scopes.
+
+Add failing native owner/close regressions and a foreground heartbeat regression
+at the TiDB transport boundary. Finish native scopes, remove ClientKv's request-
+type heuristic, synchronize the published native revision, run scoped tests,
+strict native Clippy and root lint, then both locked server publication gates.
+The separate ClientPd timestamp policy was also reproduced and replaced, allowing
+the transaction_tasks flag to be deleted completely. Go KVStore.Begin uses an
+independent start-timestamp context; TikvInProcessSource now supplies that scope,
+and embedded-store tests use the real opener instead of a duplicate construction
+path. T02's region/RPC owners remain until all DistSQL callers have migrated.
+
+Native 488bb73 is published and synchronized. Validation passes 1,405 native
+tests (two ignored), strict Clippy, 140 TiDB library tests (one ignored), 423
+transaction integration tests (ten ignored), 26 region-recovery tests, 19
+snapshot tests, 28 SQL transaction tests and 15 embedded-store tests. Two resolver
+cancellation cases fail identically on baseline and the repair (31 pass). A
+snapshot concurrency failure reproduced on baseline and passed in the final
+repair run; it remains a known intermittent test. Root lint and formatting pass.
+See parity/current-audit/operation-lifetime-repair.md for exact commands, logs,
+remaining limits and publication gates. These results are not whole-package
+acceptance or a benchmark claim.

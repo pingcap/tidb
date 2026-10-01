@@ -747,6 +747,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_rpc_honors_cancelled_operation_before_dispatch() {
+        for batch in [false, true] {
+            let client = KvRpcClient::new(
+                vec![TikvClient::new(
+                    Channel::from_static("http://127.0.0.1:1").connect_lazy(),
+                )],
+                Duration::from_secs(1),
+            );
+            let client = if batch {
+                client.with_batch_worker(&crate::config::TiKvClient::default())
+            } else {
+                client
+            };
+            let owner = crate::async_util::Cancellation::default();
+            owner.cancel();
+            let result = crate::async_util::with_background_rpc_context(
+                owner,
+                client.dispatch(&kvrpcpb::GetRequest::default()),
+            )
+            .await;
+            client.close();
+            assert!(
+                matches!(result, Err(Error::ContextCanceled)),
+                "cancelled operation reached the transport: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_rpc_cancels_inflight_operation_without_stopping_the_client() {
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let started = Arc::new(Notify::new());
+        let started_by_server = started.clone();
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let release_by_server = release.clone();
+        server.set_batch_commands_handler(Some(Arc::new(move |request| {
+            started_by_server.notify_one();
+            let (lock, condition) = &*release_by_server;
+            let _ = condition
+                .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(2), |released| {
+                    !*released
+                })
+                .unwrap();
+            Ok(crate::proto::tikvpb::BatchCommandsResponse {
+                request_ids: request.request_ids,
+                responses: request
+                    .requests
+                    .iter()
+                    .map(
+                        |_| crate::proto::tikvpb::batch_commands_response::Response {
+                            cmd: Some(
+                                crate::proto::tikvpb::batch_commands_response::response::Cmd::Get(
+                                    kvrpcpb::GetResponse::default(),
+                                ),
+                            ),
+                        },
+                    )
+                    .collect(),
+                ..Default::default()
+            })
+        })));
+        let client = KvRpcClient::new(
+            vec![
+                TikvClient::connect(format!("http://{}", server.addr().unwrap()))
+                    .await
+                    .unwrap(),
+            ],
+            Duration::from_secs(5),
+        )
+        .with_batch_worker(&crate::config::TiKvClient::default());
+        let owner = crate::async_util::Cancellation::default();
+        let request = kvrpcpb::GetRequest::default();
+        let call = crate::async_util::with_background_rpc_context(
+            owner.clone(),
+            client.dispatch(&request),
+        );
+        tokio::pin!(call);
+        tokio::select! {
+            _ = started.notified() => {},
+            result = &mut call => panic!("request completed before cancellation: {result:?}"),
+        }
+        owner.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), &mut call).await;
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        // A cancelled submission must not close the shared stream/client.
+        let subsequent = client.dispatch(&request).await;
+        client.close();
+        server.stop().await.unwrap();
+        assert!(matches!(result, Ok(Err(Error::ContextCanceled))));
+        assert!(subsequent.is_ok());
+    }
+
+    #[tokio::test]
     async fn source_test_conn() {
         let clients = (0..3)
             .map(|_| TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()))
@@ -1360,18 +1456,33 @@ impl KvRpcClient {
         timeout: Option<Duration>,
         forwarded_host: &str,
     ) -> Result<Box<dyn Any>> {
-        if let Some((key, request)) = resolve_lock_collapse_request(request) {
-            return self
-                .dispatch_collapsed_resolve_lock(
-                    key,
-                    request,
-                    timeout.unwrap_or(self.timeout),
-                    forwarded_host,
-                )
-                .await;
+        let dispatch = async {
+            if let Some((key, request)) = resolve_lock_collapse_request(request) {
+                return self
+                    .dispatch_collapsed_resolve_lock(
+                        key,
+                        request,
+                        timeout.unwrap_or(self.timeout),
+                        forwarded_host,
+                    )
+                    .await;
+            }
+            self.dispatch_uncollapsed(request, timeout, forwarded_host)
+                .await
+        };
+        let Some(owner) = crate::async_util::background_rpc_cancellation() else {
+            return dispatch.await;
+        };
+        if owner.is_cancelled() {
+            return Err(Error::ContextCanceled);
         }
-        self.dispatch_uncollapsed(request, timeout, forwarded_host)
-            .await
+        // Like Go SendRequest(ctx): cancel this logical caller. Dropping a
+        // batch submission retires its entry; a shared ResolveLock flight
+        // remains independent of any one waiter's context.
+        tokio::select! {
+            _ = owner.cancelled() => Err(Error::ContextCanceled),
+            result = dispatch => result,
+        }
     }
 
     async fn dispatch_collapsed_resolve_lock(

@@ -13,14 +13,14 @@ tokio::task_local! {
     static BACKGROUND_RPC_CANCELLATION: Cancellation;
 }
 
-/// The resolver-owned cancellation scope of the current background RPC.
+/// The operation-owned cancellation scope of the current background RPC.
 /// Injected transports use this instead of inheriting a foreground statement.
 pub fn background_rpc_cancellation() -> Option<Cancellation> {
     BACKGROUND_RPC_CANCELLATION.try_with(Clone::clone).ok()
 }
 
-/// Runs detached cleanup under its owner's cancellation scope, like Go's
-/// background resolver context. Nested async calls retain the same scope.
+/// Runs background work under its owner's cancellation scope, like Go's
+/// store or TTL-manager context. Nested async calls retain the same scope.
 pub async fn with_background_rpc_context<T>(
     cancellation: Cancellation,
     future: impl std::future::Future<Output = T>,

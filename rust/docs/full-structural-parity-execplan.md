@@ -1624,3 +1624,11 @@ retain only their reproduced HEAD failures. Exact commands, Go oracle patch,
 remaining risks and comparison names are in
 `parity/current-audit/update-privilege-repair.md`. A01 stays partially repaired;
 the register remains 74 findings, seven repaired and 67 unresolved.
+
+## Native operation-lifetime removal (2026-10-01)
+
+Refreshed both repositories and reviewed T03 against master 93a01d31f6da205ae4bf376825293903a6899fdb's client-go 8edb23f6c7ee. The renewed user instruction authorizes this continuation; the old pending patch was rederived from source, not applied wholesale. Native commit 488bb73 is published on ngaut/client-rust master. It gives transaction completion and retry/RPC dispatch the owning Go lifetime, preserves initialization rollback's caller, and validates queued/in-flight transport cancellation. The native library passes 1,405 tests (two ignored), with strict Clippy passing.
+
+TiDB removes both the heartbeat request-type exception and the transaction_tasks client-mode flag. Timestamp cancellation now uses the same explicit operation scope before and after the synchronous timestamp provider call. Regression tests reproduce the old foreground bypass and confirm background work survives statement cancellation but stops when its own owner closes. The provider's synchronous in-flight timestamp call cannot itself be interrupted by this adapter; cancellation is checked on return. That broader provider API limitation and T02's competing routing/RPC owners remain explicit follow-ups.
+
+See parity/current-audit/operation-lifetime-repair.md for source decisions, final validation and publication evidence. This is maintenance of existing transaction/transport ports, not whole-package acceptance or full TiDB/client-go parity. Native source-only synchronization regenerates protocol artifacts through the existing script; no protocol schema or generated file is edited by hand. Both mandatory locked server publication gates remain required.

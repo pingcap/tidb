@@ -132,12 +132,12 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 | --- | --- | --- | --- |
 | T01 | Generic `BufferMutation::insert` chooses both presume-not-exists and AssertNotExist. The configured INSERT planner does not read a snapshot and its planning interface lacks transaction-mode policy. A lazy optimistic miss requires a different assertion from an eager/pessimistic insert. | `rust/crates/tidb-txnkv/src/transaction/mutation.rs:47`, `rust/crates/tidb-exec/src/real_tikv_dml.rs:402` | `pkg/table/tables` owns uniqueness checking and assertion selection; the KV buffer transports the flags. Review table, index and system-row callers together; blanket AssertUnknown is also incorrect. |
 | T02 | TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs` | Pinned client-go owns storage routing/recovery; TiDB coprocessor code consumes it. Move all consumers before deleting the TiDB owner. Native RetryBackoffer already owns the retry budget and must not be duplicated again. |
-| T03 | Background request lifetime still partly depends on request type (TxnHeartBeat), rather than an explicit lifetime supplied by every operation owner. Pipelined and transaction-file cleanup remain part of the missing lifecycle. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs:569` and the native cleanup call sites recorded in the storage ExecPlan | Pinned client-go transaction/lock owners select the context. Carry lifetime explicitly; detaching every ResolveLock would break foreground cancellation. The previously rejected native patch remains unapplied; this audit does not retry it. |
+| T03 | Repaired the listed request-type and client-mode lifetime heuristics in this continuation. Native owners now distinguish explicit rollback, initialization rollback, failed-commit cleanup, secondary completion and pipelined TTL work; native transport also observes cancellation. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs`, client-rust `488bb73`, and `operation-lifetime-repair.md` | Pinned client-go transaction/lock owners select the context. The bridge's heartbeat exception and `transaction_tasks` flag are removed. This closes the listed workaround, not the broader shutdown/foreground-context audit or a complete-package parity claim. |
 
 The five earlier reviewer defects have their own regression receipts. Retry
 limits, secondary retry history, locked-entry timestamps, mock normal wake-up
-and detached read-resolution fixes are not reopened merely because T02/T03
-remain. The native dependency has not changed in this audit.
+and detached read-resolution fixes are not reopened merely because T02 remains.
+The operation-lifetime continuation updates the native dependency to `488bb73`.
 
 ## Domain and process services
 

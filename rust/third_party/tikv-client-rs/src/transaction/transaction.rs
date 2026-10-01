@@ -4015,14 +4015,26 @@ impl<PdC: PdClient> Transaction<PdC> {
         )
         .with_pessimistic_lock_keys(rollback_keys);
         let start_timestamp = self.timestamp.version();
-        tokio::spawn(async move {
-            if let Err(error) = committer.rollback(false).await {
-                warn!(
-                    "failed to roll back pessimistic locks after mutation initialization error, start_ts: {}, error: {}",
-                    start_timestamp, error
-                );
-            }
+        let retry_owner = committer.options.source_retry_owner(|| {
+            new_cleanup_backoffer(
+                crate::async_util::background_rpc_cancellation().unwrap_or_default(),
+                CLEANUP_MAX_BACKOFF,
+                &committer.settings.variables,
+            )
         });
+        tokio::spawn(crate::async_util::inherit_background_rpc_context(
+            async move {
+                if let Err(error) = committer
+                    .rollback_with_retry_owner(false, retry_owner)
+                    .await
+                {
+                    warn!(
+                        "failed to roll back pessimistic locks after mutation initialization error, start_ts: {}, error: {}",
+                        start_timestamp, error
+                    );
+                }
+            },
+        ));
     }
 
     /// Rollback the transaction.
@@ -4119,11 +4131,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             let hooks = self.commit_settings.lifecycle_hooks.clone();
             let start_timestamp = self.timestamp.version();
+            let cancellation = committer.lock_resolver_context.background_cancellation();
             tokio::spawn(async move {
                 if let Some(pre) = hooks.pre {
                     pre();
                 }
-                if let Err(error) = committer.rollback(prewritten).await {
+                if let Err(error) = committer.rollback(prewritten, cancellation).await {
                     warn!(
                         "failed to clean up pipelined transaction during rollback, start_ts: {}, error: {}",
                         start_timestamp, error
@@ -4133,7 +4146,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                     post();
                 }
             });
-        } else if let Err(error) = committer.rollback(prewritten).await {
+        } else if let Err(error) = committer
+            .rollback(prewritten, crate::async_util::Cancellation::default())
+            .await
+        {
             warn!(
                 "failed to clean up transaction during rollback, start_ts: {}, error: {}",
                 self.timestamp.version(),
@@ -6608,7 +6624,7 @@ impl<PdC: PdClient> Committer<PdC> {
     ) -> Option<Arc<tokio::sync::Mutex<RetryBackoffer>>> {
         self.options.source_retry_owner(|| {
             RetryBackoffer::with_variables(
-                crate::async_util::Cancellation::default(),
+                crate::async_util::background_rpc_cancellation().unwrap_or_default(),
                 max_sleep_ms,
                 self.settings.variables.clone(),
             )
@@ -6709,8 +6725,9 @@ impl<PdC: PdClient> Committer<PdC> {
             pre();
         }
         let start_timestamp = self.start_version.version();
+        let cancellation = self.lock_resolver_context.background_cancellation();
         tokio::spawn(async move {
-            if let Err(error) = self.rollback(prewritten).await {
+            if let Err(error) = self.rollback(prewritten, cancellation).await {
                 warn!(
                     "failed to clean up transaction after commit error, start_ts: {}, error: {}",
                     start_timestamp, error
@@ -6761,9 +6778,12 @@ impl<PdC: PdClient> Committer<PdC> {
                 }
             } else {
                 let chunks = self.txn_file_chunks.clone();
-                if let Err(error) = self
-                    .execute_txn_file_action(&chunks, TxnFileAction::Rollback)
-                    .await
+                let cancellation = self.lock_resolver_context.background_cancellation();
+                if let Err(error) = crate::async_util::with_background_rpc_context(
+                    cancellation,
+                    self.execute_txn_file_action(&chunks, TxnFileAction::Rollback),
+                )
+                .await
                 {
                     warn!(
                         "failed to clean up transaction after commit error, start_ts: {}, error: {}",
@@ -7068,20 +7088,23 @@ impl<PdC: PdClient> Committer<PdC> {
         let secondary = self.clone();
         let secondary_commit_timestamp = commit_timestamp.clone();
         let hooks = self.settings.lifecycle_hooks.clone();
-        tokio::spawn(async move {
-            if let Some(pre) = hooks.pre {
-                pre();
-            }
-            if let Err(error) = secondary
-                .finish_pipelined_locks(secondary_commit_timestamp.version())
-                .await
-            {
-                warn!("failed to resolve pipelined transaction locks: {error}");
-            }
-            if let Some(post) = hooks.post {
-                post();
-            }
-        });
+        tokio::spawn(crate::async_util::with_background_rpc_context(
+            secondary.lock_resolver_context.background_cancellation(),
+            async move {
+                if let Some(pre) = hooks.pre {
+                    pre();
+                }
+                if let Err(error) = secondary
+                    .finish_pipelined_locks(secondary_commit_timestamp.version())
+                    .await
+                {
+                    warn!("failed to resolve pipelined transaction locks: {error}");
+                }
+                if let Some(post) = hooks.post {
+                    post();
+                }
+            },
+        ));
         Ok(Some(commit_timestamp))
     }
 
@@ -7123,36 +7146,39 @@ impl<PdC: PdClient> Committer<PdC> {
                     return;
                 }
             };
-            runtime.block_on(async move {
-                let mut consecutive_failures = 0_u8;
-                loop {
-                    tokio::select! {
-                        _ = cancellation.cancelled() => break,
-                        _ = tokio::time::sleep(interval) => {}
-                    }
-                    match committer.send_pipelined_heartbeat().await {
-                        Ok(false) => consecutive_failures = 0,
-                        Ok(true) => {
-                            failed.store(true, atomic::Ordering::Release);
-                            break;
+            runtime.block_on(crate::async_util::with_background_rpc_context(
+                cancellation.clone(),
+                async move {
+                    let mut consecutive_failures = 0_u8;
+                    loop {
+                        tokio::select! {
+                            _ = cancellation.cancelled() => break,
+                            _ = tokio::time::sleep(interval) => {}
                         }
-                        Err(error) => {
-                            consecutive_failures = consecutive_failures.saturating_add(1);
-                            // sendTxnHeartBeat marks every TiKV key error as a
-                            // terminal heartbeat failure. Pipelined DML cannot
-                            // keep flushing after any such primary rejection.
-                            let terminal = heartbeat_error_stops_immediately(&error);
-                            warn!(
-                                "pipelined heartbeat failed, start_ts: {start_ts}, consecutive failures: {consecutive_failures}: {error}"
-                            );
-                            if terminal || consecutive_failures > 10 {
+                        match committer.send_pipelined_heartbeat().await {
+                            Ok(false) => consecutive_failures = 0,
+                            Ok(true) => {
                                 failed.store(true, atomic::Ordering::Release);
                                 break;
                             }
+                            Err(error) => {
+                                consecutive_failures = consecutive_failures.saturating_add(1);
+                                // sendTxnHeartBeat marks every TiKV key error as a
+                                // terminal heartbeat failure. Pipelined DML cannot
+                                // keep flushing after any such primary rejection.
+                                let terminal = heartbeat_error_stops_immediately(&error);
+                                warn!(
+                                    "pipelined heartbeat failed, start_ts: {start_ts}, consecutive failures: {consecutive_failures}: {error}"
+                                );
+                                if terminal || consecutive_failures > 10 {
+                                    failed.store(true, atomic::Ordering::Release);
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-            });
+                },
+            ));
         });
     }
 
@@ -7935,28 +7961,31 @@ impl<PdC: PdClient> Committer<PdC> {
             let mut secondary = self.clone();
             let secondary_chunks = chunks.clone();
             let hooks = self.settings.lifecycle_hooks.clone();
-            tokio::spawn(async move {
-                let mut retry_backoff =
-                    secondary.txn_file_retry_backoff(COMMIT_SECONDARY_MAX_BACKOFF);
-                if let Some(pre) = hooks.pre {
-                    pre();
-                }
-                if let Err(error) = secondary
-                    .execute_txn_file_slice_with_retry(
-                        secondary_chunks,
-                        Some(batches),
-                        action,
-                        &mut retry_backoff,
-                        is_retry_request,
-                    )
-                    .await
-                {
-                    warn!("txn file secondary failed: {error}");
-                }
-                if let Some(post) = hooks.post {
-                    post();
-                }
-            });
+            tokio::spawn(crate::async_util::with_background_rpc_context(
+                secondary.lock_resolver_context.background_cancellation(),
+                async move {
+                    let mut retry_backoff =
+                        secondary.txn_file_retry_backoff(COMMIT_SECONDARY_MAX_BACKOFF);
+                    if let Some(pre) = hooks.pre {
+                        pre();
+                    }
+                    if let Err(error) = secondary
+                        .execute_txn_file_slice_with_retry(
+                            secondary_chunks,
+                            Some(batches),
+                            action,
+                            &mut retry_backoff,
+                            is_retry_request,
+                        )
+                        .await
+                    {
+                        warn!("txn file secondary failed: {error}");
+                    }
+                    if let Some(post) = hooks.post {
+                        post();
+                    }
+                },
+            ));
             return Ok(());
         }
     }
@@ -9469,10 +9498,13 @@ impl<PdC: PdClient> Committer<PdC> {
     /// regardless of lock type. Only a pessimistic transaction that has *not*
     /// been prewritten (locks still pessimistic) uses the narrower
     /// `PessimisticRollback`.
-    async fn rollback(self, prewritten: bool) -> Result<()> {
-        // Go transaction rollback uses a background context. Statement lock
-        // rollback calls pessimistic_lock_rollback and retains its caller.
-        let cancellation = crate::async_util::Cancellation::default();
+    async fn rollback(
+        self,
+        prewritten: bool,
+        cancellation: crate::async_util::Cancellation,
+    ) -> Result<()> {
+        // The caller selects Go's store context for compensating cleanup or
+        // an independent background context for explicit transaction rollback.
         let source_retry_owner = self.options.source_retry_owner(|| {
             new_cleanup_backoffer(
                 cancellation.clone(),
@@ -10829,6 +10861,160 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn source_completion_rpc_lifetimes_follow_the_operation_owner() {
+        // These operations all issue rollback RPCs, but Go assigns different
+        // lifetimes to explicit rollback, failed commit, and pipelined cleanup.
+        #[derive(Clone, Copy, Debug)]
+        enum Completion {
+            ExplicitRollback,
+            FailedCommit,
+            PipelinedRollback,
+            TxnFileCleanup,
+        }
+        for kind in [
+            Completion::ExplicitRollback,
+            Completion::FailedCommit,
+            Completion::PipelinedRollback,
+            Completion::TxnFileCleanup,
+        ] {
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    if request.is::<kvrpcpb::PrewriteRequest>() {
+                        return Err(Error::StringError("reject prewrite".to_owned()));
+                    }
+                    sender
+                        .send(crate::async_util::background_rpc_cancellation())
+                        .unwrap();
+                    if request.is::<kvrpcpb::BroadcastTxnStatusRequest>() {
+                        Ok(Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>)
+                    } else {
+                        assert!(request.is::<kvrpcpb::BatchRollbackRequest>());
+                        Ok(Box::<kvrpcpb::BatchRollbackResponse>::default() as Box<dyn Any>)
+                    }
+                },
+            )));
+            let mut committer = source_test_committer(
+                rpc.clone(),
+                Some(Key::from(b"k".to_vec())),
+                vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+                TransactionOptions::new_optimistic(),
+                CommitSettings::default(),
+            );
+            let store_owner = committer.lock_resolver_context.clone();
+            match kind {
+                Completion::ExplicitRollback => committer
+                    .rollback(true, crate::async_util::Cancellation::default())
+                    .await
+                    .unwrap(),
+                Completion::FailedCommit => committer.cleanup_without_wait(true),
+                Completion::PipelinedRollback => {
+                    let mut txn = Transaction::new(
+                        Timestamp::from_version(1),
+                        rpc,
+                        TransactionOptions::new_optimistic()
+                            .pipelined(super::PipelinedTxnOptions {
+                                enable: true,
+                                flush_concurrency: 1,
+                                resolve_lock_concurrency: 1,
+                                ..Default::default()
+                            })
+                            .drop_check(CheckLevel::None),
+                        Keyspace::Disable,
+                    );
+                    txn.lock_resolver_context = committer.lock_resolver_context;
+                    txn.rollback().await.unwrap();
+                }
+                Completion::TxnFileCleanup => {
+                    committer
+                        .txn_file_chunks
+                        .push(7, TxnChunkRange::new(b"k".to_vec(), b"k".to_vec(), 1));
+                    committer.commit().await.unwrap_err();
+                }
+            }
+            let operation_owner = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .expect("completion RPC must carry its operation lifetime");
+            assert!(!operation_owner.is_cancelled());
+            store_owner.close().await;
+            assert_eq!(
+                operation_owner.is_cancelled(),
+                !matches!(kind, Completion::ExplicitRollback),
+                "only explicit rollback is independent of store cancellation (kind {kind:?})"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn source_secondary_rpc_lifetimes_follow_the_store() {
+        for pipelined in [false, true] {
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+                        if request.context.as_ref().unwrap().region_id == 1 {
+                            assert!(crate::async_util::background_rpc_cancellation().is_none());
+                        } else {
+                            sender
+                                .send(crate::async_util::background_rpc_cancellation())
+                                .unwrap();
+                        }
+                        return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
+                    }
+                    if request.is::<kvrpcpb::ResolveLockRequest>() {
+                        sender
+                            .send(crate::async_util::background_rpc_cancellation())
+                            .unwrap();
+                        return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                    }
+                    assert!(request.is::<kvrpcpb::BroadcastTxnStatusRequest>());
+                    Ok(Box::<kvrpcpb::BroadcastTxnStatusResponse>::default() as Box<dyn Any>)
+                },
+            )));
+            rpc.set_timestamp(Timestamp::from_version(10));
+            let mut committer = source_test_committer(
+                rpc,
+                Some(Key::from(vec![1])),
+                vec![],
+                TransactionOptions::new_optimistic(),
+                CommitSettings::default(),
+            );
+            let store_owner = committer.lock_resolver_context.clone();
+            if pipelined {
+                committer.pipelined_state.range_start = Some(vec![1]);
+                committer.pipelined_state.range_end = Some(vec![20]);
+                committer.execute_pipelined_commit().await.unwrap();
+            } else {
+                committer.mutations = vec![
+                    source_test_mutation(vec![1], kvrpcpb::Op::Put),
+                    source_test_mutation(vec![20], kvrpcpb::Op::Put),
+                ]
+                .into();
+                committer.txn_file_commit_timestamp = Some(Timestamp::from_version(10));
+                let mut chunks = TxnChunkSlice::default();
+                chunks.push(7, TxnChunkRange::new(vec![1], vec![20], 2));
+                committer
+                    .execute_txn_file_action(&chunks, TxnFileAction::Commit)
+                    .await
+                    .unwrap();
+            }
+            let operation_owner = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .expect("secondary RPC must carry its operation lifetime");
+            assert!(!operation_owner.is_cancelled());
+            store_owner.close().await;
+            assert!(
+                operation_owner.is_cancelled(),
+                "secondary work must use the store lifetime"
+            );
+        }
+    }
+
     struct RejectCleanupKillHandler(Arc<AtomicUsize>);
 
     impl crate::kv::KillSignalHandler for RejectCleanupKillHandler {
@@ -10930,7 +11116,10 @@ mod tests {
                 )
                 .with_pessimistic_lock_keys(BTreeSet::from([b"k".to_vec()]));
                 committer
-                    .rollback(matches!(kind, CleanupKind::Prewrite))
+                    .rollback(
+                        matches!(kind, CleanupKind::Prewrite),
+                        crate::async_util::Cancellation::default(),
+                    )
                     .await
             };
             if let Some(limit) = retry_limit {
@@ -11026,6 +11215,14 @@ mod tests {
                 ..Default::default()
             },
         );
+        let operation = crate::async_util::Cancellation::default();
+        let scoped = crate::async_util::with_background_rpc_context(operation.clone(), async {
+            committer.source_retry_owner(17).unwrap()
+        })
+        .await;
+        operation.cancel();
+        assert!(scoped.lock().await.cancellation().is_cancelled());
+
         let ordinary = committer.source_retry_owner(17).unwrap();
         let ordinary = ordinary.lock().await;
         assert!(ordinary.check_killed().is_err());
@@ -11225,7 +11422,10 @@ mod tests {
             .commit_secondary(Timestamp::from_version(3))
             .await
             .unwrap();
-        committer.rollback(true).await.unwrap();
+        committer
+            .rollback(true, crate::async_util::Cancellation::default())
+            .await
+            .unwrap();
 
         let tagger_calls = tagger_calls.lock().unwrap();
         let requests = requests.lock().unwrap();
@@ -11987,6 +12187,10 @@ mod tests {
             move |request: &dyn Any| {
                 if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticRollbackRequest>()
                 {
+                    assert!(
+                        crate::async_util::background_rpc_cancellation().is_none(),
+                        "initialization rollback retains the caller lifetime"
+                    );
                     captured_rollbacks
                         .lock()
                         .unwrap()
@@ -16078,7 +16282,10 @@ mod tests {
             transaction.commit_settings.clone(),
         );
         cleanup.resource_group_name = Some("test-rg".to_owned());
-        cleanup.rollback(true).await.unwrap();
+        cleanup
+            .rollback(true, crate::async_util::Cancellation::default())
+            .await
+            .unwrap();
 
         let observed = observed.lock().unwrap();
         assert_eq!(observed.len(), 4);
@@ -19219,6 +19426,7 @@ mod tests {
                         request.start_version,
                         request.advise_lock_ttl,
                         request.min_commit_ts,
+                        crate::async_util::background_rpc_cancellation(),
                     ));
                     return Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>);
                 }
@@ -19282,6 +19490,10 @@ mod tests {
         assert_eq!(flush_min_commit_ts[0], (1, 2));
         assert_eq!(flush_min_commit_ts[1], (2, 2));
         transaction.pipelined_cancellation.cancel();
+        assert!(heartbeat
+            .4
+            .expect("TTL manager must carry its own lifetime")
+            .is_cancelled());
         assert!(transaction
             .pipelined_heartbeat_started
             .load(Ordering::Acquire));

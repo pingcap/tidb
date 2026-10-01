@@ -429,7 +429,6 @@ pub struct ClientPd {
     trace: Arc<Mutex<ClientTrace>>,
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
-    transaction_tasks: bool,
     store_addresses: Mutex<HashMap<(u64, u64), String>>,
 }
 impl ClientPd {
@@ -450,7 +449,6 @@ impl ClientPd {
             }),
             trace,
             call: Arc::new(Mutex::new(None)),
-            transaction_tasks: true,
             store_addresses: Mutex::new(HashMap::new()),
         })
     }
@@ -474,7 +472,6 @@ impl ClientPd {
             }),
             trace,
             call: Arc::new(Mutex::new(None)),
-            transaction_tasks: false,
             store_addresses: Mutex::new(HashMap::new()),
         })
     }
@@ -539,7 +536,6 @@ pub struct ClientKv {
     backend: Arc<dyn Backend>,
     address: String,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
-    transaction_tasks: bool,
 }
 struct CancelBackgroundCall(crate::rpc::UnaryCancellation);
 
@@ -567,9 +563,7 @@ impl KvClient for ClientKv {
         {
             return Err(Error::ContextCanceled);
         }
-        let detached = background.is_some()
-            || (self.transaction_tasks && request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>());
-        let call = if detached {
+        let call = if background.is_some() {
             UnaryCallContext::with_timeout(timeout)
         } else {
             self.call
@@ -683,7 +677,6 @@ impl PdClient for ClientPd {
             backend: self.backend.clone(),
             address: address.clone(),
             call: self.call.clone(),
-            transaction_tasks: self.transaction_tasks,
         };
         Ok(RegionStore::new(region, Arc::new(client)).with_target(address))
     }
@@ -700,15 +693,24 @@ impl PdClient for ClientPd {
         self.backend.locate_id(id).map(client_region)
     }
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
+        let background = tikv_client::async_util::background_rpc_cancellation();
+        let is_cancelled = || {
+            background.as_ref().map_or_else(
+                || {
+                    self.call
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .as_ref()
+                        .is_some_and(|call| call.cancellation().is_cancelled())
+                },
+                |owner| owner.is_cancelled(),
+            )
+        };
+        if is_cancelled() {
+            return Err(ResolverBridgeError::CallerCancelled.native());
+        }
         let result = self.backend.timestamp();
-        if !self.transaction_tasks
-            && self
-                .call
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_ref()
-                .is_some_and(|call| call.cancellation().is_cancelled())
-        {
+        if is_cancelled() {
             return Err(ResolverBridgeError::CallerCancelled.native());
         }
         result
@@ -1115,7 +1117,8 @@ mod ownership_regressions {
     }
     impl Backend for CleanupBackend {
         fn timestamp(&self) -> Result<Timestamp> {
-            unreachable!()
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Timestamp::from_version(2))
         }
         fn cluster_id(&self) -> u64 {
             1
@@ -1144,7 +1147,10 @@ mod ownership_regressions {
             request: &dyn Request,
             call: &UnaryCallContext,
         ) -> Result<Box<dyn Any + Send>> {
-            assert!(request.as_any().is::<kvrpcpb::ResolveLockRequest>());
+            assert!(
+                request.as_any().is::<kvrpcpb::ResolveLockRequest>()
+                    || request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>()
+            );
             assert!(!call.cancellation().is_cancelled());
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.blocking {
@@ -1156,7 +1162,11 @@ mod ownership_regressions {
                 self.finished.notify_one();
                 return Err(Error::ContextCanceled);
             }
-            Ok(Box::<kvrpcpb::ResolveLockResponse>::default())
+            if request.as_any().is::<kvrpcpb::TxnHeartBeatRequest>() {
+                Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default())
+            } else {
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default())
+            }
         }
     }
 
@@ -1169,7 +1179,6 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
-            transaction_tasks: false,
         };
         // Native schedule_read_lock_cleanup sends this through the same client
         // after returning the lock classification to the foreground reader.
@@ -1199,7 +1208,6 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
-            transaction_tasks: false,
         };
         let result = runtime().block_on(client.dispatch(&kvrpcpb::ResolveLockRequest::default()));
         assert!(result.is_err());
@@ -1215,16 +1223,70 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
-            transaction_tasks: true,
         };
         let commit = kvrpcpb::CommitRequest::default();
         let rollback = kvrpcpb::PessimisticRollbackRequest::default();
-        let requests: [&dyn Request; 2] = [&commit, &rollback];
+        let heartbeat = kvrpcpb::TxnHeartBeatRequest::default();
+        let requests: [&dyn Request; 3] = [&commit, &rollback, &heartbeat];
         for request in requests {
             let result = runtime().block_on(client.dispatch(request));
             assert!(matches!(result, Err(Error::ContextCanceled)));
         }
         assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn background_heartbeat_can_dispatch_after_statement_cancellation() {
+        let parent = UnaryCallContext::with_timeout(Duration::from_secs(30));
+        parent.cancellation().cancel();
+        let backend = Arc::new(CleanupBackend::default());
+        let client = ClientKv {
+            backend: backend.clone(),
+            address: "store1".to_owned(),
+            call: Arc::new(Mutex::new(Some(parent))),
+        };
+        let result = runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+            tikv_client::async_util::Cancellation::default(),
+            client.dispatch(&kvrpcpb::TxnHeartBeatRequest::default()),
+        ));
+        assert!(result.is_ok());
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn timestamp_cancellation_follows_the_operation_scope() {
+        for background in [false, true] {
+            let parent = UnaryCallContext::with_timeout(Duration::from_secs(30));
+            parent.cancellation().cancel();
+            let backend = Arc::new(CleanupBackend::default());
+            let client = Arc::new(ClientPd {
+                trace: Arc::new(Mutex::new(ClientTrace::default())),
+                backend: backend.clone(),
+                call: Arc::new(Mutex::new(Some(parent))),
+                store_addresses: Mutex::new(HashMap::new()),
+            });
+            if background {
+                let owner = tikv_client::async_util::Cancellation::default();
+                let result =
+                    runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+                        owner.clone(),
+                        client.clone().get_timestamp(),
+                    ));
+                assert_eq!(result.unwrap().version(), 2);
+                owner.cancel();
+                let result =
+                    runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+                        owner,
+                        client.get_timestamp(),
+                    ));
+                assert!(matches!(result, Err(Error::ContextCanceled)));
+                assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+            } else {
+                let result = runtime().block_on(client.get_timestamp());
+                assert!(matches!(result, Err(Error::ContextCanceled)));
+                assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+            }
+        }
     }
 
     #[test]
@@ -1234,7 +1296,6 @@ mod ownership_regressions {
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(None)),
-            transaction_tasks: false,
         };
         let owner = tikv_client::async_util::Cancellation::default();
         owner.cancel();
@@ -1257,7 +1318,6 @@ mod ownership_regressions {
                     backend: backend.clone(),
                     address: "store1".to_owned(),
                     call: Arc::new(Mutex::new(None)),
-                    transaction_tasks: false,
                 };
                 let owner = tikv_client::async_util::Cancellation::default();
                 let operation_owner = owner.clone();

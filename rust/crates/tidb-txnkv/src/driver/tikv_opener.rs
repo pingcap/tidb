@@ -300,7 +300,14 @@ impl<PdC: PdClient> TikvTransactionSource for TikvInProcessSource<PdC> {
 
     fn current_timestamp(&self) -> Result<Timestamp, TikvTransactionError> {
         let pd = self.pd.clone();
-        Ok(self.runtime.block_on(pd.get_timestamp())?)
+        // KVStore.Begin allocates its start timestamp with context.Background;
+        // a previous statement's cancellation does not own the new transaction.
+        Ok(self
+            .runtime
+            .block_on(tikv_client::async_util::with_background_rpc_context(
+                tikv_client::async_util::Cancellation::default(),
+                pd.get_timestamp(),
+            ))?)
     }
 
     fn cluster_id(&self) -> Result<u64, TikvTransactionError> {

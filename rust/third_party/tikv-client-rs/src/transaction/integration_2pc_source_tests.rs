@@ -2624,7 +2624,7 @@ fn source_go_integration_tests_2pc_test_TestPushPessimisticLock() {
         assert_eq!(value, None);
         assert!(started.elapsed() < Duration::from_millis(500));
 
-        cleanup.rollback(true).await.unwrap();
+        cleanup.rollback(true, crate::async_util::Cancellation::default()).await.unwrap();
         transaction1.rollback().await.unwrap();
         transaction2.rollback().await.unwrap();
     });
@@ -3353,7 +3353,7 @@ fn source_go_integration_tests_2pc_test_TestUninterruptibleAction() {
         cleanup.settings.variables = Arc::new(crate::Variables::new(killed.clone()));
         cleanup.prewrite().await.unwrap();
         killed.store(2, Ordering::SeqCst);
-        cleanup.rollback(true).await.unwrap();
+        cleanup.rollback(true, crate::async_util::Cancellation::default()).await.unwrap();
 
         let killed = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let key = source_2pc_key("uninterruptible-pessimistic", "k2");
