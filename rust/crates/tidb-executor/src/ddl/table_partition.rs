@@ -632,6 +632,10 @@ pub(super) fn partition_restore_flags() -> tidb_ast::RestoreFlags {
         | tidb_ast::RestoreFlags::BRACKET_AROUND_BINARY_OPERATION
         | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
         | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+        // go's partition-bound restore prints string/DATE bounds WITHOUT the
+        // charset introducer (`SHOW CREATE TABLE pf`: '2021-06-01', not
+        // _UTF8MB4'2021-06-01').
+        | tidb_ast::RestoreFlags::STRING_WITHOUT_CHARSET
 }
 
 /// Go `checkPartitionFuncValid` plus the expression build: the restored text
