@@ -420,6 +420,9 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(sampleNum)
 	// If a numTopN value other than the active analyze default is passed in, we assume it's a value that the user wants us to honor.
 	allowPruning := isAnalyzeDefaultValue(numTopN, vardef.AnalyzeDefaultNumTopN.Load())
+	// Every unique value occurs once, so a sampled one is not frequent: it stands
+	// for sampleFactor rows of its key range and belongs in the histogram.
+	collectTopN := numTopN != 0 && !(collector.Unique && sampleFactor > 1)
 
 	// Step1: collect topn from samples using bounded min-heap and track their index ranges
 	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
@@ -443,7 +446,7 @@ func BuildHistAndTopN(
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
-		if numTopN == 0 {
+		if !collectTopN {
 			continue
 		}
 		sampleBytes, err := getComparedBytes(samples[i].Value)
@@ -473,7 +476,7 @@ func BuildHistAndTopN(
 	// handle the counting for the last value
 	// Note: not necessary to add the condition (!allowPruning || (sampleFactor <= 1 || curCnt > 1)), it can be handled
 	// inside processTopNValue but just to make it consistent with previous behavior...
-	if numTopN != 0 && (!allowPruning || (sampleFactor <= 1 || curCnt > 1)) {
+	if collectTopN && (!allowPruning || (sampleFactor <= 1 || curCnt > 1)) {
 		processTopNValue(boundedMinHeap, cur, curCnt, curStartIdx, sampleNum-1, numTopN, allowPruning, sampleFactor,
 			true)
 	}

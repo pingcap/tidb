@@ -682,6 +682,62 @@ func SubTestBuild() func(*testing.T) {
 		tblInfo.Indices = append(tblInfo.Indices, localIdx)
 		require.True(t, CanSumPartitionNDV(tblInfo, false, 2))
 		require.True(t, CanSumPartitionNDV(tblInfo, true, localIdx.ID))
+
+		t.Run("UniqueTopN", func(t *testing.T) {
+			for _, tc := range []struct {
+				name        string
+				sampleCount int
+				count       int64
+				numBuckets  int
+				numTopN     int
+				wantTopN    int
+				unique      bool
+			}{
+				// A sampled unique value stands for count/sampleCount rows of its key
+				// range, so it stays in the histogram instead of TopN.
+				{"sampled_unique", 8, 256, 4, 1, 0, true},
+				{"sampled_unique_all_topn", 8, 256, 4, 8, 0, true},
+				{"single_sample_unique", 1, 32, 4, 1, 0, true},
+				{"full_unique", 8, 8, 4, 1, 1, true},
+				{"full_unique_all_topn", 8, 8, 4, 8, 8, true},
+				{"sampled_unique_no_topn", 8, 256, 4, 0, 0, true},
+				{"sampled_non_unique", 8, 256, 4, 1, 1, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					collector := &SampleCollector{
+						Count:    tc.count,
+						FMSketch: NewFMSketch(tc.sampleCount),
+						Unique:   tc.unique,
+					}
+					for i := range tc.sampleCount {
+						value := types.NewIntDatum(int64(i))
+						// Use encoded composite index keys, with one occurrence per sample.
+						encoded, err := codec.EncodeKey(sc.TimeZone(), nil, value, value)
+						require.NoError(t, err)
+						datum := types.NewBytesDatum(encoded)
+						collector.Samples = append(collector.Samples, &SampleItem{Value: datum})
+						require.NoError(t, collector.FMSketch.InsertValue(sc, datum))
+					}
+					hist, topN, err := BuildHistAndTopN(ctx, tc.numBuckets, tc.numTopN, 4, collector, types.NewFieldType(mysql.TypeBlob), false, nil)
+					require.NoError(t, err)
+					require.Equal(t, tc.wantTopN, topN.Num())
+					wantNDV := int64(tc.sampleCount)
+					wantFrequency := tc.count / int64(tc.sampleCount)
+					if tc.unique {
+						wantNDV = tc.count
+						wantFrequency = 1
+					}
+					require.Equal(t, wantNDV, hist.NDV)
+					for _, item := range topN.TopN {
+						require.Equal(t, uint64(wantFrequency), item.Count)
+					}
+					require.Equal(t, float64(tc.count), hist.NotNullCount()+float64(topN.TotalCount()))
+					for _, bucket := range hist.Buckets {
+						require.Equal(t, wantFrequency, bucket.Repeat)
+					}
+				})
+			}
+		})
 	}
 }
 
