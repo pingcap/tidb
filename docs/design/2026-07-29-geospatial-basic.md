@@ -262,9 +262,9 @@ boundary is at distance zero and correctly not `ST_Within`.
 
 **That model is Andoyer, and v1 takes only point operands.** Everywhere else v1 answers as
 MySQL does or not at all; predicates would otherwise be the one surface shipping a
-*different answer* rather than a *smaller* one. The model is settled now and the operand
-set left open, since widening the operands later only makes rejected queries answer, while
-a new edge model would flip booleans between releases.
+*different answer* rather than a *smaller* one. The edge model is part of the contract and
+the operand set is not: widening the operands only makes rejected queries answer, while
+another edge model would flip booleans between releases.
 
 Matching MySQL is affordable on the half that matters. Boost decides which side of a segment
 a point falls on by comparing azimuths from the inverse solution, so a point-in-polygon
@@ -706,8 +706,8 @@ Risks:
 - **Matching MySQL's stored bytes.** Rejected as a non-goal: I/O compatibility is a boundary
   conversion, and MySQL does the same internally.
 - **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
-  `libgeos` in the Bazel/CI sandbox, which broke the build. The PoC moved to pure-Go
-  `simplefeatures` and stayed MySQL byte-identical. Revisit for the processing tail.
+  `libgeos` in the Bazel/CI sandbox, while pure-Go `simplefeatures` needs nothing there and
+  is MySQL byte-identical in the PoC. Revisit for the processing tail.
 - **The full [#38916](https://github.com/pingcap/tidb/pull/38916) surface at once.** Rejected as too large to review and
   land.
 - **Geometry as a generic BLOB with application-side functions.** The status quo; loses
