@@ -69,7 +69,9 @@ func (*fakeServerStateSyncer) Rewatch(context.Context) {}
 
 func newSubmitTestEnv(t *testing.T) submitTestEnv {
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	dom.DDL().OwnerManager().CampaignCancel()
+	// Stop the mock DDL owner and wait for its scheduler to exit so
+	// SubmitBatch's queued jobs remain available for inspection.
+	dom.DDL().OwnerManager().Close()
 	tk := testkit.NewTestKit(t, store)
 
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
