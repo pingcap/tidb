@@ -451,9 +451,9 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 			subStr = strings.ToLower(subStr)
 			slice = strings.ToLower(slice)
 		}
-		idx := strings.Index(slice, subStr)
-		if idx != -1 {
-			i64s[i] = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
+		idx := locateStringWithCollator(slice, subStr, b.collator())
+		if idx != 0 {
+			i64s[i] = pos + idx
 			continue
 		}
 		i64s[i] = 0
@@ -2278,7 +2278,6 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
-	ci := collate.IsCICollation(b.collation)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
@@ -2290,17 +2289,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 			i64s[i] = 1
 			continue
 		}
-		slice := str
-		if ci {
-			slice = strings.ToLower(slice)
-			subStr = strings.ToLower(subStr)
-		}
-		idx := strings.Index(slice, subStr)
-		if idx != -1 {
-			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1
-			continue
-		}
-		i64s[i] = 0
+		i64s[i] = locateStringWithCollator(str, subStr, b.collator())
 	}
 	return nil
 }
