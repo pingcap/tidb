@@ -96,7 +96,7 @@ application.
 | [EPSG](https://epsg.org/) | The EPSG Geodetic Parameter Dataset, published by IOGP, which assigns SRIDs. |
 | [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | World Geodetic System 1984, the datum and reference ellipsoid used by GPS, whose geographic coordinate system is EPSG:4326. |
 | Reference surface | What a measurement or an edge is drawn on: the flat *plane*, a *sphere* of one constant radius, or the oblate WGS 84 *ellipsoid*. SRS class decides whether it is the plane or a curved surface; the function decides which curved surface. See [SRID model](#srid-model). |
-| Geodesic | The shortest path along a curved reference surface, and equivalently the path that never turns sideways: whatever bending it does is forced on it by the surface, so it is the shape a string stretched between its two ends on that surface would take. Always along the surface, never the straight chord through the interior. |
+| Geodesic | The locally shortest path along a curved reference surface, and equivalently the path that never turns sideways: whatever bending it does is forced on it by the surface, so it is the shape a string stretched between its two ends on that surface would take. Always along the surface, never the straight chord through the interior. |
 | Great circle | The geodesic of a *sphere*, and the constructive way to say it: where a plane through the two endpoints and the centre cuts the surface. The contrast that matters here is that a great circle lies in a plane and an ellipsoidal geodesic in general lies in no plane, so the two are different curves rather than the same curve computed to different precision. A plane through the centre of an ellipsoid cuts it in a central ellipse, which is a third curve again. |
 | Andoyer | The spherical law of cosines with a first-order flattening correction, approximating the ellipsoidal geodesic without iterating. MySQL uses it for every ellipsoidal computation, measurement and predicate alike; see [SRID model](#srid-model). |
 | [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates. |
@@ -110,9 +110,14 @@ application.
 **MySQL-compatible, extensible where the extension is free.** The two directions are
 deliberately asymmetric:
 
-- **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates, SRIDs outside 0 and
-  4326, and option values MySQL rejects are all accepted, and the storage layer keeps them
-  losslessly. Accepting more cannot break a query that works on MySQL.
+- **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates and option values MySQL
+  rejects are accepted, and the storage layer keeps them losslessly. Accepting more cannot
+  break a query that works on MySQL. An SRID outside 0 and 4326 is accepted wherever no
+  SRS axis order has to be applied: the bare path, `ST_GeomFromEWKB`,
+  `ST_GeomFromGeoJSON`, and WKT or WKB given `axis-order=long-lat`. Its coordinates are
+  not range-checked, since the SRS class is unknown. WKT and WKB under `srid-defined` or
+  `lat-long` reject it, since both depend on the SRS: MySQL swaps only on a geographic
+  one.
 - **`ST_As*` emits what MySQL emits.** It errors where MySQL cannot express a value,
   because changing the bytes a client receives is where compatibility actually breaks.
   Emitting Z/M is a later extension, and then only behind an explicit option.
@@ -193,9 +198,10 @@ SRID does, because MySQL represents any SRID in its own binary format. That is w
 replication and dump whole for a column MySQL itself accepts.
 
 Both directions of the bare path are v1 choices, not properties of the format. Later
-versions can widen either end without a migration: ingest could try to recognise the format it was handed rather than
-assume MySQL's, and bare output could do something better than erroring, so long as it is
-neither silent truncation nor a format the input side will not take back.
+versions can widen either end without a migration: ingest could try to recognise the
+format it was handed rather than assume MySQL's, and bare output could do something better
+than erroring, so long as it is neither silent truncation nor a format the input side will
+not take back.
 
 **Bounded parsing.** Nesting costs 9 bytes a level in WKB, so a value inside
 `max_allowed_packet` can nest millions deep. MySQL returns
