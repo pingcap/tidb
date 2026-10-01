@@ -19,6 +19,38 @@ use super::*;
 use std::time::{Duration, Instant};
 use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table as table;
 
+// Isolate C04 without scheduling a large pressure workload. Pause the primary
+// processor inside the first rejection, then probe a new key before admission.
+#[test]
+#[ignore = "C04: Stretto publishes new primary values before admission; see lfu-review-followup.md"]
+fn nonresident_primary_waits_for_admission() {
+    use std::sync::mpsc;
+
+    let cache = Lfu::new_for_test(100).unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    *cache.state.before_trigger.lock().unwrap() = Some(Box::new(move || {
+        entered_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    }));
+    cache.put(1, table(1, 1, true, true, true));
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let next = table(1, 1, true, false, false);
+    assert!(cache.put(2, Arc::clone(&next)));
+    let visible_before_admission = cache.primary().as_ref().unwrap().get(&2).is_some();
+    // Always release the worker before asserting so a failure cannot strand
+    // it during cache drop. The fallback is immediately visible in both designs.
+    let fallback_visible = cache.state.tables.get(2).is_some();
+    release_tx.send(()).unwrap();
+    cache.wait_for_async_updates();
+    assert!(fallback_visible);
+    assert!(Arc::ptr_eq(&cache.get(2).unwrap(), &next));
+    assert!(
+        !visible_before_admission,
+        "nonresident primary value became visible before its admission"
+    );
+}
+
 fn settled_cost(cache: &Lfu, expected: i64) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -183,7 +215,10 @@ fn concurrent_small_capacity() {
     // accounting above quota. It does require retained payloads to be evicted.
     cache.wait_for_async_updates();
     assert_eq!(cache.len(), 50);
-    for value in cache.values() {
+    // Go's post-pressure assertion reads through Get, including its primary-
+    // first rule. Inspect every key as in the strengthened Go reference probe.
+    for id in 0..50 {
+        let value = cache.get(id).expect("retained table");
         check_table(&value);
         assert_eq!(value.memory_usage().total_tracking_mem_usage(), 0);
     }

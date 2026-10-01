@@ -34,6 +34,9 @@ The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigge
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
 C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,
 and its admission/metrics contract is not accepted as Ristretto-equivalent.
+The [review follow-up](lfu-review-followup.md) closes two missed shutdown paths,
+isolates the admission mismatch with a paused worker, and inventories all 91
+artifacts of the pinned external module. Both dependency probes remain red.
 
 The [restore-utils protocol repair](restore-utils-protocol-repair.md) removes
 P04's two handwritten protocol owners after reviewing the complete eight-artifact

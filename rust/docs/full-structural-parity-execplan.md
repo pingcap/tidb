@@ -9,6 +9,7 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, LFU review follow-up) Recheck all five LFU artifacts and inventory all 91 artifacts of pinned Ristretto v0.1.1. Reproduce unguarded public eviction lifetime and fix TriggerEvict/SetCapacity; both are exercised by the passing regression. Add a deterministic primary-admission failure and restore the pressure test's Go Get observation path (still fails). Native owner/parent suites pass 33 tests; two dependency probes remain ignored and unaccepted. The original 10 LFU and 73 Ristretto tests pass with race detection. All-target compilation, lint, formatting and inventory checks pass. Both locked publication builds remain required.
 - [x] (2026-10-01, LFU owner review/native repair) Review all five artifacts at current master; reproduce and repair premature Close, fake-table/negative-key classification, and signed-shard drift; remove the exclusive per-access primary mutex/clones and synthetic trigger tables. Map all ten original tests; 19 LFU and 13 parent tests, original Go race suite, all-target compilation and lint pass. Publication still requires both locked server builds.
 - [ ] (2026-10-01, C04 external boundary) Replace or accept the complete pinned Ristretto dependency owner. The original low-capacity concurrent workload retains full payloads in Stretto after Wait; its failing native reproduction is explicitly ignored, not accepted. Policy-metric assertions also remain unavailable in its synchronous public API. Do not claim complete LFU package parity.
 
@@ -71,6 +72,13 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 
 ## Surprises & Discoveries
 
+The LFU shutdown review found two public paths outside the new lifetime gate:
+TriggerEvict and SetCapacity's final trigger. State's Weak upgrade can keep the
+primary alive after Close has dropped its own Arc. A test-only pause after
+that upgrade makes the early Close return deterministic. Callback-triggered
+upgrades must remain free of the lifetime gate because Close drains callbacks
+while holding its exclusive side; public calls must hold the shared side.
+
 The rtree package still permits arbitrary narrowed file payloads through
 RangeFile, including a four-field TestFile projection in its original-case
 tests. Its missing-range API returns the local algebra KeyRange, while Go
@@ -125,6 +133,13 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+For the LFU review, retain the existing shared owner and cover both missing
+public accesses with its guard. Do not add another close flag, counter or
+wait loop, and never take that guard in a callback. For C04, isolate admission
+by pausing the processor in a rejection callback and submitting another key:
+Go's primary must miss before admission and hit after Wait. A failed probe is
+dependency evidence, not justification for another TiDB-wrapper cache.
 
 (2026-10-01) Implement O12 as the complete three-artifact globalconfigsync leaf
 plus required production callers. Use generated PD messages and the existing
@@ -220,6 +235,18 @@ schema publication or require another action tick.
 Inventory coverage explicitly and implement package-sized owner corrections. Do not promise a complete semantic audit from partial receipts, suppress failing tests, or replace Go policies with broad defaults. Complete generated schemas are the owner of protocol declarations; Rust execution support remains a separately audited consumer.
 
 ## Outcomes & Retrospective
+
+The LFU review repaired the missed public trigger/capacity lifetime without
+adding another shutdown owner. A paused-worker comparison now proves the
+dependency's eager nonresident primary publication separately from the
+pressure workload. The latter still fails after using Go's Get path rather
+than fallback-only Values. C04 remains unresolved. The full 91-artifact
+external module inventory preserves six root production files, six test files,
+73 original tests, five benchmarks and all separate support/build variants.
+No partial replacement cache is integrated. See
+`parity/current-audit/lfu-review-followup.md` for exact checks, limits and the
+reproducible Go admission probe. This advances the review and repairs the
+native lifetime gap; it does not complete the broad parity goal.
 
 
 The shared UPDATE follow-up removes the raw joined write and statement-specific

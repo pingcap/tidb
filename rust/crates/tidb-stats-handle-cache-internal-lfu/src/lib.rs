@@ -123,6 +123,9 @@ struct State {
     cost: AtomicI64,
     closed: AtomicBool,
     primary: OnceLock<Weak<Primary>>,
+    // Pause a live primary handle at the precise shutdown race in tests.
+    #[cfg(test)]
+    before_trigger: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl State {
@@ -141,6 +144,13 @@ impl State {
         let Some(cache) = self.primary.get().and_then(Weak::upgrade) else {
             return;
         };
+        #[cfg(test)]
+        {
+            let hook = self.before_trigger.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
         if self.cost.load(Ordering::Acquire) > cache.max_cost() {
             let key = -((rand::random::<u64>() & i64::MAX as u64) as i64);
             cache.insert(key, None, 0);
@@ -248,6 +258,8 @@ impl Lfu {
             cost: AtomicI64::new(0),
             closed: AtomicBool::new(false),
             primary: OnceLock::new(),
+            #[cfg(test)]
+            before_trigger: std::sync::Mutex::new(None),
         });
         let cache = Arc::new(
             CacheBuilder::new_with_key_builder(
@@ -363,7 +375,8 @@ impl StatsCacheInner for Lfu {
                 return;
             }
         };
-        if let Some(cache) = self.primary().as_ref() {
+        let primary = self.primary();
+        if let Some(cache) = primary.as_ref() {
             cache.update_max_cost(capacity);
         }
         self.state.trigger_evict();
@@ -388,6 +401,9 @@ impl StatsCacheInner for Lfu {
         }
     }
     fn trigger_evict(&self) {
+        // State's Weak upgrade must not outlive a public operation's guard.
+        // Callbacks call State directly while Close drains their processor.
+        let _primary = self.primary();
         self.state.trigger_evict();
     }
     fn wait_for_async_updates(&self) {
@@ -401,6 +417,51 @@ impl StatsCacheInner for Lfu {
 mod tests {
     use super::*;
     use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table;
+
+    #[test]
+    fn public_eviction_operations_cannot_outlive_close() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        for set_capacity in [false, true] {
+            let cache = Arc::new(Lfu::new_for_test(100).unwrap());
+            let owner = Arc::downgrade(cache.primary().as_ref().unwrap());
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            *cache.state.before_trigger.lock().unwrap() = Some(Box::new(move || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }));
+            let operation = {
+                let cache = Arc::clone(&cache);
+                std::thread::spawn(move || {
+                    if set_capacity {
+                        cache.set_capacity(50);
+                    } else {
+                        cache.trigger_evict();
+                    }
+                })
+            };
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (closed_tx, closed_rx) = mpsc::channel();
+            let closer = {
+                let cache = Arc::clone(&cache);
+                std::thread::spawn(move || {
+                    cache.close();
+                    closed_tx.send(()).unwrap();
+                })
+            };
+            let premature = closed_rx.recv_timeout(Duration::from_millis(100)).is_ok();
+            release_tx.send(()).unwrap();
+            operation.join().unwrap();
+            closer.join().unwrap();
+            assert!(
+                !premature,
+                "Close returned with a live eviction handle (SetCapacity={set_capacity})"
+            );
+            assert!(owner.upgrade().is_none());
+        }
+    }
 
     #[test]
     fn close_waits_for_active_primary_operations_and_other_closers() {

@@ -1,5 +1,10 @@
 # Statistics LFU lifetime and nil-trigger repair
 
+Follow-up: the [shutdown review](lfu-review-followup.md) found and repaired two
+public eviction paths missed by this change. It also adds controlled admission
+evidence and the complete external dependency inventory. Counts below are
+historical; C04 remains open.
+
 Integration baseline `affe8b392b4957ab84009f4cb44c586ecf677354` was pulled before
 review. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. The complete
 [package inventory](lfu-lifecycle-package.json) covers all five artifacts of

@@ -83,5 +83,13 @@
   ],
   "integration": "Existing parent StatsCache consumes the same StatsCacheInner implementation. Shared read lifetime and exclusive joined shutdown replace primary clones; callbacks never take lifetime gate. Existing LFU remains seed evidence, not an accepted Ristretto implementation.",
   "acceptance_scope": "Complete five-artifact review and native lifetime/nil-callback repair. C04 remains open for dependency admission/replacement and metrics. One original concurrency case is a failing retained reproduction; no package-completion claim.",
-  "validation_receipt": "lfu-lifecycle-repair.md"
+  "validation_receipt": "lfu-lifecycle-repair.md",
+  "review_followup": {
+    "baseline": "f94540083fd7c17b8589226feb105f18f2b31703",
+    "source_recheck": "All five blobs match current master; no new variants or fixtures.",
+    "repair": "Keep TriggerEvict and SetCapacity eviction inside the shared primary lifetime guard; deterministic paused-handle regression covers both paths.",
+    "dependency_probe": "Nonresident primary admission fails deterministically with a paused rejection worker; Go misses before admission and hits after Wait.",
+    "external_inventory": "ristretto-v0.1.1-inventory.json",
+    "receipt": "lfu-review-followup.md"
+  }
 }
