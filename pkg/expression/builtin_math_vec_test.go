@@ -20,6 +20,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
@@ -162,6 +165,34 @@ func TestVectorizedBuiltinMathFunc(t *testing.T) {
 
 func TestVectorizedBuiltinMathFuncForRand(t *testing.T) {
 	testVectorizedBuiltinFuncForRand(t, vecBuiltinMathCases1)
+}
+
+func TestVectorizedDegreesOverflow(t *testing.T) {
+	ctx := mock.NewContext()
+	testCases := []struct {
+		args   []float64
+		errMsg string
+	}{
+		{args: []float64{2.0, 1.0e308}, errMsg: "[types:1690]DOUBLE value is out of range in 'degrees(Column#0)'"},
+		{args: []float64{-1.0e308, 5.0}, errMsg: "[types:1690]DOUBLE value is out of range in 'degrees(Column#0)'"},
+		{args: []float64{1.5e308, -1.5e308}, errMsg: "[types:1690]DOUBLE value is out of range in 'degrees(Column#0)'"},
+	}
+
+	fts := []*types.FieldType{eType2FieldType(types.ETReal)}
+	cols := []Expression{&Column{Index: 0, RetType: fts[0]}}
+	baseFunc, err := funcs[ast.Degrees].getFunction(ctx, cols)
+	require.NoError(t, err)
+
+	for _, test := range testCases {
+		input := chunk.NewChunkWithCapacity(fts, len(test.args))
+		for _, arg := range test.args {
+			input.AppendFloat64(0, arg)
+		}
+		result := chunk.NewColumn(eType2FieldType(types.ETReal), len(test.args))
+		err = baseFunc.vecEvalReal(ctx, input, result)
+		require.Error(t, err)
+		require.Equal(t, test.errMsg, err.Error())
+	}
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {
