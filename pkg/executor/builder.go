@@ -5987,6 +5987,10 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 
 // NewRowDecoder creates a chunk decoder for new row format row value decode.
 func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+	return newRowDecoder(ctx, schema, tbl, nil)
+}
+
+func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo, physicalID func() int64) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -6020,6 +6024,10 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
+		if reqCols[i].ID == model.ExtraPhysTblID && physicalID != nil {
+			chk.AppendInt64(i, physicalID())
+			return nil
+		}
 		if reqCols[i].ID < 0 {
 			// model.ExtraHandleID, ExtraPhysTblID... etc
 			// Don't set the default value for that column.
@@ -6066,13 +6074,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 
 	b.sctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
-	decoder := NewRowDecoder(b.sctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.sctx, plan.Schema(), plan.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(plan, true),
 		tblInfo:            plan.TblInfo,
 		idxInfo:            plan.IndexInfo,
-		rowDecoder:         decoder,
 		keepOrder:          plan.KeepOrder,
 		desc:               plan.Desc,
 		lock:               plan.Lock,
@@ -6082,6 +6088,15 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
 	}
+	var physicalID func() int64
+	for _, col := range plan.Schema().Columns {
+		if col.ID == model.ExtraPhysTblID {
+			e.needsPhysicalID = true
+			physicalID = func() int64 { return e.rowPhysIDs[e.index] }
+			break
+		}
+	}
+	e.rowDecoder = newRowDecoder(b.sctx, plan.Schema(), plan.TblInfo, physicalID)
 
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {
