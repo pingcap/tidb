@@ -154,6 +154,43 @@ func TestLoadDataInitParam(t *testing.T) {
 		exeerrors.ErrLoadDataWrongFormatConfig)
 }
 
+func TestLoadDataMissingDefaults(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone='+00:00'")
+	tk.MustExec(`create table missing_defaults (
+		id int primary key, a int not null default 100, b varchar(20) not null default 'fallback',
+		d date not null default '2000-01-01', ts timestamp not null default '2000-01-01 01:02:03',
+		n int, nullable_default int default 7, expr_default varchar(36) default (uuid()),
+		generated_value int as (a+1), current_ts timestamp not null default current_timestamp)`)
+	ctx := tk.Session().(sessionctx.Context)
+	load := func(data, columns string) {
+		ctx.SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+			Build: func(string) (io.ReadCloser, error) { return mydump.NewStringReader(data), nil },
+			Wg:    &sync.WaitGroup{},
+		})
+		tk.MustExec("load data local infile '/tmp/missing_defaults.csv' into table missing_defaults " + columns)
+	}
+	load("1\n2\n", "")
+	tk.MustQuery("select id,a,b,d,ts,n,nullable_default,length(expr_default),generated_value from missing_defaults order by id").Check(testkit.Rows(
+		"1 100 fallback 2000-01-01 2000-01-01 01:02:03 <nil> 7 36 101",
+		"2 100 fallback 2000-01-01 2000-01-01 01:02:03 <nil> 7 36 101"))
+	tk.MustQuery("select count(distinct expr_default) from missing_defaults").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from missing_defaults where current_ts between current_timestamp - interval 1 minute and current_timestamp").Check(testkit.Rows("2"))
+	// A mapped missing field gets its own default, independently of physical column order.
+	tk.MustExec("set @missing=123")
+	load("3\n", "(id,@missing,b,a) set n=ifnull(@missing,9)")
+	tk.MustQuery("select a,b,n,generated_value from missing_defaults where id=3").Check(testkit.Rows("100 fallback 9 101"))
+	// Explicit NULL and empty input remain different from an absent field.
+	load("4\t\\N\t\n", "(id,nullable_default,b)")
+	tk.MustQuery("select nullable_default,b='' from missing_defaults where id=4").Check(testkit.Rows("<nil> 1"))
+	tk.MustExec("drop table missing_defaults")
+	tk.MustExec("create table missing_defaults (id int primary key, a int not null, b varchar(10) not null, d date not null, seq int auto_increment unique)")
+	load("1\n", "")
+	tk.MustQuery("select id,a,b='',d,seq from missing_defaults").Check(testkit.Rows("1 0 1 0000-00-00 1"))
+}
+
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
@@ -181,8 +218,8 @@ func TestLoadData(t *testing.T) {
 	// fields and lines are default, ReadOneBatchRows returns data is nil
 	tests := []testCase{
 		// In MySQL we have 4 warnings: 1*"Incorrect integer value: '' for column 'id' at row", 3*"Row 1 doesn't contain data for all columns"
-		{[]byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("\t\n"), []string{"2|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("\n"), []string{"1|<nil>|def|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("\t\n"), []string{"2|0|def|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, trivialMsg},
 		{[]byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -209,7 +246,7 @@ func TestLoadData(t *testing.T) {
 		{[]byte("3\t2\t3\t4\t5||4\t22\t33||"), []string{
 			"3|2|3|4", "4|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("4\t2\t3\t4\t5||5\t22\t33||6\t222||"),
-			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|def|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("6\t2\t34\t5||"), []string{"6|2|34|5"}, trivialMsg},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
@@ -218,8 +255,8 @@ func TestLoadData(t *testing.T) {
 	loadSQL = "load data local infile '/tmp/nonexistence.csv' " +
 		`ignore into table load_data_test fields terminated by '\\' lines starting by 'xxx' terminated by '|!#^'`
 	tests = []testCase{
-		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
-		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{[]byte("xxx|!#^"), []string{"13|<nil>|def|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx\\|!#^"), []string{"14|0|def|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, trivialMsg},
 		{[]byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -246,9 +283,9 @@ func TestLoadData(t *testing.T) {
 		{[]byte("xxx23\\2\\3\\4\\5|!#^xxx24\\22\\33|!#^"),
 			[]string{"23|2|3|4", "24|22|33|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx24\\2\\3\\4\\5|!#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
-			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|def|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("xxx25\\2\\3\\4\\5|!#^26\\22\\33|!#^xxx27\\222|!#^"),
-			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+			[]string{"25|2|3|4", "27|222|def|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\2\\34\\5|!#^"), []string{"28|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
@@ -304,7 +341,7 @@ func TestLoadData(t *testing.T) {
 		"fields terminated by '#' enclosed by '\\\"' " +
 		"lines starting by 'xxx' terminated by '#\\n'"
 	tests = []testCase{
-		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
+		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|def|<nil>", "2|<nil>|def|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), []string{"1|2|3#|4", "2|3|#4#\n|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
