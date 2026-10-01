@@ -2070,6 +2070,7 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 
 func TestCoalescePlanCacheUpdate(t *testing.T) {
 	t.Run("Values", testCoalesceUpdateValues)
+	t.Run("DirtyTransaction", testCoalesceDirtyTransaction)
 	t.Run("Precision", testNonPreparedCoalescePrecision)
 	t.Run("Scope", testNonPreparedCoalesceScope)
 	for _, instance := range []bool{false, true} {
@@ -2430,7 +2431,8 @@ func testCoalesceUpdateValues(t *testing.T) {
 				return err
 			}
 			// Exercise cross-assignment reads and conversion to VARCHAR in both
-			// assignment orders, preserving the cache-disabled branch semantics.
+			// assignment orders. TiDB intentionally reads original column values:
+			// https://docs.pingcap.com/tidb/stable/sql-statement-update/#mysql-compatibility
 			require.NoError(t, run(" set d=coalesce(1.25,b),b=d,s=b where id=1", 0))
 			require.NoError(t, run(" set d=coalesce(2.50,b),b=d,s=b where id=1", 1))
 			cached.MustQuery("select d,b,s from values_cached where id=1").Check(testkit.Rows("2.500000000000000000 1.250000000000000000 0.000000000000000000"))
@@ -2502,5 +2504,64 @@ func testCoalesceUpdateValues(t *testing.T) {
 			cached.MustExec("admin check table values_cached")
 			fresh.MustExec("admin check table values_fresh")
 		})
+	}
+}
+
+// testCoalesceDirtyTransaction covers issue #19250: reusing a clean-table
+// plan after an earlier UPDATE must not lose transaction-local row/index data.
+func testCoalesceDirtyTransaction(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, enabled := range []bool{false, true} {
+			for _, pessimistic := range []bool{false, true} {
+				t.Run(fmt.Sprintf("instance=%v/cache=%v/pessimistic=%v", instance, enabled, pessimistic), func(t *testing.T) {
+					store := testkit.CreateMockStore(t)
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+					tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache=%v", enabled))
+					tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", enabled))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+					tk.MustExec("create table dirty_update(c_int int primary key,c_decimal decimal(12,6),key idx_decimal(c_decimal))")
+					tk.MustExec("prepare dirty_stmt from 'update dirty_update set c_decimal=c_decimal*? where c_int in (?,?,?)'")
+					begin := "begin optimistic"
+					if pessimistic {
+						begin = "begin pessimistic"
+					}
+					for _, prepared := range []bool{true, false} {
+						// Repeat with the same statement to exercise reuse after commit.
+						for round := range 2 {
+							tk.MustExec("delete from dirty_update")
+							tk.MustExec("insert into dirty_update values(1,4.586),(2,3.705),(3,6.769)")
+							tk.MustExec(begin)
+							if prepared {
+								tk.MustExec("set @a=0.5,@b=1,@c=2,@d=3")
+								tk.MustExec("execute dirty_stmt using @a,@b,@c,@d")
+							} else {
+								tk.MustExec("update dirty_update set c_decimal=coalesce(0.5,c_decimal) where c_int in (1,2,3)")
+							}
+							require.Equal(t, enabled && round == 1, tk.Session().GetSessionVars().FoundInPlanCache)
+							require.Equal(t, uint64(3), tk.Session().AffectedRows())
+							if prepared {
+								tk.MustExec("set @a=2,@b=1,@c=3,@d=5")
+								tk.MustExec("execute dirty_stmt using @a,@b,@c,@d")
+							} else {
+								tk.MustExec("update dirty_update set c_decimal=coalesce(2.0,c_decimal) where c_int in (1,3,5)")
+							}
+							require.Equal(t, enabled && round == 1, tk.Session().GetSessionVars().FoundInPlanCache)
+							require.Equal(t, uint64(2), tk.Session().AffectedRows())
+							want := testkit.Rows("1 4.586000", "2 1.852500", "3 6.769000")
+							if !prepared {
+								want = testkit.Rows("1 2.000000", "2 0.500000", "3 2.000000")
+							}
+							tk.MustQuery("select * from dirty_update order by c_int").Check(want)
+							tk.MustExec("commit")
+							tk.MustQuery("select * from dirty_update force index(primary) order by c_int").Check(want)
+							tk.MustQuery("select * from dirty_update force index(idx_decimal) order by c_int").Check(want)
+							tk.MustExec("admin check table dirty_update")
+						}
+					}
+				})
+			}
+		}
 	}
 }
