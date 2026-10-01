@@ -631,8 +631,9 @@ type functionClassWithName interface {
 // functions that always return not null type
 // todo add more functions to this set
 var functionSetForReturnTypeAlwaysNotNull = set.StringSet{
-	ast.IsNull: {},
-	ast.NullEQ: {},
+	ast.IsNull:    {},
+	ast.IsNotNull: {},
+	ast.NullEQ:    {},
 }
 
 // functions that always return nullable type
@@ -661,9 +662,11 @@ var funcs = map[string]functionClass{
 	// common functions
 	ast.Coalesce: &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
 	ast.IsNull:   &isNullFunctionClass{baseFunctionClass{ast.IsNull, 1, 1}},
-	ast.Greatest: &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
-	ast.Least:    &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
-	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
+	// ast.IsNotNull is the single-ScalarFunction form of `IS NOT NULL`, see issue #9965.
+	ast.IsNotNull: &isNotNullFunctionClass{baseFunctionClass{ast.IsNotNull, 1, 1}},
+	ast.Greatest:  &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
+	ast.Least:     &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
+	ast.Interval:  &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
 
 	// math functions
 	ast.Abs:      &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},

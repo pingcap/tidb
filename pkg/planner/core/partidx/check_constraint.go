@@ -71,12 +71,8 @@ func canBeImpliedFromExprs(
 ) bool {
 	sf := pre.(*expression.ScalarFunction)
 
-	if sf.FuncName.L == ast.UnaryNot {
-		nf, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
-		if !ok || nf.FuncName.L != ast.IsNull {
-			return false
-		}
-		col, ok := nf.GetArgs()[0].(*expression.Column)
+	if arg, ok := expression.ExtractIsNotNullArg(sf); ok {
+		col, ok := arg.(*expression.Column)
 		if !ok {
 			return false
 		}
@@ -154,15 +150,11 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 	if len(prePredicates) != 1 {
 		return false
 	}
-	sf, ok := prePredicates[0].(*expression.ScalarFunction)
-	if !ok || sf.FuncName.L != ast.UnaryNot {
+	arg, ok := expression.ExtractIsNotNullArg(prePredicates[0])
+	if !ok {
 		return false
 	}
-	innerSf, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
-	if !ok || innerSf.FuncName.L != ast.IsNull {
-		return false
-	}
-	col, ok := innerSf.GetArgs()[0].(*expression.Column)
+	col, ok := arg.(*expression.Column)
 	if !ok {
 		return false
 	}

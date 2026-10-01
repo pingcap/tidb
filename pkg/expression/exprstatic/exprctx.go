@@ -40,6 +40,7 @@ type exprCtxState struct {
 	defaultCollationForUTF8MB4 string
 	blockEncryptionMode        string
 	sysDateIsNow               bool
+	isNotNullScalarFuncEnabled bool
 	noopFuncsMode              int
 	rng                        *mathutil.MysqlRng
 	planCacheTracker           *contextutil.PlanCacheTracker
@@ -87,6 +88,14 @@ func WithBlockEncryptionMode(mode string) ExprCtxOption {
 func WithSysDateIsNow(now bool) ExprCtxOption {
 	return func(s *exprCtxState) {
 		s.sysDateIsNow = now
+	}
+}
+
+// WithIsNotNullScalarFuncEnabled sets whether `IS NOT NULL` is built as the single
+// `isnotnull` ScalarFunction for `ExprContext`.
+func WithIsNotNullScalarFuncEnabled(enabled bool) ExprCtxOption {
+	return func(s *exprCtxState) {
+		s.isNotNullScalarFuncEnabled = enabled
 	}
 }
 
@@ -169,6 +178,7 @@ func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 			defaultCollationForUTF8MB4: mysql.DefaultCollationName,
 			blockEncryptionMode:        vardef.DefBlockEncryptionMode,
 			sysDateIsNow:               vardef.DefSysdateIsNow,
+			isNotNullScalarFuncEnabled: vardef.DefTiDBEnableIsNotNullScalarFunc,
 			noopFuncsMode:              variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 			windowingUseHighPrecision:  true,
 			groupConcatMaxLen:          vardef.DefGroupConcatMaxLen,
@@ -246,6 +256,11 @@ func (ctx *ExprContext) GetBlockEncryptionMode() string {
 // GetSysdateIsNow implements the `ExprContext.GetSysdateIsNow`.
 func (ctx *ExprContext) GetSysdateIsNow() bool {
 	return ctx.sysDateIsNow
+}
+
+// IsNotNullScalarFuncEnabled implements the `ExprContext.IsNotNullScalarFuncEnabled`.
+func (ctx *ExprContext) IsNotNullScalarFuncEnabled() bool {
+	return ctx.isNotNullScalarFuncEnabled
 }
 
 // GetNoopFuncsMode implements the `ExprContext.GetNoopFuncsMode`.
@@ -331,6 +346,7 @@ func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContex
 		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
 		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
 		WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		WithIsNotNullScalarFuncEnabled(ctx.IsNotNullScalarFuncEnabled()),
 		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
 		WithRng(ctx.Rng()),
 		WithPlanCacheTracker(ctx.GetPlanCacheTracker()),
@@ -372,6 +388,8 @@ func (ctx *ExprContext) loadSessionVarsInternal(
 			}
 		case vardef.TiDBSysdateIsNow:
 			opts = append(opts, WithSysDateIsNow(sessionVars.SysdateIsNow))
+		case vardef.TiDBEnableIsNotNullScalarFunc:
+			opts = append(opts, WithIsNotNullScalarFuncEnabled(sessionVars.EnableIsNotNullScalarFunc))
 		case vardef.TiDBEnableNoopFuncs:
 			opts = append(opts, WithNoopFuncsMode(sessionVars.NoopFuncsMode))
 		case vardef.WindowingUseHighPrecision:
