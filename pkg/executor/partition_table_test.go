@@ -260,8 +260,8 @@ func TestPartitionBatchPointGetRouting(t *testing.T) {
 		query := "select * from t_route where (a=1 or a=11 or a=99) and b>0"
 		tk.MustHavePlan(query, "Batch_Point_Get")
 		tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "11 11"))
-		// Ordered queries retain a Sort or an ordered scan instead of a cross-partition BatchPointGet.
-		tk.MustNotHavePlan(query+" order by a desc", "Batch_Point_Get")
+		tk.MustHavePlan(query+" order by a desc", "Batch_Point_Get")
+		tk.MustNotHavePlan(query+" order by a desc", "Sort")
 		tk.MustQuery(query + " order by a desc").Check(testkit.Rows("11 11", "1 1"))
 		tk.MustExec("drop table t_route")
 	}
@@ -282,6 +282,160 @@ func TestPartitionBatchPointGetRouting(t *testing.T) {
 	query = "select _tidb_rowid,a from t_route partition(p1) where _tidb_rowid=5 or _tidb_rowid=7"
 	tk.MustHavePlan(query, "Batch_Point_Get")
 	tk.MustQuery(query).Sort().Check(testkit.Rows("5 2", "7 3"))
+}
+
+func TestPartitionBatchPointGetOrdered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set tidb_opt_fix_control='44830:ON'")
+	for _, key := range []string{"primary key(a) clustered", "primary key(a) nonclustered"} {
+		tk.MustExec("create table t_order(a int, v int, " + key + ") partition by list(a) (partition p0 values in(21,31), partition p1 values in(1,11), partition p2 values in(41,51))")
+		tk.MustExec("insert into t_order values(1,1),(11,1),(21,1),(31,1)")
+		query := "select * from t_order where (a=1 or a=11 or a=21 or a=31 or a=41 or a=51) and v>0"
+		for _, desc := range []bool{false, true} {
+			ordered := query + " order by a"
+			rows := testkit.Rows("1 1", "11 1", "21 1", "31 1")
+			if desc {
+				ordered += " desc"
+				rows = testkit.Rows("31 1", "21 1", "11 1", "1 1")
+			}
+			tk.MustHavePlan(ordered, "Batch_Point_Get")
+			tk.MustNotHavePlan(ordered, "Sort")
+			tk.MustQuery(ordered).Check(rows)
+		}
+		tk.MustExec("begin")
+		tk.MustExec("delete from t_order where a=21")
+		tk.MustExec("update t_order set a=41 where a=11")
+		tk.MustExec("insert into t_order values(51,2)")
+		tk.MustExec("update t_order set v=0 where a=31")
+		tk.MustHavePlan(query+" order by a desc limit 2", "Batch_Point_Get")
+		tk.MustNotHavePlan(query+" order by a desc limit 2", "TopN")
+		tk.MustQuery(query + " order by a desc limit 2").Check(testkit.Rows("51 2", "41 1"))
+		tk.MustExec("prepare ordered from 'select * from t_order where (a=? or a=? or a=?) and v>0 order by a desc'")
+		tk.MustExec("set @a=1,@b=41,@c=51")
+		tk.MustQuery("execute ordered using @a,@b,@c").Check(testkit.Rows("51 2", "41 1", "1 1"))
+		tk.MustQuery("execute ordered using @a,@b,@c").Check(testkit.Rows("51 2", "41 1", "1 1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("update t_order set a=11 where a=41")
+		tk.MustExec("set @b=11")
+		tk.MustQuery("execute ordered using @a,@b,@c").Check(testkit.Rows("51 2", "11 1", "1 1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("rollback")
+		tk.MustExec("drop table t_order")
+	}
+	tk.MustExec("create table t_order(a bigint unsigned primary key, v int) partition by range(a) (partition p0 values less than(100), partition p1 values less than(maxvalue))")
+	tk.MustExec("insert into t_order values(1,1),(11,1),(9223372036854775808,1),(18446744073709551615,1)")
+	query := "select a from t_order where (a=1 or a=11 or a=9223372036854775808 or a=18446744073709551615) and v>0 order by a"
+	tk.MustHavePlan(query, "Batch_Point_Get")
+	tk.MustNotHavePlan(query, "Sort")
+	tk.MustQuery(query).Check(testkit.Rows("1", "11", "9223372036854775808", "18446744073709551615"))
+	tk.MustQuery(query + " desc").Check(testkit.Rows("18446744073709551615", "9223372036854775808", "11", "1"))
+	tk.MustExec("drop table t_order")
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		tk.MustExec("create table t_order(a varchar(20), p int, v int, primary key(a,p) " + clustered + ", unique key uk(a) global) collate=utf8mb4_unicode_ci partition by range(p) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(maxvalue))")
+		tk.MustExec("insert into t_order values('Alpha',21,1),('Beta',11,2),('Zulu',1,3)")
+		for _, index := range []string{"primary", "uk"} {
+			where := "(a='alpha ' and p=21) or (a='Beta' and p=11) or (a='Zulu' and p=1) or (a='Absent' and p=11)"
+			if index == "uk" {
+				where = "a='alpha ' or a='Beta' or a='Zulu' or a='Absent'"
+			}
+			order := "a,p"
+			orderDesc := "a desc,p desc"
+			if index == "uk" {
+				order, orderDesc = "a", "a desc"
+			}
+			query = "select * from t_order use index(" + index + ") where (" + where + ") and v>0 order by " + order
+			tk.MustHavePlan(query, "Batch_Point_Get")
+			tk.MustNotHavePlan(query, "Sort")
+			tk.MustQuery(query).Check(testkit.Rows("Alpha 21 1", "Beta 11 2", "Zulu 1 3"))
+			// Both index columns must have the same direction to match the property.
+			descQuery := "select * from t_order use index(" + index + ") where (" + where + ") and v>0 order by " + orderDesc
+			tk.MustHavePlan(descQuery, "Batch_Point_Get")
+			tk.MustNotHavePlan(descQuery, "Sort")
+			tk.MustQuery(descQuery).Check(testkit.Rows("Zulu 1 3", "Beta 11 2", "Alpha 21 1"))
+		}
+		// Sorting a full (a,p) key cannot provide ordering by p alone.
+		query = "select * from t_order use index(primary) where (a='Alpha' and p=21) or (a='Beta' and p=11) or (a='Zulu' and p=1) order by p"
+		for _, row := range tk.MustQuery("explain format='brief' " + query).Rows() {
+			if strings.Contains(fmt.Sprint(row), "Batch_Point_Get") {
+				require.Contains(t, fmt.Sprint(row), "keep order:false")
+			}
+		}
+		tk.MustQuery(query).Check(testkit.Rows("Zulu 1 3", "Beta 11 2", "Alpha 21 1"))
+		tk.MustExec("begin")
+		tk.MustExec("delete from t_order where a='Beta'")
+		tk.MustExec("update t_order set p=1,v=4 where a='Alpha'")
+		tk.MustExec("insert into t_order values('Gamma',21,5)")
+		for _, index := range []string{"primary", "uk"} {
+			where := "(a='alpha ' and p=1) or (a='Beta' and p=11) or (a='Zulu' and p=1) or (a='Gamma' and p=21)"
+			if index == "uk" {
+				where = "a='alpha ' or a='Beta' or a='Zulu' or a='Gamma'"
+			}
+			order := "a desc,p desc"
+			if index == "uk" {
+				order = "a desc"
+			}
+			query = "select * from t_order use index(" + index + ") where (" + where + ") and v>=4 order by " + order + " limit 2"
+			tk.MustHavePlan(query, "Batch_Point_Get")
+			tk.MustNotHavePlan(query, "TopN")
+			tk.MustQuery(query).Check(testkit.Rows("Gamma 21 5", "Alpha 1 4"))
+		}
+		tk.MustExec("rollback")
+		tk.MustExec("drop table t_order")
+	}
+}
+
+func TestPartitionBatchPointGetOrderedLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		for _, isolation := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+			t.Run(clustered+"/"+isolation, func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk2 := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk2.MustExec("use test")
+				tk.MustExec("set transaction_isolation='" + isolation + "'")
+				// Exercise both row formats across the two local key paths.
+				if clustered == "nonclustered" {
+					tk.MustExec("set tidb_row_format_version=1")
+				} else {
+					tk.MustExec("set tidb_row_format_version=2")
+				}
+				t.Cleanup(func() {
+					tk2.MustExec("rollback")
+					tk.MustExec("rollback")
+					tk.MustExec("drop table if exists t_order")
+				})
+				tk.MustExec("create table t_order(k int, p int, primary key(k,p) " + clustered + ", unique key uk(k) global) partition by range(p) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(maxvalue))")
+				tk.MustExec("insert into t_order values(1,21),(11,11),(21,1),(31,21)")
+				for _, index := range []string{"primary", "uk"} {
+					tk.MustExec("begin pessimistic")
+					where := "(k=99 and p=11) or (k=1 and p=21) or (k=11 and p=11) or (k=21 and p=1)"
+					if index == "uk" {
+						where = "k=99 or k=1 or k=11 or k=21"
+					}
+					order := "k desc,p desc"
+					if index == "uk" {
+						order = "k desc"
+					}
+					query := "select * from t_order use index(" + index + ") where " + where + " order by " + order + " for update"
+					tk.MustHavePlan(query, "Batch_Point_Get")
+					tk.MustNotHavePlan(query, "Sort")
+					tk.MustQuery(query).Check(testkit.Rows("21 1", "11 11", "1 21"))
+					tk2.MustExec("begin pessimistic")
+					for _, key := range []string{"k=1 and p=21", "k=11 and p=11", "k=21 and p=1"} {
+						require.Error(t, tk2.ExecToErr("select * from t_order where "+key+" for update nowait"))
+					}
+					tk2.MustQuery("select * from t_order where k=31 and p=21 for update nowait").Check(testkit.Rows("31 21"))
+					tk2.MustExec("rollback")
+					tk.MustExec("rollback")
+				}
+				tk.MustExec("drop table t_order")
+			})
+		}
+	}
 }
 
 func TestPartitionBatchPointGetUpperLock(t *testing.T) {
