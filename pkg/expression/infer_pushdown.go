@@ -184,6 +184,11 @@ func scalarExprSupportedByTiDB(ctx EvalContext, function *ScalarFunction) bool {
 
 // supported functions tracked by https://github.com/tikv/tikv/issues/5751
 func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
+	// TiKV's REAL-to-DATE conversion does not match TiDB for zero and fractional values.
+	if sf.FuncName.L == ast.Cast && sf.Function.PbCode() == tipb.ScalarFuncSig_CastRealAsTime &&
+		sf.RetType.GetType() == mysql.TypeDate {
+		return false
+	}
 	switch sf.FuncName.L {
 	case
 		// op functions.
