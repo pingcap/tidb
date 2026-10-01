@@ -17,6 +17,7 @@ package statistics
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -71,4 +72,14 @@ func topNMetaToDatum(val TopNMeta,
 		}
 	}
 	return dat, err
+}
+
+// DecodeColumnTopNValue decodes an encoded column TopN value for consumers that
+// need to preserve string comparison bytes.
+func DecodeColumnTopNValue(encoded []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+	_, dat, err := codec.DecodeOne(encoded)
+	if err != nil || types.IsString(ft.GetType()) {
+		return dat, err
+	}
+	return tablecodec.Unflatten(dat, ft, loc)
 }
