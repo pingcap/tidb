@@ -2051,16 +2051,21 @@ DecimalMul multiplies two decimals.
 */
 func DecimalMul(from1, from2, to *MyDecimal) error {
 	from1, from2, to = validateArgs(from1, from2, to)
+	// Leading integer zeros do not contribute to the product's precision. Count
+	// only significant digits before deciding whether fractional words fit, but
+	// keep the original offsets to the operands' fractional words.
+	leadingWords1, digitsInt1 := from1.removeLeadingZeros()
+	leadingWords2, digitsInt2 := from2.removeLeadingZeros()
 	var (
 		err         error
-		wordsInt1   = digitsToWords(int(from1.digitsInt))
+		wordsInt1   = digitsToWords(digitsInt1)
 		wordsFrac1  = digitsToWords(int(from1.digitsFrac))
-		wordsInt2   = digitsToWords(int(from2.digitsInt))
+		wordsInt2   = digitsToWords(digitsInt2)
 		wordsFrac2  = digitsToWords(int(from2.digitsFrac))
-		wordsIntTo  = digitsToWords(int(from1.digitsInt) + int(from2.digitsInt))
+		wordsIntTo  = digitsToWords(digitsInt1 + digitsInt2)
 		wordsFracTo = wordsFrac1 + wordsFrac2
-		idx1        = wordsInt1
-		idx2        = wordsInt2
+		idx1        = leadingWords1 + wordsInt1
+		idx2        = leadingWords2 + wordsInt2
 		idxTo       int
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
