@@ -20,6 +20,7 @@
     * [Phasing](#phasing)
     * [Scope and deferrals](#scope-and-deferrals)
     * [Compatibility](#compatibility)
+    * [Differences from MySQL](#differences-from-mysql)
 * [Test Design](#test-design)
     * [Functional Tests](#functional-tests)
     * [Scenario Tests](#scenario-tests)
@@ -46,7 +47,7 @@ geometry storable, readable and queryable.
   [`SRID`](#terminology) 0 and 4326 (to be extended later).
 - **Storage.** `<version byte = 1>` + [EWKB](#terminology).
 - **Binary in and out.** A bare `SELECT` and a bare literal both use MySQL's binary
-  format, so a `mysqldump` loads unchanged; the stored bytes have their own pair,
+  format, so `mysqldump` data loads unchanged; the stored bytes have their own pair,
   `ST_AsEWKB` and `ST_GeomFromEWKB`.
 - **Functions.** The minimal `ST_*` set, including the [DE-9IM](#terminology) predicates.
 - **Algorithms.** The same distance and relate algorithms as MySQL, so results are as
@@ -167,9 +168,10 @@ pair:
 The bare path is MySQL's format in both directions, so ingest never has to guess: a bare
 literal is always MySQL's format, and the stored format stays off the user surface. It is
 what makes a Dumpling to Lightning round-trip work with no function call, and what lets a
-`mysqldump` load unchanged. The SRID in those bytes is validated against `SRID n` like any
-other ingest path, and the geometry has to consume the input exactly: a byte short or a
-byte long is rejected, as MySQL rejects both with `ERROR 1416`.
+`mysqldump` load unchanged, unless the table has a spatial index
+([Differences from MySQL](#differences-from-mysql)). The SRID in those bytes is validated
+against `SRID n` like any other ingest path, and the geometry has to consume the input
+exactly: a byte short or a byte long is rejected, as MySQL rejects both with `ERROR 1416`.
 
 **MySQL has one binary representation**, `<srid u32 LE><WKB>`, and uses it everywhere:
 what it stores, what a bare `SELECT` returns over the wire, what it accepts as a literal,
@@ -217,8 +219,8 @@ Why EWKB rather than the alternatives:
 | | SRID 0 | SRID 4326 |
 | --- | --- | --- |
 | Coordinate system | abstract Cartesian plane, unitless X/Y | WGS 84 geographic, latitude/longitude |
-| Bounds | none, the full finite IEEE-754 double range, as MySQL | latitude `[-90, 90]`, longitude `[-180, 180]`, except `(-180, 180]` through GeoJSON, as MySQL |
-| Rejected on ingest | Inf/NaN, `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
+| Bounds | none, the full finite IEEE-754 double range | latitude `[-90, 90]`, longitude `[-180, 180]`, except `(-180, 180]` through GeoJSON, as MySQL |
+| Rejected on ingest | Inf/NaN: `ERROR 3037`, or `ERROR 1416` on a bare literal | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
 | Measurement | planar (Cartesian) | Andoyer on the WGS 84 ellipsoid for distance and length, as MySQL; stated per operation in [Reference surface](#reference-surface) |
 
 Codes and wording are matched as closely as possible on every ingest path:
@@ -527,8 +529,6 @@ Out of scope here, each with a home:
 | Area | Effect |
 | --- | --- |
 | Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
-| Indexes on a geometry column | None in v1, of any kind: not a primary, unique, secondary or composite member. The useful one is the spatial index, which is the other design. A functional index over a geometry-valued expression is rejected too, as in MySQL. |
-| Generated columns | No `ST_*` function is allowed in a virtual or stored generated column expression in v1; each can be allowed once shown useful and correct there. Registering a builtin admits it in generated columns by default, so every `ST_*` name goes on the generated-column blocklist. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
 | DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected as unsupported in v1, whatever the change: the `SRID` attribute, the subtype in either direction, or conversion to or from another type. The exception is `NULL`/`NOT NULL`, which the generic nullability path handles without knowing the column is geometry. Anything else means adding a new column and backfilling it. `DROP COLUMN` is ordinary. |
@@ -536,12 +536,31 @@ Out of scope here, each with a home:
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | BR | None. Backs up and restores bytes and metadata without interpreting column values. |
-| Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged. A column holding Z/M values cannot be dumped that way, since MySQL has no form for them and a bare `SELECT` errors; those need `ST_AsEWKB` and an `ST_GeomFromEWKB(0x...)` literal, which is Dumpling work and TiDB-only output. An SRID outside 0 and 4326 needs none of that, since it round-trips on the bare path unchanged. |
-| DM | Replicating MySQL into TiDB carries geometry in MySQL's binary format, since the binlog row image is the same bytes MySQL stores and returns, and that is exactly what the bare ingest path takes. DM itself needs no change; the conversion is TiDB-side and rewrites only the header. This is the migration case the bare path is chosen for. |
+| Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged, unless the table has a spatial index, which v1 rejects. A column holding Z/M values cannot be dumped that way, since MySQL has no form for them and a bare `SELECT` errors; those need `ST_AsEWKB` and an `ST_GeomFromEWKB(0x...)` literal, which is Dumpling work and TiDB-only output. An SRID outside 0 and 4326 needs none of that, since it round-trips on the bare path unchanged. |
+| DM | Replicating MySQL into TiDB carries geometry in MySQL's binary format, since the binlog row image is the same bytes MySQL stores and returns, and that is exactly what the bare ingest path takes. DM itself needs no change; the conversion is TiDB-side and rewrites only the header. This is the migration case the bare path is chosen for. A table with a spatial index fails at its DDL. |
 | TiCDC | Not pass-through: it reads the stored value from the KV layer, so it sees the format-version byte and EWKB. It converts to MySQL's binary format before it emits, as the bare path does; a Z/M value has no MySQL form and fails the changefeed. |
 | TiFlash | Not supported in v1. Setting a TiFlash replica on a table with a geometry column is rejected, and so is adding a geometry column to a table that has one, as TiDB already does for a `gbk` column. |
 | Upgrade | Additive: the type does not exist in earlier releases, so no existing schema or query changes behavior. |
 | Downgrade | A release without the type cannot read a table that has a geometry column, so those columns must be dropped first, an ordinary `DROP COLUMN`. |
+
+### Differences from MySQL
+
+Every deliberate difference from MySQL 9.7 in v1:
+
+| Area | v1 | MySQL |
+| --- | --- | --- |
+| 4326 DE-9IM predicates | need a point operand (`POINT` or `MULTIPOINT`); other pairs raise `ERROR 3618`, checked per row | any pair |
+| 4326 `ST_Distance` | point operands only, else `ERROR 3618` | any pair |
+| 4326 `ST_IsValid` | polygonal input raises `ERROR 3618` | any input |
+| SRIDs | the catalog and `SRID n` hold 0 and 4326; WKT and WKB reject other SRIDs unless given `axis-order=long-lat` | its full catalog |
+| NaN and Inf at SRID 0 | rejected | stored through WKB and a bare literal |
+| Indexes on a geometry column | none: a spatial index, and any other index with a geometry member, is rejected | a plain `KEY` on a geometry column becomes a spatial index |
+| Generated columns | no `ST_*` function allowed | allowed |
+| `MODIFY`/`CHANGE COLUMN` on geometry | rejected, except `NULL`/`NOT NULL` | allowed |
+| Functions and spatial catalog tables | the v1 allowlist and `st_spatial_reference_systems`; the rest is in [Scope and deferrals](#scope-and-deferrals) | the full set |
+| Z/M coordinates | stored, through `ST_GeomFromEWKB` and GeoJSON `options` 5 and 6 | rejected |
+| `ORDER BY` on a column mixing SRIDs or subtypes | subtype first | SRID first |
+| Nesting depth | one bound for ingest and read | stores values its functions cannot read |
 
 ## Test Design
 
@@ -642,10 +661,12 @@ Risks:
   (measured over 100,000 distances). A 4326 predicate near an edge can flip on that bit, so
   a mixed-architecture cluster could answer one query two ways. Mitigated by fusion-free
   trigonometry of our own, which a later TiKV evaluator ports as is.
-- **Generated columns:** `pt POINT AS (ST_SRID(Point(lng, lat), 4326)) STORED` with a
-  spatial index is the usual MySQL way to index latitude/longitude columns, and v1 rejects
-  it at DDL ([Compatibility](#compatibility)), so such a schema does not migrate until
-  `Point` and `ST_SRID` are allowed there.
+- **MySQL spatial schemas may not migrate:** a MySQL spatial table usually has a spatial
+  index, which MySQL creates even for a plain `KEY` on a geometry column, and
+  `pt POINT AS (ST_SRID(Point(lng, lat), 4326)) STORED` is the usual way to index
+  latitude/longitude columns. v1 rejects both at DDL, so dump, Lightning and DM fail on
+  such a table until the index lands and those functions are allowed in generated columns
+  ([Differences from MySQL](#differences-from-mysql)).
 - **MySQL error parity:** exact codes and messages may not match initially (the PoC used
   placeholder wording); a compatibility risk, not a correctness one.
 - **Parsers take untrusted bytes:** geometry parsing is the one new path a client drives
