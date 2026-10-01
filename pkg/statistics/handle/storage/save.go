@@ -574,6 +574,10 @@ func InsertTableStats2KV(
 // convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
 // The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
 // TODO: add a test to make sure that this assumption is correct.
+//
+// A TIMESTAMP bound is written out as a bare datetime string with no time zone attached, so it only
+// round-trips because the bound is collected in UTC and convertBoundFromBlob parses it back in
+// UTC. See issue #52429.
 func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
 	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }

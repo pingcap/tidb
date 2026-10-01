@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -137,7 +137,7 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		totFts = append(totFts, col.RetType)
 	}
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
+	decoder := codec.NewDecoder(chk, time.UTC)
 	for _, sample := range collector.Base().Samples {
 		for i, columns := range sample.Columns {
 			// Virtual columns will be decoded as null first.
@@ -219,8 +219,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
-
-	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
@@ -317,7 +315,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		// If there's no virtual column, normal decode way is enough.
 		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
-				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, time.UTC)
 				if err != nil {
 					return 0, nil, nil, nil, err
 				}
@@ -326,8 +324,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// Calculate handle from the row data for each row. It will be used to sort the samples.
+	// The samples were decoded in UTC, so the handle has to be encoded in UTC as well, otherwise a
+	// TIMESTAMP in a clustered handle would be shifted twice.
+	utcStmtCtx := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	for _, sample := range rootRowCollector.Base().Samples {
-		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(utcStmtCtx, sample.Columns)
 		if err != nil {
 			return 0, nil, nil, nil, err
 		}
@@ -530,9 +531,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh ch
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
 func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context, indexInfos []*model.IndexInfo) []*analyzeTask {
-	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
-	sc := e.ctx.GetSessionVars().StmtCtx
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(ctx, e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
@@ -540,12 +539,10 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context
 			planID:      e.planID,
 			tableID:     e.TableID,
 			concurrency: concurrency,
-			analyzePB: &tipb.AnalyzeReq{
-				Tp:             tipb.AnalyzeType_TypeIndex,
-				Flags:          sc.PushDownFlags(),
-				TimeZoneOffset: offset,
-			},
-			snapshot: e.snapshot,
+			// ANALYZE deliberately carries no session state: TiKV builds an EvalConfig::default()
+			// for analyze and reads neither Flags nor TimeZoneOffset. See issue #52429.
+			analyzePB: &tipb.AnalyzeReq{Tp: tipb.AnalyzeType_TypeIndex},
+			snapshot:  e.snapshot,
 		}
 		idxExec := &AnalyzeIndexExec{
 			baseAnalyzeExec: base,
@@ -825,7 +822,7 @@ workLoop:
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
+							b, err = codec.EncodeKey(time.UTC, b, tmpDatum)
 							err = errCtx.HandleError(err)
 							if err != nil {
 								resultCh <- err
@@ -833,7 +830,7 @@ workLoop:
 							}
 							continue
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						b, err = codec.EncodeKey(time.UTC, b, row.Columns[col.Offset])
 						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -28,6 +29,7 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -310,4 +312,68 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 
 	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
 	require.Equal(t, beforeAutoFail, readCounter(autoFail))
+}
+
+// TestTimestampStatsAreTimeZoneIndependent is a regression test for issue #52429: the histogram
+// bucket bounds of a TIMESTAMP column used to be stored as a naked datetime string in the time zone
+// of the session that ran ANALYZE, while TopN and index bounds were stored in UTC. Both the output
+// of SHOW STATS_BUCKETS and the row count estimation were therefore wrong for any session whose
+// time zone differed from the one that collected the statistics.
+func TestTimestampStatsAreTimeZoneIndependent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone = '+08:00'")
+	tk.MustExec("create table t (a timestamp)")
+	// Four distinct values, 512 rows each, so that they end up in the histogram and not in TopN.
+	tk.MustExec(`insert into t values ('2024-04-08 10:00:01'), ('2024-04-08 10:00:02'),
+		('2024-04-08 10:00:03'), ('2024-04-08 10:00:04')`)
+	for range 9 {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("analyze table t with 0 topn")
+
+	// The bounds are stored in UTC, 8 hours behind the session that ran ANALYZE.
+	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	tk.MustQuery("select cast(lower_bound as char), cast(upper_bound as char) from mysql.stats_buckets" +
+		" where table_id = " + strconv.FormatInt(tblID, 10) + " and is_index = 0 order by bucket_id").
+		Check(testkit.Rows(
+			"2024-04-08 02:00:01 2024-04-08 02:00:01",
+			"2024-04-08 02:00:02 2024-04-08 02:00:02",
+			"2024-04-08 02:00:03 2024-04-08 02:00:03",
+			"2024-04-08 02:00:04 2024-04-08 02:00:04",
+		))
+
+	// SHOW STATS_BUCKETS renders them in the session time zone, like the column value itself.
+	showBounds := func(timeZone string) [][]any {
+		tk.MustExec("set @@time_zone = '" + timeZone + "'")
+		rows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Rows()
+		bounds := make([][]any, 0, len(rows))
+		for _, row := range rows {
+			bounds = append(bounds, []any{row[8], row[9]})
+		}
+		return bounds
+	}
+	require.Equal(t, [][]any{
+		{"2024-04-08 10:00:01", "2024-04-08 10:00:01"},
+		{"2024-04-08 10:00:02", "2024-04-08 10:00:02"},
+		{"2024-04-08 10:00:03", "2024-04-08 10:00:03"},
+		{"2024-04-08 10:00:04", "2024-04-08 10:00:04"},
+	}, showBounds("+08:00"))
+	require.Equal(t, [][]any{
+		{"2024-04-08 02:00:01", "2024-04-08 02:00:01"},
+		{"2024-04-08 02:00:02", "2024-04-08 02:00:02"},
+		{"2024-04-08 02:00:03", "2024-04-08 02:00:03"},
+		{"2024-04-08 02:00:04", "2024-04-08 02:00:04"},
+	}, showBounds("+00:00"))
+
+	// The same instant has to produce the same estimate no matter which time zone spells it out.
+	estimate := func(timeZone, value string) string {
+		tk.MustExec("set @@time_zone = '" + timeZone + "'")
+		return tk.MustQuery("explain format = 'brief' select * from t where a > '" + value + "'").Rows()[0][1].(string)
+	}
+	// About half of the 2048 rows are greater than the second of the four distinct values.
+	require.Equal(t, "1044.48", estimate("+00:00", "2024-04-08 02:00:02"))
+	require.Equal(t, "1044.48", estimate("+08:00", "2024-04-08 10:00:02"))
+	require.Equal(t, "1044.48", estimate("-05:00", "2024-04-07 21:00:02"))
 }
