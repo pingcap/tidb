@@ -12,13 +12,13 @@ select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
 a	b	c
 kk	1	10
 xx	4	10
-explain format='plan_tree' select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+explain format='plan_tree' select /*+ use_index(t, idx_ab) */ * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
 id	task	access object	operator info
 IndexLookUp	root		
 ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_ab(a, b)	range:["hh" 2,"hh" 2], ["kk" 1,"kk" 1], ["xx","xx"], ["yy","yy"], keep order:false, stats:pseudo
 └─Selection(Probe)	cop[tikv]		eq(util__ranger.t.c, 10)
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+select /*+ use_index(t, idx_ab) */ * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
 a	b	c
 hh	2	10
 kk	1	10
@@ -558,11 +558,11 @@ Projection	root		Column
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	root		funcs:count(1)->Column
-    └─HashJoin	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
-      ├─IndexReader(Build)	root		index:IndexFullScan
-      │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false
-      └─IndexReader(Probe)	root		index:IndexRangeScan
-        └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(util__ranger.t.b, 1) in(util__ranger.t.c, 1, 2) eq(util__ranger.t.d, util__ranger.t.a)], keep order:false
+    └─IndexJoin	root		inner join, inner:TableReader, outer key:util__ranger.t.a, inner key:util__ranger.t.a, equal cond:eq(util__ranger.t.a, util__ranger.t.a)
+      ├─IndexReader(Build)	root		index:IndexRangeScan
+      │ └─IndexRangeScan	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(util__ranger.t.b, 1) in(util__ranger.t.c, 1, 2) eq(util__ranger.t.d, util__ranger.t.a)], keep order:false
+      └─TableReader(Probe)	root		data:TableRangeScan
+        └─TableRangeScan	cop[tikv]	table:t1	range: decided by [util__ranger.t.a], keep order:false
 select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
 t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a)
 1

@@ -223,16 +223,14 @@ explain format='plan_tree' select id1 from t3 where id2 > '3' or id8 < 10 union 
 id	task	access object	operator info
 HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 └─Union	root		
-  ├─Projection	root		executor__chunk_reuse.t3.id1->Column
-  │ └─IndexMerge	root		type: union
-  │   ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
-  │   ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,10), keep order:false, stats:pseudo
-  │   └─TableRowIDScan(Probe)	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─Projection	root		executor__chunk_reuse.t3.id1->Column
-    └─IndexMerge	root		type: union
-      ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
-      ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,7), keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  ├─TableReader	root		data:Projection
+  │ └─Projection	cop[tikv]		executor__chunk_reuse.t3.id1->Column
+  │   └─Selection	cop[tikv]		or(gt(executor__chunk_reuse.t3.id2, "3"), lt(executor__chunk_reuse.t3.id8, 10))
+  │     └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─TableReader	root		data:Projection
+    └─Projection	cop[tikv]		executor__chunk_reuse.t3.id1->Column
+      └─Selection	cop[tikv]		or(gt(executor__chunk_reuse.t3.id2, "4"), lt(executor__chunk_reuse.t3.id8, 7))
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
 id1
 1
