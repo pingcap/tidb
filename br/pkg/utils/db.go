@@ -114,7 +114,7 @@ const (
 	DefaultGcRatioVal  = "1.1"
 	DisabledGcRatioVal = "-1.0"
 
-	RocksDBMaxBackgroundJobsForRestore = "1"
+	RocksDBMaxBackgroundJobsForRestore = "9"
 )
 
 func SetGcRatio(ctx sqlexec.RestrictedSQLExecutor, ratio string) error {
