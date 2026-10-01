@@ -3166,7 +3166,17 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		batchPointGetPlan.SetNoncacheableReason(candidate.path.NoncacheableReason)
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		for _, ran := range candidate.path.Ranges {
+		ranges := candidate.path.Ranges
+		if ds.TableInfo.GetPartitionInfo() != nil {
+			// Partition routing and unique-key encoding both need typed original
+			// values. CBO index ranges may already contain collation sort keys.
+			rawRanges, err := ranger.DetachCondAndBuildRangeForPartition(ds.SCtx().GetRangerCtx(), candidate.path.AccessConds, candidate.path.IdxCols, candidate.path.IdxColLens, 0)
+			if err != nil || !areFullPointGetRanges(ds.SCtx(), rawRanges.Ranges, len(candidate.path.Index.Columns)) || !isSafeRange(candidate.path.AccessConds, rawRanges, false, nil) {
+				return base.InvalidTask
+			}
+			ranges = rawRanges.Ranges
+		}
+		for _, ran := range ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
 		if !prop.IsSortItemEmpty() {
