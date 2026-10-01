@@ -61,11 +61,16 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		!isStmtNode ||
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
-		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		!sctx.GetSessionVars().DisableTxnAutoRetry { // txn-auto-retry
 		return nil, nil, false, nil
 	}
-
+	if sctx.GetSessionVars().InMultiStmts {Add a comment on  line R80Add diff commentMarkdown input:  edit mode selected.WritePreviewAdd a suggestionHeadingBold(command b) command⌘ bBItalic(command i) command⌘ iIQuote(command shift right angle bracket) command⌘ shift⇧ right angle bracket>Code(command e) command⌘ eELink(command k) command⌘ kKUnordered list(command 8) command⌘ 88Numbered list(command shift ampersand) command⌘ shift⇧ ampersand&Task list(command shift l) command⌘ shift⇧ lLMentionReferenceSlash commandsMore itemsSaved repliesAdd FilesPaste, drop, or click to add filesCancelCommentStart a review
+		// Prebuilt plans contain literal values and must not be cached under a
+		// parameterized SQL key. A nil plan leaves normal planning available.
+		if fp, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok && fp.Plan != nil {
+			return nil, nil, false, nil
+		}
+	}
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
