@@ -322,7 +322,7 @@
   },
   {
    "package": "pkg/utils/grpcutil",
-   "review": "unreviewed-at-current-master",
+   "review": "source-boundary-and-contract-reviewed; adapter-implementation-and-acceptance-open",
    "artifacts": [
     [
      "pkg/utils/grpcutil/grpcutil.go",
@@ -332,7 +332,8 @@
      "pkg/utils/grpcutil/grpcutil_test.go",
      "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
     ]
-   ]
+   ],
+   "review_receipt": "pd-grpcutil-contract/README.md"
   },
   {
    "package": "pkg/utils/testutil",

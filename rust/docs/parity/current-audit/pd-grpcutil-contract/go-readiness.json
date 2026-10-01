@@ -1,0 +1,4 @@
+{
+  "connect_waits_for_server_settings": true,
+  "lazy_connects_in_background": true
+}

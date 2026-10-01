@@ -1,0 +1,383 @@
+{
+  "source": {
+    "module": "github.com/tikv/pd/client",
+    "version": "v0.0.0-20260805103528-afa43111d149",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "package": "pkg/utils/grpcutil"
+  },
+  "status": "complete source-boundary review; adapter/implementation/acceptance open; not a transcreation claim",
+  "package_files": [
+    "pkg/utils/grpcutil/grpcutil.go",
+    "pkg/utils/grpcutil/grpcutil_test.go"
+  ],
+  "absent_package_artifacts": [
+    "doc.go",
+    "generated sources",
+    "generation inputs",
+    "production build/platform variants",
+    "fixtures",
+    "package-local build files"
+  ],
+  "constants": {
+    "dialTimeout": "3 seconds setup timeout",
+    "ForwardMetadataKey": "pd-forwarded-host",
+    "FollowerHandleMetadataKey": "pd-allow-follower-handle"
+  },
+  "production_functions": {
+    "UnaryBackofferInterceptor": "copied retry owner; final nonnil RPC error; cancellation during wait",
+    "UnaryCircuitBreakerInterceptor": "optional/disabled context; each physical attempt; triggerCircuitBreaker",
+    "isOverloaded": "all 17 gRPC codes, including errors.Cause stack wrapper",
+    "GetClientConn": "URL/error/credentials/options; default background connect; blocking HTTP/2 readiness; setup-only context",
+    "BuildForwardContext": "replace outgoing metadata, preserving unrelated context values",
+    "GetForwardedHost": "extractor direction, first value and absent metadata/key",
+    "BuildFollowerHandleContext": "replace outgoing metadata with present empty follower value",
+    "IsFollowerHandleEnabled": "key presence, absent context/key",
+    "getValueFromMetadata": "first slice value; source panic for a present empty slice",
+    "GetOrCreateGRPCConn": "per-owner exact-key map, three-second setup timeout, loser close, closed reuse, source failpoint",
+    "GetCalleeID": "five unchanged original cases; address/error edge cases remain required before native acceptance"
+  },
+  "original_tests": {
+    "TestMain": "unchanged goleak with five shared testutil files",
+    "TestGetCallerID": "unchanged five subcases; misleading source function comment is not the contract"
+  },
+  "pd_artifacts": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "kind": "module-build-license"
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "kind": "module-build-license"
+    },
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "clients/tso/stream.go",
+      "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "errs/errno.go",
+      "sha256": "32fc4ed013f6d810b7d19d3de4634a83faff48359b7e3fcb25ff76633e84fbe2",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "errs/errs.go",
+      "sha256": "e3af949b6f5db4c8751ed914d77c54d9665babe8b56efe288e83d72e3a64352a",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "kind": "module-build-license"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "kind": "module-build-license"
+    },
+    {
+      "path": "keyspace_client_test.go",
+      "sha256": "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544",
+      "kind": "source-consumer-test"
+    },
+    {
+      "path": "meta_storage_client.go",
+      "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "metrics/metrics.go",
+      "sha256": "9d966d40fbe46d4d5d925ed59d2a0291fa2f812f17a1029f48b535385ef8d34b",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker.go",
+      "sha256": "f5364cc36beec2eb3921520ba33d430642d011316fad598b080b011ba63dbb92",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/circuitbreaker/circuit_breaker_test.go",
+      "sha256": "7cc3d6082f522f32886e43085d658b583a8f4e4ca4214d01e3194262671eddac",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/retry/backoff.go",
+      "sha256": "7e8933434ddf483e6a8777c22aebfdb2aa619e690e9bc49c8603ff0dfcc02c80",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/retry/backoff_test.go",
+      "sha256": "0c40ec1d5bbd6acd4f577d2e6e35c6cc3c7f7b0972bbf4419f2c643b876ba1c6",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/retry/interval_retry.go",
+      "sha256": "4df997fea114ee60cfabd333c04f7bc58913c6c5fb05449de554643bb456bf86",
+      "kind": "imported-owner-input"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "kind": "production"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil_test.go",
+      "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b",
+      "kind": "original-test"
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_dummy.go",
+      "sha256": "c24555281422963888221434be397b9909f799ce7dd1f4a2a4db218b65437cc2",
+      "kind": "original-test-support"
+    },
+    {
+      "path": "pkg/utils/testutil/check_env_linux.go",
+      "sha256": "400885eecc41a9badf71bd8415ce72afd03e91226347d6283d1328cdf0c7cade",
+      "kind": "original-test-support"
+    },
+    {
+      "path": "pkg/utils/testutil/leak.go",
+      "sha256": "a1751623342fc99db4c7a90b39d0edc0ddc5ce5ee39c068f5d41a1646d880201",
+      "kind": "original-test-support"
+    },
+    {
+      "path": "pkg/utils/testutil/tempurl.go",
+      "sha256": "04ce093e14184b51d0bb0aa3b010802d7e6f895891cc841209ab98c9930b42e2",
+      "kind": "original-test-support"
+    },
+    {
+      "path": "pkg/utils/testutil/testutil.go",
+      "sha256": "5253e9c3618e83d315b7ea9032270f806bb4b9261c7b791afd95b3d421790fbd",
+      "kind": "original-test-support"
+    },
+    {
+      "path": "resource_manager_client_test.go",
+      "sha256": "a255b8f94daddb5ac20a5a619d1786ee9f42a820e2bd60de7d38f4a0a12067e8",
+      "kind": "source-consumer-test"
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "kind": "source-consumer"
+    },
+    {
+      "path": "servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "kind": "source-consumer-test"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "kind": "source-consumer"
+    }
+  ],
+  "pd_consumers": [
+    "clients/tso/client.go",
+    "clients/tso/stream.go",
+    "keyspace_client_test.go",
+    "meta_storage_client.go",
+    "resource_manager_client_test.go",
+    "servicediscovery/resource_manager_service_discovery.go",
+    "servicediscovery/router_service_discovery.go",
+    "servicediscovery/service_discovery.go",
+    "servicediscovery/service_discovery_test.go",
+    "servicediscovery/tso_service_discovery.go"
+  ],
+  "native_artifacts": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "5dc70f58d37cd8db8a14d8719f861bd8a8528c4c0821dd9150643780d98300c9"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "8a824cc718107b3ad835fdab7fa9d3ffddd44e40a2d77b73d5395fe26d9f0775"
+    },
+    {
+      "path": "src/common/security.rs",
+      "sha256": "69fec60b5df9a05c31bcea7456e3430c38ae6cf638c884cb01aaf32573600ccf"
+    },
+    {
+      "path": "src/pd/cluster.rs",
+      "sha256": "26172c6c902ee98031ee065e32679d3b8afa84272d5c62117356cfdf04f3e2a3"
+    },
+    {
+      "path": "src/pd/timestamp.rs",
+      "sha256": "3e90cc766fa2125db6817bb62e6d1208d7eec05502e69531d70fa556e9348bc6"
+    },
+    {
+      "path": "src/pd/retry.rs",
+      "sha256": "5ceaea1226f8f88c1337d8d9db0b1be41419c754b05d35a5ebb19f0190ed769d"
+    },
+    {
+      "path": "src/pd/opt.rs",
+      "sha256": "70bee69c3dd032435ef89f04fd33d8a9d2ece999ec2b6a12c6ad639c812becbe"
+    },
+    {
+      "path": "src/pd/backoff.rs",
+      "sha256": "6e0bff303d46c0841bd53bba0bf90e0432c93d2b64677ed379406419ab15c0b6"
+    },
+    {
+      "path": "src/pd/circuitbreaker.rs",
+      "sha256": "d9a1a1268b8f9d2cd039fd89a55bea4a1954fbf4e0f01b4142780be3f4e90d2a"
+    },
+    {
+      "path": "src/pd/errs.rs",
+      "sha256": "2b855d9649ac9626a9326912c6bf63936e2c31d66303bb52689299402d14a688"
+    },
+    {
+      "path": "src/region_cache.rs",
+      "sha256": "0556368402a720ba37191e60ff60db58e3a3585387e08c5475f304eb10bed13e"
+    },
+    {
+      "path": "src/trace.rs",
+      "sha256": "2d3b8a6e93295a04f1f354f9ebfcac236f7884a1da7d47bee148661c3eec276d"
+    }
+  ],
+  "backend_review_inputs": [
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/endpoint.rs",
+      "sha256": "10096644fd1928d74f0082b01f6a9a54f3dd23ab02b03c702bd1914e1cc4cea7"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/mod.rs",
+      "sha256": "32742aab20de42f3af9c017c8b8ebfd6f3c6741ccced9ab5e466976b3394eb77"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/add_origin.rs",
+      "sha256": "24ebd1284f5fcd57d73ff625a9192a3bd612fb4b9e39a9a840372eba774ded84"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/connection.rs",
+      "sha256": "5e576d1563bdd811f276248a86fd8ec7d4be9f508ae5f141ca4d2e2a278f7ec6"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/connector.rs",
+      "sha256": "1d480eb969442b6c5481ac1f53ac8f790dceee4f72fcd6dd919663d4a9cdca41"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/discover.rs",
+      "sha256": "e348fabd149aad9950930096170315a2ac9f38d1e0d077601d63dc49f6bdb979"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/executor.rs",
+      "sha256": "5c98dc06f6c004d57ca5d5651fb831467384e555753b6ebd733b10883813176d"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/io.rs",
+      "sha256": "df111e9e4f72522345f37f0f8a10232d826c733c3f6a49b011cbe1a5a6dd5d0c"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/mod.rs",
+      "sha256": "dd92140f480808e6cefb75c8b50a62a532035020a9e2a94ef426341868ea824f"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/reconnect.rs",
+      "sha256": "4e69c38c8a0760182c83ba5683711624f87aa315a71a1424678f745212aaeda6"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/tls.rs",
+      "sha256": "25242d308894d4cb2df9339080e1a77e3a46e509eee1043e1ea0cd74f047b7a0"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/service/user_agent.rs",
+      "sha256": "9273ca8396175578c41909ac1f8cf3b68c94bc68bacdefc459421106e70f3238"
+    },
+    {
+      "module": "tonic",
+      "version": "0.12.3",
+      "path": "src/transport/channel/tls.rs",
+      "sha256": "705687a7ae6129c047963efd07568532976035e26d592216321a637b0d4e9ec3"
+    },
+    {
+      "module": "hyper",
+      "version": "1.11.0",
+      "path": "src/proto/h2/client.rs",
+      "sha256": "5d81af4ed1ef5a687c21dea559da28d8d96fbdf4e63b68c461f5b2e7733d13ab"
+    },
+    {
+      "module": "hyper",
+      "version": "1.11.0",
+      "path": "src/client/conn/http2.rs",
+      "sha256": "ba1ff22ec9af06a2e985eedd54f60daf92b658319146ab53b2da664814b5331e"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "version": "v1.82.1",
+      "path": "clientconn.go",
+      "sha256": "99306aedde629d39aaf84141a0bd44f04ed3c0f105a85fd10128c68c818c7c34"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "version": "v1.82.1",
+      "path": "backoff/backoff.go",
+      "sha256": "79c43f7f8f0ea8a1aa8a93e0f37a2d9eedd3a6dafde0adee0a0a97a6a0ed5d8d"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "version": "v1.82.1",
+      "path": "internal/backoff/backoff.go",
+      "sha256": "f6385bcafb72a06a86d5c28e0cd1680fdad8e3757182e2291fe13b495615a991"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "version": "v1.82.1",
+      "path": "internal/transport/http2_client.go",
+      "sha256": "71830eb7918bccbc3b2718689cc7971f74b5a177981f182bf4fdfe1dcafe860f"
+    }
+  ],
+  "native_retirement": {
+    "src/pd/cluster.rs": "separate PD/keyspace SecurityManager.connect paths, direct unary dispatch including get_prev_region/membership",
+    "src/region_cache.rs": "logical-operation breaker execution and private direct-status classifier",
+    "src/pd/timestamp.rs": "concrete Channel client lifetime must consume the shared connection owner; do not add unary interception to TSO",
+    "src/common/security.rs": "PD dependence on TiKV eager-dial/keepalive/URL policy; retain TiKV behavior until its own package owner migrates",
+    "src/pd/opt.rs": "Endpoint-only opaque dial options cannot express all required backend options; revalidate full options package if changed"
+  },
+  "validation_limits": [
+    "no native production integration",
+    "TLS/GOAWAY/backoff jitter and reset/background reconnect/close of active work still unproved",
+    "concurrent cache oracle does not force/count all loser candidates",
+    "unreachableNetwork2 tested with URL failure before allocation",
+    "non-Linux test-support execution only",
+    "no live-cluster or workload measurements"
+  ]
+}

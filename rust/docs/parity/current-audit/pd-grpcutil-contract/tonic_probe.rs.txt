@@ -1,0 +1,44 @@
+// Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
+// Isolated feasibility probe; this is not a production transport implementation.
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
+use tokio::net::TcpListener;
+use tonic::transport::Endpoint;
+
+#[tokio::main]
+async fn main() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint =
+        Endpoint::from_shared(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let channel = endpoint.clone().connect_lazy();
+    let lazy_connects_in_background =
+        tokio::time::timeout(Duration::from_millis(200), listener.accept())
+            .await
+            .is_ok();
+    drop(channel);
+    let (preface_tx, preface_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut preface = [0; 24];
+        socket.read_exact(&mut preface).await.unwrap();
+        assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+        let _ = preface_tx.send(());
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+    let result = tokio::time::timeout(Duration::from_millis(500), endpoint.connect()).await;
+    let connect_waits_for_server_settings = result.is_err();
+    let connected = result
+        .ok()
+        .map(|channel| channel.expect("TCP/HTTP2 setup failed"));
+    tokio::time::timeout(Duration::from_secs(3), preface_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(connected);
+    server.abort();
+    let _ = server.await;
+    println!(
+        "{}",
+        serde_json::json!({"lazy_connects_in_background":lazy_connects_in_background,"connect_waits_for_server_settings":connect_waits_for_server_settings})
+    );
+}
