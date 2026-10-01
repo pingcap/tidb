@@ -171,6 +171,8 @@ func NewPipelineRegionsSplitter(
 }
 
 func (r *PipelineRegionsSplitterImpl) ExecuteRegions(ctx context.Context, splitHelper *SplitHelperIterator) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var ectx context.Context
 	var wg sync.WaitGroup
 	r.eg, ectx = errgroup.WithContext(ctx)
@@ -199,19 +201,21 @@ func (r *PipelineRegionsSplitterImpl) ExecuteRegions(ctx context.Context, splitH
 
 	err := SplitPoint(ectx, splitHelper, r.client, r.splitRegionByPoints)
 	if err != nil {
-		return errors.Trace(err)
+		// Stop submitted split work before waiting for it to return its workers.
+		cancel()
 	}
 
 	// wait for completion of splitting regions
-	if err := r.eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
+	workerErr := r.eg.Wait()
 
 	// wait for completion of scattering regions
 	close(r.regionsCh)
 	wg.Wait()
 
-	return nil
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(workerErr)
 }
 
 type splitFunc = func(context.Context, uint64, int64, *RegionInfo, []Valued) error
