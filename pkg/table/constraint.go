@@ -15,6 +15,8 @@
 package table
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -137,6 +139,13 @@ type checkConstraintChecker struct {
 func (checker *checkConstraintChecker) Enter(in ast.Node) (skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.FuncCallExpr:
+		// grouping() is only meaningful inside a ROLLUP aggregation, so it is
+		// rejected here for the same reason as *ast.AggregateFuncExpr below.
+		if x.FnName.L == ast.Grouping {
+			checker.allowed = false
+			checker.reason = dbterror.ErrInvalidGroupFuncUse
+			return true
+		}
 		if _, ok := unsupportedNodeForCheckConstraint[x.FnName.L]; ok {
 			checker.allowed = false
 			checker.reason = dbterror.ErrCheckConstraintNamedFuncIsNotAllowed.GenWithStackByArgs(checker.name, x.FnName.L)
@@ -151,6 +160,18 @@ func (checker *checkConstraintChecker) Enter(in ast.Node) (skipChildren bool) {
 		// subquery is not allowed
 		checker.allowed = false
 		checker.reason = dbterror.ErrCheckConstraintFuncIsNotAllowed.GenWithStackByArgs(checker.name)
+		return true
+	// A check constraint is evaluated against a single row, so it can refer to
+	// neither an aggregation nor a window frame. Both must be rejected here: the
+	// DDL path builds the expression without a plan context, so letting them reach
+	// the planner expression rewriter surfaces an internal error to the client.
+	case *ast.AggregateFuncExpr:
+		checker.allowed = false
+		checker.reason = dbterror.ErrInvalidGroupFuncUse
+		return true
+	case *ast.WindowFuncExpr:
+		checker.allowed = false
+		checker.reason = dbterror.ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(x.Name))
 		return true
 	case *ast.DefaultExpr:
 		// default expr is not allowed
