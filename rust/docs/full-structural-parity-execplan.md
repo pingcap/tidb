@@ -9,6 +9,10 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-09-30) Remove C01's per-statement physical vectors and DML-only metadata LRU; integrate the shared session owner, close policy, flush and server lifetime/response paths.
+- [x] Reproduce four session ownership failures and LRU replacement pressure on baseline; 128 session prepared tests, 9 LRU tests, 31 server prepared tests and both new server regressions pass. Three broader-suite failures reproduce unchanged and remain open.
+- [x] Complete the C01 all-target check and root lint. Publication uses the mandatory hook build and a fresh pre-push build; commands/results/limits are in `parity/current-audit/shared-session-plan-cache-repair.md` and the publication response.
+
 - [x] (2026-09-30) Remove all five remaining handwritten PD/BR/TiKV/etcd schema projections and the handwritten MPP fixture stub owner; migrate all callers to complete native/descriptor/upstream contracts. P01/P02 contract gaps are repaired; external helper/runtime package acceptance remains open.
 - [x] Confirm three fail-before wire/identity regressions; 55 protocol tests, 45 PD and 423 transaction tests (10 already ignored), original Go package tests, every direct consumer target and root lint pass. Details: `parity/current-audit/complete-protocol-owner-repair.md`.
 
@@ -74,6 +78,19 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+
+The C01 continuation repairs the shared physical-entry owner: remove
+PreparedSelectPlan/PreparedDmlPlan's private vectors and move every prepared
+and non-prepared SELECT/DML lookup/insertion to one Session-owned cache.
+Parameter signatures, schemas/statistics, database, bindings and environment
+remain in the identity; statement definitions do not own cached physical plans.
+Consolidate non-prepared definition metadata into Go's one separate statement
+LRU. Use the existing plan-cache container and O(1) LRU primitive, maintaining
+per-SQL parameter buckets and one global recency/capacity budget. Cover capacity,
+parameter variants, mixed callers, captured capacity, invalidation and flush with failing
+regressions before edits. C02's instance physical-plan cloning is separate;
+this repair must not claim complete planner/session package acceptance.
 
 
 The protocol-owner continuation removes all five remaining local projection
@@ -942,3 +959,18 @@ See `parity/current-audit/complete-protocol-owner-repair.md` for the complete
 change boundary, red/green evidence, commands and risks. Generated contracts
 do not supply PD service discovery, BR helper constants, etcd logging/gateway
 behavior or whole-package acceptance. The other structural findings stay open.
+
+## Shared session plan-cache owner outcome
+
+Prepared/non-prepared SELECT/DML now use one physical-entry owner. Capacity,
+recency, compatible variants, invalidation and cache close belong to that
+session owner; prepared definitions retain syntax and key metadata. SQL and
+binary statement close share Go's retention switch. Instance flush uses a
+factory-lifetime invalidation handle across independent session catalog images,
+and the server sends the correct OK response for flush.
+
+The repair receipt is `parity/current-audit/shared-session-plan-cache-repair.md`.
+Three broader checks still fail on unchanged integration: filtered-IN access
+path selection, an index-join parameter rebuild and MySQL grants quoting.
+No assertion was disabled. C02, exact native retained-heap accounting, workload
+benchmarks and complete package acceptance remain outside this repair.

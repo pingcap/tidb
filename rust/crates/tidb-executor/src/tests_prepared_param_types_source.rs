@@ -83,6 +83,7 @@ fn go_t1_t2_catalog() -> Catalog {
 /// that the single Int entry keeps serving further same-type executes.
 #[test]
 fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
+    let cache = crate::SessionPlanCache::default();
     let catalog = go_t1_t2_catalog();
     let ctx = ctx();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -94,6 +95,7 @@ fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(3)],
             &catalog,
             DEFAULT_DATABASE,
@@ -118,6 +120,7 @@ fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
@@ -141,6 +144,7 @@ fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(-200)],
             &catalog,
             DEFAULT_DATABASE,
@@ -162,6 +166,7 @@ fn plan_cache_keyed_by_int_parameter_type_serves_each_value() {
 /// catalog change must turn the next same-type execute back into a miss.
 #[test]
 fn plan_cache_entry_invalidates_when_the_catalog_version_moves() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = go_t1_t2_catalog();
     let ctx = ctx();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -173,6 +178,7 @@ fn plan_cache_entry_invalidates_when_the_catalog_version_moves() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(3)],
             &catalog,
             DEFAULT_DATABASE,
@@ -192,6 +198,7 @@ fn plan_cache_entry_invalidates_when_the_catalog_version_moves() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(3)],
             &catalog,
             DEFAULT_DATABASE,
@@ -212,6 +219,7 @@ fn plan_cache_entry_invalidates_when_the_catalog_version_moves() {
 /// returns Go's recorded empty result with a cache miss.
 #[test]
 fn plan_cache_keys_string_typed_parameters_as_their_own_entry() {
+    let cache = crate::SessionPlanCache::default();
     let catalog = go_t1_t2_catalog();
     let ctx = ctx();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -222,6 +230,7 @@ fn plan_cache_keys_string_typed_parameters_as_their_own_entry() {
     );
     let execution = plan
         .bind(
+            &cache,
             &[Datum::String(StringDatum::new(
                 "abc",
                 Collation::Utf8Mb4Bin,
@@ -246,6 +255,7 @@ fn plan_cache_keys_string_typed_parameters_as_their_own_entry() {
 /// and recursively rebuilds its parameterized access ranges.
 #[test]
 fn plan_cache_serves_a_parameterized_join() {
+    let cache = crate::SessionPlanCache::default();
     let catalog = go_t1_t2_catalog();
     let ctx = ctx();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -260,6 +270,7 @@ fn plan_cache_serves_a_parameterized_join() {
 
     let first = plan
         .bind(
+            &cache,
             &[Datum::Int(1)],
             &catalog,
             DEFAULT_DATABASE,
@@ -274,6 +285,7 @@ fn plan_cache_serves_a_parameterized_join() {
 
     let second = plan
         .bind(
+            &cache,
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
@@ -289,6 +301,7 @@ fn plan_cache_serves_a_parameterized_join() {
 
     let string = plan
         .bind(
+            &cache,
             &[Datum::String(StringDatum::new(
                 "abc",
                 Collation::Utf8Mb4Bin,

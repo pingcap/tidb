@@ -701,10 +701,10 @@ pub struct Session {
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>>,
-    /// The session's non-prepared physical-plan cache
-    /// (`tidb_enable_non_prepared_plan_cache`).
+    /// Go's separate non-prepared statement metadata LRU.
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
-    non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache,
+    physical_plan_cache: tidb_executor::SessionPlanCache,
+    plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
     /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
     /// found its plan in the cache. Reset for every statement.
     found_in_plan_cache: bool,
@@ -844,6 +844,10 @@ impl Session {
     /// infoschema. Cluster bootstrap is owned by the store/domain, not by each
     /// session opened on it.
     fn unbootstrapped(catalog: SharedCatalog) -> Self {
+        let plan_cache_invalidation = catalog
+            .lock()
+            .expect("catalog poisoned")
+            .plan_cache_invalidation();
         Session {
             catalog,
             account_storage_delegated: false,
@@ -916,7 +920,8 @@ impl Session {
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
-            non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache::default(),
+            physical_plan_cache: tidb_executor::SessionPlanCache::default(),
+            plan_cache_invalidation,
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
             user_vars: Arc::default(),
@@ -1097,6 +1102,7 @@ mod prepared_ast;
 mod prepared_plan_cache;
 mod prepared_statements;
 mod record_set;
+mod session_plan_cache;
 use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 pub mod session_vars;

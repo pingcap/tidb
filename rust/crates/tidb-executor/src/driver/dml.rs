@@ -18,6 +18,7 @@
 //! Mirrors Go's `PlanBuilder.buildInsert` / `buildUpdate` / `buildDelete` and
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
+use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 
@@ -2321,27 +2322,22 @@ pub struct PreparedDmlPlan {
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     statement: Stmt,
-    cached_plans: std::sync::Mutex<Vec<CachedDmlPlanEntry>>,
+    cache_key: String,
+    last_limit_values: std::sync::Mutex<Vec<u64>>,
 }
 
 #[derive(Debug)]
-struct CachedDmlPlanEntry {
-    schema_version: u64,
-    stats_version_hash: u64,
-    environment: PreparedPlanCacheEnvironment,
-    parameter_types: Vec<PreparedParameterType>,
-    limit_values: Vec<u64>,
-    plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
-}
-
-#[derive(Debug)]
-struct CachedDmlPlan {
+pub(super) struct CachedDmlPlan {
     statement: Stmt,
     physical: tidb_planner::physical::PhysicalPlan,
     generation: u64,
 }
 
 impl CachedDmlPlan {
+    pub(super) fn memory_usage(&self) -> i64 {
+        tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
+    }
+
     fn bind(&mut self, values: &[Datum]) -> Option<u64> {
         super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
         let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
@@ -2378,6 +2374,34 @@ pub struct PreparedDmlExecution {
 }
 
 impl PreparedDmlPlan {
+    /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
+    #[must_use]
+    pub fn with_sql(mut self, sql: &str) -> Self {
+        self.cache_key = super::plan_cache::statement_key(&self.current_database, sql);
+        self
+    }
+
+    /// Go DEALLOCATE/COM_STMT_CLOSE deletes the current environment's key,
+    /// including every parameter-type variant, unless the session retains it.
+    pub fn discard_cached_plan(
+        &self,
+        cache: &SessionPlanCache,
+        catalog: &Catalog,
+        environment: &PreparedPlanCacheEnvironment,
+    ) {
+        cache.delete(&PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version: catalog.metadata_version(),
+            stats_version_hash: self.stats_version_hash(catalog, environment),
+            environment: environment.clone(),
+            limit_values: self
+                .last_limit_values
+                .lock()
+                .expect("prepared limits poisoned")
+                .clone(),
+        });
+    }
+
     /// The immutable statement retained at PREPARE time.
     #[must_use]
     pub const fn statement(&self) -> &Stmt {
@@ -2390,6 +2414,7 @@ impl PreparedDmlPlan {
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -2397,6 +2422,7 @@ impl PreparedDmlPlan {
     ) -> Option<PreparedDmlExecution> {
         let ctx = crate::StmtContext::for_query();
         self.bind_for_statement(
+            cache,
             params,
             catalog,
             current_database,
@@ -2412,6 +2438,7 @@ impl PreparedDmlPlan {
     #[must_use]
     pub fn bind_for_statement(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -2420,6 +2447,7 @@ impl PreparedDmlPlan {
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
         self.bind_inner(
+            cache,
             params,
             catalog,
             current_database,
@@ -2435,6 +2463,7 @@ impl PreparedDmlPlan {
     #[must_use]
     pub fn bind_cached_for_statement(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -2442,6 +2471,7 @@ impl PreparedDmlPlan {
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
         self.bind_inner(
+            cache,
             params,
             catalog,
             current_database,
@@ -2453,6 +2483,7 @@ impl PreparedDmlPlan {
 
     fn bind_inner(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -2463,10 +2494,8 @@ impl PreparedDmlPlan {
         if !self.current_database.eq_ignore_ascii_case(current_database) {
             return None;
         }
-        let parameter_types = params
-            .iter()
-            .map(PreparedParameterType::of)
-            .collect::<Vec<_>>();
+        let parameter_types: Arc<[PreparedParameterType]> =
+            params.iter().map(PreparedParameterType::of).collect();
         let limit_values = self
             .limit_parameter_orders
             .iter()
@@ -2476,26 +2505,29 @@ impl PreparedDmlPlan {
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
+        self.last_limit_values
+            .lock()
+            .ok()?
+            .clone_from(&limit_values);
         let schema_version = catalog.metadata_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
-        let mut cached_plans = self.cached_plans.lock().ok()?;
-        let cached = cached_plans.iter().position(|entry| {
-            entry.schema_version == schema_version
-                && entry.stats_version_hash == stats_version_hash
-                && entry.environment == *environment
-                && super::access::prepared_parameter_types_compatible(
-                    &entry.parameter_types,
-                    &parameter_types,
-                )
-                && entry.limit_values == limit_values
-        });
+        let cache_key = PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version,
+            stats_version_hash,
+            environment: environment.clone(),
+            limit_values,
+        };
+        let cached = match cache.get(&cache_key, &parameter_types) {
+            Some(CachedPhysicalPlan::Dml(plan)) => Some(plan),
+            _ => None,
+        };
         if cached.is_none() {
             ctx?;
         }
         let parameters: Arc<[Datum]> = Arc::from(params);
         let (cached_plan, generation, cache_hit) = match cached {
-            Some(index) => {
-                let plan = Arc::clone(&cached_plans[index].plan);
+            Some(plan) => {
                 let generation = {
                     let mut cached = plan.lock().ok()?;
                     cached.bind(params)
@@ -2503,10 +2535,7 @@ impl PreparedDmlPlan {
                 match generation {
                     Some(generation) => (plan, generation, true),
                     None => {
-                        cached_plans.remove(index);
-                        // Go `plan_cache_lru.go` delete arm decrements the
-                        // session plan-num gauge for every dropped plan.
-                        tidb_planner::metrics::plan_cache_instance_num_counter(false).sub(1.0);
+                        cache.delete(&cache_key);
                         return None;
                     }
                 }
@@ -2534,30 +2563,12 @@ impl PreparedDmlPlan {
                 // A rejected candidate executes once without a cache rebuild or insertion.
                 let generation = if cacheable { plan.bind(params)? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
-                let stale_before_retain = cached_plans.len();
-                cached_plans.retain(|entry| {
-                    entry.schema_version == schema_version
-                        && entry.stats_version_hash == stats_version_hash
-                        && entry.environment == *environment
-                });
-                // Go environment invalidation drops every stale-environment
-                // plan and decrements the gauge by that count.
-                let stale_removed = stale_before_retain - cached_plans.len();
-                if stale_removed > 0 {
-                    tidb_planner::metrics::plan_cache_instance_num_counter(false)
-                        .sub(stale_removed as f64);
-                }
                 if cacheable {
-                    cached_plans.push(CachedDmlPlanEntry {
-                        schema_version,
-                        stats_version_hash,
-                        environment: environment.clone(),
+                    cache.put(
+                        cache_key,
                         parameter_types,
-                        limit_values,
-                        plan: Arc::clone(&plan),
-                    });
-                    // Go `updateInstancePlanNum` put arm.
-                    tidb_planner::metrics::plan_cache_instance_num_counter(false).add(1.0);
+                        CachedPhysicalPlan::Dml(Arc::clone(&plan)),
+                    );
                 }
                 (plan, generation, false)
             }
@@ -2663,7 +2674,8 @@ pub fn build_prepared_dml_plan(
         parameter_count,
         limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
         statement: statement.clone(),
-        cached_plans: std::sync::Mutex::new(Vec::new()),
+        last_limit_values: std::sync::Mutex::default(),
+        cache_key: super::plan_cache::statement_key(current_db, &statement.restore()),
     }))
 }
 

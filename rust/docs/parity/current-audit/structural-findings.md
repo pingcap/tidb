@@ -23,7 +23,7 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **41 tracked findings**; E01 is repaired and E02 has a runtime repair with plan integration still open. See [the shared UPDATE repair receipt](shared-update-owner-repair.md). The latest 12 additions
+The register contains **41 tracked findings**; C01 ownership and E01 are repaired; E02 has a runtime repair with plan integration still open. See [the shared UPDATE repair receipt](shared-update-owner-repair.md). The latest 12 additions
 are D11, C01–C02, E01–E04, S01–S02 and I01–I03. Five of these groups have SQL
 reproductions in [the session/executor review](session-ownership-review.md):
 D11, C01, E01, E02 and I01. The other seven are source-confirmed design or
@@ -53,7 +53,7 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
-| C01 | Prepared SELECT/DML definitions each own a vector of physical plans; the available LRU implementation is not their owner. Non-prepared SELECT/DML also have separate statement LRUs. Shared entry budget, recency/pressure eviction and flush are absent. **Reproduced:** capacity 1 retains both prepared plans (`0,0,1` hits), and `ADMIN FLUSH SESSION PLAN_CACHE` is refused. | `rust/crates/tidb-executor/src/driver/access.rs:390`, `:741`, `:811`; `driver/dml.rs:2376`, `:2540`; `rust/crates/tidb-session/src/non_prepared_plan_cache.rs:85`, `:123` | `pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache.go`, `plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache`: one session cache owns all physical entries, memory accounting and invalidation. Move prepared/non-prepared SELECT/DML consumers together before deleting the per-statement stores. |
+| C01 | **Ownership repaired:** one session physical-entry LRU now serves prepared/non-prepared SELECT/DML, with shared capacity, recency, pressure, close and flush. Separate per-statement vectors and the DML-only metadata LRU are removed. See the [repair receipt](shared-session-plan-cache-repair.md) for regressions and limits; this is not whole-package acceptance. | `rust/crates/tidb-executor/src/driver/plan_cache.rs`, `rust/crates/tidb-planner/src/plan_cache_lru.rs`, `rust/crates/tidb-session/src/session_plan_cache.rs`; server factory and COM_STMT_CLOSE callers | `pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache` and `prepared.go::DeallocateExec.Next`. C02 remains open. |
 | C02 | Instance-plan-cache variables are registered, but no domain-scoped shared cache or instance hit/clone/eviction path is composed into production. Enabling the flag cannot select Go's instance owner. | `rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:256`; C01's owners; production reference audit in the review receipt | `pkg/planner/core/plan_cache.go::lookupPlanCache`/`clonePlanForInstancePlanCache`, `plan_cache_instance.go`, Domain: shared ownership plus per-execution cloning. Reuse admission/key/rebuild contracts; another ad hoc global map is insufficient. |
 
 ## DML and executor handoff

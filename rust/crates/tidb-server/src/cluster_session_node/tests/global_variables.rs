@@ -196,3 +196,55 @@ fn prepared_system_variable_scope_errors_survive_cluster_metadata_probe() {
         assert_query_error_packet(&query_error, code, message);
     }
 }
+
+#[test]
+fn session_plan_cache_instance_flush_uses_factory_lifetime() {
+    use tidb_datatype::Datum;
+
+    let node = MockNode::start();
+    let factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([]));
+    let other_factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([]));
+    let mut first = factory.open_session(session_context(61)).unwrap();
+    let mut peer = factory.open_session(session_context(62)).unwrap();
+    let mut other = other_factory.open_session(session_context(63)).unwrap();
+    for session in [&mut first, &mut peer, &mut other] {
+        session.select_database("app").unwrap();
+    }
+    first.execute_write("INSERT INTO t VALUES (1,10)").unwrap();
+    for session in [&mut first, &mut peer, &mut other] {
+        session.execute_write("SET @id=1").unwrap();
+        session
+            .execute_write("PREPARE p FROM 'SELECT v FROM t WHERE id=?'")
+            .unwrap();
+        assert_eq!(
+            rows(session, "EXECUTE p USING @id"),
+            vec![vec![Datum::Int(10)]]
+        );
+        assert_eq!(
+            rows(session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(0)]]
+        );
+        assert_eq!(
+            rows(session, "EXECUTE p USING @id"),
+            vec![vec![Datum::Int(10)]]
+        );
+        assert_eq!(
+            rows(session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(1)]]
+        );
+    }
+    first
+        .execute_write("ADMIN FLUSH INSTANCE PLAN_CACHE")
+        .unwrap()
+        .expect("flush answers with an OK packet");
+    for (session, hit) in [(&mut first, 0), (&mut peer, 0), (&mut other, 1)] {
+        assert_eq!(
+            rows(session, "EXECUTE p USING @id"),
+            vec![vec![Datum::Int(10)]]
+        );
+        assert_eq!(
+            rows(session, "SELECT @@last_plan_from_cache"),
+            vec![vec![Datum::Int(hit)]]
+        );
+    }
+}

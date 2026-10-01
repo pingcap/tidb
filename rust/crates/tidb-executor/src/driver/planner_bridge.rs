@@ -3385,6 +3385,10 @@ pub(crate) struct CachedSelectPlan {
 }
 
 impl CachedSelectPlan {
+    pub(super) fn memory_usage(&self) -> i64 {
+        tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
+    }
+
     pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<u64> {
         super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
         // Rebuild through the current execute parameters, never the datum

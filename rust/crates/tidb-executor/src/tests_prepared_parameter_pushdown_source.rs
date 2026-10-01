@@ -62,6 +62,7 @@ fn go_t_catalog() -> Catalog {
 /// (`pkg/executor/testdata/prepare_suite_out.json`, the `select * from t where b>?` execute pair).
 #[test]
 fn parameter_predicate_pushes_into_the_scan_and_keeps_the_cached_plan() {
+    let cache = crate::SessionPlanCache::default();
     let catalog = go_t_catalog();
     let ctx = ctx();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -73,6 +74,7 @@ fn parameter_predicate_pushes_into_the_scan_and_keeps_the_cached_plan() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(1)],
             &catalog,
             DEFAULT_DATABASE,
@@ -99,6 +101,7 @@ fn parameter_predicate_pushes_into_the_scan_and_keeps_the_cached_plan() {
 
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(5)],
             &catalog,
             DEFAULT_DATABASE,

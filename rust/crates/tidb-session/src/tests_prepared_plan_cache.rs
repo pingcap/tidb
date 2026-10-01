@@ -1626,3 +1626,350 @@ fn prepared_dml_lock_environment_tracks_explicit_transaction_mode() {
     );
     session.run("ROLLBACK").unwrap();
 }
+
+#[test]
+fn session_plan_cache_shares_prepared_select_and_dml_capacity() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE shared_cache (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO shared_cache VALUES (1,10)",
+        "SET tidb_session_plan_cache_size=1",
+        "PREPARE a FROM 'SELECT v FROM shared_cache WHERE id=?'",
+        "PREPARE b FROM 'UPDATE shared_cache SET v=v+1 WHERE id=?'",
+        "SET @id=1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for (sql, hit) in [
+        ("EXECUTE a USING @id", 0),
+        ("EXECUTE a USING @id", 1),
+        ("EXECUTE b USING @id", 0),
+        ("EXECUTE a USING @id", 0),
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(
+            session.run("SELECT @@last_plan_from_cache").unwrap(),
+            crate::StmtResult::Rows(vec![vec![Datum::Int(hit)]]),
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        session.run("SELECT v FROM shared_cache").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(11)]])
+    );
+}
+
+#[test]
+fn session_plan_cache_counts_parameter_variants_as_entries() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE variant_cache (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO variant_cache VALUES (1,10)")
+        .unwrap();
+    session.run("SET tidb_session_plan_cache_size=1").unwrap();
+    let prepared = session
+        .prepare_ast("SELECT v FROM variant_cache WHERE id=?")
+        .unwrap();
+    for value in [Datum::Int(1), Datum::UInt(1), Datum::Int(1)] {
+        let execution = session
+            .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[value])
+            .unwrap();
+        assert!(
+            !execution.cache_hit(),
+            "the previous parameter variant must have been evicted"
+        );
+    }
+}
+
+#[test]
+fn session_plan_cache_shares_prepared_and_non_prepared_capacity() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE mixed_cache (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO mixed_cache VALUES (1,10)",
+        "SET tidb_session_plan_cache_size=1",
+        "SET tidb_enable_non_prepared_plan_cache=ON",
+        "SET @id=1",
+        "PREPARE a FROM 'SELECT v FROM mixed_cache WHERE id=?'",
+    ] {
+        session.run(sql).unwrap();
+    }
+    for sql in [
+        "EXECUTE a USING @id",
+        "SELECT id FROM mixed_cache WHERE v=10",
+        "EXECUTE a USING @id",
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(
+            session.run("SELECT @@last_plan_from_cache").unwrap(),
+            crate::StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+    }
+}
+
+#[test]
+fn session_plan_cache_flush_discards_physical_entries_but_keeps_prepared_statements() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE flush_cache (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO flush_cache VALUES (1,10)",
+        "SET @id=1",
+        "PREPARE a FROM 'SELECT v FROM flush_cache WHERE id=?'",
+        "EXECUTE a USING @id",
+    ] {
+        session.run(sql).unwrap();
+    }
+    session.run("ADMIN FLUSH SESSION PLAN_CACHE").unwrap();
+    assert_eq!(
+        session.run("EXECUTE a USING @id").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(10)]])
+    );
+    assert_eq!(
+        session.run("SELECT @@last_plan_from_cache").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(0)]])
+    );
+}
+
+fn shared_cache_session(capacity: usize) -> Session {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE cache_lifecycle (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO cache_lifecycle VALUES (1,10),(2,20)",
+        "SET @id=1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    session
+        .run(&format!("SET tidb_session_plan_cache_size={capacity}"))
+        .unwrap();
+    session
+}
+
+fn assert_cache_hit(session: &mut Session, sql: &str, hit: i64) {
+    session.run(sql).unwrap();
+    assert_eq!(
+        session.run("SELECT @@last_plan_from_cache").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(hit)]]),
+        "{sql}"
+    );
+}
+
+#[test]
+fn session_plan_cache_recency_is_shared_and_capacity_is_captured_once() {
+    let mut session = shared_cache_session(2);
+    for sql in [
+        "PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'",
+        "PREPARE b FROM 'UPDATE cache_lifecycle SET v=v+1 WHERE id=?'",
+        "PREPARE c FROM 'SELECT id FROM cache_lifecycle WHERE v=?'",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    // Go GetSessionPlanCache creates the LRU once. Changing the variable
+    // afterward does not resize an already-existing physical cache.
+    session.run("SET tidb_session_plan_cache_size=1").unwrap();
+    assert_cache_hit(&mut session, "EXECUTE b USING @id", 0);
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+    assert_cache_hit(&mut session, "EXECUTE c USING @id", 0);
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+    assert_cache_hit(&mut session, "EXECUTE b USING @id", 0);
+    assert_eq!(session.physical_plan_cache.size(), 2);
+    assert_eq!(
+        session
+            .run("SELECT v FROM cache_lifecycle WHERE id=1")
+            .unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(12)]])
+    );
+}
+
+#[test]
+fn session_plan_cache_non_prepared_dml_uses_the_same_budget() {
+    let mut session = shared_cache_session(1);
+    session
+        .run("SET tidb_enable_non_prepared_plan_cache=ON")
+        .unwrap();
+    session
+        .run("SET tidb_enable_non_prepared_plan_cache_for_dml=ON")
+        .unwrap();
+    session
+        .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+        .unwrap();
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    assert_cache_hit(
+        &mut session,
+        "UPDATE cache_lifecycle SET v=11 WHERE id=1",
+        0,
+    );
+    assert_cache_hit(
+        &mut session,
+        "UPDATE cache_lifecycle SET v=12 WHERE id=1",
+        1,
+    );
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    assert_eq!(
+        session
+            .run("SELECT v FROM cache_lifecycle WHERE id=1")
+            .unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(12)]])
+    );
+}
+
+#[test]
+fn session_plan_cache_session_and_instance_flush_have_distinct_lifetimes() {
+    let mut first = shared_cache_session(2);
+    let mut peer = Session::with_catalog(first.shared_catalog());
+    let mut other_instance = shared_cache_session(2);
+    for session in [&mut first, &mut peer, &mut other_instance] {
+        session.run("SET @id=1").unwrap();
+        session
+            .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        assert_cache_hit(session, "EXECUTE a USING @id", 0);
+    }
+    first.run("ADMIN FLUSH SESSION PLAN_CACHE").unwrap();
+    assert_eq!(first.physical_plan_cache.memory_usage(), 0);
+    assert_cache_hit(&mut first, "EXECUTE a USING @id", 0);
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
+    first.run("ADMIN FLUSH INSTANCE PLAN_CACHE").unwrap();
+    assert_cache_hit(&mut first, "EXECUTE a USING @id", 0);
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 0);
+    assert_cache_hit(&mut other_instance, "EXECUTE a USING @id", 1);
+}
+
+#[test]
+fn session_plan_cache_flush_preserves_gos_disabled_and_global_policy() {
+    let mut session = shared_cache_session(2);
+    session
+        .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+        .unwrap();
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    session
+        .run("SET tidb_enable_prepared_plan_cache=OFF")
+        .unwrap();
+    session.run("ADMIN FLUSH SESSION PLAN_CACHE").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "The plan cache is disable. So there no need to flush the plan cache".to_owned(),
+        ]]
+    );
+    assert!(session
+        .run("ADMIN FLUSH GLOBAL PLAN_CACHE")
+        .unwrap_err()
+        .to_string()
+        .contains("Do not support the 'admin flush global scope.'"));
+    session
+        .run("SET tidb_enable_prepared_plan_cache=ON")
+        .unwrap();
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+}
+
+#[test]
+fn session_plan_cache_sql_and_binary_close_share_gos_retention_policy() {
+    for (setting, expected_hit) in [("OFF", 0), ("ON", 1)] {
+        let mut session = shared_cache_session(2);
+        session
+            .run(&format!(
+                "SET tidb_ignore_prepared_cache_close_stmt={setting}"
+            ))
+            .unwrap();
+        session
+            .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        session
+            .run("PREPARE b FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+        assert_cache_hit(&mut session, "EXECUTE b USING @id", 1);
+        session.run("DEALLOCATE PREPARE a").unwrap();
+        assert_cache_hit(&mut session, "EXECUTE b USING @id", expected_hit);
+        let prepared = session
+            .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
+            .unwrap();
+        let plan = prepared.select_plan().unwrap();
+        let execution = session
+            .bind_cached_prepared_select(&plan, &[Datum::Int(1)])
+            .unwrap();
+        assert!(execution.cache_hit());
+        session.close_prepared(&prepared);
+        assert_cache_hit(&mut session, "EXECUTE b USING @id", expected_hit);
+    }
+}
+
+#[test]
+fn session_plan_cache_eviction_does_not_destroy_an_open_execution() {
+    let mut session = shared_cache_session(1);
+    let prepared = session
+        .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
+        .unwrap();
+    let execution = session
+        .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(2)])
+        .unwrap();
+    assert!(session.physical_plan_cache.memory_usage() > 0);
+    let other = session
+        .prepare_ast("SELECT id FROM cache_lifecycle WHERE id=?")
+        .unwrap();
+    session
+        .bind_cached_prepared_select(&other.select_plan().unwrap(), &[Datum::Int(1)])
+        .unwrap();
+    let output = session
+        .execute_prepared_record_set_for(&execution, &prepared)
+        .unwrap();
+    let crate::StmtOutput::Rows { rows, .. } = crate::tests_support::collect_record_set(output)
+    else {
+        panic!("cached select must return rows");
+    };
+    assert_eq!(rows, vec![vec![Datum::Int(20)]]);
+    assert!(!session
+        .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(1)])
+        .unwrap()
+        .cache_hit());
+}
+
+#[test]
+fn session_plan_cache_flush_and_close_initialize_the_configured_capacity() {
+    for initialize in [
+        "ADMIN FLUSH SESSION PLAN_CACHE",
+        "DEALLOCATE PREPARE unused",
+    ] {
+        let mut session = shared_cache_session(2);
+        session
+            .run("PREPARE unused FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        session.run(initialize).unwrap();
+        session.run("SET tidb_session_plan_cache_size=1").unwrap();
+        session
+            .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        session
+            .run("PREPARE b FROM 'SELECT id FROM cache_lifecycle WHERE v=?'")
+            .unwrap();
+        assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+        assert_cache_hit(&mut session, "EXECUTE b USING @id", 0);
+        assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+    }
+}
+
+#[test]
+fn session_plan_cache_close_deletes_only_the_current_environment_bucket() {
+    let mut session = shared_cache_session(4);
+    session.run("SET sql_mode=''").unwrap();
+    for name in ["a", "b"] {
+        session
+            .run(&format!(
+                "PREPARE {name} FROM 'SELECT v FROM cache_lifecycle WHERE id=?'"
+            ))
+            .unwrap();
+    }
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+    assert_cache_hit(&mut session, "EXECUTE b USING @id", 0);
+    session.run("DEALLOCATE PREPARE b").unwrap();
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
+    session.run("SET sql_mode=''").unwrap();
+    assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+}

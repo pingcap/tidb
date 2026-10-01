@@ -15,8 +15,8 @@
 //! The parsed statement retained by PREPARE and its execute-time bound clone.
 //!
 //! Go stores this as `PlanCacheStmt.PreparedAst`. The retained point-get and
-//! general SELECT descriptors are immutable; the protocol layer owns their
-//! cache state and rebuilds mutable execution state for every EXECUTE.
+//! general SELECT descriptors retain syntax and key metadata; the session
+//! owns cached physical plans and rebuilds execution state for every EXECUTE.
 
 use std::sync::Arc;
 
@@ -281,6 +281,7 @@ impl Session {
                         &catalog,
                         self.current_database(),
                     )?
+                    .map(|plan| plan.with_sql(sql))
                 } else {
                     None
                 },
@@ -293,6 +294,7 @@ impl Session {
                             self.current_database(),
                             &planner_context,
                         )
+                        .map(|plan| plan.with_sql(sql))
                     })
                     .flatten(),
             )
@@ -416,10 +418,12 @@ impl Session {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        self.configure_session_plan_cache();
         let lookup_start = std::time::Instant::now();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(cached) = plan.bind_cached_for_statement(
+                &self.physical_plan_cache,
                 values,
                 &catalog,
                 self.current_database(),
@@ -455,6 +459,7 @@ impl Session {
         // (plan_cache.go:366).
         tidb_planner::metrics::plan_cache_miss_counter(false).inc();
         plan.bind_for_statement(
+            &self.physical_plan_cache,
             values,
             &catalog,
             self.current_database(),
@@ -495,10 +500,12 @@ impl Session {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        self.configure_session_plan_cache();
         let lookup_start = std::time::Instant::now();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
+                &self.physical_plan_cache,
                 values,
                 &catalog,
                 self.current_database(),
@@ -519,6 +526,7 @@ impl Session {
         let ctx = self.statement_context_for_stmt(statement, false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
+            &self.physical_plan_cache,
             values,
             &catalog,
             self.current_database(),

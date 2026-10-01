@@ -152,6 +152,7 @@ fn index_join_deduplicates_go_prefix_lookup_keys_before_reading() {
 
 #[test]
 fn cached_index_join_compare_filter_rebinds_its_parameter() {
+    let cache = tidb_executor::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let ctx = tidb_executor::StmtContext::for_query();
     run_create_table_on("CREATE TABLE cij_outer (a BIGINT, lo BIGINT)", &mut catalog).unwrap();
@@ -182,6 +183,7 @@ fn cached_index_join_compare_filter_rebinds_its_parameter() {
     let execute = |parameter: i64| {
         let execution = plan
             .bind(
+                &cache,
                 &[Datum::Int(parameter)],
                 &catalog,
                 DEFAULT_DATABASE,
@@ -227,6 +229,7 @@ fn cached_index_join_compare_filter_rebinds_its_parameter() {
 
 #[test]
 fn fresh_and_cached_physical_execution_returns_the_same_rows_and_metadata() {
+    let cache = tidb_executor::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let ctx = tidb_executor::StmtContext::for_query();
     run_create_table_on(
@@ -267,6 +270,7 @@ fn fresh_and_cached_physical_execution_returns_the_same_rows_and_metadata() {
     );
     let execution = plan
         .bind(
+            &cache,
             &[Datum::Int(1), Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,

@@ -1013,6 +1013,8 @@ pub struct ClusterSessionFactory {
     /// Go's one `sessmgr.Manager` per TiDB instance: what `SHOW PROCESSLIST`
     /// reads and `KILL` reaches into.
     processes: ProcessRegistry,
+    /// Domain lifetime: independent of each connection's rebuilt catalog.
+    plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
     /// The coprocessor this node's sessions serve base-table scans with, when
     /// it was given one. `None` keeps every scan on the raw key/value path.
     cop_scans: Option<Arc<dyn PushdownScanner>>,
@@ -1158,6 +1160,7 @@ impl ClusterSessionFactory {
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
+            plan_cache_invalidation: Arc::default(),
             auto_ids,
             cop_scans: None,
             server_info: None,
@@ -3195,6 +3198,7 @@ impl ClusterSessionFactory {
         };
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
         session.set_index_usage_collector(self.stats_usage.index_usage_collector());
         if self
             .stats_usage_workers
@@ -7058,6 +7062,14 @@ impl QuerySession for ClusterServerSession {
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.session.select_database(name).map_err(map_error)
+    }
+
+    fn close_prepared(&mut self, statement: &crate::sql_node::PreparedStatement) {
+        if let crate::sql_node::PreparedStatement::General(general) = statement {
+            if let Some(prepared) = general.prepared_ast() {
+                self.session.close_prepared(prepared);
+            }
+        }
     }
 
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {

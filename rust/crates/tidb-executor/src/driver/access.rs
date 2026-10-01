@@ -30,6 +30,7 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
+use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::point_get_key::{names_no_rows, point_get_value, point_get_value_overflowed};
 use super::*;
 use std::sync::Arc;
@@ -382,10 +383,8 @@ pub struct PreparedPointGetExecution {
     cache_hit: bool,
 }
 
-/// The immutable half of a reusable SELECT plan.  This is the complete shared
-/// planner tree, not a hand-built executor shortcut: access paths, readers,
-/// joins, aggregation, sort, and every nested range-bearing physical node are
-/// retained together and rebuilt recursively on a cache hit.
+/// The retained SELECT syntax and key metadata. The session cache owns the
+/// complete physical operator tree and rebuilds its ranges on a cache hit.
 #[derive(Debug)]
 pub struct PreparedSelectPlan {
     current_database: String,
@@ -395,23 +394,14 @@ pub struct PreparedSelectPlan {
     parameter_count: usize,
     limit_parameter_orders: Vec<usize>,
     statement: tidb_ast::Stmt,
-    cached_plans: std::sync::Mutex<Vec<CachedSelectPlanEntry>>,
+    cache_key: String,
+    last_limit_values: std::sync::Mutex<Vec<u64>>,
     contains_sequence_functions: bool,
-}
-
-#[derive(Debug)]
-struct CachedSelectPlanEntry {
-    schema_version: u64,
-    stats_version_hash: u64,
-    environment: PreparedPlanCacheEnvironment,
-    parameter_types: Vec<PreparedParameterType>,
-    limit_values: Vec<u64>,
-    plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
 }
 
 /// Session facts in Go's prepared-plan cache key that can change physical
 /// planning without changing the statement, schema, or parameter types.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PreparedPlanCacheEnvironment {
     sql_mode: tidb_mysql::SqlMode,
     /// Go's `EnableNoBackslashEscapesInLike` plan-cache key bit. The
@@ -443,6 +433,17 @@ impl Default for PreparedPlanCacheEnvironment {
 }
 
 impl PreparedPlanCacheEnvironment {
+    pub(super) fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.time_zone.capacity()
+            + self.connection_charset.capacity()
+            + self.connection_collation.capacity()
+            + self.partition_prune_mode.capacity()
+            + self.isolation_read_engines.capacity()
+            + self.sql_select_limit.capacity()
+            + self.binding_sql.capacity()
+    }
+
     /// Builds the non-schema portion of Go's plan-cache environment key.
     #[must_use]
     pub fn new(
@@ -602,6 +603,34 @@ pub struct PreparedSelectExecution {
 }
 
 impl PreparedSelectPlan {
+    /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
+    #[must_use]
+    pub fn with_sql(mut self, sql: &str) -> Self {
+        self.cache_key = super::plan_cache::statement_key(&self.current_database, sql);
+        self
+    }
+
+    /// Go DEALLOCATE/COM_STMT_CLOSE deletes the current environment's key,
+    /// including every parameter-type variant, unless the session retains it.
+    pub fn discard_cached_plan(
+        &self,
+        cache: &SessionPlanCache,
+        catalog: &Catalog,
+        environment: &PreparedPlanCacheEnvironment,
+    ) {
+        cache.delete(&PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version: catalog.metadata_version(),
+            stats_version_hash: self.stats_version_hash(catalog, environment),
+            environment: environment.clone(),
+            limit_values: self
+                .last_limit_values
+                .lock()
+                .expect("prepared limits poisoned")
+                .clone(),
+        });
+    }
+
     /// The immutable statement retained at PREPARE time.
     #[must_use]
     pub const fn statement(&self) -> &tidb_ast::Stmt {
@@ -628,6 +657,7 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -635,6 +665,7 @@ impl PreparedSelectPlan {
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
         self.bind_for_statement(
+            cache,
             values,
             catalog,
             current_database,
@@ -650,6 +681,7 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn bind_for_statement(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -658,6 +690,7 @@ impl PreparedSelectPlan {
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
         self.bind_inner(
+            cache,
             values,
             catalog,
             current_database,
@@ -673,12 +706,14 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn bind_cached(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
         self.bind_cached_for_statement(
+            cache,
             values,
             catalog,
             current_database,
@@ -692,6 +727,7 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn bind_cached_for_statement(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -699,6 +735,7 @@ impl PreparedSelectPlan {
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
         self.bind_inner(
+            cache,
             values,
             catalog,
             current_database,
@@ -710,6 +747,7 @@ impl PreparedSelectPlan {
 
     fn bind_inner(
         self: &Arc<Self>,
+        cache: &SessionPlanCache,
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
@@ -723,10 +761,8 @@ impl PreparedSelectPlan {
         if !matches!(statement, tidb_ast::Stmt::Query(_)) {
             return None;
         }
-        let parameter_types = values
-            .iter()
-            .map(PreparedParameterType::of)
-            .collect::<Vec<_>>();
+        let parameter_types: Arc<[PreparedParameterType]> =
+            values.iter().map(PreparedParameterType::of).collect();
         let limit_values = self
             .limit_parameter_orders
             .iter()
@@ -736,23 +772,29 @@ impl PreparedSelectPlan {
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
+        self.last_limit_values
+            .lock()
+            .ok()?
+            .clone_from(&limit_values);
         let schema_version = catalog.metadata_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
-        let mut cached_plans = self.cached_plans.lock().ok()?;
-        let cached = cached_plans.iter().position(|entry| {
-            entry.schema_version == schema_version
-                && entry.stats_version_hash == stats_version_hash
-                && entry.environment == *environment
-                && prepared_parameter_types_compatible(&entry.parameter_types, &parameter_types)
-                && entry.limit_values == limit_values
-        });
+        let cache_key = PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version,
+            stats_version_hash,
+            environment: environment.clone(),
+            limit_values,
+        };
+        let cached = match cache.get(&cache_key, &parameter_types) {
+            Some(CachedPhysicalPlan::Select(plan)) => Some(plan),
+            _ => None,
+        };
         if cached.is_none() {
             ctx?;
         }
         let parameters: Arc<[Datum]> = Arc::from(values);
         let (cached_plan, generation, cache_hit) = match cached {
-            Some(index) => {
-                let plan = Arc::clone(&cached_plans[index].plan);
+            Some(plan) => {
                 let generation = plan.lock().ok()?.bind(values);
                 match generation {
                     Some(generation) => (plan, generation, true),
@@ -760,11 +802,7 @@ impl PreparedSelectPlan {
                         // Go rejects a cache entry whose in-place range rebuild
                         // fails and generates a fresh plan. Do not leave a
                         // partially rebuilt tree available to the next execute.
-                        cached_plans.remove(index);
-                        // Go `plan_cache_lru.go` delete arm (`2pc`-style book):
-                        // every dropped plan decrements the session plan-num
-                        // gauge.
-                        tidb_planner::metrics::plan_cache_instance_num_counter(false).sub(1.0);
+                        cache.delete(&cache_key);
                         return None;
                     }
                 }
@@ -776,19 +814,6 @@ impl PreparedSelectPlan {
                     return None;
                 };
                 let query = query.into_inner();
-                let stale_before_retain = cached_plans.len();
-                cached_plans.retain(|entry| {
-                    entry.schema_version == schema_version
-                        && entry.stats_version_hash == stats_version_hash
-                        && entry.environment == *environment
-                });
-                // Go `LRUPlanCache.DeleteAll`/environment invalidation decrements
-                // the plan-num gauge by every evicted entry.
-                let stale_removed = stale_before_retain - cached_plans.len();
-                if stale_removed > 0 {
-                    tidb_planner::metrics::plan_cache_instance_num_counter(false)
-                        .sub(stale_removed as f64);
-                }
                 let (mut plan, cacheable) = super::planner_bridge::cached_query_plan(
                     &query,
                     catalog,
@@ -800,18 +825,11 @@ impl PreparedSelectPlan {
                 let generation = if cacheable { plan.bind(values)? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 if cacheable {
-                    cached_plans.push(CachedSelectPlanEntry {
-                        schema_version,
-                        stats_version_hash,
-                        environment: environment.clone(),
+                    cache.put(
+                        cache_key,
                         parameter_types,
-                        limit_values,
-                        plan: Arc::clone(&plan),
-                    });
-                    // Go `updateInstancePlanNum` put arm
-                    // (`plan_cache_lru.go:276`): one cached plan increments
-                    // the session plan-num gauge.
-                    tidb_planner::metrics::plan_cache_instance_num_counter(false).add(1.0);
+                        CachedPhysicalPlan::Select(Arc::clone(&plan)),
+                    );
                 }
                 (plan, generation, false)
             }
@@ -1347,7 +1365,8 @@ pub fn build_prepared_select_plan(
         parameter_count,
         limit_parameter_orders,
         statement: stmt.clone(),
-        cached_plans: std::sync::Mutex::new(Vec::new()),
+        last_limit_values: std::sync::Mutex::default(),
+        cache_key: super::plan_cache::statement_key(current_database, &stmt.restore()),
         contains_sequence_functions: statement_contains_sequence_functions(stmt),
     })
 }

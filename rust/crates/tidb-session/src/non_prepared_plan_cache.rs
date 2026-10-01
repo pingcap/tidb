@@ -19,7 +19,7 @@
 //! `extractTableNames`, and the `nonPreparedPlanCacheableChecker` visitor)
 //! plus Go `getPlanFromNonPreparedPlanCache`: literal parameterization creates
 //! one retained marker-bearing statement, and the same `PreparedSelectPlan`
-//! used by SQL/binary PREPARE owns its physical entries. Parameter types,
+//! used by SQL/binary PREPARE uses the shared session physical-entry owner. Parameter types,
 //! schema/statistics versions, matched binding SQL, admission, recursive range
 //! rebuild, and executor construction therefore have one implementation.
 
@@ -78,69 +78,30 @@ pub(crate) struct ParameterizedSelect {
     pub(crate) values: Vec<Datum>,
 }
 
-/// The per-session parameterized-statement LRU. Each value owns the same
-/// general physical-plan cache used by PREPARE.
+/// Go SessionVars.nonPreparedPlanCacheStmts: syntax metadata only, with one
+/// definition LRU shared by SELECT and DML. Physical entries live in the
+/// session owner independently of metadata eviction.
+#[derive(Clone)]
+pub(crate) enum NonPreparedPlan {
+    Select(std::sync::Arc<PreparedSelectPlan>),
+    Dml(std::sync::Arc<PreparedDmlPlan>),
+}
+
 #[derive(Default)]
 pub(crate) struct NonPreparedPlanCache {
-    plans: Option<SimpleLruCache<String, std::sync::Arc<PreparedSelectPlan>>>,
-    capacity: usize,
+    plans: Option<SimpleLruCache<String, NonPreparedPlan>>,
 }
 
 impl NonPreparedPlanCache {
-    pub(crate) fn resize(&mut self, capacity: usize) {
-        if self.capacity == capacity {
-            return;
-        }
-        match self.plans.as_mut() {
-            Some(plans) if capacity > 0 => {
-                let _ = plans.set_capacity(capacity);
-            }
-            _ => self.plans = (capacity > 0).then(|| SimpleLruCache::new(capacity)),
-        }
-        self.capacity = capacity;
-    }
-
-    pub(crate) fn get(&mut self, key: &str) -> Option<std::sync::Arc<PreparedSelectPlan>> {
+    pub(crate) fn get(&mut self, key: &str) -> Option<NonPreparedPlan> {
         self.plans.as_mut()?.get(key).cloned()
     }
 
-    pub(crate) fn put(&mut self, key: String, plan: std::sync::Arc<PreparedSelectPlan>) {
-        if let Some(plans) = self.plans.as_mut() {
-            plans.put(key, plan);
-        }
-    }
-}
-
-/// The per-session parameterized-DML-statement LRU over the same
-/// general physical-plan cache PREPARE uses for DML roots.
-#[derive(Default)]
-pub(crate) struct NonPreparedDmlCache {
-    plans: Option<SimpleLruCache<String, std::sync::Arc<PreparedDmlPlan>>>,
-    capacity: usize,
-}
-
-impl NonPreparedDmlCache {
-    pub(crate) fn resize(&mut self, capacity: usize) {
-        if self.capacity == capacity {
-            return;
-        }
-        match self.plans.as_mut() {
-            Some(plans) if capacity > 0 => {
-                let _ = plans.set_capacity(capacity);
-            }
-            _ => self.plans = (capacity > 0).then(|| SimpleLruCache::new(capacity)),
-        }
-        self.capacity = capacity;
-    }
-
-    pub(crate) fn get(&mut self, key: &str) -> Option<std::sync::Arc<PreparedDmlPlan>> {
-        self.plans.as_mut()?.get(key).cloned()
-    }
-
-    pub(crate) fn put(&mut self, key: String, plan: std::sync::Arc<PreparedDmlPlan>) {
-        if let Some(plans) = self.plans.as_mut() {
-            plans.put(key, plan);
-        }
+    pub(crate) fn put(&mut self, key: String, plan: NonPreparedPlan, capacity: usize) {
+        // Go allocates the metadata LRU at the first admitted insertion.
+        self.plans
+            .get_or_insert_with(|| SimpleLruCache::new(capacity))
+            .put(key, plan);
     }
 }
 
@@ -999,8 +960,6 @@ impl crate::Session {
         // (cacheable=false after `Accept`); clause-level fast-check refusals
         // return their reason without touching any counter. The
         // classification rides on `Refusal::counted`.
-        let capacity = self.non_prepared_plan_cache_capacity();
-        self.non_prepared_plan_cache.resize(capacity);
         let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
         let string_collation = self
             .vars
@@ -1054,8 +1013,6 @@ impl crate::Session {
         {
             return None;
         }
-        let capacity = self.non_prepared_plan_cache_capacity();
-        self.non_prepared_dml_cache.resize(capacity);
         let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
         let string_collation = self
             .vars
@@ -1098,8 +1055,9 @@ impl crate::Session {
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
         let lookup_start = std::time::Instant::now();
-        let plan = match self.non_prepared_dml_cache.get(&parameterized.key) {
-            Some(plan) => plan,
+        let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
+            Some(NonPreparedPlan::Dml(plan)) => plan,
+            Some(_) => return None,
             None => {
                 let plan = {
                     let catalog = self.lock_catalog().ok()?;
@@ -1111,15 +1069,20 @@ impl crate::Session {
                     )
                     .ok()??
                 };
-                let plan = std::sync::Arc::new(plan);
-                self.non_prepared_dml_cache
-                    .put(parameterized.key.clone(), std::sync::Arc::clone(&plan));
+                let plan = std::sync::Arc::new(plan.with_sql(&parameterized.key));
+                self.non_prepared_plan_cache.put(
+                    parameterized.key.clone(),
+                    NonPreparedPlan::Dml(std::sync::Arc::clone(&plan)),
+                    self.session_plan_cache_capacity(),
+                );
                 plan
             }
         };
+        self.configure_session_plan_cache();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
+                &self.physical_plan_cache,
                 &parameterized.values,
                 &catalog,
                 self.current_database(),
@@ -1139,6 +1102,7 @@ impl crate::Session {
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
+            &self.physical_plan_cache,
             &parameterized.values,
             &catalog,
             self.current_database(),
@@ -1164,7 +1128,8 @@ impl crate::Session {
         let lookup_start = std::time::Instant::now();
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
         let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
-            Some(plan) => plan,
+            Some(NonPreparedPlan::Select(plan)) => plan,
+            Some(_) => return None,
             None => {
                 let ctx = self.statement_context(false);
                 let plan = {
@@ -1177,12 +1142,16 @@ impl crate::Session {
                         &ctx,
                     )?
                 };
-                let plan = std::sync::Arc::new(plan);
-                self.non_prepared_plan_cache
-                    .put(parameterized.key.clone(), std::sync::Arc::clone(&plan));
+                let plan = std::sync::Arc::new(plan.with_sql(&parameterized.key));
+                self.non_prepared_plan_cache.put(
+                    parameterized.key.clone(),
+                    NonPreparedPlan::Select(std::sync::Arc::clone(&plan)),
+                    self.session_plan_cache_capacity(),
+                );
                 plan
             }
         };
+        self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
             tidb_planner::metrics::plan_cache_lookup_duration(false)
                 .observe(start.elapsed().as_secs_f64());
@@ -1190,6 +1159,7 @@ impl crate::Session {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
+                &self.physical_plan_cache,
                 &parameterized.values,
                 &catalog,
                 self.current_database(),
@@ -1209,6 +1179,7 @@ impl crate::Session {
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         let execution = plan.bind_for_statement(
+            &self.physical_plan_cache,
             &parameterized.values,
             &catalog,
             self.current_database(),
@@ -1248,7 +1219,7 @@ impl crate::Session {
         !hint_only || hints.use_plan_cache
     }
 
-    fn non_prepared_plan_cache_capacity(&self) -> usize {
+    pub(crate) fn session_plan_cache_capacity(&self) -> usize {
         // Go's capacity comes from the unified `tidb_session_plan_cache_size`
         // ONLY (`session.go:2927`, `NewSimpleLRUCache(uint(s.SessionPlanCacheSize))`).
         // The deprecated `tidb_non_prepared_plan_cache_size` writes an orphan
@@ -1256,7 +1227,7 @@ impl crate::Session {
         // nothing it wouldn't. The `unwrap_or(100)` is the defensive default
         // matching `DefTiDBSessionPlanCacheSize`.
         self.vars
-            .get_system("tidb_session_plan_cache_size")
+            .system_value("tidb_session_plan_cache_size")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(100)

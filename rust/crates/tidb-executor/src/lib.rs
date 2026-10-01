@@ -236,6 +236,7 @@ pub use ddl_sequence::{
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::infoschema_meta;
+pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
         build_prepared_point_get_plan, build_prepared_select_plan, open_prepared_point_get,

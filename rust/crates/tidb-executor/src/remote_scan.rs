@@ -3148,6 +3148,7 @@ mod tests {
     /// planning.
     #[test]
     fn a_cached_clustered_range_sends_the_cop_projection_after_rebuild() {
+        let cache = crate::SessionPlanCache::default();
         let mut fixture = clustered_fixture();
         for a in 1..=10 {
             fixture
@@ -3179,7 +3180,14 @@ mod tests {
             ),
         ] {
             let execution = plan
-                .bind(&bounds, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .bind(
+                    &cache,
+                    &bounds,
+                    &catalog,
+                    DEFAULT_DATABASE,
+                    &ctx,
+                    &environment,
+                )
                 .expect("the integer bounds bind");
             assert_eq!(execution.cache_hit(), cache_hit);
             let (_, rows) =

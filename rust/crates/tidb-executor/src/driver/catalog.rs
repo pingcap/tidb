@@ -182,6 +182,8 @@ fn enqueue_sync_load_failures(
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct Catalog {
+    /// Domain-scoped plan-cache flush generation, shared by catalog snapshots.
+    plan_cache_epoch: Arc<super::plan_cache::PlanCacheInvalidation>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
     databases: Arc<HashMap<String, Arc<Database>>>,
@@ -492,6 +494,7 @@ impl CatalogSnapshot {
 
     fn restore(&self, owner: &Catalog) -> Catalog {
         Catalog {
+            plan_cache_epoch: Arc::clone(&owner.plan_cache_epoch),
             databases: Arc::clone(&self.databases),
             max_index_length: self.max_index_length,
             enable_enum_length_limit: self.enable_enum_length_limit,
@@ -655,6 +658,7 @@ impl Default for Catalog {
             next_table_id: 0,
             version: 0,
             metadata_version: next_metadata_version(),
+            plan_cache_epoch: Arc::default(),
             latest_index_schema: std::sync::OnceLock::new(),
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
@@ -1699,6 +1703,12 @@ impl Catalog {
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Shared invalidation owner for embedded sessions over this catalog.
+    /// Cluster servers install their domain owner directly on each session.
+    pub fn plan_cache_invalidation(&self) -> Arc<super::plan_cache::PlanCacheInvalidation> {
+        Arc::clone(&self.plan_cache_epoch)
     }
 
     /// Process-local identity of this schema metadata image. Unlike a local

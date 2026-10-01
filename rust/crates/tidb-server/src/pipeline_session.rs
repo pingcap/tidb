@@ -461,6 +461,15 @@ impl QuerySession for PipelineServerSession {
         }))
     }
 
+    /// Release physical entries for COM_STMT_CLOSE using session cache policy.
+    fn close_prepared(&mut self, statement: &crate::sql_node::PreparedStatement) {
+        if let crate::sql_node::PreparedStatement::General(general) = statement {
+            if let Some(prepared) = general.prepared_ast() {
+                self.session.close_prepared(prepared);
+            }
+        }
+    }
+
     /// Go reports a prepared statement's marker count and result columns at
     /// PREPARE time. The columns come from planning the statement with every
     /// marker bound to NULL, which is side-effect free for a query; a

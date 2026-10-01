@@ -92,12 +92,11 @@ pub(crate) struct PreparedStatement {
     /// at `PREPARE` by `IsASTCacheable` -- an uncacheable statement never
     /// reports a hit, and never pays the walk again.
     cacheable: Result<(), String>,
-    /// The general shared-planner SELECT cache. Its first EXECUTE generates a
-    /// physical tree for the current schema and parameter types; later hits
-    /// clone and recursively rebuild that tree.
+    /// SELECT syntax and cache-key metadata. Physical entries belong to the
+    /// session cache; hits rebuild its tree in place before execution.
     select_plan: Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>>,
-    /// The same cache-owned physical root for INSERT/UPDATE/DELETE. Its
-    /// `SelectPlan` is rebuilt and then consumed by the ordinary DML executor.
+    /// INSERT/UPDATE/DELETE syntax and cache-key metadata. The ordinary DML
+    /// executor consumes the physical root from the same session cache.
     dml_plan: Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
@@ -199,7 +198,7 @@ impl Session {
                     self.current_database(),
                     &planner_context,
                 )
-                .map(std::sync::Arc::new)
+                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
             } else {
                 None
             };
@@ -210,7 +209,7 @@ impl Session {
                     &catalog,
                     self.current_database(),
                 )?
-                .map(std::sync::Arc::new)
+                .map(|plan| std::sync::Arc::new(plan.with_sql(&text)))
             } else {
                 None
             };
@@ -383,7 +382,13 @@ impl Session {
     /// parses to the same statement and behaves identically.
     pub(crate) fn deallocate_prepared_statement(&mut self, name: &str) -> Result<(), DriverError> {
         match self.prepared_statements.remove(name) {
-            Some(_) => Ok(()),
+            Some(prepared) => {
+                self.release_prepared_plans(
+                    prepared.select_plan.as_deref(),
+                    prepared.dml_plan.as_deref(),
+                );
+                Ok(())
+            }
             None => Err(DriverError::PreparedStmtNotFound),
         }
     }

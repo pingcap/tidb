@@ -389,6 +389,7 @@ impl PreparedStatementRegistry {
         session: &mut S,
     ) -> Option<ConnectionPreparedStatement> {
         let mut statement = self.statements.remove(&statement_id)?;
+        session.close_prepared(&statement.statement);
         if statement.bound_long_data_bytes > 0 {
             session.release_long_data(statement.bound_long_data_bytes);
             statement.bound_long_data_bytes = 0;

@@ -49,7 +49,8 @@ pub struct PlanCacheabilityContext {
     pub max_plan_size: u64,
 }
 
-fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
+/// The physical tree footprint used by cache admission and session accounting.
+pub fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
     let mut total = u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX);
     let hidden = match plan {
         PhysicalPlan::CTE(cte) => std::iter::once(cte.seed_plan.as_ref())

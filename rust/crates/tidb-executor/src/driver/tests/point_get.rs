@@ -107,6 +107,7 @@ impl TableStorage for BatchGetCountingStorage {
 
 #[test]
 fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
@@ -131,6 +132,7 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
     let environment = PreparedPlanCacheEnvironment::default();
     let first = plan
         .bind(
+            &cache,
             &[Datum::Int(1), Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
@@ -142,6 +144,7 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
     drop(first);
     let cached = plan
         .bind(
+            &cache,
             &[Datum::Int(2), Datum::Int(3)],
             &catalog,
             DEFAULT_DATABASE,
@@ -158,6 +161,7 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 
 #[test]
 fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
+    let cache = crate::SessionPlanCache::default();
     use tidb_planner::physical::PhysicalPlan;
 
     fn contains_lookup(plan: &PhysicalPlan) -> bool {
@@ -180,31 +184,19 @@ fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
         &ctx,
     )
     .unwrap();
-    scale_analyzed_tpcc_table(
-        &mut catalog,
-        "prepared_in_stats",
-        10,
-        &[("k", 10)],
-        &ctx,
-    );
+    scale_analyzed_tpcc_table(&mut catalog, "prepared_in_stats", 10, &[("k", 10)], &ctx);
 
-    let statement = tidb_parser::parse(
-        "SELECT id, v FROM prepared_in_stats WHERE k IN (?,?,?,?,?,?,?,?,?,?)",
-    )
-    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT id, v FROM prepared_in_stats WHERE k IN (?,?,?,?,?,?,?,?,?,?)")
+            .unwrap();
     let plan = std::sync::Arc::new(
-        build_prepared_select_plan(
-            &statement,
-            10,
-            &catalog,
-            DEFAULT_DATABASE,
-            &ctx,
-        )
-        .expect("the prepared IN query is cacheable"),
+        build_prepared_select_plan(&statement, 10, &catalog, DEFAULT_DATABASE, &ctx)
+            .expect("the prepared IN query is cacheable"),
     );
     let values = (1..=10).map(Datum::Int).collect::<Vec<_>>();
     let execution = plan
         .bind(
+            &cache,
             &values,
             &catalog,
             DEFAULT_DATABASE,
@@ -217,6 +209,7 @@ fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
 
 #[test]
 fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
@@ -254,6 +247,7 @@ fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
     let environment = PreparedPlanCacheEnvironment::default();
     let first = plan
         .bind(
+            &cache,
             &[Datum::Int(0), Datum::Int(0)],
             &catalog,
             DEFAULT_DATABASE,
@@ -275,6 +269,7 @@ fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
 
     let second = plan
         .bind(
+            &cache,
             &[Datum::Int(2), Datum::Int(-1)],
             &catalog,
             DEFAULT_DATABASE,
@@ -332,6 +327,7 @@ fn composite_unique_prefix_is_not_a_point_get() {
 
 #[test]
 fn cached_physical_index_readers_build_without_legacy_planner() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let ctx = crate::StmtContext::for_query();
     crate::run_create_table_on(
@@ -380,7 +376,14 @@ fn cached_physical_index_readers_build_without_legacy_planner() {
         .enumerate()
         {
             let execution = plan
-                .bind(&values, &catalog, DEFAULT_DATABASE, &ctx, &environment)
+                .bind(
+                    &cache,
+                    &values,
+                    &catalog,
+                    DEFAULT_DATABASE,
+                    &ctx,
+                    &environment,
+                )
                 .expect("the cached index ranges rebuild");
             assert_eq!(execution.cache_hit(), execution_index != 0);
             let expected = run_select_on(ordinary, &catalog, &ctx).unwrap();
@@ -397,6 +400,7 @@ fn cached_physical_index_readers_build_without_legacy_planner() {
 /// mix.
 #[test]
 fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = Catalog::default();
     let environment = PreparedPlanCacheEnvironment::default();
     crate::run_create_table_on(
@@ -480,6 +484,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
             let execution = plan
                 .bind(
+                    &cache,
                     &values,
                     &catalog,
                     DEFAULT_DATABASE,
@@ -541,6 +546,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
         let expected = run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
         let execution = plan
             .bind(
+                &cache,
                 &values,
                 &catalog,
                 DEFAULT_DATABASE,
@@ -580,6 +586,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     ] {
         let execution = plan
             .bind(
+                &cache,
                 &values,
                 &catalog,
                 DEFAULT_DATABASE,
@@ -591,6 +598,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     }
     assert!(plan
         .bind(
+            &cache,
             &[Datum::UInt(10_001)],
             &catalog,
             DEFAULT_DATABASE,
@@ -607,6 +615,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     );
     let first_changed = plan
         .bind(
+            &cache,
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
@@ -617,6 +626,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     assert!(!first_changed.cache_hit());
     let second_changed = plan
         .bind(
+            &cache,
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,

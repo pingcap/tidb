@@ -1262,6 +1262,9 @@ pub trait QuerySession {
         0
     }
 
+    /// Release physical entries for COM_STMT_CLOSE using session cache policy.
+    fn close_prepared(&mut self, _statement: &PreparedStatement) {}
+
     /// Prepares a statement of any shape, reporting the marker count and the
     /// result columns a PREPARE sends.
     ///

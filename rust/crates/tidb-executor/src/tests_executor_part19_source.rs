@@ -68,12 +68,14 @@ fn prepared_select_plan(
 }
 
 fn cached_select_rows(
+    cache: &crate::SessionPlanCache,
     plan: &Arc<crate::PreparedSelectPlan>,
     values: &[Datum],
     catalog: &mut Catalog,
 ) -> (bool, Vec<Vec<Datum>>) {
     let execution = plan
         .bind(
+            cache,
             values,
             catalog,
             DEFAULT_DATABASE,
@@ -88,6 +90,7 @@ fn cached_select_rows(
 }
 
 fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (bool, u64) {
+    let cache = crate::SessionPlanCache::default();
     let statement = tidb_parser::parse(sql).expect("prepared DML parses");
     let plan = Arc::new(
         build_prepared_dml_plan(&statement, values.len(), catalog, DEFAULT_DATABASE)
@@ -96,6 +99,7 @@ fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (
     );
     let execution = plan
         .bind(
+            &cache,
             values,
             catalog,
             DEFAULT_DATABASE,
@@ -146,13 +150,15 @@ fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (
 /// `pkg/executor/test/plancache/plan_cache_test.go:36::TestPointGetPreparedPlan`.
 #[test]
 fn point_get_prepared_plan_rebinds_values_and_reports_hits() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan("SELECT v FROM prepared_part19 WHERE id = ?", 1, &catalog);
-    let (first_hit, first_rows) = cached_select_rows(&plan, &[Datum::Int(1)], &mut catalog);
+    let (first_hit, first_rows) = cached_select_rows(&cache, &plan, &[Datum::Int(1)], &mut catalog);
     assert!(!first_hit);
     assert_eq!(first_rows, vec![vec![Datum::Int(10)]]);
 
-    let (second_hit, second_rows) = cached_select_rows(&plan, &[Datum::Int(3)], &mut catalog);
+    let (second_hit, second_rows) =
+        cached_select_rows(&cache, &plan, &[Datum::Int(3)], &mut catalog);
     assert!(second_hit);
     assert_eq!(second_rows, vec![vec![Datum::Int(30)]]);
 }
@@ -182,6 +188,7 @@ fn point_update_prepared_plan_reuses_the_ordinary_cached_update_root() {
 /// `plan_cache_test.go:452::TestPreparedPlanCachePlanSelectionRegressions`.
 #[test]
 fn prepared_plan_cache_selection_rebinds_a_range_without_replanning_the_shape() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan(
         "SELECT v FROM prepared_part19 WHERE id BETWEEN ? AND ? ORDER BY id",
@@ -189,12 +196,12 @@ fn prepared_plan_cache_selection_rebinds_a_range_without_replanning_the_shape() 
         &catalog,
     );
     let (first_hit, first_rows) =
-        cached_select_rows(&plan, &[Datum::Int(1), Datum::Int(2)], &mut catalog);
+        cached_select_rows(&cache, &plan, &[Datum::Int(1), Datum::Int(2)], &mut catalog);
     assert!(!first_hit);
     assert_eq!(first_rows, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
 
     let (second_hit, second_rows) =
-        cached_select_rows(&plan, &[Datum::Int(2), Datum::Int(3)], &mut catalog);
+        cached_select_rows(&cache, &plan, &[Datum::Int(2), Datum::Int(3)], &mut catalog);
     assert!(second_hit);
     assert_eq!(
         second_rows,
@@ -205,17 +212,19 @@ fn prepared_plan_cache_selection_rebinds_a_range_without_replanning_the_shape() 
 /// `plan_cache_test.go:574::TestPreparedPlanCacheOperators`.
 #[test]
 fn prepared_plan_cache_reuses_a_parameterized_operator_tree() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan(
         "SELECT v FROM prepared_part19 WHERE id > ? ORDER BY id",
         1,
         &catalog,
     );
-    let (first_hit, first_rows) = cached_select_rows(&plan, &[Datum::Int(1)], &mut catalog);
+    let (first_hit, first_rows) = cached_select_rows(&cache, &plan, &[Datum::Int(1)], &mut catalog);
     assert!(!first_hit);
     assert_eq!(first_rows, vec![vec![Datum::Int(20)], vec![Datum::Int(30)]]);
 
-    let (second_hit, second_rows) = cached_select_rows(&plan, &[Datum::Int(2)], &mut catalog);
+    let (second_hit, second_rows) =
+        cached_select_rows(&cache, &plan, &[Datum::Int(2)], &mut catalog);
     assert!(second_hit);
     assert_eq!(second_rows, vec![vec![Datum::Int(30)]]);
 }
@@ -223,16 +232,17 @@ fn prepared_plan_cache_reuses_a_parameterized_operator_tree() {
 /// `pkg/executor/test/seqtest/prepared_test.go:39::TestPrepared`.
 #[test]
 fn prepared_statement_select_reuses_the_executor_plan() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan(
         "SELECT id, v FROM prepared_part19 WHERE id = ?",
         1,
         &catalog,
     );
-    let (first_hit, rows) = cached_select_rows(&plan, &[Datum::Int(1)], &mut catalog);
+    let (first_hit, rows) = cached_select_rows(&cache, &plan, &[Datum::Int(1)], &mut catalog);
     assert!(!first_hit);
     assert_eq!(rows, vec![vec![Datum::Int(1), Datum::Int(10)]]);
-    let (second_hit, rows) = cached_select_rows(&plan, &[Datum::Int(2)], &mut catalog);
+    let (second_hit, rows) = cached_select_rows(&cache, &plan, &[Datum::Int(2)], &mut catalog);
     assert!(second_hit);
     assert_eq!(rows, vec![vec![Datum::Int(2), Datum::Int(20)]]);
 }
@@ -240,13 +250,15 @@ fn prepared_statement_select_reuses_the_executor_plan() {
 /// `prepared_test.go:268::TestPreparedLimitOffset`.
 #[test]
 fn prepared_limit_offset_binds_integer_parameters() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan(
         "SELECT id FROM prepared_part19 ORDER BY id LIMIT ? OFFSET ?",
         2,
         &catalog,
     );
-    let (hit, rows) = cached_select_rows(&plan, &[Datum::Int(1), Datum::Int(1)], &mut catalog);
+    let (hit, rows) =
+        cached_select_rows(&cache, &plan, &[Datum::Int(1), Datum::Int(1)], &mut catalog);
     assert!(!hit);
     assert_eq!(rows, vec![vec![Datum::Int(2)]]);
 }
@@ -254,19 +266,20 @@ fn prepared_limit_offset_binds_integer_parameters() {
 /// `prepared_test.go:300::TestPrepareWithAggregation`.
 #[test]
 fn prepared_aggregation_rebinds_its_filter_parameter() {
+    let cache = crate::SessionPlanCache::default();
     let mut catalog = prepared_catalog();
     let plan = prepared_select_plan(
         "SELECT SUM(v) FROM prepared_part19 WHERE id > ?",
         1,
         &catalog,
     );
-    let (first_hit, rows) = cached_select_rows(&plan, &[Datum::Int(1)], &mut catalog);
+    let (first_hit, rows) = cached_select_rows(&cache, &plan, &[Datum::Int(1)], &mut catalog);
     assert!(!first_hit);
     assert_eq!(
         rows,
         vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(50))]]
     );
-    let (second_hit, rows) = cached_select_rows(&plan, &[Datum::Int(2)], &mut catalog);
+    let (second_hit, rows) = cached_select_rows(&cache, &plan, &[Datum::Int(2)], &mut catalog);
     assert!(second_hit);
     assert_eq!(
         rows,

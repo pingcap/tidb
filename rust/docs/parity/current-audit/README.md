@@ -38,6 +38,10 @@ virtual tables served from fixtures or constants. Seven further owner gaps
 are source-confirmed with explicit runtime limits. No production fix or new
 package acceptance is included in this follow-up.
 
+The [shared session cache repair](shared-session-plan-cache-repair.md) removes
+C01's separate physical owners and metadata LRU, including close and flush
+callers. C02's instance physical cache and full package acceptance remain open.
+
 | Finding | Evidence and Go ownership | Status |
 | --- | --- | --- |
 | Partial TiPB declarations and stale dependency selection | Four local projections omitted 157 declarations from master's pin; the old checker validated only locally present declarations against this branch's older pin. `Executor` decode discarded a valid ExplainForConnection body. | Fixed by complete upstream input ownership; individual gaps listed below. Source gate, original Go tests, Rust wire tests and consumers validated. |
@@ -369,3 +373,11 @@ was dispatched and no package-complete parity or performance claim is made.
 The [shared UPDATE owner repair](shared-update-owner-repair.md) removes the
 UPDATE/ODKU write bypasses and executor undo logs, with fail-before/pass-after
 regressions. E01 is repaired; E02 still requires FK plan integration.
+
+The cache-owner continuation additionally reproduced two executor failures on
+unchanged integration `5fcc321d48`: `prepared_in_predicate_uses_filtered_stats_for_cache_admission`
+and `cached_index_join_compare_filter_rebinds_its_parameter`. Their original
+assertions remain enabled. See the [cache repair receipt](shared-session-plan-cache-repair.md)
+for the commands and independent baseline evidence. The broader MySQL pipeline
+test also reproduces its existing account-name quoting assertion on unchanged
+source; this is not counted as a passing protocol suite.

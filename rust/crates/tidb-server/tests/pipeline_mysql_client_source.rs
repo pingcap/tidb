@@ -2430,3 +2430,81 @@ fn the_ok_packet_reports_the_statements_warning_count() {
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
+
+#[test]
+fn session_plan_cache_binary_close_uses_session_retention_policy() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_configured_store(&store),
+            &store,
+            &Arc::new(ConnectionTracker::default()),
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+        .unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader);
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE close_cache (id INT PRIMARY KEY, v INT)",
+    );
+    run_write(
+        &mut client,
+        &mut reader,
+        "INSERT INTO close_cache VALUES (1,10),(2,20)",
+    );
+    for (setting, expected_hit) in [("OFF", "0"), ("ON", "1")] {
+        run_write(
+            &mut client,
+            &mut reader,
+            &format!("SET tidb_ignore_prepared_cache_close_stmt={setting}"),
+        );
+        run_write(&mut client, &mut reader, "ADMIN FLUSH SESSION PLAN_CACHE");
+        let (first, _, _) = prepare_statement(
+            &mut client,
+            &mut reader,
+            "SELECT v FROM close_cache WHERE id>=?",
+        );
+        let (second, _, _) = prepare_statement(
+            &mut client,
+            &mut reader,
+            "SELECT v FROM close_cache WHERE id>=?",
+        );
+        for (id, hit) in [(first, "0"), (second, "1")] {
+            assert_eq!(
+                execute_statement(&mut client, &mut reader, id, &[2]),
+                vec![vec!["20".to_owned()]]
+            );
+            assert_eq!(
+                run_query(&mut client, &mut reader, "SELECT @@last_plan_from_cache"),
+                vec![vec![hit.to_owned()]]
+            );
+        }
+        let mut close = vec![COM_STMT_CLOSE];
+        close.extend_from_slice(&first.to_le_bytes());
+        write_packet(&mut client, 0, &close);
+        assert_eq!(
+            execute_statement(&mut client, &mut reader, second, &[1]),
+            vec![vec!["10".to_owned()], vec!["20".to_owned()]]
+        );
+        assert_eq!(
+            run_query(&mut client, &mut reader, "SELECT @@last_plan_from_cache"),
+            vec![vec![expected_hit.to_owned()]]
+        );
+    }
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    worker.join().unwrap();
+}

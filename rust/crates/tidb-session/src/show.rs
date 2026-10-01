@@ -762,6 +762,10 @@ impl Session {
             // See `tidb_executor::explain`'s module doc for every place
             // this tier's plan text diverges from Go's and why.
             tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
+            tidb_ast::AdminStmt::FlushPlanCache(scope) => {
+                self.flush_session_plan_cache(*scope)?;
+                Ok(Some(StmtOutput::Done(true)))
+            }
             // SQL bindings. See `crate::binding_arm`, and `crate::binding`
             // for the normalization and hint-transfer they are built on.
             tidb_ast::AdminStmt::CreateBinding(create) => {

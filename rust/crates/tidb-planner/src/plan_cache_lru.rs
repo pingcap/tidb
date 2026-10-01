@@ -21,7 +21,8 @@
 //! oldest entries while instance memory usage stays above
 //! `quota * (1 - guard)`.
 
-use std::collections::VecDeque;
+use std::{borrow::Borrow, collections::HashMap, hash::Hash};
+use tidb_util::kvcache::SimpleLruCache;
 
 /// Go `PlanCacheValue`: one cached plan plus the parameter-type signature the
 /// compatibility check compares.
@@ -30,47 +31,54 @@ pub trait PlanCacheValue: Clone {
     type ParamTypes: PartialEq + Clone;
 
     /// Go `ParamTypes` accessor.
-    fn param_types(&self) -> Self::ParamTypes;
+    fn param_types(&self) -> &Self::ParamTypes;
+
+    /// Go's per-bucket parameter compatibility (which need not be equality).
+    fn parameter_types_compatible(cached: &Self::ParamTypes, requested: &Self::ParamTypes) -> bool {
+        cached == requested
+    }
 
     /// Go `MemoryUsage`: the tracked footprint of one cached plan (the key
     /// length is added by the container, mirroring `planCacheEntry`).
     fn memory_usage(&self) -> i64;
 }
 
-struct LruEntry<V: PlanCacheValue> {
-    key: String,
-    param_types: V::ParamTypes,
+/// A cache identity with its native owned-memory estimate. Go uses a byte
+/// string; Rust can retain the same fields as a typed, collision-safe key.
+pub trait PlanCacheKey: Clone + Eq + Hash {
+    /// Bytes accounted for this key, excluding the physical plan value.
+    fn memory_usage(&self) -> i64;
+}
+
+impl PlanCacheKey for String {
+    fn memory_usage(&self) -> i64 {
+        self.len() as i64
+    }
+}
+
+struct LruEntry<V: PlanCacheValue, K: PlanCacheKey> {
+    key: K,
     value: V,
 }
 
-/// Go `LRUPlanCache`: an LRU whose keys map to buckets of plans differing by
-/// parameter-type signature.
-///
-/// Go keeps the per-key buckets and one global recency list; this port keeps
-/// one recency queue of entries and scans it for the key+compatibility match,
-/// which preserves every observable behavior (put-replace moves to front, get
-/// moves to front, capacity eviction removes the oldest, `SetCapacity` below
-/// one refuses) at the container's small entry counts.
-/// Go's `onEvict func(string, any)`: the key and value of an evicted entry.
-pub type OnEvict<V> = Box<dyn FnMut(&str, &V)>;
+/// Go's test hook, called only on capacity or memory-pressure eviction.
+pub type OnEvict<V, K = String> = Box<dyn FnMut(&K, &V) + Send>;
 
-/// Go `LRUPlanCache`: an LRU whose keys map to buckets of plans differing by
-/// parameter-type signature.
-pub struct LruPlanCache<V: PlanCacheValue> {
+/// Go LRUPlanCache: per-key parameter buckets and one global recency list.
+/// Lookup scans only a key's variants; the shared LRU primitive owns links.
+pub struct LruPlanCache<V: PlanCacheValue, K: PlanCacheKey = String> {
     capacity: usize,
-    /// Go `quota`: 0 disables the memory guard.
     quota: u64,
-    /// Go `guard`.
     guard: f64,
-    on_evict: Option<OnEvict<V>>,
-    /// Instance memory probe Go reads via `memory.InstanceMemUsed` inside
-    /// `memoryControl`.
-    memory_used: Option<Box<dyn Fn() -> u64>>,
-    entries: VecDeque<LruEntry<V>>,
+    on_evict: Option<OnEvict<V, K>>,
+    memory_used: Option<Box<dyn Fn() -> u64 + Send>>,
+    entries: SimpleLruCache<[u8; 8], LruEntry<V, K>>,
+    buckets: HashMap<K, Vec<[u8; 8]>>,
+    next_id: u64,
     memory_usage_total: i64,
 }
 
-impl<V: PlanCacheValue> LruPlanCache<V> {
+impl<V: PlanCacheValue, K: PlanCacheKey> LruPlanCache<V, K> {
     /// Go `NewLRUPlanCache`: a capacity below 1 falls back to the default 100.
     pub fn new(capacity: usize, quota: u64, guard: f64) -> Self {
         Self {
@@ -79,93 +87,110 @@ impl<V: PlanCacheValue> LruPlanCache<V> {
             guard,
             on_evict: None,
             memory_used: None,
-            entries: VecDeque::new(),
+            entries: SimpleLruCache::new(usize::MAX),
+            buckets: HashMap::new(),
+            next_id: 0,
             memory_usage_total: 0,
         }
     }
 
     /// Go's `onEvict` hook: invoked with the key and value of every entry
     /// evicted by capacity or memory pressure.
-    pub fn set_on_evict(&mut self, on_evict: OnEvict<V>) {
+    pub fn set_on_evict(&mut self, on_evict: OnEvict<V, K>) {
         self.on_evict = Some(on_evict);
     }
 
     /// Installs the instance-memory probe `memoryControl` consults.
-    pub fn set_memory_used(&mut self, memory_used: Box<dyn Fn() -> u64>) {
+    pub fn set_memory_used(&mut self, memory_used: Box<dyn Fn() -> u64 + Send>) {
         self.memory_used = Some(memory_used);
     }
 
-    /// Go `Get`: the most recent entry whose key and parameter-type signature
-    /// match, moved to the front of the recency order.
-    pub fn get(&mut self, key: &str, param_types: &V::ParamTypes) -> Option<V> {
-        let index = self
-            .entries
-            .iter()
-            .position(|entry| entry.key == key && &entry.param_types == param_types)?;
-        let entry = self.entries.remove(index)?;
-        self.entries.push_front(entry);
-        Some(self.entries.front()?.value.clone())
+    /// Go `Get`: a compatible entry from the key's bucket, moved to the
+    /// front of the global recency order.
+    pub fn get<Q: Eq + Hash + ?Sized>(&mut self, key: &Q, param_types: &V::ParamTypes) -> Option<V>
+    where
+        K: Borrow<Q>,
+    {
+        let id = self.compatible_entry(key, param_types)?;
+        Some(self.entries.get(&id)?.value.clone())
     }
 
-    /// Go `Put`: replaces the compatible entry for this key (moving it to the
-    /// front) or pushes a new one, then evicts the oldest while the cache is
-    /// over capacity and applies the memory guard.
-    pub fn put(&mut self, key: &str, param_types: V::ParamTypes, value: V) {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|entry| entry.key == key && entry.param_types == param_types)
-        {
-            // Go's replace path: the tracked total moves by the usage delta.
-            let old_usage = self.entries[index].value.memory_usage();
-            let new_usage = value.memory_usage();
-            self.entries[index].value = value;
-            self.memory_usage_total += new_usage - old_usage;
-            let entry = self.entries.remove(index).expect("index exists");
-            self.entries.push_front(entry);
-            self.memory_control();
+    fn compatible_entry<Q: Eq + Hash + ?Sized>(
+        &self,
+        key: &Q,
+        param_types: &V::ParamTypes,
+    ) -> Option<[u8; 8]>
+    where
+        K: Borrow<Q>,
+    {
+        self.buckets.get(key)?.iter().copied().find(|id| {
+            self.entries.peek(id).is_some_and(|entry| {
+                V::parameter_types_compatible(entry.value.param_types(), param_types)
+            })
+        })
+    }
+
+    /// Go `Put`: update a compatible variant or add an entry, then evict the
+    /// oldest entry across every SQL key when capacity or memory requires it.
+    pub fn put(&mut self, key: impl Into<K>, param_types: V::ParamTypes, value: V) {
+        let key = key.into();
+        if let Some(id) = self.compatible_entry(&key, &param_types) {
+            let entry = self.entries.peek(&id).expect("indexed entry");
+            self.memory_usage_total += value.memory_usage() - entry.value.memory_usage();
+            self.entries.put(
+                id,
+                LruEntry {
+                    key: key.clone(),
+                    value,
+                },
+            );
+            // Go's replacement arm returns before memoryControl.
             return;
         }
-        let usage = value.memory_usage();
-        self.entries.push_front(LruEntry {
-            key: key.to_owned(),
-            param_types,
-            value,
-        });
-        self.memory_usage_total += usage + i64::try_from(key.len()).unwrap_or(i64::MAX);
-        if self.entries.len() > self.capacity {
+        let id = self.next_id.to_le_bytes();
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("plan cache entry identity exhausted");
+        self.memory_usage_total += value.memory_usage() + key.memory_usage();
+        self.entries.put(
+            id,
+            LruEntry {
+                key: key.clone(),
+                value,
+            },
+        );
+        self.buckets.entry(key).or_default().push(id);
+        if self.entries.size() > self.capacity {
             self.remove_oldest();
         }
         self.memory_control();
     }
 
-    /// Go `Delete`: removes every entry of the key.
-    pub fn delete(&mut self, key: &str) {
-        let mut index = 0;
-        while index < self.entries.len() {
-            if self.entries[index].key == key {
-                if let Some(entry) = self.entries.remove(index) {
-                    // Go's Delete updates the memory accounting without
-                    // invoking `onEvict` (that hook fires only from
-                    // `removeOldest`).
-                    self.memory_usage_total -= i64::try_from(entry.key.len()).unwrap_or(i64::MAX)
-                        + entry.value.memory_usage();
-                }
-            } else {
-                index += 1;
+    /// Go `Delete`: removes every variant of this key, without onEvict.
+    pub fn delete<Q: Eq + Hash + ?Sized>(&mut self, key: &Q)
+    where
+        K: Borrow<Q>,
+    {
+        if let Some(ids) = self.buckets.remove(key) {
+            for id in ids {
+                let entry = self.entries.peek(&id).expect("indexed entry");
+                self.memory_usage_total -= entry.key.memory_usage() + entry.value.memory_usage();
+                self.entries.delete(&id);
             }
         }
     }
 
     /// Go `DeleteAll`.
     pub fn delete_all(&mut self) {
-        self.entries.clear();
+        self.entries.delete_all();
+        self.buckets.clear();
         self.memory_usage_total = 0;
     }
 
     /// Go `Size`.
     pub fn size(&self) -> usize {
-        self.entries.len()
+        self.entries.size()
     }
 
     /// Go `SetCapacity`: a capacity below 1 is refused; otherwise the cache
@@ -175,7 +200,7 @@ impl<V: PlanCacheValue> LruPlanCache<V> {
             return Err("capacity of LRU cache should be at least 1".to_owned());
         }
         self.capacity = capacity;
-        while self.entries.len() > self.capacity {
+        while self.entries.size() > self.capacity {
             self.remove_oldest();
         }
         Ok(())
@@ -195,14 +220,18 @@ impl<V: PlanCacheValue> LruPlanCache<V> {
     /// Go `removeOldest`: drops the least-recently-used entry, reporting it
     /// through `onEvict` when installed.
     fn remove_oldest(&mut self) {
-        let Some(entry) = self.entries.pop_back() else {
+        let Some((id, entry)) = self.entries.remove_oldest() else {
             return;
         };
+        let bucket = self.buckets.get_mut(&entry.key).expect("indexed SQL key");
+        bucket.retain(|other| *other != id);
+        if bucket.is_empty() {
+            self.buckets.remove(&entry.key);
+        }
         if let Some(on_evict) = &mut self.on_evict {
             on_evict(&entry.key, &entry.value);
         }
-        self.memory_usage_total -=
-            i64::try_from(entry.key.len()).unwrap_or(i64::MAX) + entry.value.memory_usage();
+        self.memory_usage_total -= entry.key.memory_usage() + entry.value.memory_usage();
     }
 
     /// Go `memoryControl`: while instance memory usage is above
@@ -212,7 +241,7 @@ impl<V: PlanCacheValue> LruPlanCache<V> {
             return;
         }
         loop {
-            if self.entries.is_empty() {
+            if self.entries.size() == 0 {
                 return;
             }
             let used = match &self.memory_used {
@@ -243,8 +272,8 @@ mod tests {
     impl PlanCacheValue for TestValue {
         type ParamTypes = Vec<i64>;
 
-        fn param_types(&self) -> Self::ParamTypes {
-            self.param_types.clone()
+        fn param_types(&self) -> &Self::ParamTypes {
+            &self.param_types
         }
 
         fn memory_usage(&self) -> i64 {
@@ -353,11 +382,11 @@ mod tests {
     #[test]
     fn set_capacity_refuses_below_one_and_shrinks_by_evicting() {
         let mut cache = LruPlanCache::<TestValue>::new(5, 0, 0.0);
-        let evicted: std::rc::Rc<std::cell::RefCell<Vec<String>>> =
-            std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let evicted_sink = std::rc::Rc::clone(&evicted);
+        let evicted: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let evicted_sink = std::sync::Arc::clone(&evicted);
         cache.set_on_evict(Box::new(move |key, _| {
-            evicted_sink.borrow_mut().push(key.to_owned());
+            evicted_sink.lock().unwrap().push(key.to_owned());
         }));
 
         for code in 0..5 {
@@ -374,7 +403,7 @@ mod tests {
         cache.set_capacity(3).expect("capacity 3 is legal");
         assert_eq!(cache.size(), 3);
         assert_eq!(
-            evicted.borrow().len(),
+            evicted.lock().unwrap().len(),
             2,
             "the two oldest entries were evicted"
         );
@@ -415,13 +444,13 @@ mod tests {
     #[test]
     fn memory_usage_tracks_puts_evictions_and_deletes() {
         let mut cache = LruPlanCache::<TestValue>::new(3, 0, 0.0);
-        let evicted_total: std::rc::Rc<std::cell::Cell<i64>> =
-            std::rc::Rc::new(std::cell::Cell::new(0));
-        let evicted_total_sink = std::rc::Rc::clone(&evicted_total);
+        let evicted_total: std::sync::Arc<std::sync::Mutex<i64>> =
+            std::sync::Arc::new(std::sync::Mutex::new(0));
+        let evicted_total_sink = std::sync::Arc::clone(&evicted_total);
         cache.set_on_evict(Box::new(move |key, value| {
             // Each eviction removes `len(key) + usage` from the total.
             let removed = i64::try_from(key.len()).unwrap() + value.memory_usage();
-            evicted_total_sink.set(evicted_total_sink.get() - removed);
+            *evicted_total_sink.lock().unwrap() -= removed;
         }));
 
         for (code, key) in [(41, "key-a"), (42, "key-b"), (43, "key-c")] {
@@ -437,6 +466,32 @@ mod tests {
         cache.delete("key-d");
         assert_eq!(cache.memory_usage(), expected - 105);
         cache.delete_all();
+        assert_eq!(cache.memory_usage(), 0);
+    }
+
+    #[test]
+    fn replacement_updates_accounting_without_memory_pressure_eviction() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        };
+        let used = Arc::new(AtomicU64::new(0));
+        let probe = Arc::clone(&used);
+        let mut cache = LruPlanCache::<TestValue>::new(2, 100, 0.1);
+        cache.set_memory_used(Box::new(move || probe.load(Ordering::Relaxed)));
+        cache.put("key", vec![11], test_value(&[11], 10));
+        used.store(100, Ordering::Relaxed);
+        cache.put("key", vec![11], test_value(&[11], 20));
+        assert_eq!(
+            cache.size(),
+            1,
+            "Go returns before memoryControl on replacement"
+        );
+        assert_eq!(cache.memory_usage(), 23);
+        assert_eq!(cache.get("key", &vec![11]).unwrap().usage, 20);
+        // A new entry still runs the pressure guard and removes both entries.
+        cache.put("other", vec![11], test_value(&[11], 10));
+        assert_eq!(cache.size(), 0);
         assert_eq!(cache.memory_usage(), 0);
     }
 }
