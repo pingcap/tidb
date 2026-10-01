@@ -1959,6 +1959,8 @@ const (
 	UniqueKeyType = "UNIQUE"
 	// ForeignKeyType is the string constant of Foreign Key.
 	ForeignKeyType = "FOREIGN KEY"
+	// CheckType is the string constant of CHECK.
+	CheckType = "CHECK"
 )
 
 const (
