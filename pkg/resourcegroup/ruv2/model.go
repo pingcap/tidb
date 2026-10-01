@@ -129,6 +129,10 @@ func (weights DDLWeights) Validate() error {
 
 // Valid reports whether every raw unit is finite and nonnegative.
 func (units StmtUnits) Valid() bool {
+	return units.valid()
+}
+
+func (units *StmtUnits) valid() bool {
 	return units.CrossAZNetBytes <= units.NetBytes && validValues(
 		units.CrossAZNetBytes,
 		units.CPUWork,
@@ -145,6 +149,10 @@ func (units StmtUnits) Valid() bool {
 }
 
 func (weights StmtWeights) valid() bool {
+	return weights.isValid()
+}
+
+func (weights *StmtWeights) isValid() bool {
 	return validValues(
 		weights.CrossAZNetByte,
 		weights.CPUWork,
@@ -187,7 +195,8 @@ func (weights StmtWeights) Validate() error {
 
 func validValues(values ...float64) bool {
 	for _, value := range values {
-		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		// The negated range check also rejects NaN, for which both comparisons are false.
+		if !(value >= 0 && value <= math.MaxFloat64) {
 			return false
 		}
 	}
@@ -231,7 +240,14 @@ func (units StmtUnits) Sub(other StmtUnits) StmtUnits {
 // Calculate applies weights to units. It returns false for invalid input or an
 // invalid weighted result.
 func Calculate(units StmtUnits, weights StmtWeights) (StmtResult, bool) {
-	if !units.Valid() || !weights.valid() {
+	return units.Calculate(&weights)
+}
+
+// Calculate applies weights without copying the units or weights. Both pointers
+// must be non-nil; neither input is mutated or retained. It returns false for
+// invalid input or an invalid weighted result.
+func (units *StmtUnits) Calculate(weights *StmtWeights) (StmtResult, bool) {
+	if !units.valid() || !weights.isValid() {
 		return StmtResult{}, false
 	}
 	totalRU := weights.CPUWork*units.CPUWork +

@@ -299,13 +299,13 @@ func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes in
 	return statementRUScanEvidence{state: statementRUScanEvidenceValid, scanBytes: scanBytes}
 }
 
-func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
+func (calculator *statementRUCalculator) finalize() (statementRUFinalizedSnapshot, bool) {
 	weights := currentStatementRUWeights()
-	result, ok := ruv2.Calculate(calculator.units, weights)
+	result, ok := calculator.units.Calculate(&weights)
 	if !ok {
 		return statementRUFailed(statementRUOperatorInvalid), false
 	}
-	engineRU := calculator.engineResult(weights)
+	engineRU := calculator.engineResult(&weights)
 	// TotalRU already includes the original TiFlash RU, so add only the extra
 	// (multiplier - 1) copies: total - original TiFlash RU + scaled TiFlash RU.
 	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
@@ -316,17 +316,18 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 			return statementRUFailed(statementRUOperatorInvalid), false
 		}
 	}
-	if calculator.report != nil {
+	frozenReport := calculator.report
+	if frozenReport != nil {
 		// Freeze full-mode details independently of the mutable accumulator.
-		report := *calculator.report
+		report := *frozenReport
 		report.addStatementUnits(calculator.units)
-		calculator.report = &report
+		frozenReport = &report
 	}
 	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
 		result:           result,
 		engineRU:         engineRU,
-		report:           calculator.report,
+		report:           frozenReport,
 		calibrationState: statementRUCalibrationIncomplete,
 		sqlType:          "select",
 	}, true
@@ -334,7 +335,7 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 
 func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
-	finalized statementRUFinalizedSnapshot,
+	finalized *statementRUFinalizedSnapshot,
 ) {
 	reportStatementRUV2ConsumptionSafely(stmt, finalized.engineRU)
 	publishStatementRUMetricsSafely(finalized)
@@ -363,7 +364,7 @@ func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngi
 
 // publishStatementRUMetricsSafely publishes result metrics using cached counters.
 // All label lookup and calibration projections live behind the full-mode guard.
-func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
+func publishStatementRUMetricsSafely(finalized *statementRUFinalizedSnapshot) {
 	defer func() {
 		if recover() != nil && finalized.report != nil {
 			publishStatementRUFailureSafely(statementRUPanic)
