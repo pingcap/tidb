@@ -416,6 +416,13 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	return BuildFTSToILikeExpression(ctx, args[1:], againstConst.Value.GetString(), sig.modifier)
 }
 
+// BuildFTSTermILikePredicate builds the ILIKE predicate that selects the rows
+// whose column contains term, for estimating how many rows contain one
+// analyzed term of a full-text index.
+func BuildFTSTermILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
+	return buildFTSILikePredicate(ctx, column, term)
+}
+
 // buildFTSILikePredicate builds a single ILIKE predicate for a column and search term,
 // wrapped in IFNULL so that NULL columns are treated as not containing the term.
 func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {

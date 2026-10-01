@@ -160,6 +160,12 @@ id
 explain format = 'brief' select id from clustered_docs where tenant_id = 2 and match(body) against('distrib*' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
+└─Selection	1.00	root		match_against("distrib*", planner__core__fulltext_index_tikv.clustered_docs.body)
+  └─TableReader	10.00	root		data:TableRangeScan
+    └─TableRangeScan	10.00	cop[tikv]	table:clustered_docs	range:[2,2], keep order:false, stats:pseudo
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('distrib*' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
 └─IndexMerge	1.00	root		type: union
   ├─FullTextIndexScan(Build)	1.00	root	table:clustered_docs, index:idx_body(body)	fulltext:"distrib*", range:[2,2], keep order:false, stats:pseudo
   └─Selection(Probe)	1.00	cop[tikv]		eq(planner__core__fulltext_index_tikv.clustered_docs.tenant_id, 2)

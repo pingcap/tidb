@@ -1881,7 +1881,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if len(c.path.Ranges) > 1 {
 				hasMultiRange = true
 			}
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			// A FULLTEXT index path reads only the postings of the search's
+			// terms, never the whole table, so it is kept to compete on cost.
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) ||
+				isFullTextIndexPath(c.path) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}

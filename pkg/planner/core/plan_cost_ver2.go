@@ -21,8 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -72,15 +74,68 @@ func getPlanCostVer24PhysicalSelection(pp base.PhysicalPlan, taskType property.T
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := filterCostVer2(option, inputRows, p.Conditions, cpuFactor)
+	matchCost := localMatchCostVer2(option, p, inputRows, cpuFactor)
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(filterCost, childCost)
+	p.PlanCostVer2 = costusage.SumCostVer2(filterCost, matchCost, childCost)
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
+}
+
+// localMatchCostVer2 returns what evaluating the MATCH ... AGAINST conditions
+// of a Selection in TiDB costs beyond the constant a filter is charged, which
+// is:
+// match-cost = input-rows * document-bytes * match-cost-per-byte * cpu-factor
+// A locally evaluated MATCH analyzes the document of every row it is given,
+// which costs in proportion to the size of the document, far more than an
+// ordinary function. Without this charge a plan that evaluates the MATCH on
+// every row of a scan would look nearly as cheap as one that reads only the
+// matching rows from a FULLTEXT index.
+func localMatchCostVer2(option *costusage.PlanCostOption, p *physicalop.PhysicalSelection, inputRows float64, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	var columns []*expression.Column
+	for _, cond := range p.Conditions {
+		columns = appendLocalMatchColumns(columns, cond)
+	}
+	if len(columns) == 0 {
+		return costusage.ZeroCostVer2
+	}
+	docBytes := 32.0 // a short document, when there are no statistics to say
+	if stats := p.Children()[0].StatsInfo(); stats != nil && stats.HistColl != nil {
+		docBytes = cardinality.GetAvgRowSize(p.SCtx(), stats.HistColl, columns, false, false)
+	}
+	return costusage.NewCostVer2(option, cpuFactor,
+		inputRows*docBytes*fulltext.DocumentMatchCostPerByte*cpuFactor.Value,
+		func() string {
+			return fmt.Sprintf("match(%v*docbytes(%v)*%v*%v)", inputRows, docBytes, fulltext.DocumentMatchCostPerByte, cpuFactor)
+		})
+}
+
+// appendLocalMatchColumns appends the columns of every locally evaluated
+// MATCH ... AGAINST in expr, one per MATCH and column, since each MATCH
+// analyzes its columns on its own.
+func appendLocalMatchColumns(columns []*expression.Column, expr expression.Expression) []*expression.Column {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return columns
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		if _, local := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf); local {
+			for _, arg := range sf.GetArgs()[1:] {
+				if col, ok := arg.(*expression.Column); ok {
+					columns = append(columns, col)
+				}
+			}
+		}
+		return columns
+	}
+	for _, arg := range sf.GetArgs() {
+		columns = appendLocalMatchColumns(columns, arg)
+	}
+	return columns
 }
 
 // getPlanCostVer24PhysicalProjection returns the plan-cost of this sub-plan, which is:
@@ -133,6 +188,11 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
+	if p.FullText != nil {
+		p.PlanCostVer2 = fullTextIndexScanCostVer2(option, p)
+		p.PlanCostInit = true
+		return p.PlanCostVer2, nil
+	}
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns) // consider all index columns
@@ -151,6 +211,37 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 		p.PlanCostVer2 = costusage.AddCostWithoutTrace(p.PlanCostVer2, tieBreakerValue)
 	}
 	return p.PlanCostVer2, nil
+}
+
+// fullTextPostingEntrySize is the typical size of an entry of a FULLTEXT index
+// built in TiKV: the index prefix, a short term and the handle in the key, and
+// a few bytes of positions in the value.
+const fullTextPostingEntrySize = 48
+
+// fullTextIndexScanCostVer2 returns the cost of reading a FULLTEXT index built
+// in TiKV, which is:
+// plan-cost = seek-cost + scan-cost + net-cost + decode-cost
+// seek-cost = posting-scans * 10 * log2(8) * tikv-scan-factor
+// scan-cost = posting-rows * log2(entry-size) * tikv-scan-factor
+// net-cost = posting-rows * entry-size * net-factor
+// decode-cost = posting-rows * tidb-cpu-factor
+// Every posting list the search opens is read in full and sent to TiDB, which
+// decodes and merges the entries, so the cost follows the entries read rather
+// than the rows the search matches.
+func fullTextIndexScanCostVer2(option *costusage.PlanCostOption, p *physicalop.PhysicalIndexScan) costusage.CostVer2 {
+	rows := p.FullText.PostingRows
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopMultiReadTaskType)
+	// Each posting scan is a request of its own, priced like the seek of an
+	// ordinary range scan.
+	seekCost := costusage.NewCostVer2(option, scanFactor,
+		p.FullText.PostingScans*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("seeking(%v*10*log2(8)*%v)", p.FullText.PostingScans, scanFactor) })
+	scanCost := scanCostVer2(option, rows, fullTextPostingEntrySize, scanFactor)
+	netCost := netCostVer2(option, rows, fullTextPostingEntrySize, getTaskNetFactorVer2(p, property.RootTaskType))
+	cpuFactor := getTaskCPUFactorVer2(p, property.RootTaskType)
+	decodeCost := costusage.NewCostVer2(option, cpuFactor, rows*cpuFactor.Value,
+		func() string { return fmt.Sprintf("decode(%v*%v)", rows, cpuFactor) })
+	return costusage.SumCostVer2(seekCost, scanCost, netCost, decodeCost)
 }
 
 // getPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
@@ -453,6 +544,16 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 
 	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
 	for _, indexPath := range p.PartialPlansRaw {
+		if is, ok := indexPath.(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+			// The posting lists are read by one worker in TiDB, one request
+			// after another, and the scan's own cost includes sending them.
+			indexChildCost, err := indexPath.GetPlanCostVer2(taskType, option)
+			if err != nil {
+				return costusage.ZeroCostVer2, err
+			}
+			indexSideCost = append(indexSideCost, indexChildCost)
+			continue
+		}
 		rows := getCardinality(indexPath, option.CostFlag)
 		rowSize := getAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
 

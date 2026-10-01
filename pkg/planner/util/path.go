@@ -51,6 +51,14 @@ type FullTextAccessInfo struct {
 	Match *expression.ScalarFunction
 	// Search is the constant boolean-mode search string.
 	Search string
+	// PostingRows estimates the posting entries the search reads: every
+	// posting list it opens is read in full, whatever the size of the
+	// result, so this rather than the rows matched is what reading the index
+	// costs.
+	PostingRows float64
+	// PostingScans is the number of posting scans the search opens: one per
+	// term and handle range, and one per prefix.
+	PostingScans float64
 }
 
 // Clone clones FullTextAccessInfo.
@@ -58,7 +66,7 @@ func (info *FullTextAccessInfo) Clone() *FullTextAccessInfo {
 	if info == nil {
 		return nil
 	}
-	return &FullTextAccessInfo{Match: info.Match.Clone().(*expression.ScalarFunction), Search: info.Search}
+	return &FullTextAccessInfo{Match: info.Match.Clone().(*expression.ScalarFunction), Search: info.Search, PostingRows: info.PostingRows, PostingScans: info.PostingScans}
 }
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,

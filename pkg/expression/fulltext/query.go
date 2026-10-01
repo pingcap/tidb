@@ -115,6 +115,70 @@ func (q *Query) UsesPrefixPostings() bool {
 	return queryNodeUsesPrefix(q.root)
 }
 
+// PostingRead is one posting list that evaluating the query against an index
+// reads in full: the postings of an exact term, or of every term with a
+// prefix.
+type PostingRead struct {
+	Term   string
+	Prefix bool
+}
+
+// PostingReads returns the posting lists OpenPostings reads, which is what
+// evaluating the query against an index costs: every list is read from start
+// to end, whatever the size of the result. A term read twice in one phrase
+// is read once.
+func (q *Query) PostingReads() []PostingRead {
+	if q == nil || q.matchesNothing {
+		return nil
+	}
+	return appendPostingReads(nil, q.root)
+}
+
+// appendPostingReads mirrors openPostingStream: a group reads its required
+// children, or its optional ones when it has none required, and its
+// prohibited children.
+func appendPostingReads(reads []PostingRead, node queryNode) []PostingRead {
+	switch n := node.(type) {
+	case termNode:
+		return append(reads, PostingRead{Term: n.token})
+	case prefixNode:
+		return append(reads, PostingRead{Term: n.prefix, Prefix: true})
+	case phraseNode:
+		seen := make(map[string]struct{}, len(n.tokens))
+		for _, token := range n.tokens {
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			reads = append(reads, PostingRead{Term: token})
+		}
+		return reads
+	case groupNode:
+		positive := n.must
+		if len(positive) == 0 {
+			positive = n.should
+		}
+		if len(positive) == 0 {
+			return reads
+		}
+		for _, child := range positive {
+			reads = appendPostingReads(reads, child)
+		}
+		for _, child := range n.mustNot {
+			reads = appendPostingReads(reads, child)
+		}
+		return reads
+	}
+	return reads
+}
+
+// DocumentMatchCostPerByte is roughly what evaluating a query against one
+// document costs per byte of the document, in units of the evaluation of one
+// simple scalar function: analyzing the document dominates, and measures
+// about 100ns a byte for the NGRAM parser on documents of 30 to 3000 bytes,
+// where a simple function is about 50ns.
+const DocumentMatchCostPerByte = 2.0
+
 func queryNodeUsesPrefix(node queryNode) bool {
 	switch n := node.(type) {
 	case prefixNode:

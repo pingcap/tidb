@@ -308,23 +308,41 @@ structure and is what MySQL's InnoDB FTS does too.
   `FULLTEXT(tenant_id, body)` remains the choice for prefix searches within
   a tenant, for search dimensions outside the primary key, and for
   tenant-first locality.
-- **When such a path exists it replaces every other path**, as the columnar
-  full-text path does. The alternative is tokenizing every document to
-  evaluate the MATCH, which the cost model does not see (a filter costs one
-  constant per row), and the index has no statistics to tell a rare term from
-  a common one; with the default string-match selectivity of 0.8 the scan
-  would otherwise always win. Several MATCH conjuncts still compete on cost.
-  `USE INDEX`, `FORCE INDEX` and `IGNORE INDEX`, in both syntaxes, are
-  honoured, so a scan can be forced. Invisible indexes follow
-  `tidb_opt_use_invisible_indexes`.
+- **The path competes on cost with every other path.** Reading the index
+  costs the posting entries the search reads, not the rows it matches:
+  every posting list the search opens is read in full. For each term (each
+  NGRAM gram, each phrase word, each prefix) the entries read are the rows
+  containing the term within the rows the key-column point selects, and,
+  for an exact term, the handle ranges too. The rows containing a term are
+  estimated with the term's `ILIKE '%term%'` form against the column's
+  statistics, the same estimate #65626 uses for a `MATCH`; when the
+  statistics cannot evaluate it (no statistics, or a non-binary collation)
+  the string-match default selectivity is used. Each term and handle range
+  is also charged a seek, since each opens a scan of its own. The posting
+  scans run one after another in one TiDB worker, so unlike a coprocessor
+  scan they are not divided by the scan concurrency. Every other path
+  evaluates the `MATCH` in TiDB on the rows it returns, and the Selection
+  doing so is charged for analyzing each document, in proportion to the
+  column's average size (about 100ns a byte measured for NGRAM, twice a
+  simple function per byte). A poorly filtering search therefore loses to a
+  scan, and a selective condition on another index wins over the search.
+  `USE INDEX` and `FORCE INDEX` naming the index force it, in both syntaxes;
+  `IGNORE INDEX` forbids it. Invisible indexes follow
+  `tidb_opt_use_invisible_indexes`. Under `tidb_opt_prefer_range_scan`
+  without statistics the path is kept like an MV index path: it never
+  scans the table.
 - The path cannot keep an order, even one on the indexed column. Plans using
   it are not cached, since the search string is baked in.
 - Explain shows `FullTextIndexScan(Build)` as a root operator with
   `index:idx(col) fulltext:"<search>"`, followed by `range:` for the pinned
   key columns and the handle ranges, `[7 1,7 1]` for key column 7 and handle
   1, under `IndexMerge`, with the table lookup as the coprocessor probe.
-- Row estimate: the `MATCH`'s own selectivity (the ILIKE proxy on the
-  selectivity term). Posting-length statistics are a follow-up.
+- Row estimate: the `MATCH`'s own selectivity. A STANDARD query with a
+  single term is estimated through its ILIKE form; any other query, NGRAM
+  included, is evaluated directly against the column's TopN and histogram
+  bounds, which gives the same estimate as the equivalent `LIKE` for a
+  binary collation and the string-match default otherwise. Posting-length
+  statistics are a follow-up.
 
 ## Test Design
 
@@ -349,8 +367,10 @@ structure and is what MySQL's InnoDB FTS does too.
   text column. Creation is refused until every node in the cluster is at
   least the first release carrying the feature, and a downgrade must drop the
   index first.
-- The index path replaces every other path when it applies; `IGNORE INDEX`
-  restores the scan.
+- The index path is chosen on cost. Its cost rests on per-term estimates
+  from the column's statistics, which are rough for short high-NDV text and
+  fall back to a default under non-binary collations; `USE INDEX` and
+  `IGNORE INDEX` override the choice either way.
 - Plans using the index are never cached, since the search string is baked
   in. A prepared statement with a parameter search string scans.
 
@@ -371,6 +391,7 @@ structure and is what MySQL's InnoDB FTS does too.
 - `MATCH` over several columns: the entry layout tokenizes one column.
 - Several values of a key column in one search (`tenant_id IN (...)`), which
   needs a merge of one posting scan per value.
-- Posting-length statistics for cardinality estimation; today the path uses
-  the `MATCH` selectivity proxy and is preferred outright.
+- Posting-length statistics for cardinality and cost estimation; today the
+  per-term cost and the `MATCH` row estimate come from the column's
+  statistics through the term's `ILIKE` form.
 - `ADMIN CLEANUP INDEX`, which reads indexes through a coprocessor scan.

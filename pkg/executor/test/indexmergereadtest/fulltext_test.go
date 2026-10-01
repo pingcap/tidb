@@ -316,15 +316,17 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 		}
 		return text.String()
 	}
+	// The index competes on cost, so the plans checked here force it; the
+	// scan they are compared against forbids it.
 	scanOf := func(sql string) string {
-		return strings.Replace(sql, "from th where", "from th ignore index (idx) where", 1)
+		return strings.Replace(sql, "from th use index (idx) where", "from th ignore index (idx) where", 1)
 	}
 	for _, search := range []string{"+rareword", "+rareword -alpha", "rareword theta", `"distributed storage"`, "rare*", "+rareword -alph*", "+of"} {
 		for _, handleCond := range []string{
 			"tenant = 3", "tenant in (2, 5)", "tenant > 4", "tenant between 2 and 3", "(tenant = 3 or tenant = 6)",
 			"tenant = 3 and id > 700", "tenant = 3 and id between 100 and 900", "tenant = 3 and id in (97, 388, 1067)",
 		} {
-			sql := fmt.Sprintf("select id from th where %s and match(body) against('%s' in boolean mode) order by id", handleCond, search)
+			sql := fmt.Sprintf("select id from th use index (idx) where %s and match(body) against('%s' in boolean mode) order by id", handleCond, search)
 			mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
 			require.Contains(t, explain(sql), "range:", sql)
 			tk.MustQuery(sql).Check(tk.MustQuery(scanOf(sql)).Rows())
@@ -333,17 +335,17 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 	// A search of exact terms is confined by the index alone; a prefix
 	// search reads every term with the prefix, so the condition is checked
 	// on the rows as well.
-	plan := explain("select id from th where tenant = 3 and match(body) against('+rareword' in boolean mode)")
+	plan := explain("select id from th use index (idx) where tenant = 3 and match(body) against('+rareword' in boolean mode)")
 	require.Contains(t, plan, "range:[3,3]", plan)
 	require.NotContains(t, plan, "eq(test.th.tenant", plan)
-	plan = explain("select id from th where tenant = 3 and match(body) against('rare*' in boolean mode)")
+	plan = explain("select id from th use index (idx) where tenant = 3 and match(body) against('rare*' in boolean mode)")
 	require.Contains(t, plan, "range:[3,3]", plan)
 	require.Contains(t, plan, "eq(test.th.tenant, 3)", plan)
 	tk.MustQuery("select count(*) from th where tenant = 3 and match(body) against('+rareword' in boolean mode)").
 		Check(tk.MustQuery("select count(*) from th ignore index (idx) where tenant = 3 and match(body) against('+rareword' in boolean mode)").Rows())
 	// A condition on the trailing handle column alone selects no contiguous
 	// slice of a term's postings.
-	sql := "select tenant from th where id = 97 and match(body) against('+rareword' in boolean mode) order by tenant"
+	sql := "select tenant from th use index (idx) where id = 97 and match(body) against('+rareword' in boolean mode) order by tenant"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	require.NotContains(t, explain(sql), "range:", sql)
 	tk.MustQuery(sql).Check(tk.MustQuery(scanOf(sql)).Rows())
@@ -356,7 +358,7 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 	tk.MustExec("update th set tenant = 3 where id = 97")
 	tk.MustExec("update th set tenant = 4 where id = 388")
 	tk.MustExec("delete from th where id = 1067")
-	sql = "select id from th where tenant = 3 and match(body) against('+rareword' in boolean mode) order by id"
+	sql = "select id from th use index (idx) where tenant = 3 and match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	tk.MustQuery(sql).Check(tk.MustQuery(scanOf(sql)).Rows())
 	tk.MustQuery("select id from th where tenant = 3 and match(body) against('+rareword' in boolean mode) and id in (97, 388, 1067, 100001, 100002) order by id").Check(testkit.Rows("97", "100001"))
@@ -368,31 +370,31 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 	// does.
 	tk.MustExec("create table ts (tenant varchar(16) collate utf8mb4_general_ci, id int, body text, primary key (tenant, id) clustered, fulltext index idx (body))")
 	tk.MustExec("insert into ts values ('acme', 1, 'rareword one'), ('Acme', 2, 'rareword two'), ('ACME ', 3, 'rareword three'), ('globex', 4, 'rareword four'), ('acme', 5, 'nothing here')")
-	sql = "select id from ts where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
+	sql = "select id from ts use index (idx) where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	require.Contains(t, explain(sql), "range:", sql)
 	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ts where", "from ts ignore index (idx) where", 1)).Rows())
+	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ts use index (idx) where", "from ts ignore index (idx) where", 1)).Rows())
 	tk.MustExec("admin check table ts")
 
 	// An integer handle, and a partitioned table with a clustered key.
 	tk.MustExec("create table ti (id int primary key, tenant int, body text, fulltext index idx (body))")
 	tk.MustExec("insert into ti select id, tenant, body from th")
 	for _, handleCond := range []string{"id between 100 and 900", "id in (97, 194, 291)", "id > 1400"} {
-		sql = fmt.Sprintf("select id from ti where %s and match(body) against('+rareword' in boolean mode) order by id", handleCond)
+		sql = fmt.Sprintf("select id from ti use index (idx) where %s and match(body) against('+rareword' in boolean mode) order by id", handleCond)
 		mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 		require.Contains(t, explain(sql), "range:", sql)
-		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ti where", "from ti ignore index (idx) where", 1)).Rows())
+		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ti use index (idx) where", "from ti ignore index (idx) where", 1)).Rows())
 	}
 	tk.MustExec("create table tp (id int, tenant int, body text, primary key (tenant, id) clustered, fulltext index idx (body)) partition by hash(id) partitions 4")
 	tk.MustExec("insert into tp select id, tenant, body from th")
 	tk.MustExec("analyze table tp")
 	for _, mode := range []string{"dynamic", "static"} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + mode + "'")
-		sql = "select id from tp where tenant = 3 and id > 500 and match(body) against('+rareword' in boolean mode) order by id"
+		sql = "select id from tp use index (idx) where tenant = 3 and id > 500 and match(body) against('+rareword' in boolean mode) order by id"
 		mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 		require.Contains(t, explain(sql), "range:", sql)
-		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tp where", "from tp ignore index (idx) where", 1)).Rows())
+		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tp use index (idx) where", "from tp ignore index (idx) where", 1)).Rows())
 	}
 	tk.MustExec("admin check table tp")
 
@@ -400,10 +402,10 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 	// confined and the condition stays on the table side.
 	tk.MustExec("create table tnc (id int, tenant int, body text, primary key (tenant, id) nonclustered, fulltext index idx (body))")
 	tk.MustExec("insert into tnc select id, tenant, body from th")
-	sql = "select id from tnc where tenant = 3 and match(body) against('+rareword' in boolean mode) order by id"
+	sql = "select id from tnc use index (idx) where tenant = 3 and match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	plan = explain(sql)
 	require.NotContains(t, plan, "range:", plan)
 	require.Contains(t, plan, "eq(test.tnc.tenant, 3)", plan)
-	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tnc where", "from tnc ignore index (idx) where", 1)).Rows())
+	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tnc use index (idx) where", "from tnc ignore index (idx) where", 1)).Rows())
 }

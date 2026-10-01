@@ -362,3 +362,78 @@ func TestOpenPostingsMatchesNothing(t *testing.T) {
 	require.Empty(t, drain(t, iter))
 	require.Zero(t, index.opened)
 }
+
+// recordingSource records the posting lists a query opens.
+type recordingSource struct {
+	memIndex
+	reads []PostingRead
+}
+
+func (r *recordingSource) Term(term string) (PostingCursor, error) {
+	r.reads = append(r.reads, PostingRead{Term: term})
+	return r.memIndex.Term(term)
+}
+
+func (r *recordingSource) Prefix(prefix string) (PostingCursor, error) {
+	r.reads = append(r.reads, PostingRead{Term: prefix, Prefix: true})
+	return r.memIndex.Prefix(prefix)
+}
+
+// TestPostingReadsMatchOpenPostings checks that PostingReads, from which the
+// planner costs a search, names exactly the posting lists OpenPostings opens.
+func TestPostingReadsMatchOpenPostings(t *testing.T) {
+	words := []string{"alpha", "beta", "gamma", "delta", "of", "the"}
+	rng := rand.New(rand.NewSource(20260930))
+	sortReads := func(reads []PostingRead) []PostingRead {
+		reads = slices.Clone(reads)
+		slices.SortFunc(reads, func(a, b PostingRead) int {
+			if c := strings.Compare(a.Term, b.Term); c != 0 {
+				return c
+			}
+			return compareBool(a.Prefix, b.Prefix)
+		})
+		return reads
+	}
+	checked := 0
+	for _, config := range []AnalyzerConfig{standardConfig(), ngramConfig()} {
+		index := newMemIndex(t, config)
+		index.add(t, 1, "alpha beta gamma delta")
+		for range 300 {
+			search := randomBooleanQuery(rng, words)
+			query, err := CompileBooleanQuery(search, config)
+			if err != nil {
+				continue
+			}
+			src := &recordingSource{memIndex: *index}
+			iter, err := query.OpenPostings(src)
+			require.NoError(t, err)
+			require.NoError(t, iter.Close())
+			require.Equal(t, sortReads(src.reads), sortReads(query.PostingReads()), "%v %q", config.ParserType, search)
+			checked++
+		}
+	}
+	require.Greater(t, checked, 400)
+
+	// A group with required clauses does not read its optional ones, and a
+	// phrase reads a repeated term once.
+	query, err := CompileBooleanQuery(`+alpha beta -gamma`, standardConfig())
+	require.NoError(t, err)
+	require.Equal(t, []PostingRead{{Term: "alpha"}, {Term: "gamma"}}, query.PostingReads())
+	query, err = CompileBooleanQuery(`abab*`, ngramConfig())
+	require.NoError(t, err)
+	require.Equal(t, []PostingRead{{Term: "ab"}, {Term: "ba"}}, query.PostingReads())
+	query, err = CompileBooleanQuery(`a*`, ngramConfig())
+	require.NoError(t, err)
+	require.Equal(t, []PostingRead{{Term: "a", Prefix: true}}, query.PostingReads())
+}
+
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	default:
+		return -1
+	}
+}
