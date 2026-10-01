@@ -399,7 +399,9 @@ func BuildHistAndTopN(
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
-	if ndv > count {
+	// Schema-guaranteed uniqueness makes NDV equal to the non-NULL row count.
+	// Otherwise, cap the sketch estimate at that count.
+	if collector.Unique || ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {

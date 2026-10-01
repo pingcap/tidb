@@ -639,6 +639,46 @@ func TestGlobalStatsNDV(t *testing.T) {
 	tk.MustExec("insert into t values (31), (33), (34)")
 	tk.MustExec("insert into t values (1), (2), (3)")
 	checkNDV(13, 3, 3, 3, 4)
+
+	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV of every
+	// column here, while a unique column or index takes the exact row count on
+	// partitions and on the global stats.
+	tk.MustExec(`create table tu (a int primary key, b int not null, c int,
+	unique key ab(a, b), unique key ac(a, c), key ic(c)) partition by hash(a) partitions 2`)
+	tk.MustExec("insert into tu values (1, 1, 1)")
+	for n := 1; n < 1<<15; n *= 2 {
+		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
+	}
+	for _, async := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_async_merge_global_stats = %d", async))
+		tk.MustExec("analyze table tu")
+		var ndvs []string
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tu'").Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v %v", r[2], r[3], r[6]))
+		}
+		require.Equal(t, []string{
+			"global a 32768", "global ab 32768", "global ac 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"p0 a 16384", "p0 ab 16384", "p0 ac 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
+			"p1 a 16384", "p1 ab 16384", "p1 ac 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+		}, ndvs)
+
+		// A global unique key does not determine the partition. Move b=1 to p1
+		// without changing its value. After analyzing only p1, both its fresh
+		// stats and p0's stale stats contain that same value. NULL rows keep the
+		// row-count cap from hiding double-counted NDVs.
+		tk.MustExec("drop table if exists tm")
+		tk.MustExec("create table tm (a int, b int, unique key ub(b) global) partition by hash(a) partitions 2")
+		tk.MustExec("insert into tm values (0, 1), (1, null), (2, null)")
+		tk.MustExec("analyze table tm")
+		tk.MustExec("update tm set a = 1 where b = 1")
+		tk.MustExec("flush stats_delta *.*")
+		tk.MustExec("analyze table tm partition p1")
+		ndvs = ndvs[:0]
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tm' and partition_name = 'global' and column_name in ('b', 'ub')").Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v", r[3], r[6]))
+		}
+		require.Equal(t, []string{"b 1", "ub 1"}, ndvs)
+	}
 }
 
 func TestGlobalStatsIndexNDV(t *testing.T) {

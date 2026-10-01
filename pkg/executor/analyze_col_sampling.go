@@ -878,6 +878,7 @@ workLoop:
 					numTopN = 0
 				}
 			}
+			collector.Unique = statistics.IsUniqueBySchema(e.tableInfo, !task.isColumn, task.id)
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err

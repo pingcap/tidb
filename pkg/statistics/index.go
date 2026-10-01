@@ -235,3 +235,55 @@ func IsSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
 		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
 		!idx.HasPrefixIndex() && !idx.HasCondition()
 }
+
+// IsUniqueBySchema reports whether schema constraints establish uniqueness
+// of non-NULL column values or index keys. It conservatively rejects
+// composite indexes with nullable columns.
+func IsUniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	if !isIndex {
+		col := model.FindColumnInfoByID(tblInfo.Columns, id)
+		return col != nil && (tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) ||
+			IsColumnCoveredBySingleColUniqueIndex(tblInfo, col.Offset))
+	}
+	idx := tblInfo.FindIndexByID(id)
+	if idx == nil || !idx.Unique || idx.HasCondition() {
+		return false
+	}
+	if len(idx.Columns) == 1 {
+		return true
+	}
+	// This is stricter than SQL's composite UNIQUE constraint, which allows
+	// repeated tuples containing NULL, such as (1, NULL). To guarantee that all
+	// composite index keys are distinct, this helper requires every indexed
+	// column to be NOT NULL.
+	for _, col := range idx.Columns {
+		if !mysql.HasNotNullFlag(tblInfo.Columns[col.Offset].GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
+// CanSumPartitionNDV reports whether schema-unique values determine their partition,
+// so partition NDVs remain disjoint across partial ANALYZE runs. Local unique keys
+// include all partitioning columns. Global unique keys need not, so a moved value
+// can appear in both an old partition's stale stats and a new partition's fresh stats.
+// Conservatively reject global indexes even if they include partitioning columns.
+func CanSumPartitionNDV(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	if !IsUniqueBySchema(tblInfo, isIndex, id) {
+		return false
+	}
+	if isIndex {
+		return !tblInfo.FindIndexByID(id).Global
+	}
+	col := model.FindColumnInfoByID(tblInfo.Columns, id)
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
+		return true
+	}
+	for _, idx := range tblInfo.Indices {
+		if !idx.Global && IsSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == col.Offset {
+			return true
+		}
+	}
+	return false
+}
