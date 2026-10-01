@@ -823,7 +823,7 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec sto
 			return rs.CopyFrom(ctx, e, spec)
 		}
 	}
-	return nil
+	return err
 }
 
 type asyncWriter struct {

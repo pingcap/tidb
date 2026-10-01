@@ -685,6 +685,54 @@ func TestKS3CreateHonorsPartSize(t *testing.T) {
 	}, uploadedPartSizes)
 }
 
+func TestKS3CopyFromErrors(t *testing.T) {
+	for _, code := range []string{"", "AccessDenied", "NoSuchKey", "ObjectAlreadyExists", "ObjectAlreayExists"} {
+		t.Run(code, func(t *testing.T) {
+			var copies, deletes atomic.Int32
+			alreadyExists := strings.HasPrefix(code, "ObjectAl")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/xml")
+				switch r.Method {
+				case http.MethodPut:
+					attempt := copies.Add(1)
+					if code != "" && (!alreadyExists || attempt == 1) {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>copy failed</Message></Error>", code)
+						return
+					}
+					_, _ = fmt.Fprint(w, `<CopyObjectResult><LastModified>2026-09-16T00:00:00Z</LastModified><ETag>"copied"</ETag></CopyObjectResult>`)
+				case http.MethodDelete:
+					deletes.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected KS3 request: %s %s", r.Method, r.URL)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			ctx := context.Background()
+			storage, err := NewKS3Storage(ctx, &backuppb.S3{
+				Region: "test-region", Endpoint: server.URL, Bucket: "bucket", Prefix: "prefix",
+				AccessKey: "access-key", SecretAccessKey: "secret-access-key", ForcePathStyle: true,
+			}, &storeapi.Options{})
+			require.NoError(t, err)
+			err = storage.CopyFrom(ctx, storage, storeapi.CopySpec{From: "source", To: "target"})
+			if code == "" || alreadyExists {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, code)
+			}
+			if alreadyExists {
+				require.EqualValues(t, 2, copies.Load())
+				require.EqualValues(t, 1, deletes.Load())
+			} else {
+				require.EqualValues(t, 1, copies.Load())
+				require.Zero(t, deletes.Load())
+			}
+		})
+	}
+}
+
 func mockGetObject(t *testing.T, s3api *mock.MockS3API, times int) {
 	t.Helper()
 	s3api.EXPECT().
