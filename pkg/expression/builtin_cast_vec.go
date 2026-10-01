@@ -262,7 +262,7 @@ func (b *builtinCastDecimalAsStringSig) vecEvalString(ctx EvalContext, input *ch
 			result.AppendNull()
 			continue
 		}
-		res, e := types.ProduceStrWithSpecifiedTp(string(v.ToString()), b.tp, tc, false)
+		res, e := types.ProduceStrWithSpecifiedTp(v.String(), b.tp, tc, false)
 		if e != nil {
 			return e
 		}
