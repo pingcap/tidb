@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -145,12 +144,6 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		if i >= len(parserData) {
 			if col == nil {
 				setVar(en.fieldMappings[i].UserVar.Name, nil)
-				continue
-			}
-
-			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(col.GetType()) && mysql.HasNotNullFlag(col.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(col.GetType())))
 				continue
 			}
 

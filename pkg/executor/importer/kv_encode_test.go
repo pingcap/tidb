@@ -102,6 +102,67 @@ func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
 	return tbl
 }
 
+func TestKVEncoderMissingTemporalDefaults(t *testing.T) {
+	for _, tp := range []string{"date", "datetime", "timestamp"} {
+		for _, tc := range []struct {
+			name, definition, want string
+			missingDefault         bool
+		}{
+			{"fixed", "not null default '2000-01-01'", "2000-01-01", false},
+			{"nullable", "null", "", false},
+			{"required", "not null", "", true},
+			{"current", "not null default current_timestamp", "2009-02-13 23:31:30", false},
+			{"explicit", "not null default '2000-01-01'", "2010-02-03", false},
+			{"explicit null", "null default '2000-01-01'", "", false},
+		} {
+			if tp == "date" && tc.name == "current" {
+				continue
+			}
+			t.Run(tp+"/"+tc.name, func(t *testing.T) {
+				tbl := newKVEncoderTestTable(t, "create table t(id int primary key clustered, v "+tp+" "+tc.definition+")")
+				cols := tbl.VisibleCols()
+				ctrl := &importer.LoadDataController{
+					ASTArgs: &importer.ASTArgs{}, Plan: &importer.Plan{}, Table: tbl,
+					InsertColumns: cols,
+					FieldMappings: []*importer.FieldMapping{{Column: cols[0]}, {Column: cols[1]}},
+				}
+				encoder, err := importer.NewTableKVEncoder(&encode.EncodingConfig{
+					Table: tbl, Logger: log.L(),
+					SessionOptions: encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables, Timestamp: 1234567890, SysVars: map[string]string{"time_zone": "+00:00"}},
+				}, ctrl)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, encoder.Close()) }()
+				input := []types.Datum{types.NewIntDatum(1)}
+				if tc.name == "explicit" {
+					input = append(input, types.NewStringDatum("2010-02-03"))
+				} else if tc.name == "explicit null" {
+					input = append(input, types.NewDatum(nil))
+				}
+				pairs, err := encoder.Encode(input, 1)
+				if tc.missingDefault {
+					require.ErrorContains(t, err, "doesn't have a default value")
+					return
+				}
+				require.NoError(t, err)
+				require.Len(t, pairs.Pairs, 1)
+				handle, err := tablecodec.DecodeRowKey(pairs.Pairs[0].Key)
+				require.NoError(t, err)
+				row, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(), tbl, handle, cols, pairs.Pairs[0].Val)
+				require.NoError(t, err)
+				if tc.name == "nullable" || tc.name == "explicit null" {
+					require.True(t, row[1].IsNull())
+				} else {
+					want := tc.want
+					if (tc.name == "fixed" || tc.name == "explicit") && tp != "date" {
+						want += " 00:00:00"
+					}
+					require.Equal(t, want, row[1].GetMysqlTime().String())
+				}
+			})
+		}
+	}
+}
+
 func TestKVEncoderCastErrorMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
