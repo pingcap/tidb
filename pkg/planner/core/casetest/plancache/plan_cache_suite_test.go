@@ -2069,6 +2069,7 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 }
 
 func TestCoalescePlanCacheUpdate(t *testing.T) {
+	t.Run("Values", testCoalesceUpdateValues)
 	t.Run("Precision", testNonPreparedCoalescePrecision)
 	t.Run("Scope", testNonPreparedCoalesceScope)
 	for _, instance := range []bool{false, true} {
@@ -2392,5 +2393,114 @@ func testNonPreparedCoalesceNested(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func testCoalesceUpdateValues(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprintf("instance=%v", instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			cached, fresh := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+			cached.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+			for i, tk := range []*testkit.TestKit{cached, fresh} {
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", i == 0))
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+			}
+			cached.MustExec("create table values_cached(id int primary key, tenant int, d decimal(36,18), b decimal(36,18), s varchar(100), state tinyint unsigned, u bigint unsigned, rev int, key idx_d(d), key idx_state(state))")
+			fresh.MustExec("create table values_fresh like values_cached")
+			cached.MustExec("insert into values_cached values(1,1,0,7,'initial',0,0,0),(2,1,null,null,'untouched',0,0,0),(3,2,99,99,'other tenant',0,0,0)")
+			fresh.MustExec("insert into values_fresh select * from values_cached")
+			// Compare every stored column, diagnostics and affected rows immediately
+			// after each UPDATE, including errors and no-op/stale-version updates.
+			run := func(query string, hit int) error {
+				err := cached.ExecToErr("update values_cached" + query)
+				if hit >= 0 {
+					require.Equal(t, hit == 1, cached.Session().GetSessionVars().FoundInPlanCache, query)
+				}
+				affected := cached.Session().AffectedRows()
+				warnings := cached.MustQuery("show warnings").Rows()
+				wantErr := fresh.ExecToErr("update values_fresh" + query)
+				require.False(t, fresh.Session().GetSessionVars().FoundInPlanCache, query)
+				require.Equal(t, fmt.Sprint(wantErr), fmt.Sprint(err), query)
+				require.Equal(t, fresh.Session().AffectedRows(), affected, query)
+				require.Equal(t, fresh.MustQuery("show warnings").Rows(), warnings, query)
+				cached.MustQuery("select * from values_cached order by id").Check(fresh.MustQuery("select * from values_fresh order by id").Rows())
+				return err
+			}
+			// Exercise cross-assignment reads and conversion to VARCHAR in both
+			// assignment orders, preserving the cache-disabled branch semantics.
+			require.NoError(t, run(" set d=coalesce(1.25,b),b=d,s=b where id=1", 0))
+			require.NoError(t, run(" set d=coalesce(2.50,b),b=d,s=b where id=1", 1))
+			cached.MustQuery("select d,b,s from values_cached where id=1").Check(testkit.Rows("2.500000000000000000 1.250000000000000000 0.000000000000000000"))
+			require.NoError(t, run(" set b=d,d=coalesce(3.75,b),s=b where id=1", 0))
+			require.NoError(t, run(" set b=d,d=coalesce(4.25,b),s=b where id=1", 1))
+			cached.MustQuery("select d,b,s from values_cached where id=1").Check(testkit.Rows("4.250000000000000000 3.750000000000000000 2.500000000000000000"))
+			// Change every SET parameter and the selected row while reusing one
+			// plan. Keep another tenant as a sentinel for range/parameter mistakes.
+			for i := 1; i <= 12; i++ {
+				query := fmt.Sprintf(" set b=d,d=coalesce(%d.%018d,coalesce(3.14,b)),s=d,state=coalesce(%d,state),u=coalesce(%d,u),rev=%d where id=%d and tenant=1 and rev<%d", i, i, i, 100+i, i, 1+i%2, i)
+				hit := 1
+				if i == 1 || i == 10 { // Crossing ten changes DECIMAL precision.
+					hit = 0
+				}
+				require.NoError(t, run(query, hit))
+				require.NoError(t, run(query, 1)) // Stale revision must not rewrite the row.
+			}
+			cached.MustQuery("select d,state,u,rev from values_cached where id=1").Check(testkit.Rows("12.000000000000000012 12 112 12"))
+			cached.MustQuery("select s,rev from values_cached where id=3").Check(testkit.Rows("other tenant 0"))
+			if instance {
+				cached = testkit.NewTestKit(t, store)
+				cached.MustExec("use test")
+				cached.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				cached.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				cached.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+				require.NoError(t, run(" set d=coalesce(6.50,b),b=d,s=b where id=2", 1))
+			}
+			// NULL literals must bypass the numeric cache path, then subsequent
+			// non-NULL parameters must still use their own values.
+			require.NoError(t, run(" set d=coalesce(null,b),s=d where id=1", 0))
+			require.NoError(t, run(" set b=null where id=1", -1))
+			require.NoError(t, run(" set d=coalesce(null,b),s=d where id=1", 0))
+			cached.MustQuery("select d,b from values_cached where id=1").Check(testkit.Rows("<nil> <nil>"))
+			require.NoError(t, run(" set d=coalesce(5.50,b),b=d,s=b where id=1", 1))
+			// Strict overflow on a cache hit must not leave an earlier SET written.
+			require.NoError(t, run(" set d=coalesce(8.00,d),state=coalesce(254,state) where id=1", 0))
+			before := cached.MustQuery("select * from values_cached order by id").Rows()
+			require.Error(t, run(" set d=coalesce(1.00,d),state=coalesce(256,state) where id=1", 1))
+			cached.MustQuery("select * from values_cached order by id").Check(before)
+			for _, tk := range []*testkit.TestKit{cached, fresh} {
+				tk.MustExec("set sql_mode=''")
+			}
+			for _, value := range []string{"255", "256", "999", "1"} {
+				require.NoError(t, run(" set d=coalesce(1.00,d),state=coalesce("+value+",state) where id=1", -1))
+			}
+			for _, value := range []string{"18446744073709551614", "18446744073709551615", "18446744073709551614", "0"} {
+				require.NoError(t, run(" set u=coalesce("+value+",u) where id=1", -1))
+			}
+			for _, value := range []string{"1.1234567890123456789", "2.1234567890123456789", "999999999999999999.999999999999999999", "1000000000000000000.000000000000000000", "-1.123456789012345678", "3.50"} {
+				require.NoError(t, run(" set d=coalesce("+value+",b),s=d where id=1", -1))
+			}
+			// Exercise a range update as well as point updates; tenant 2 must stay intact.
+			require.NoError(t, run(" set d=coalesce(4.50,b),state=coalesce(5,state) where id<=2 and tenant=1", -1))
+			require.NoError(t, run(" set d=coalesce(5.50,b),state=coalesce(6,state) where id<=2 and tenant=1", -1))
+			cached.MustQuery("select s,rev from values_cached where id=3").Check(testkit.Rows("other tenant 0"))
+			// Dirty transaction plans can bypass caching; verify rollback independently
+			// of cache eligibility, and validate secondary index entries afterward.
+			before = cached.MustQuery("select * from values_cached order by id").Rows()
+			for _, tk := range []*testkit.TestKit{cached, fresh} {
+				tk.MustExec("begin pessimistic")
+			}
+			require.NoError(t, run(" set d=coalesce(6.50,b),b=d,s=b where id=1", -1))
+			require.NoError(t, run(" set d=coalesce(7.50,b),b=d,s=b where id=2", 0))
+			for _, tk := range []*testkit.TestKit{cached, fresh} {
+				tk.MustExec("rollback")
+			}
+			cached.MustQuery("select * from values_cached order by id").Check(before)
+			fresh.MustQuery("select * from values_fresh order by id").Check(before)
+			cached.MustExec("admin check table values_cached")
+			fresh.MustExec("admin check table values_fresh")
+		})
 	}
 }
