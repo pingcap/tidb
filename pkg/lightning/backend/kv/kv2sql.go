@@ -133,6 +133,7 @@ func NewTableKVDecoder(
 	if err != nil {
 		return nil, err
 	}
+	se.exprCtx.setNewCollationEnabled(tbl.UseNewCollate())
 
 	genCols, err := CollectGeneratedColumns(se, tbl)
 	if err != nil {

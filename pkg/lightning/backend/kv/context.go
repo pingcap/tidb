@@ -96,6 +96,10 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 	}, nil
 }
 
+func (ctx *litExprContext) setNewCollationEnabled(enabled bool) {
+	ctx.ExprContext = ctx.ExprContext.Apply(exprstatic.WithNewCollationEnabled(enabled))
+}
+
 // setUserVarVal sets the value of a user variable.
 func (ctx *litExprContext) setUserVarVal(name string, dt types.Datum) {
 	ctx.userVars.SetUserVarVal(name, dt)

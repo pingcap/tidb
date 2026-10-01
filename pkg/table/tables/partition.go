@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -115,7 +116,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, table.ErrUnknownPartition
 	}
 	ret := &partitionedTable{TableCommon: tbl.Copy()}
-	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
+	partitionExpr, err := ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -215,9 +216,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
+			ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
 		} else {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions)
+			ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -241,10 +242,10 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if len(pi.AddingDefinitions) > 0 {
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
+				ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
 			} else {
 				// REORGANIZE PARTITION
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions)
+				ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions)
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -282,7 +283,7 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 }
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
-func NewPartitionExprBuildCtx() expression.BuildContext {
+func NewPartitionExprBuildCtx() *exprstatic.ExprContext {
 	return exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
@@ -302,8 +303,9 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 	)
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
-	ctx := NewPartitionExprBuildCtx()
+func (t *partitionedTable) newPartitionExpr(tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
+	tblInfo := t.meta
+	ctx := NewPartitionExprBuildCtx().Apply(exprstatic.WithNewCollationEnabled(t.UseNewCollate()))
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
@@ -365,7 +367,7 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			data, err := val.ToHashKey()
+			data, err := kp.datumToHashKey(&val)
 			if err != nil {
 				return 0, err
 			}
@@ -373,6 +375,19 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		}
 	}
 	return int(h.Sum32() % uint32(numParts)), nil
+}
+
+func (kp *ForKeyPruning) datumToHashKey(d *types.Datum) ([]byte, error) {
+	switch d.Kind() {
+	case types.KindString, types.KindBytes:
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(d.GetString()), nil
+	default:
+		str, err := d.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(str), nil
+	}
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -450,7 +465,8 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exp
 
 // ForKeyPruning is used for key partition pruning.
 type ForKeyPruning struct {
-	KeyPartCols []*expression.Column
+	KeyPartCols   []*expression.Column
+	useNewCollate bool
 }
 
 // ForListPruning is used for list partition pruning.
@@ -508,6 +524,7 @@ func lessBtreeListColumnItem(a, b *btreeListColumnItem) bool {
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
+	encoder  codec.Encoder
 	valueMap map[string]ListPartitionLocation
 	sorted   *btree.BTreeG[*btreeListColumnItem]
 
@@ -735,7 +752,7 @@ func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
-		ForKeyPruning: &ForKeyPruning{},
+		ForKeyPruning: &ForKeyPruning{useNewCollate: ctx.NewCollationEnabled()},
 	}
 	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
 	if err != nil {
@@ -954,6 +971,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 	p := parser.New()
 	colPrunes := make([]*ForListColumnPruning, 0, len(partCols))
 	lp.defaultPartitionIdx = -1
+	useNewCollate := ctx.NewCollationEnabled()
 	for colIdx := range partCols {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, partCols[colIdx].L)
 		if colInfo == nil {
@@ -971,6 +989,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 			colIdx:   colIdx,
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
+			encoder:  codec.NewEncoder(useNewCollate),
 			valueMap: make(map[string]ListPartitionLocation),
 			sorted:   btree.NewG[*btreeListColumnItem](btreeDegree, lessBtreeListColumnItem),
 		}
@@ -1241,7 +1260,7 @@ func (lp *ForListColumnPruning) genKey(tc types.Context, ec errctx.Context, v ty
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	valByte, err := codec.EncodeKey(tc.Location(), nil, v)
+	valByte, err := lp.encoder.EncodeKey(tc.Location(), nil, v)
 	err = ec.HandleError(err)
 	return valByte, err
 }
