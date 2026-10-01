@@ -625,7 +625,7 @@ pub fn linear_partitioning_warning(create: &CreateTableStmt) -> Option<String> {
 /// The bracket flag is why `hash(a+b)` is stored -- and printed -- as
 /// ``(`a`+`b`)``, with no spaces around the operator, unlike a generated
 /// column's ``(`a` + 1)``. Captured: ``PARTITION BY HASH ((`a`+`b`))``.
-fn partition_restore_flags() -> tidb_ast::RestoreFlags {
+pub(super) fn partition_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_UPPERCASE
         | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
