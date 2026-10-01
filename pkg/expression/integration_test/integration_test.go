@@ -1586,6 +1586,37 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 }
 
+func TestBitCountBinaryStrings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @bits = b'10100100010000100000100000010000000100000000" +
+		"10000000001000000000010000000000010000000000001'")
+	tk.MustQuery("select bit_count(@bits)").Check(testkit.Rows("13"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select bit_count(64), bit_count('64'), " +
+		"bit_count(binary 64), bit_count(x'ff'), bit_count(b'11111111')").
+		Check(testkit.Rows("1 1 7 8 8"))
+	tk.MustQuery("select bit_count(_binary x'ffffffffffffffffff'), " +
+		"bit_count(_binary b'11111111')").Check(testkit.Rows("72 8"))
+	tk.MustExec("create table bit_strings(id int primary key, b varbinary(32))")
+	tk.MustExec("insert into bit_strings values " +
+		"(1, '64'), (2, x'ffffffffffffffffff'), (3, ''), (4, NULL)")
+	for _, enabled := range []string{"ON", "OFF"} {
+		tk.MustExec("set tidb_enable_vectorized_expression=" + enabled)
+		tk.MustQuery("select bit_count(b) from bit_strings order by id").
+			Check(testkit.Rows("7", "72", "0", "<nil>"))
+	}
+	tk.MustExec("prepare bit_stmt from 'select bit_count(?)'")
+	tk.MustQuery("execute bit_stmt using @bits").Check(testkit.Rows("13"))
+	tk.MustExec("set @bits=64")
+	tk.MustQuery("execute bit_stmt using @bits").Check(testkit.Rows("1"))
+	tk.MustExec("set @bits=binary '64'")
+	tk.MustQuery("execute bit_stmt using @bits").Check(testkit.Rows("7"))
+	tk.MustExec("set @bits='64'")
+	tk.MustQuery("execute bit_stmt using @bits").Check(testkit.Rows("1"))
+}
+
 func TestInfoBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

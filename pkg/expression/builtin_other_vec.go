@@ -121,6 +121,33 @@ func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	return nil
 }
 
+func (*builtinBitCountBinarySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinBitCountBinarySig) vecEvalInt(
+	ctx EvalContext, input *chunk.Chunk, result *chunk.Column,
+) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	values := result.Int64s()
+	for i := range n {
+		if !result.IsNull(i) {
+			values[i] = bitCountBinary(buf.GetString(i))
+		}
+	}
+	return nil
+}
+
 func (b *builtinGetParamStringSig) vectorized() bool {
 	return true
 }
