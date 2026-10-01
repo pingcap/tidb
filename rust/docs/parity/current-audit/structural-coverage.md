@@ -1,6 +1,6 @@
 # Complete structural-audit scope
 
-Go reference: `e953a09d9d5e29e60c62f42d3aacebb819af49a5`. Regenerate with
+Go reference: `93a01d31f6da205ae4bf376825293903a6899fdb`. Regenerate with
 `python3 rust/scripts/build-structural-coverage.py`.
 
 This accounts for **all 83 Rust crates and all 856 inventoried TiDB Go package directories**.
@@ -17,21 +17,21 @@ The exact package/artifact list remains in [package-coverage.json](package-cover
 | Queue | Go package directories | Rust crates | Confirmed findings / review limits |
 | --- | ---: | ---: | --- |
 | Syntax and name resolution | 20 | 7 | A01, N01; grammar/AST variants still require full review |
-| Values and expressions | 24 | 8 | X01, K03, N01 |
+| Values and expressions | 24 | 8 | X01–X02, K03, N01 |
 | Planning | 93 | 4 | Q01, C02, E02, M01–M02 |
 | Execution | 60 | 4 | E02–E07, K03; E01 repaired |
 | Session and authorization | 44 | 3 | A01–A04, B01–B02, S01–S04, I01–I03, N04; C01 repaired |
-| Domain and shared services | 11 | 5 | O01–O11, O13, I04, C02; O12 repaired |
+| Domain and shared services | 11 | 5 | O01–O11, O13–O19, I04, C02; O12 repaired |
 | Metadata and tables | 27 | 4 | K01–K03, I04, T01, D01–D11 |
-| DDL | 32 | 8 | D01–D11, F01–F03 |
-| Statistics | 40 | 19 | O07, C04; LFU lifetime repaired, dependency admission/metrics remain open |
-| Storage and distributed reads | 34 | 5 | T01–T03, C03, M01–M04, O03, O13 |
-| Protocols and external services | 0 | 3 | P03, T02; P01–P02, P04–P05 repaired; other helpers/variants unreviewed |
-| Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O11, O13; O12 repaired |
+| DDL | 32 | 8 | D01–D11, F01–F03, O14 |
+| Statistics | 40 | 19 | O07, O19, C04; LFU lifetime repaired, dependency admission/metrics remain open |
+| Storage and distributed reads | 34 | 5 | T01–T02, T04, C03, M01–M05, O03, O13; T03 repaired |
+| Protocols and external services | 0 | 3 | P03, P06–P07, T02, T04; P01–P02, P04–P05 repaired; other helpers/variants unreviewed |
+| Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O11, O13–O19; O12 repaired |
 | Background jobs and bulk data | 182 | 6 | O04–O06, O10, E05, E07; P04–P05 repaired; other bulk-data packages unreviewed |
 | Utilities and errors | 137 | 5 | O11; other utility/error contracts unreviewed |
 | Build, tools and test support | 93 | 0 | Original suites/build variants not accepted at current master |
-| Other upstream product surfaces | 28 | 0 | Unreviewed: no inference of absence from missing crate names |
+| Other upstream product surfaces | 28 | 0 | X02, O16–O17; remaining packages unreviewed, no inference of absence from crate names |
 
 ## Every Rust crate
 

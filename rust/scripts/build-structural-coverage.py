@@ -49,21 +49,21 @@ GO_PREFIXES = {
 
 FINDINGS = {
     "Syntax and name resolution": "A01, N01; grammar/AST variants still require full review",
-    "Values and expressions": "X01, K03, N01",
+    "Values and expressions": "X01–X02, K03, N01",
     "Planning": "Q01, C02, E02, M01–M02",
     "Execution": "E02–E07, K03; E01 repaired",
     "Session and authorization": "A01–A04, B01–B02, S01–S04, I01–I03, N04; C01 repaired",
-    "Domain and shared services": "O01–O11, O13, I04, C02; O12 repaired",
+    "Domain and shared services": "O01–O11, O13–O19, I04, C02; O12 repaired",
     "Metadata and tables": "K01–K03, I04, T01, D01–D11",
-    "DDL": "D01–D11, F01–F03",
-    "Statistics": "O07, C04; LFU lifetime repaired, dependency admission/metrics remain open",
-    "Storage and distributed reads": "T01–T03, C03, M01–M04, O03, O13",
-    "Protocols and external services": "P03, T02; P01–P02, P04–P05 repaired; other helpers/variants unreviewed",
-    "Server and configuration": "N01–N05, A02–A03, O01–O11, O13; O12 repaired",
+    "DDL": "D01–D11, F01–F03, O14",
+    "Statistics": "O07, O19, C04; LFU lifetime repaired, dependency admission/metrics remain open",
+    "Storage and distributed reads": "T01–T02, T04, C03, M01–M05, O03, O13; T03 repaired",
+    "Protocols and external services": "P03, P06–P07, T02, T04; P01–P02, P04–P05 repaired; other helpers/variants unreviewed",
+    "Server and configuration": "N01–N05, A02–A03, O01–O11, O13–O19; O12 repaired",
     "Background jobs and bulk data": "O04–O06, O10, E05, E07; P04–P05 repaired; other bulk-data packages unreviewed",
     "Utilities and errors": "O11; other utility/error contracts unreviewed",
     "Build, tools and test support": "Original suites/build variants not accepted at current master",
-    "Other upstream product surfaces": "Unreviewed: no inference of absence from missing crate names",
+    "Other upstream product surfaces": "X02, O16–O17; remaining packages unreviewed, no inference of absence from crate names",
 }
 
 

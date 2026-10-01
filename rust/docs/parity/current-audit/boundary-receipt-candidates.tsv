@@ -1,0 +1,102 @@
+receipt	line	evidence
+rust/testport/receipts/ddl_label.md	18	| `main_test.go` | 34 | `aa8bef08d69a68cc2f849c59d747445ef1734a7a` | Go goleak/test-suite harness only; Rust has no package-owned worker or harness behavior to reproduce |
+rust/testport/receipts/domain_affinity.md	30	Rust has no dependency-closed PD affinity manager, DDL integration, or owner
+rust/testport/receipts/domain_crossks.md	74	The complete cross-keyspace inventory and Go-only boundary are recorded here.
+rust/testport/receipts/domain_infosync.md	58	and TiFlash status endpoints. Rust has no dependency-closed infosync owner or
+rust/testport/receipts/domain_serverinfo_audit.md	78	The complete server-info inventory and Go-only boundary are recorded here.
+rust/testport/receipts/domain_sqlsvrapi.md	27	coupled to TiDB KV, metadata, owner, and session-pool interfaces. Rust has no
+rust/testport/receipts/domain_sqlsvrapi.md	53	The complete root `sqlsvrapi` inventory and explicit Go-only boundary are
+rust/testport/receipts/domain_sqlsvrapi_mock.md	29	consumed by domain, session, and cross-keyspace tests. Rust has no compatible
+rust/testport/receipts/dumpformat_parsedef.md	30	and logging code; no dependency-closed Rust dump-format or zap logging owner
+rust/testport/receipts/dumpformat_sqlfile.md	52	build were not run because this package has no dependency-closed Rust owner or
+rust/testport/receipts/dxf_framework_dxfmetric.md	38	an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_dxfutil.md	40	remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_handle.md	39	Rust has no dependency-closed owner for this Go DXF handle layer. The Rust
+rust/testport/receipts/dxf_framework_handle.md	45	so this complete Go package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_handle.md	71	tested Go callers. Rust has no equivalent dependency-closed implementation at
+rust/testport/receipts/dxf_framework_integrationtests.md	38	Rust has no dependency-closed DXF scheduler, SQL-backed task manager, TiKV
+rust/testport/receipts/dxf_framework_metering.md	39	Rust has no dependency-closed owner for this DXF metering package. Rust config
+rust/testport/receipts/dxf_framework_metering.md	45	speculative, so this complete Go package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_metering.md	72	registration lifecycle. Rust has no equivalent implementation at this
+rust/testport/receipts/dxf_framework_mock.md	39	Rust has no dependency-closed owner for these generated GoMock packages. The
+rust/testport/receipts/dxf_framework_mock.md	44	this complete generated-support package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_mock_execute.md	31	Rust has no dependency-closed owner for this generated GoMock package. The
+rust/testport/receipts/dxf_framework_mock_execute.md	36	generated-support package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_planner.md	39	package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_scheduler.md	60	explicit Go-only boundary; the nested generated mock package is audited
+rust/testport/receipts/dxf_framework_scheduler.md	99	Go storage/taskexecutor implementations. Rust has no equivalent scheduler
+rust/testport/receipts/dxf_framework_scheduler_mock.md	34	remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_framework_taskexecutor.md	38	Rust has no dependency-closed DXF task-executor manager, slot allocator,
+rust/testport/receipts/dxf_framework_taskexecutor_execute.md	25	Rust has no dependency-closed StepExecutor runtime or object-store metering
+rust/testport/receipts/dxf_framework_testutil.md	35	Rust has no dependency-closed owner for this Go DXF test utility package. The
+rust/testport/receipts/dxf_framework_testutil.md	41	complete support package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_importinto.md	99	windows in `job_doc.go`; and Rust has no executable parity path for those
+rust/testport/receipts/dxf_importinto_mock.md	29	Rust has no dependency-closed owner for this generated GoMock package. The
+rust/testport/receipts/dxf_importinto_mock.md	36	the complete generated-support package remains an explicit Go-only boundary.
+rust/testport/receipts/dxf_importinto_mock.md	59	Go operator tests—not this package—own writer/collector behavior. Rust has no
+rust/testport/receipts/executor_internal_exec.md	71	old-cluster persistence, even though Rust has no executable versioned upgrade
+rust/testport/receipts/executor_internal_querywatch.md	34	Rust has no dependency-closed execution owner for this package. The Rust
+rust/testport/receipts/executor_internal_testutil.md	37	benchmark scaffolding, and no dependency-closed Rust package exposes a shared
+rust/testport/receipts/executor_internal_util.md	30	Rust has no single dependency-closed utility owner for this package. Physical
+rust/testport/receipts/executor_root_distsql_indexjoin.md	241	the compiled `sort.rs` test module. Rust has no dependency-closed owners for
+rust/testport/receipts/expression_generator.md	55	Rust has no runtime equivalent of this Go-only code-generation package. The
+rust/testport/receipts/expression_generator.md	91	its explicit Go-only boundary; it is not a repository-wide parity claim.
+rust/testport/receipts/importsdk.md	44	Rust has no dependency-closed equivalent of this Go SDK. `tidb-parser` and
+rust/testport/receipts/inference.md	77	Rust has no dependency-closed inference owner. `tidb-vardef` contains the
+rust/testport/receipts/ingestor_globalsort.md	45	Rust has no global-sort external engine, object-store SST merge reader/writer,
+rust/testport/receipts/ingestor_root.md	31	explicit unimplemented boundary. Creating a placeholder `tidb-ingestor`
+rust/testport/receipts/ingestor_simplesst.md	47	Rust has no `simplesst` implementation, object-store SST byte-reader/codec,
+rust/testport/receipts/ingestor_testutils.md	24	Rust has no transcreated Go object-store memory backend or global-sort/simple-
+rust/testport/receipts/lightning_backend_encode.md	14	| `encode.go` | 92 | `931067181122ed345d634fff37e44ec874560861` | interface and configuration contract; no dependency-closed Rust owner |
+rust/testport/receipts/lightning_config.md	19	| `config.go` | 1,670 | `784053c1a405960f0d93489c896594d850e646ae` | complete Lightning schema/default/validation/marshal behavior; no dependency-closed Rust owner |
+rust/testport/receipts/lightning_membuf.md	65	contract; Rust has no tracing garbage collector, so the two GC variants retain
+rust/testport/receipts/lightning_mydump.md	82	Searches found no dependency-closed Rust owner or consumer for CSV parsing,
+rust/testport/receipts/objstore_mockobjstore.md	28	`storeapi.Storage` contract or owns this generated helper. Rust has no
+rust/testport/receipts/objstore_ossstore.md	48	Rust has no dependency-closed Alibaba OSS owner, OSS SDK adapter, temporary
+rust/testport/receipts/objstore_ossstore.md	89	validation was applicable because no dependency-closed Rust OSS backend exists
+rust/testport/receipts/objstore_ossstore_mock.md	27	Rust has no GoMock-compatible owner for either the Alibaba OSS SDK API or the
+rust/testport/receipts/objstore_root.md	80	Rust has no dependency-closed owner for Go `pkg/objstore`'s storage interface
+rust/testport/receipts/objstore_s3like.md	43	Rust has no dependency-closed owner for the Go S3-compatible backend contract,
+rust/testport/receipts/objstore_s3like_mock.md	25	Rust has no GoMock-compatible owner or dependency-closed S3-compatible client
+rust/testport/receipts/objstore_s3store.md	59	Rust has no dependency-closed owner for AWS S3, GCS XML interoperability,
+rust/testport/receipts/objstore_s3store_mock.md	25	Rust has no GoMock-compatible AWS S3 API mock owner. This is Go test support,
+rust/testport/receipts/objstore_storeapi.md	44	Rust has no dependency-closed owner for the Go object-store `Storage` contract,
+rust/testport/receipts/owner_parity.md	40	leases, failpoints, metrics, and retry helpers. Rust has no
+rust/testport/receipts/server_handler.md	20	server's schema routes, but no dependency-closed Rust implementation of the
+rust/testport/receipts/server_handler_extractorhandler.md	31	statement-summary storage); no dependency-closed Rust HTTP/domain owner exists
+rust/testport/receipts/server_handler_tests.md	31	Rust has no dependency-closed Go session-backed HTTP test server or TiFlash/DXF
+rust/testport/receipts/server_handler_tikvhandler.md	31	but no dependency-closed Rust HTTP router/domain owner for these handlers. No
+rust/testport/receipts/server_internal_testserverclient.md	30	server-process test lifecycle. Rust has no dependency-closed equivalent of the
+rust/testport/receipts/server_internal_util.md	35	configuration. Rust has no dependency-closed server listener/config owner for
+rust/testport/receipts/server_wire_eof_metadata.md	90	Rust has no session-owned equivalent of Go's `StatementContext.LastMessage`,
+rust/testport/receipts/session_metrics.md	34	telemetry consumers and have no dependency-closed Rust owner today.
+rust/testport/receipts/session_test_variable.md	36	There is no dependency-closed Rust equivalent of this package's mock
+rust/testport/receipts/sessionctx_stmtctx.md	63	there is no dependency-closed Rust owner for the complete Go `StatementContext`
+rust/testport/receipts/sessiontxn_staleread.md	39	Rust has no dependency-closed equivalent of `pkg/sessiontxn/staleread`.
+rust/testport/receipts/statistics_handle_autoanalyze_refresher_audit.md	82	`main_test.go` contributes only Go's package-level goleak wrapper; Rust has no
+rust/testport/receipts/statistics_handle_metrics_audit.md	52	Rust has no completed owner for that 60-artifact package. The existing
+rust/testport/receipts/statistics_handle_syncload_audit.md	89	`pkg/metrics` package, for which Rust has no complete atomic owner. Porting five
+rust/testport/receipts/store_copr.md	77	Rust has no dependency-closed owner for Go's `pkg/store/copr` worker lifecycle,
+rust/testport/receipts/table_tblctx.md	3	Status: Audited; no dependency-closed Rust implementation was added. This
+rust/testport/receipts/table_tblsession.md	3	Status: Audited; no dependency-closed Rust implementation was added. This
+rust/testport/receipts/telemetry.md	34	Rust has no dependency-closed owner for this package. Existing pieces are
+rust/testport/receipts/testkit.md	80	Rust has no dependency-closed equivalent of Go `pkg/testkit`. Existing Rust
+rust/testport/receipts/ttl_client.md	3	Status: Audited; no dependency-closed Rust implementation was added. This
+rust/testport/receipts/ttl_metrics.md	3	Status: Audited; no dependency-closed Rust implementation was added. This
+rust/testport/receipts/util_cgmon.md	6	with Go metrics and server lifecycle consumers; no dependency-closed Rust
+rust/testport/receipts/util_cgmon.md	43	startup/shutdown integration. Rust has no equivalent `MaxProcs`/`MemoryLimit`
+rust/testport/receipts/util_config.md	34	`pkg/executor/plan_replayer.go::loadVariables`. Rust has no executor-side plan
+rust/testport/receipts/util_cpuprofile.md	6	runtime/pprof sampler and its HTTP/test adapters; no dependency-closed Rust
+rust/testport/receipts/util_cpuprofile.md	53	Rust has no equivalent process-wide runtime profiler, Google pprof decoder or
+rust/testport/receipts/util_injectfailpoint.md	22	Rust has no repository-wide failpoint registry and no DXF call path that
+rust/testport/receipts/util_logutil.md	58	there is no dependency-closed Rust consumer or equivalent runtime context for
+rust/testport/receipts/util_mvmap.md	36	Rust has no complete counterpart for that executor package, so no substitute
+rust/testport/receipts/util_profile.md	3	Status: complete inventory; no dependency-closed Rust owner exists, so no
+rust/testport/receipts/util_ranger.md	100	- Rust has no mutable Go `StatementContext`; comparison uses typed datum/collation semantics and literal rendering reports errors instead of mutating warning state.
+rust/testport/receipts/util_root_audit.md	72	dependency-closed root-package owner. In particular, Rust has no equivalent
+rust/testport/receipts/util_stmtsummary_audit.md	31	`stmtsummary.rs` modules. Rust has no v2 `reader.rs`, `logger.rs`, or
+rust/testport/receipts/util_tableutil.md	3	Status: complete inventory; no dependency-closed Rust owner for the Go
+rust/testport/receipts/util_topsql_audit.md	89	their mocks, and the gRPC/profiler consumers have no dependency-closed Rust
+rust/testport/receipts/util_topsql_audit.md	107	corresponding counter. Rust has no reporter worker or channel/data-sink
+rust/testport/receipts/util_topsql_audit.md	110	accounts panics as failed reports. Rust has no `SingleTargetDataSink` or
+rust/testport/receipts/workloadlearning.md	75	Rust has no dependency-closed owner for this package's workload-based

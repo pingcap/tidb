@@ -1,5 +1,5 @@
 {
- "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+ "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
  "module": "github.com/tikv/pd/client",
  "version": "v0.0.0-20260805103528-afa43111d149",
  "digest": "sha256",

@@ -1,5 +1,5 @@
 {
- "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+ "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
  "digest": "git blob object id",
  "scope": "All tracked artifacts grouped by nearest Go package directory, including build variants, generated inputs, tests and fixtures. Unassigned artifacts are retained. This is inventory, not semantic acceptance.",
  "packages": [
@@ -1047,7 +1047,7 @@
     ],
     [
      "br/pkg/restore/snap_client/systable_restore_test.go",
-     "c065ee43c8799aeb8bd0c8d54ac641d31adb4491"
+     "84ee877dcfa11288502f7cabf5a49534011e0960"
     ],
     [
      "br/pkg/restore/snap_client/systable_schema_update.go",
@@ -8043,7 +8043,7 @@
     ],
     [
      "pkg/executor/set_test.go",
-     "7453dca2f02ca2f6ef056e7f797fcb170356ba51"
+     "e49da3bb9689d8d14d1993c51b4a06e9c9597158"
     ],
     [
      "pkg/executor/show.go",
@@ -15211,11 +15211,11 @@
     ],
     [
      "pkg/planner/core/find_best_task.go",
-     "0bb7bb509d62472a14f5f8566b435afe7ce2e277"
+     "1f6899e3d82142c94db2be5158d2d7d92b98304a"
     ],
     [
      "pkg/planner/core/find_best_task_test.go",
-     "4207cdebd3976bae24df40feb4474e21ed1a4137"
+     "6227a09a83ec359c235a96dbd6c4b368e195de46"
     ],
     [
      "pkg/planner/core/flat_plan.go",
@@ -15263,7 +15263,7 @@
     ],
     [
      "pkg/planner/core/integration_test.go",
-     "4005f8d90e3fadcbca6aaf47926e50406fc517e0"
+     "c334017b92a2fa345b05ca77ed0d7c0e5e6b6208"
     ],
     [
      "pkg/planner/core/lateral_join_test.go",
@@ -19381,7 +19381,7 @@
     ],
     [
      "pkg/session/upgrade_def.go",
-     "6e2fef8c4c56efe6039e01b2ab140e14b866df98"
+     "a95225e4f091c7d3ffa300896fa1f2dbe3b1da0b"
     ],
     [
      "pkg/session/upgrade_run.go",
@@ -19531,7 +19531,7 @@
     ],
     [
      "pkg/session/test/bootstraptest/boot_test.go",
-     "6084dfe408a576045a3fc46df0e2787e680ccc03"
+     "0e7797b4866c64e80aef2947da1cab3b2562f8ac"
     ],
     [
      "pkg/session/test/bootstraptest/bootstrap_upgrade_test.go",
@@ -19901,7 +19901,7 @@
     ],
     [
      "pkg/sessionctx/vardef/tidb_vars.go",
-     "ea05f036fb734d84838e7fe2b55e3b2dd9d3473d"
+     "35183c29514a06f400cccb8086944c9ae1c86516"
     ],
     [
      "pkg/sessionctx/vardef/tidb_vars_test.go",
@@ -19971,11 +19971,11 @@
     ],
     [
      "pkg/sessionctx/variable/session.go",
-     "2f63f0199594a3af5342e6d259095bf6cfb4ae83"
+     "147715f3fbe3febfed212bc8e1c2749790716ed6"
     ],
     [
      "pkg/sessionctx/variable/setvar_affect.go",
-     "84960b1edd425f91e0ea4ee25b4b751db55315f5"
+     "d1dacb0da6a269a0e70e0bf7016eff09d00e2d8d"
     ],
     [
      "pkg/sessionctx/variable/slow_log.go",
@@ -19991,7 +19991,7 @@
     ],
     [
      "pkg/sessionctx/variable/sysvar.go",
-     "1455b08ba45b95648121b0aa35060dcc4664122a"
+     "3011c7f8c514bf68de277874d9e9dafce017d845"
     ],
     [
      "pkg/sessionctx/variable/sysvar_test.go",

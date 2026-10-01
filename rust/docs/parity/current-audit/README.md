@@ -1,17 +1,17 @@
 # Structural parity audit: current evidence
 
-Current inventory baseline: TiDB Go master `e953a09d9d5e29e60c62f42d3aacebb819af49a5`, client-go
+Current inventory baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
-`b2b3783` (published shared-buffer repair). The integration started at
-`5503f8860883c6cd80bdd0d487d34c53787daf24`.
+`6f663b396552eec6d1bfad76b65f813e317884a4` (published health-owner repair).
+The current review starts at integration `771e62b2871890eeae2296cbeed04a19b1316201`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
 The coverage inventories enumerate every tracked artifact in 856 TiDB, 41 client-go,
 41 kvproto, 24 PD-client and 7 etcd-API package directories, with 83 Rust crates
 awaiting current-master acceptance. Original tests, generated/build/platform inputs, fixtures and
-unassigned root artifacts are retained. The 2,047 candidate lines are search
-evidence, not 2,047 defects. Some are errors Go intentionally returns.
+unassigned root artifacts are retained. The 2,043 candidate lines are search
+evidence, not a defect count. Some are errors Go intentionally returns.
 
 Reproduce the inventory from the repository root with
 `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`.
@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 74 tracked ownership/contract findings (67 unresolved, seven repaired), review candidates and the
+consolidates 85 tracked ownership/contract findings (77 unresolved, eight repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -29,6 +29,12 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [2026-10-01 full register reconciliation](remaining-structure-review.md) adds
+11 previously unregistered source-confirmed boundaries, records the statement-summary
+SQL probe, and corrects stale T03 status. [Machine-readable findings](structural-findings.json)
+and [source continuity](structural-source-continuity.json) retain every ID and current source pin.
+No production code was repaired by this review.
 
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
@@ -110,7 +116,7 @@ callers. C02's instance physical cache and full package acceptance remain open.
 | TiFlash polling lacks shared progress/backoff and PD HTTP discovery owners | Go refreshTiFlashTicker owns periodic store refresh, unavailable backoff and available-table progress caching; infosync gets PD HTTP store states including Down/Disconnected. Rust calls gRPC discovery every tick and filters legacy Up stores; no shared progress cache or cluster-security HTTP manager. | Open. Errors from selected Up stores are fixed, but that does not certify discovery, offline-store progress, cache, TLS/failover or scheduling parity. |
 | Generic mutation constructor chooses table assertion policy | `tidb-txnkv/src/transaction/mutation.rs::BufferMutation::insert` combines presume-not-exists with AssertNotExist. `tidb-exec/src/real_tikv_dml.rs::plan_insert` intentionally does no snapshot check. Go `pkg/table/tables` chooses Unknown for a lazy optimistic miss and NotExist for an eager/pessimistic insert. | Open. Reconcile all callers; blanket Unknown would break eager/pessimistic ownership. Configured WritePlanningSnapshot lacks transaction-mode input; system-row index writes omit assertions. These need the table owner, not another global default. |
 | Region/cache/RPC algorithms have competing owners | `tidb-txnkv/src/driver/client_bridge.rs::ClientPd` delegates to TiDB routing/recovery/transport while client-rust also implements these algorithms. DistSQL still needs TiDB capabilities. | Open architecture migration. Duplication alone is not proof of a runtime failure; native RetryBackoffer already owns RegionBackoffBudget. |
-| Background lifetime still has request-type inference | The bridge retains a TxnHeartBeatRequest exception; additional pipelined/transaction-file cleanup paths need explicit operation scopes like Go's owners. | Open; the concrete native patch was rejected by automatic approval review and remains unapplied pending its separately requested approval. Foreground ResolveLock must remain cancellable. |
+| Background lifetime inferred from request type/client mode | The earlier bridge used a TxnHeartBeatRequest exception and native transaction_tasks flag. | Repaired as T03 by native 488bb73 and the synchronized TiDB dependency. Explicit operation lifetimes now cross the bridge; foreground ResolveLock remains cancellable. The prior approval block is historical and resolved. Broader native TSO shutdown remains separately open as P06. |
 | Alternate storage session dispatch remains incomplete | The lightweight path's supported SET assignments now use the normal parser, but its transaction mode/autocommit lifecycle is not fully unified with the ordinary session owner. | Review required at session package scope; do not delete a dispatcher before migrating all its callers. |
 | Other locally projected protocol packages | Five local PD/TiKV/BR/etcd projections caused 400 omissions and a PD presence mismatch. | Removed. Complete native ownership, descriptor-derived TiKV transport and full pinned etcd inputs eliminate the compared gaps; all 71 opaque representations retain presence. P01/P02 contract ownership repaired; P03 discovery and external package/runtime acceptance remain open. |
 

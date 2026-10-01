@@ -1,0 +1,1331 @@
+{
+  "baseline": {
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "tidb_integration": "771e62b2871890eeae2296cbeed04a19b1316201",
+    "client_rust": "6f663b396552eec6d1bfad76b65f813e317884a4",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "prior_register_integration": "dae65456f9528d1747d47daf542e890ba8db952c",
+  "scope": "Exact current source blobs/trees for literal Rust paths in the register; shorthand/module references remain in the finding text. Unchanged blobs preserve earlier source evidence, not package acceptance or rerun tests. New entries have no prior reviewed status.",
+  "findings": [
+    {
+      "id": "A01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "prior_blob_or_tree": "c80f266c49335cdff9cbad5d5884d6b74fbeb28e",
+          "current_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-session/src/table_privilege.rs",
+          "prior_blob_or_tree": "253c719075b69585503900b33236f21a7ed44cd9",
+          "current_blob_or_tree": "08baf83dd24f2b5dfbb2fedaaa1cb342a1c7d706",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "A02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "prior_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "current_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_privileges.rs",
+          "prior_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "current_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege.rs",
+          "prior_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "current_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "A03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_tls.rs",
+          "prior_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "current_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege/privs.rs",
+          "prior_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "current_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "A04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/account.rs",
+          "prior_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "current_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "B01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/binding_cache.rs",
+          "prior_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "current_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "B02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_binding_seam.rs",
+          "prior_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "current_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/binding_arm.rs",
+          "prior_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "current_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "N01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_connection.rs",
+          "prior_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "current_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "N02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/main_flags.rs",
+          "prior_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "current_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "N03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/bin/tidb-server.rs",
+          "prior_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "current_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "prior_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "current_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "prior_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "prior_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "current_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "prior_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "prior_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D05",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D06",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D07",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "prior_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D08",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/partition_maintenance.rs",
+          "prior_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "current_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D09",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mview_build_engine.rs",
+          "prior_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "current_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D10",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "D11",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+          "prior_blob_or_tree": "d4c568b46e29e64366bf64640384cc4b84fcb1ab",
+          "current_blob_or_tree": "d4c568b46e29e64366bf64640384cc4b84fcb1ab",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "C01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/plan_cache.rs",
+          "prior_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "current_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/plan_cache_lru.rs",
+          "prior_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "current_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/session_plan_cache.rs",
+          "prior_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "current_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "C02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "prior_blob_or_tree": "c0b4f5d282d550ebe05bfdbeed5fd0523462ec9a",
+          "current_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "C04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs",
+          "prior_blob_or_tree": "8d2e416e875803b2fcc3b41d342be14d23ce2ef9",
+          "current_blob_or_tree": "54aebf777d6d32539987de7172f10a5905be3d14",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "E01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/multi_dml.rs",
+          "prior_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "current_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "E02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/dml.rs",
+          "prior_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "current_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "E03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver.rs",
+          "prior_blob_or_tree": "43779d081ac36fb4051c52c2c2f1bc406c395f48",
+          "current_blob_or_tree": "1e08a9bd09ce37d444027cec85a157e8ded391cc",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "prior_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "current_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "E04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "prior_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "current_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/physical/mod.rs",
+          "prior_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "current_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "E05",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "S01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "prior_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "current_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "prior_blob_or_tree": "4d02f4434608351e02ea920a1f3accb7687cef61",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "S02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/real_tikv_node/mod.rs",
+          "prior_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "current_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "I01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "I02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/lib.rs",
+          "prior_blob_or_tree": "1c4a2fe7e3ae0e0c8bd871e6af1681b043f00f12",
+          "current_blob_or_tree": "7ba3f1e82f1492359d5b108abededcf325cc72ae",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "I03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "T01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "prior_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "current_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/transaction/mutation.rs",
+          "prior_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "current_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "T02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "prior_blob_or_tree": "e7108bc913fc4dc31cff25e260776eb9660a0dfe",
+          "current_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/region",
+          "prior_blob_or_tree": "4879d296266a726feb6c4af8711c0fcd725a0e76",
+          "current_blob_or_tree": "c393df3aab3d4962193d582d3bd85bacabeabdcb",
+          "changed": true
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/region_cache.rs",
+          "prior_blob_or_tree": "9208184f909151f3f9c8e77dac0e7d66ada0705e",
+          "current_blob_or_tree": "81072bc65e49668915a48625cd3adbf368260ca4",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "T03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "prior_blob_or_tree": "e7108bc913fc4dc31cff25e260776eb9660a0dfe",
+          "current_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "T04",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/locate.rs",
+          "prior_blob_or_tree": "28c3b05b002752adbd42e9160d3bb483bfe877cf",
+          "current_blob_or_tree": "633a592e2f3867c34e99e9c66ecd2e8c8a305cfe",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/serverinfo_etcd.rs",
+          "prior_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "current_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/sql_node.rs",
+          "prior_blob_or_tree": "9242f174cbaca1c452680fe724fb573a7d903c82",
+          "current_blob_or_tree": "9242f174cbaca1c452680fe724fb573a7d903c82",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "prior_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "current_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mysql_bootstrap.rs",
+          "prior_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "current_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/client_go_metrics.rs",
+          "prior_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "current_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_api.rs",
+          "prior_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "current_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-ttl/src/lib.rs",
+          "prior_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "current_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O05",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "prior_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/resource_control.rs",
+          "prior_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "current_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O06",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-domain/src/ru_stats.rs",
+          "prior_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "current_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O07",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+          "prior_blob_or_tree": "daf63a69b614e1b309332fcb0bccf5034e968c71",
+          "current_blob_or_tree": "fba945b7239420ed2c9526633aac43c2e650c568",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O08",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-domain/src/plan_replayer.rs",
+          "prior_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "current_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O09",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-domain/src/serverinfo_syncer.rs",
+          "prior_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "current_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O14",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-planner/src/plan_builder/catalog.rs",
+          "prior_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "current_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "prior_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "current_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O15",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-domain/src/lib.rs",
+          "prior_blob_or_tree": "4363821567571a1d3708566b2145e206d6bd6053",
+          "current_blob_or_tree": "43aed7fd0d94dca10cc934f3faa519add2be7d17",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O16",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O17",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "prior_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "current_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O18",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/adapter.rs",
+          "prior_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "current_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs",
+          "prior_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "current_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O19",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/catalog/sync_load.rs",
+          "prior_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "current_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-stats-handle-metrics/src/lib.rs",
+          "prior_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "current_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "F01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "prior_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "current_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "prior_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "prior_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "current_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "M01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "prior_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "M02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "prior_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "M03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "prior_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "M04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "prior_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "M05",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-config/src/tiflash.rs",
+          "prior_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "current_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "prior_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "prior_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "current_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "P01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/requests.rs",
+          "prior_blob_or_tree": "76cf23b0fe68f9fddb6ef642cb68f86cf268d740",
+          "current_blob_or_tree": "736d5dfbd415a5548d9c93af31735e35cd12ebbb",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-proto/src/lib.rs",
+          "prior_blob_or_tree": "b44a34aa086a6a77562da07205ac2fe857a57112",
+          "current_blob_or_tree": "b3e615562ee30bdc6118fecba035c87d0ce3b38b",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "P02",
+      "previously_registered": true,
+      "explicit_rust_paths": []
+    },
+    {
+      "id": "P03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/topology.rs",
+          "prior_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "current_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-pd-client/src/tso.rs",
+          "prior_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "current_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "P06",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/timestamp.rs",
+          "prior_blob_or_tree": "30cfd8ee7c6b22e2d3ade4b70782b06b775a5493",
+          "current_blob_or_tree": "30cfd8ee7c6b22e2d3ade4b70782b06b775a5493",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "P07",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/retry.rs",
+          "prior_blob_or_tree": "e2d1931f1663aed3af3a9e80c095f0536bb48ab7",
+          "current_blob_or_tree": "e2d1931f1663aed3af3a9e80c095f0536bb48ab7",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "P05",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-br/src/rtree/rtree.rs",
+          "prior_blob_or_tree": "f994f547a5b9dbf7b8bc3ab09d59dde9fffb747c",
+          "current_blob_or_tree": "960420948a81760e80821101bbb6f5fff8fcd013",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "Q01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "prior_blob_or_tree": "c80f266c49335cdff9cbad5d5884d6b74fbeb28e",
+          "current_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "prior_blob_or_tree": "c0b4f5d282d550ebe05bfdbeed5fd0523462ec9a",
+          "current_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "X01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-expr/src/new_function.rs",
+          "prior_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "current_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "X02",
+      "previously_registered": false,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-expr/src",
+          "prior_blob_or_tree": "9bceb6b30f83fa198696b8a3fd5b78cb95e5f5f0",
+          "current_blob_or_tree": "9bceb6b30f83fa198696b8a3fd5b78cb95e5f5f0",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "prior_blob_or_tree": "89fb97bb9b0f09aa223c87e214875613500f35e4",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-vardef/src/tidb_vars.rs",
+          "prior_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "current_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-distsql/src/copr_cache.rs",
+          "prior_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "current_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_read.rs",
+          "prior_blob_or_tree": "70241d27398c397913c17a03dc5ea278bf222359",
+          "current_blob_or_tree": "a0c7ae45e28176abf6ca6bb5ed02420ae26441eb",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "K01",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_auto_id.rs",
+          "prior_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "current_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_auto_id_seam.rs",
+          "prior_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "current_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "K02",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/cache.rs",
+          "prior_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "current_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "prior_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "current_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "K03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table.rs",
+          "prior_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "current_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "I04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-exec/src/catalog_watch.rs",
+          "prior_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "current_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "prior_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "S03",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "S04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "E06",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-executor/src/projection.rs",
+          "prior_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "current_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "E07",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-br/src/lib.rs",
+          "prior_blob_or_tree": "e7178df4839114d2fa3e97c34abba42a314418cd",
+          "current_blob_or_tree": "23dfb4b29beec367becb52d59367fb8b91489672",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "prior_blob_or_tree": "5772a706eeda405ba8f2ffdc824e49a5d73bdf11",
+          "current_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "N04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-session/src/process_arm.rs",
+          "prior_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "current_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "N05",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/http_status.rs",
+          "prior_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "current_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O10",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-dxf-operator/src/lib.rs",
+          "prior_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "current_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-dxf/src/lib.rs",
+          "prior_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "current_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "prior_blob_or_tree": "4d02f4434608351e02ea920a1f3accb7687cef61",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O11",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "prior_blob_or_tree": "4d02f4434608351e02ea920a1f3accb7687cef61",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-util/src/topsql_reporter/mod.rs",
+          "prior_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "current_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "O12",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-domain/src/globalconfigsync.rs",
+          "prior_blob_or_tree": null,
+          "current_blob_or_tree": "bd5c3155578fe743446daf8b93f18c2e8e1b4c11",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/global_config_sync.rs",
+          "prior_blob_or_tree": null,
+          "current_blob_or_tree": "e51e2add67db2ea3a4980386a07137bfcc440119",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-session/src/variables.rs",
+          "prior_blob_or_tree": "19bf602c907be326dea41f738f7dff30060662f7",
+          "current_blob_or_tree": "fdff03cb3f780ac220ded7b4d64f20e983488cde",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "id": "O13",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+          "prior_blob_or_tree": "4d0373a47bbc83b61ac6de821c2e05bdd0c8d140",
+          "current_blob_or_tree": "30385f0ed4c2c5110892591f1db18145107c2a7c",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "prior_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_contract.rs",
+          "prior_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "current_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "id": "P04",
+      "previously_registered": true,
+      "explicit_rust_paths": [
+        {
+          "path": "rust/crates/tidb-br/src/restore_utils.rs",
+          "prior_blob_or_tree": "83280640bdea596a2d4c4102e980672f20bf81ab",
+          "current_blob_or_tree": "58667c2c416f953a18b946d682f7a98a79128214",
+          "changed": true
+        }
+      ]
+    }
+  ]
+}

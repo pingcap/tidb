@@ -68,7 +68,7 @@ rust/crates/tidb-executor/src/driver/set_opr.rs	187	"plan-only metadata for a se
 rust/crates/tidb-executor/src/driver/subquery.rs	527	"a scalar subquery selecting several columns is not supported yet",
 rust/crates/tidb-executor/src/driver/subquery.rs	582	"an ANY/ALL subquery selecting several columns is not supported yet",
 rust/crates/tidb-executor/src/driver/subquery.rs	899	"a scalar subquery selecting several columns is not supported yet",
-rust/crates/tidb-executor/src/driver.rs	940	"this subquery result kind is not supported yet",
+rust/crates/tidb-executor/src/driver.rs	941	"this subquery result kind is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	378	"a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	584	"this expression index's expression is not supported yet",
 rust/crates/tidb-executor/src/expression_index.rs	642	"an expression index over an expression with no static type is not supported yet",
@@ -1554,7 +1554,7 @@ rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	251	#[ignore 
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	259	#[ignore = "go-parity-gap: cross-session pessimistic lock ordering needs transactional execution"]
 rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	266	#[ignore = "go-parity-gap: statement-hint application writes StmtCtx fields that no Rust surface carries yet"]
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
-rust/crates/tidb-server/src/cluster_session_node/mod.rs	6854	"{feature} is not supported yet"
+rust/crates/tidb-server/src/cluster_session_node/mod.rs	6868	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
 rust/crates/tidb-server/tests/auth_exchange_source.rs	95	// and is intentionally not implemented by this transport leaf.
 rust/crates/tidb-server/tests/auth_token_source.rs	78	// claims owner are deliberately not implemented here.
@@ -1566,18 +1566,18 @@ rust/crates/tidb-session/src/account.rs	1582	"GRANT/REVOKE with a column list is
 rust/crates/tidb-session/src/account.rs	1661	"GRANT/REVOKE with a column list is not supported yet",
 rust/crates/tidb-session/src/binding_cache.rs	96	//!   incremental watermark and metrics are not implemented here.
 rust/crates/tidb-session/src/dispatch.rs	420	"this CREATE DATABASE option is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	2616	"IMPORT INTO FORMAT '{format}' is not supported yet"
-rust/crates/tidb-session/src/dispatch.rs	2757	"this DML statement kind ({}) is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	3055	"this DDL statement kind ({}) is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	3060	"this statement kind (ADMIN {}) is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	3064	"this statement kind ({}) is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	3145	"reading at @@tidb_snapshot is not supported yet",
-rust/crates/tidb-session/src/dispatch.rs	3159	"reading at @@tidb_read_staleness is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	2620	"IMPORT INTO FORMAT '{format}' is not supported yet"
+rust/crates/tidb-session/src/dispatch.rs	2761	"this DML statement kind ({}) is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	3059	"this DDL statement kind ({}) is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	3064	"this statement kind (ADMIN {}) is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	3068	"this statement kind ({}) is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	3149	"reading at @@tidb_snapshot is not supported yet",
+rust/crates/tidb-session/src/dispatch.rs	3163	"reading at @@tidb_read_staleness is not supported yet",
 rust/crates/tidb-session/src/explain_arm.rs	67	"EXPLAIN of a plan digest is not supported yet",
-rust/crates/tidb-session/src/explain_arm.rs	146	"EXPLAIN ANALYZE of {} is not supported yet",
-rust/crates/tidb-session/src/explain_arm.rs	153	"EXPLAIN ANALYZE of {} is not supported yet",
-rust/crates/tidb-session/src/explain_arm.rs	186	"EXPLAIN of {} is not supported yet",
-rust/crates/tidb-session/src/explain_arm.rs	193	"EXPLAIN of {} is not supported yet",
+rust/crates/tidb-session/src/explain_arm.rs	149	"EXPLAIN ANALYZE of {} is not supported yet",
+rust/crates/tidb-session/src/explain_arm.rs	156	"EXPLAIN ANALYZE of {} is not supported yet",
+rust/crates/tidb-session/src/explain_arm.rs	189	"EXPLAIN of {} is not supported yet",
+rust/crates/tidb-session/src/explain_arm.rs	196	"EXPLAIN of {} is not supported yet",
 rust/crates/tidb-session/src/show.rs	889	"EXPLAIN FOR CONNECTION over a live statement is not supported yet",
 rust/crates/tidb-session/src/show.rs	1476	"SHOW WARNINGS filters are not supported yet",
 rust/crates/tidb-session/src/show.rs	1484	"SHOW ERRORS filters are not supported yet",
@@ -1656,10 +1656,6 @@ rust/crates/tidb-session/src/tests_domain_extract_source.rs	43	// go-parity-gap:
 rust/crates/tidb-session/src/tests_domain_extract_source.rs	46	#[ignore = "go-parity-gap: extract.go + persisted stmtsummary are not \
 rust/crates/tidb-session/src/tests_domain_extract_source.rs	54	// go-parity-gap: extract.go's statements-summary SQL read path is not
 rust/crates/tidb-session/src/tests_domain_extract_source.rs	57	#[ignore = "go-parity-gap: extract.go's summary-history read path is not \
-rust/crates/tidb-session/src/tests_domain_globalconfigsync_source.rs	33	// go-parity-gap: globalconfigsync is an etcd/PD-client writer with no Rust
-rust/crates/tidb-session/src/tests_domain_globalconfigsync_source.rs	36	#[ignore = "go-parity-gap: pkg/domain/globalconfigsync is not transcreated"]
-rust/crates/tidb-session/src/tests_domain_globalconfigsync_source.rs	45	// go-parity-gap: needs the session bootstrap + globalconfigsync's PD
-rust/crates/tidb-session/src/tests_domain_globalconfigsync_source.rs	48	#[ignore = "go-parity-gap: session bootstrap + globalconfigsync PD writer \
 rust/crates/tidb-session/src/tests_domain_infosync_source.rs	41	// go-parity-gap: the infosync package (PD HTTP placement-bundle client) is
 rust/crates/tidb-session/src/tests_domain_infosync_source.rs	44	#[ignore = "go-parity-gap: pkg/domain/infosync is not transcreated"]
 rust/crates/tidb-session/src/tests_domain_infosync_source.rs	54	// go-parity-gap: the infosync TiFlash manager is not transcreated.
@@ -2038,7 +2034,7 @@ rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	696	// go-parity-gap: SysV
 rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	702	// go-parity-gap: SysVar duration validation (time.ParseDuration paths) not ported to this crate
 rust/third_party/tikv-client-rs/src/common/errors.rs	59	/// Feature is not implemented.
 rust/third_party/tikv-client-rs/src/mock.rs	431	unimplemented!()
-rust/third_party/tikv-client-rs/src/region_cache.rs	4204	unimplemented!()
+rust/third_party/tikv-client-rs/src/region_cache.rs	4199	unimplemented!()
 rust/third_party/tikv-client-rs/src/request/mod.rs	449	unimplemented!()
 rust/third_party/tikv-client-rs/src/request/mod.rs	453	unimplemented!()
 rust/third_party/tikv-client-rs/src/request/mod.rs	666	unimplemented!()

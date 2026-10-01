@@ -1,5 +1,5 @@
 {
- "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+ "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
  "module": "go.etcd.io/etcd/api/v3",
  "version": "v3.5.15",
  "digest": "sha256",
