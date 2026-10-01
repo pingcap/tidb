@@ -109,7 +109,12 @@ func installStatementRUOwner(stmt *ExecStmt) {
 	}
 	setup.fullReport = fullReport
 	owner := newStatementRUOwner(stmt)
-	owner.calculationSetup = setup
+	owner.setCalculationSetup(setup)
+	// This mode remains immutable after the owner becomes visible, including
+	// after the terminal consumes and clears calculationSetup.
+	if setup.fullReport {
+		owner.installFlags |= statementRUInstallFull
+	}
 	stmt.statementRUOwner = owner
 }
 
@@ -118,13 +123,15 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 		return statementRUCalculationSetup{}, false
 	}
 	sessVars := stmt.Ctx.GetSessionVars()
-	planInfo := classifyStatementRUPlan(stmt.Plan)
 	if sessVars == nil || sessVars.StmtCtx == nil {
 		return statementRUCalculationSetup{}, false
 	}
 	// Locking SELECTs still perform reads even though they are not read-only.
-	eligible := sessVars.StmtCtx.IsReadOnly || sessVars.StmtCtx.InSelectStmt ||
-		planInfo.kind == statementRUPlanAnalyze || planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit
+	eligible := sessVars.StmtCtx.IsReadOnly || sessVars.StmtCtx.InSelectStmt
+	if !eligible {
+		planInfo := classifyStatementRUPlan(stmt.Plan)
+		eligible = planInfo.kind == statementRUPlanAnalyze || planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit
+	}
 	if !eligible ||
 		(sessVars.InRestrictedSQL && !isStatementRUTTLJob(sessVars)) || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
 		sessVars.StmtCtx.GetFlatPlan() != nil {
@@ -201,23 +208,24 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 		return 0
 	}
 
-	sql := stmt.StmtNode.OriginalText()
+	var sessVars *variable.SessionVars
 	if stmt.Ctx != nil {
-		sessVars := stmt.Ctx.GetSessionVars()
+		sessVars = stmt.Ctx.GetSessionVars()
 		// Both prepared and non-prepared cache hits skip plan compilation.
 		if sessVars != nil && sessVars.FoundInPlanCache {
 			return 0
 		}
-		if sessVars != nil && sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
-			stmtCtx := sessVars.StmtCtx
-			normalizedSQL, _ := stmtCtx.SQLDigest()
-			normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
-			if normalizedSQL != "" {
-				return float64(len(normalizedSQL))
-			}
-			if sql == "" {
-				sql = stmtCtx.OriginalSQL
-			}
+	}
+	sql := stmt.StmtNode.OriginalText()
+	if sessVars != nil && sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
+		stmtCtx := sessVars.StmtCtx
+		normalizedSQL, _ := stmtCtx.SQLDigest()
+		normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
+		if normalizedSQL != "" {
+			return float64(len(normalizedSQL))
+		}
+		if sql == "" {
+			sql = stmtCtx.OriginalSQL
 		}
 	}
 	if sql == "" {
@@ -331,6 +339,88 @@ func (calculator *statementRUCalculator) finalize() (statementRUFinalizedSnapsho
 		calibrationState: statementRUCalibrationIncomplete,
 		sqlType:          "select",
 	}, true
+}
+
+// A point result needs all four floats, including the sign of zero TiFlash RU.
+type statementRUPointPayload struct {
+	totalRU  float64
+	engineRU statementRUEngineResult
+}
+
+func finalizeStatementRUPointPayload(scanBytes, netBytes, frontendCompileBytes float64) (statementRUPointPayload, bool) {
+	weights := currentStatementRUWeights()
+	// The fresh point snapshot has seven +0 units and OperatorNum=1.
+	// NetBytes validation also proves CrossAZNetBytes=0 <= NetBytes.
+	for _, value := range [...]float64{scanBytes, netBytes, frontendCompileBytes} {
+		if !(value >= 0 && value <= math.MaxFloat64) {
+			return statementRUPointPayload{}, false
+		}
+	}
+	// Validate every coefficient, including the fixed-zero units.
+	for _, value := range [...]float64{weights.CrossAZNetByte, weights.CPUWork, weights.ScanByte,
+		weights.NetByte, weights.FrontendCompileByte, weights.HashStateRow, weights.JoinOutputRow,
+		weights.WriteStatement, weights.OperatorNum, weights.WriteKey, weights.WriteByte} {
+		if !(value >= 0 && value <= math.MaxFloat64) {
+			return statementRUPointPayload{}, false
+		}
+	}
+	// Substitute only the fixed units in StmtUnits.Calculate. Retain its
+	// zero products and addition order for signed zero and rounded sums.
+	totalRU := weights.CPUWork*0 +
+		weights.ScanByte*scanBytes +
+		weights.NetByte*netBytes +
+		weights.CrossAZNetByte*0 +
+		weights.FrontendCompileByte*frontendCompileBytes +
+		weights.HashStateRow*0 +
+		weights.JoinOutputRow*0 +
+		weights.WriteStatement*0 +
+		weights.OperatorNum*1 +
+		weights.WriteKey*0 +
+		weights.WriteByte*0
+	if !(totalRU >= 0 && totalRU <= math.MaxFloat64) {
+		return statementRUPointPayload{}, false
+	}
+	result := ruv2.StmtResult{TotalRU: totalRU}
+	// These are engineResult's expressions with the point compute fields
+	// substituted. Keep zero products and their addition order: valid -0
+	// coefficients can make even an unused engine's result negative zero.
+	engineRU := statementRUEngineResult{
+		TiDB: weights.CPUWork*0 + weights.HashStateRow*0 +
+			weights.OperatorNum*1 + weights.JoinOutputRow*0 +
+			weights.FrontendCompileByte*frontendCompileBytes + weights.WriteStatement*0,
+		TiKV: weights.CPUWork*0 + weights.HashStateRow*0 +
+			weights.OperatorNum*0 + weights.ScanByte*(scanBytes-0) +
+			weights.NetByte*(netBytes-0) + weights.WriteKey*0 + weights.WriteByte*0,
+		TiFlash: weights.CPUWork*0 + weights.HashStateRow*0 +
+			weights.OperatorNum*0 + weights.JoinOutputRow*0 +
+			weights.ScanByte*0 + weights.NetByte*0 + weights.CrossAZNetByte*0,
+	}
+	result.TotalRU += engineRU.TiFlash * (statementRUTiFlashMultiplier - 1)
+	engineRU.TiFlash *= statementRUTiFlashMultiplier
+	for _, ru := range [...]float64{result.TotalRU, engineRU.TiDB, engineRU.TiKV, engineRU.TiFlash} {
+		if ru < 0 || math.IsNaN(ru) || math.IsInf(ru, 0) {
+			return statementRUPointPayload{}, false
+		}
+	}
+	return statementRUPointPayload{totalRU: result.TotalRU, engineRU: engineRU}, true
+}
+
+// statementRUResultSnapshot carries only the values consumed in result mode.
+// Full reporting keeps its original unit snapshot and frozen report layout.
+type statementRUResultSnapshot struct {
+	result   ruv2.StmtResult
+	engineRU statementRUEngineResult
+	sqlType  string
+}
+
+// Result metrics have their own panic boundary so a reporter panic cannot
+// suppress them. No calibration or failure series are published in this mode.
+func publishStatementRUResultMetricsSafely(finalized *statementRUResultSnapshot, ttlJob bool) {
+	defer func() { _ = recover() }()
+	if ttlJob {
+		metrics.RUV2TTLTotal.Add(finalized.result.TotalRU)
+	}
+	metrics.AddRUV2Results(finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash, finalized.result.TotalRU, finalized.sqlType)
 }
 
 func publishStatementRUFinalizedSnapshot(
