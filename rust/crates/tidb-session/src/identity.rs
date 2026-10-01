@@ -330,8 +330,53 @@ impl Session {
         if self.privilege_context().is_none() {
             return Ok(());
         }
-        let requests = crate::table_privilege::required_table_privileges(stmt, &self.current_db);
+        let requests = self.collect_table_privileges(stmt, false)?;
         self.check_table_privilege_requests(&requests)
+    }
+
+    pub(crate) fn collect_table_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        preparing: bool,
+    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+        crate::table_privilege::required_table_privileges(stmt, &self.current_db, |update| {
+            let mut ctx = self.statement_context_for_stmt(stmt, false);
+            if preparing {
+                // Go initializes each PREPARE marker to NULL before building
+                // its plan. EXECUTE uses the actual bound statement values.
+                ctx = ctx.with_prepared_params(
+                    vec![tidb_datatype::Datum::Null; tidb_executor::parsed_parameter_count(stmt)]
+                        .into(),
+                );
+            }
+            let resolve = |catalog: &tidb_executor::Catalog| {
+                if self.local_temporary_tables.is_empty() {
+                    return tidb_executor::driver::update_privilege_tables(
+                        update,
+                        catalog,
+                        &self.current_db,
+                        &ctx,
+                    );
+                }
+                // Name resolution must see the same session overlay as the
+                // executor, including a temporary table shadowing a base table.
+                let mut catalog = catalog.clone();
+                catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
+                tidb_executor::driver::update_privilege_tables(
+                    update,
+                    &catalog,
+                    &self.current_db,
+                    &ctx,
+                )
+            };
+            match &self.txn {
+                Some(txn) => resolve(&txn.working),
+                None => {
+                    let catalog = self.lock_catalog()?;
+                    resolve(&catalog)
+                }
+            }
+        })
     }
 
     /// Checks one statement's derived requests against the live grants.

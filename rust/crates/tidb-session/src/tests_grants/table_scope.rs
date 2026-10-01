@@ -63,6 +63,152 @@ fn table_denied(command: &str, table: &str) -> (u16, String) {
     )
 }
 
+#[test]
+fn joined_update_privileges_follow_resolved_assignment_targets() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE TABLE v (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    boot.run("INSERT INTO v VALUES (1, 20)").unwrap();
+    boot.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+    for sql in [
+        "UPDATE t JOIN v ON t.a=v.id SET x=21",
+        "UPDATE t AS l JOIN v AS r ON l.a=r.id SET x=21",
+        "UPDATE t JOIN v ON t.a=v.id SET x=21 WHERE 0",
+        "EXPLAIN UPDATE t JOIN v ON t.a=v.id SET x=21",
+        "EXPLAIN ANALYZE UPDATE t JOIN v ON t.a=v.id SET x=21",
+    ] {
+        assert_eq!(denied(&mut bob, sql).0, 8121, "{sql}");
+    }
+    assert_eq!(row_text(boot.run("SELECT x FROM v")), vec![vec!["20"]]);
+    boot.run("GRANT UPDATE ON test.t TO 'bob'@'%'").unwrap();
+    assert_eq!(
+        denied(&mut bob, "UPDATE t JOIN v ON t.a=v.id SET b=11,x=21").0,
+        8121
+    );
+    assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["10"]]);
+    // A read-only join participant needs SELECT, but never UPDATE.
+    boot.run("GRANT UPDATE ON test.v TO 'bob'@'%'").unwrap();
+    boot.run("REVOKE UPDATE ON test.t FROM 'bob'@'%'").unwrap();
+    bob.run("UPDATE t AS l JOIN v AS r ON l.a=r.id SET x=22")
+        .unwrap();
+    assert_eq!(row_text(boot.run("SELECT x FROM v")), vec![vec!["22"]]);
+}
+
+#[test]
+fn prepared_joined_update_rechecks_resolved_target_privileges() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE TABLE v (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    boot.run("INSERT INTO v VALUES (1, 20)").unwrap();
+    boot.run("GRANT SELECT, UPDATE ON test.* TO 'bob'@'%'")
+        .unwrap();
+    bob.run("PREPARE s FROM 'UPDATE t JOIN v ON t.a=v.id SET x=?'")
+        .unwrap();
+    bob.run("SET @x=21").unwrap();
+    bob.run("EXECUTE s USING @x").unwrap();
+    boot.run("REVOKE UPDATE ON test.* FROM 'bob'@'%'").unwrap();
+    bob.run("SET @x=22").unwrap();
+    assert_eq!(denied(&mut bob, "EXECUTE s USING @x").0, 8121);
+    assert_eq!(row_text(boot.run("SELECT x FROM v")), vec![vec!["21"]]);
+}
+
+#[test]
+fn prepared_joined_update_resolves_targets_again_after_ddl() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE TABLE v (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    boot.run("INSERT INTO v VALUES (1, 20)").unwrap();
+    boot.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+    boot.run("GRANT UPDATE ON test.t TO 'bob'@'%'").unwrap();
+    let sql = "UPDATE t JOIN v ON t.a=v.id SET b=?";
+    let binary = bob.prepare_ast(sql).unwrap();
+    bob.run("PREPARE s FROM 'UPDATE t JOIN v ON t.a=v.id SET b=?'")
+        .unwrap();
+    bob.run("SET @b=30").unwrap();
+    boot.run("ALTER TABLE t RENAME COLUMN b TO old_b").unwrap();
+    boot.run("ALTER TABLE v RENAME COLUMN x TO b").unwrap();
+    assert_eq!(denied(&mut bob, "EXECUTE s USING @b").0, 8121);
+    let bound =
+        tidb_executor::bind_statement(binary.statement().clone(), &[Datum::Int(30)]).unwrap();
+    match bob.execute_bound_record_set_for(bound, &binary) {
+        Err(error) => assert_eq!(error.to_mysql_error().code, 8121),
+        Ok(_) => panic!("binary EXECUTE must check the newly resolved write table"),
+    }
+    assert_eq!(row_text(boot.run("SELECT b FROM v")), vec![vec!["20"]]);
+    boot.run("GRANT UPDATE ON test.v TO 'bob'@'%'").unwrap();
+    bob.run("EXECUTE s USING @b").unwrap();
+    assert_eq!(row_text(boot.run("SELECT b FROM v")), vec![vec!["30"]]);
+}
+
+#[test]
+fn joined_update_privileges_preserve_planner_name_errors() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+    assert_eq!(
+        denied(&mut bob, "UPDATE t JOIN u ON t.a=u.a SET b=1").0,
+        1052
+    );
+    assert_eq!(
+        denied(&mut bob, "UPDATE t JOIN u ON t.a=u.a SET missing=1").0,
+        1054
+    );
+    assert_eq!(
+        denied(
+            &mut bob,
+            "UPDATE t JOIN (SELECT a AS id,b AS x FROM u) d ON t.a=d.id SET x=1"
+        )
+        .0,
+        1288
+    );
+    assert_eq!(
+        denied(
+            &mut bob,
+            "UPDATE t JOIN (SELECT a AS id,b AS x FROM u) d ON t.a=d.id SET b=1"
+        )
+        .0,
+        8121
+    );
+}
+
+#[test]
+fn prepared_joined_update_privileges_allow_parameterized_derived_sources() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT SELECT, UPDATE ON test.t TO 'bob'@'%'")
+        .unwrap();
+    let prepared = bob
+        .prepare_ast("UPDATE t JOIN (SELECT ? AS id) d ON t.a=d.id SET b=?")
+        .unwrap();
+    let bound = prepared.bind(&[Datum::Int(1), Datum::Int(30)]).unwrap();
+    bob.execute_bound_record_set_for(bound, &prepared).unwrap();
+    assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["30"]]);
+}
+
+#[test]
+fn explain_uses_the_same_privileges_as_its_target() {
+    let (_, mut boot, mut bob) = scoped();
+    assert_eq!(
+        denied(&mut bob, "EXPLAIN SELECT * FROM t"),
+        table_denied("SELECT", "t")
+    );
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    assert_eq!(
+        denied(&mut bob, "EXPLAIN ANALYZE UPDATE t SET b=20").0,
+        8121
+    );
+    assert_eq!(row_text(boot.run("SELECT b FROM t")), vec![vec!["10"]]);
+}
+
+#[test]
+fn joined_update_privileges_resolve_the_session_temporary_overlay() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT ALL ON test.* TO 'bob'@'%'").unwrap();
+    bob.run("CREATE TEMPORARY TABLE v (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    bob.run("INSERT INTO v VALUES (1, 20)").unwrap();
+    bob.run("UPDATE t JOIN v ON t.a=v.id SET x=30").unwrap();
+    assert_eq!(row_text(bob.run("SELECT x FROM v")), vec![vec!["30"]]);
+}
+
 /// A `SELECT` demands `SELECT` on every table it reads, and the grant that
 /// opens it may sit at any scope.
 #[test]

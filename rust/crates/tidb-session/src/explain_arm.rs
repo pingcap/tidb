@@ -77,6 +77,9 @@ impl Session {
             self.apply_set_var_hints(bound)?;
         }
         let target = bound.as_ref().unwrap_or(target);
+        // EXPLAIN follows the same resolved privilege boundary as execution;
+        // ANALYZE can write, and plain EXPLAIN still exposes the target plan.
+        self.require_statement_table_privileges(target)?;
         self.activate_statement_resource_group(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see

@@ -14,20 +14,10 @@
 
 //! The table-scope privileges one statement demands -- Go's `visitInfo`.
 //!
-//! Go collects these while PLANNING (`planner/core`'s `appendVisitInfo`, one
-//! entry per table the plan touches) and checks them in one pass afterwards
-//! (`optimizer.go`'s `CheckPrivilege`). This tier plans inside the executor,
-//! so the collection happens here instead, off the parsed statement -- but
-//! the entries, their order, and the error each one reports are Go's.
-//!
-//! WHAT IS DELIBERATELY NOT COLLECTED. A request this module cannot resolve
-//! to a concrete `(schema, table)` is DROPPED rather than guessed at: the
-//! `SET` targets of a multi-table `UPDATE` whose assignments are unqualified,
-//! and a multi-table `DELETE` target that matches no table in its own join.
-//! Go resolves those through name resolution this module does not run.
-//! Dropping is fail-open for exactly those shapes and is called out at each
-//! site; inventing a table instead would REFUSE statements Go allows, which
-//! is the worse error.
+//! Go collects these while planning and checks them after name resolution.
+//! UPDATE targets below come from the logical planner's resolved output names;
+//! SQL spelling alone cannot identify the owner of an unqualified column.
+//! Other statement collectors still use the AST and remain a parity boundary.
 
 use tidb_ast::{DdlStmt, DmlStmt, Stmt};
 
@@ -209,7 +199,7 @@ fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Resolves a multi-table `UPDATE`/`DELETE` target, which is written as a
+/// Resolves a multi-table `DELETE` target, which is written as a
 /// bare name that may be either a table or one of the join's ALIASES.
 ///
 /// Returns `None` when the name matches no source in the statement's own
@@ -267,7 +257,10 @@ fn aliased_sources(stmt: &Stmt, current_db: &str) -> Vec<(String, String, Option
 pub(crate) fn required_table_privileges(
     stmt: &Stmt,
     current_db: &str,
-) -> Vec<TablePrivilegeRequest> {
+    resolve_update: impl FnOnce(
+        &tidb_ast::UpdateStmt,
+    ) -> Result<Vec<(String, String)>, tidb_executor::DriverError>,
+) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
     match stmt {
         // `buildDataSource` (`logical_plan_builder.go` around line 4972)
@@ -330,43 +323,12 @@ pub(crate) fn required_table_privileges(
                         GlobalPriv::Select,
                     ));
                 }
-                match &update.kind {
-                    tidb_ast::UpdateKind::Single(table_ref) => {
-                        if let Some((schema, table)) = split_path(&table_ref.name, current_db) {
-                            requests.push(TablePrivilegeRequest::unnamed(
-                                &schema,
-                                &table,
-                                GlobalPriv::Update,
-                            ));
-                        }
-                    }
-                    tidb_ast::UpdateKind::Multi { .. } => {
-                        // Each assignment names its own table, so only the
-                        // QUALIFIED ones can be placed without running Go's
-                        // column resolution. An unqualified assignment in a
-                        // multi-table update is therefore not demanded here
-                        // (see the module doc).
-                        let sources = aliased_sources(stmt, current_db);
-                        for assignment in &update.assignments {
-                            let qualifier =
-                                &assignment.col[..assignment.col.len().saturating_sub(1)];
-                            if qualifier.is_empty() {
-                                continue;
-                            }
-                            if let Some((schema, table)) =
-                                resolve_target(qualifier, &sources, current_db)
-                            {
-                                let request = TablePrivilegeRequest::unnamed(
-                                    &schema,
-                                    &table,
-                                    GlobalPriv::Update,
-                                );
-                                if !requests.contains(&request) {
-                                    requests.push(request);
-                                }
-                            }
-                        }
-                    }
+                for (schema, table) in resolve_update(update)? {
+                    requests.push(TablePrivilegeRequest::unnamed(
+                        &schema,
+                        &table,
+                        GlobalPriv::Update,
+                    ));
                 }
             }
             // `buildDelete` (`logical_plan_builder.go` around line 6640):
@@ -414,7 +376,7 @@ pub(crate) fn required_table_privileges(
         Stmt::Ddl(ddl) => requests.extend(ddl_table_privileges(ddl, current_db)),
         Stmt::Admin(_) | Stmt::Session(_) => {}
     }
-    requests
+    Ok(requests)
 }
 
 /// The `visitInfo` `planbuilder.go`'s DDL arm appends, for the statements

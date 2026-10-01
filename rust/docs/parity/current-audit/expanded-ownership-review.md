@@ -44,7 +44,7 @@ two-row CSV. Its [output](expanded-ownership-probe.txt) records the following:
 | Finding | Setup and actual Rust result | Go comparison |
 | --- | --- | --- |
 | A01 | An account granted only global SELECT receives `PrivilegeCheckFail("Update")` for single-table UPDATE and qualified joined `SET a.x=12`. The same join with `SET x=13` succeeds and persists 13. | `buildNewAssignments` resolves the target's schema/table and appends UpdatePriv for each assignment; qualifier spelling does not remove the check. |
-| A01 | A registry with SELECT only on column x cannot execute `SELECT x`; it receives table-level denial. SELECT on the ungranted id is also denied. | `CheckPrivilege` supplies resolved column requests to `RequestVerification`, which checks column grants. |
+| Disproved A01 candidate | A registry with SELECT only on column x cannot execute `SELECT x`; it receives table-level denial. | Rechecked 2026-10-01 on master 93a01d31f6da205ae4bf376825293903a6899fdb: Go also returns 1142. `buildDataSource` records table SELECT with an empty column. The earlier claim that this SELECT planner supplied a column request was incorrect; see `update-privilege-repair.md`. |
 | A04 | PASSWORD HISTORY 3 is accepted, but a change from First!1234 to Second!1234 and back succeeds. The persisted history setting is NULL. These are dummy probe credentials. | `simple.go` stores policy/history and `checkPasswordHistoryRule` rejects a password in the retained history. |
 | A03 | CREATE USER with REQUIRE X509 is refused with an explicit unsupported error. | Go's TLS/account owners support CA verification and X509 constraints when configured. |
 | E05 | IMPORT INTO with skip_rows=1 imports both `1,10` and `2,20`, returning affected=2. | `importer/import.go` maps the option to IgnoreLines; the controller/import task owns decoding and job completion. |
@@ -206,3 +206,10 @@ the living ExecPlan and publication response. No full Go suite, real
 TiKV/TiFlash cluster, TLS rotation, GC retention, parallel admission stress,
 or sysbench/TPC-C/TPC-H/YCSB benchmark was run. Audit artifacts introduce no
 production behavior change and do not fix the reported risks.
+
+
+2026-10-01 follow-up: the reproduced joined UPDATE bypass and separate EXPLAIN
+privilege bypass are repaired by resolved target checks. A01 remains open for
+the remaining AST visit collectors and complete planner/session ownership;
+see [repair receipt](update-privilege-repair.md). The original probe above is
+historical fail-before evidence, not the current result.

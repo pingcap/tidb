@@ -1,0 +1,81 @@
+{
+  "integration_base": "9d6fab5fdcc062033c95b974ffc9d057f89fbb58",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "method": "Identical Rust tests, replacing only changed production .rs files with HEAD temporarily; sources restored in finally. No ignored failures added.",
+  "suites": {
+    "grants": {
+      "before": "test result: FAILED. 74 passed; 36 failed; 0 ignored; 0 measured; 1998 filtered out; finished in 0.28s",
+      "after": "test result: FAILED. 80 passed; 31 failed; 0 ignored; 0 measured; 1998 filtered out; finished in 0.31s",
+      "remaining_failure_names": [
+        "tests_grants::accounts::create_user_identified_with_stores_the_plugin_and_validates_credentials",
+        "tests_grants::accounts::drop_user_clears_scoped_grant_rows",
+        "tests_grants::accounts::rename_user_moves_role_edges_and_default_roles",
+        "tests_grants::accounts::rename_user_moves_the_whole_account_row",
+        "tests_grants::column_grants::a_column_that_does_not_exist_is_refused_at_grant_time",
+        "tests_grants::column_grants::an_active_role_contributes_its_column_grants",
+        "tests_grants::column_grants::column_grants_merge_into_one_line_in_row_order",
+        "tests_grants::column_grants::only_the_four_column_privileges_accept_a_column_list",
+        "tests_grants::column_grants::table_and_column_grants_on_one_table_print_as_two_lines",
+        "tests_grants::column_grants::usage_with_a_column_list_grants_nothing_but_creates_the_table_row",
+        "tests_grants::dynamic_grants::dynamic_privileges_grant_revoke_and_show_grants",
+        "tests_grants::dynamic_grants::super_is_the_fallback_for_every_dynamic_privilege",
+        "tests_grants::processlist::kill_answers_ok_and_reaches_only_live_connections",
+        "tests_grants::processlist::kill_of_another_users_connection_accepts_connection_admin",
+        "tests_grants::processlist::kill_of_another_users_connection_requires_super",
+        "tests_grants::roles::a_role_can_be_hosted",
+        "tests_grants::roles::activation_is_direct_but_inheritance_is_transitive",
+        "tests_grants::roles::create_role_and_drop_role_are_privileges_of_their_own",
+        "tests_grants::roles::granting_a_role_adds_an_edge_and_a_show_grants_line",
+        "tests_grants::roles::revoking_and_dropping_a_role_clean_up_every_edge",
+        "tests_grants::roles::the_role_line_sits_between_the_table_and_dynamic_lines",
+        "tests_grants::static_grants::db_scope_grant_revoke_and_show_grants_round_trip",
+        "tests_grants::static_grants::grant_all_privileges_collapses_show_grants",
+        "tests_grants::static_grants::grant_all_withholds_grant_option_but_the_named_privilege_confers_it",
+        "tests_grants::static_grants::grant_option_is_a_per_scope_bit_printed_as_a_line_suffix",
+        "tests_grants::static_grants::grant_revoke_and_show_grants_round_trip",
+        "tests_grants::static_grants::show_grants_for_current_user_reports_root_bootstrap",
+        "tests_grants::static_grants::table_scope_grant_revoke_and_show_grants_round_trip",
+        "tests_grants::visibility::a_server_admin_privilege_is_not_schema_visibility",
+        "tests_grants::visibility::information_schema_is_visible_without_any_grant",
+        "tests_grants::visibility::schemata_asks_a_narrower_question_than_show_databases"
+      ],
+      "new_failure_names": [],
+      "fixed_failure_names": [
+        "tests_grants::table_scope::explain_uses_the_same_privileges_as_its_target",
+        "tests_grants::table_scope::joined_update_privileges_follow_resolved_assignment_targets",
+        "tests_grants::table_scope::joined_update_privileges_preserve_planner_name_errors",
+        "tests_grants::table_scope::prepared_joined_update_rechecks_resolved_target_privileges",
+        "tests_grants::table_scope::prepared_joined_update_resolves_targets_again_after_ddl"
+      ]
+    },
+    "prepared": {
+      "before": "test result: FAILED. 82 passed; 1 failed; 0 ignored; 0 measured; 2025 filtered out; finished in 0.27s",
+      "after": "test result: FAILED. 82 passed; 1 failed; 0 ignored; 0 measured; 2026 filtered out; finished in 0.24s",
+      "remaining_failure_names": [
+        "tests_prepared_plan_cache::a_literal_fts_search_is_cacheable"
+      ],
+      "new_failure_names": [],
+      "fixed_failure_names": []
+    },
+    "explain": {
+      "before": "test result: FAILED. 99 passed; 12 failed; 0 ignored; 0 measured; 1997 filtered out; finished in 0.83s",
+      "after": "test result: FAILED. 99 passed; 12 failed; 0 ignored; 0 measured; 1998 filtered out; finished in 0.92s",
+      "remaining_failure_names": [
+        "tests_explain::adaptive_limit_index_join_preserves_sql_results",
+        "tests_explain::builtin_in_estimate_without_stats_keeps_selection_floor",
+        "tests_explain::composite_index_estimate_and_empty_index_stats_match_go",
+        "tests_explain::default_string_match_selectivity_zero_improves_like_estimates",
+        "tests_explain::determinate_objective_uses_analyzed_row_count_after_inserts",
+        "tests_explain::explain_est_rows_for_a_join",
+        "tests_explain::explain_est_rows_on_an_unanalyzed_table",
+        "tests_explain::explain_refuses_what_it_cannot_plan",
+        "tests_explain::explain_select",
+        "tests_explain::prefixed_common_handle_ranges_match_go_cardinality_cases",
+        "tests_explain::truncated_integer_handle_ranges_match_go_cardinality_estimates",
+        "tests_explain_derived::two_derived_tables_join_without_a_base_table"
+      ],
+      "new_failure_names": [],
+      "fixed_failure_names": []
+    }
+  }
+}

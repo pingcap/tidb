@@ -248,8 +248,7 @@ impl Session {
         } else {
             text
         };
-        let privilege_requests =
-            crate::table_privilege::required_table_privileges(&statement, self.current_database());
+        let privilege_requests = self.collect_table_privileges(&statement, true)?;
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {

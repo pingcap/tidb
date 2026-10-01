@@ -2254,7 +2254,14 @@ impl Session {
         // specific privileges instead. A prepared EXECUTE checks the
         // requests derived once for its text (Go `checkPreparedPriv` on the
         // stored `VisitInfos`).
-        if let Some(requests) = prepared {
+        if matches!(&stmt, Stmt::Dml(dml) if matches!(dml.as_ref(),
+            DmlStmt::Update(update) if matches!(&update.kind, tidb_ast::UpdateKind::Multi { .. })))
+        {
+            // Joined DML is rebuilt on every execution, including PREPARE.
+            // Resolve its visits against that same current schema: DDL can
+            // move an unqualified column to another table after PREPARE.
+            self.require_statement_table_privileges(&stmt)?;
+        } else if let Some(requests) = prepared {
             self.check_table_privilege_requests(requests)?;
         } else {
             self.require_statement_table_privileges(&stmt)?;
@@ -2399,10 +2406,7 @@ impl Session {
                         // the requests its own walk derived, as Go's
                         // non-prepared cache path hands `checkPreparedPriv`
                         // the statement's `VisitInfos`.
-                        let requests = crate::table_privilege::required_table_privileges(
-                            &stmt,
-                            &self.current_db,
-                        );
+                        let requests = self.collect_table_privileges(&stmt, false)?;
                         return self
                             .execute_cached_prepared_dml(&execution, sql, &requests)
                             .map(PendingExecution::Complete);

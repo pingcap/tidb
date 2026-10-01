@@ -1,0 +1,48 @@
+diff --git a/pkg/session/test/privileges/privileges_test.go b/pkg/session/test/privileges/privileges_test.go
+index 77d62dd8cb..6c7376fc72 100644
+--- a/pkg/session/test/privileges/privileges_test.go
++++ b/pkg/session/test/privileges/privileges_test.go
+@@ -50,4 +50,43 @@ func TestSessionAuth(t *testing.T) {
+ 	tk := testkit.NewTestKit(t, store)
+ 	tk.MustExec("use test")
+ 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
++
++	tk.MustExec("create user 'parity'@'%'")
++	tk.MustExec("create table privilege_l (id int primary key, x int)")
++	tk.MustExec("create table privilege_r (rid int primary key, y int)")
++	tk.MustExec("insert into privilege_l values (1,10)")
++	tk.MustExec("insert into privilege_r values (1,20)")
++	tk.MustExec("grant select on test.* to 'parity'@'%'")
++	reader := testkit.NewTestKit(t, store)
++	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "parity", Hostname: "%"}, nil, nil, nil))
++	reader.MustExec("use test")
++	for _, sql := range []string{
++		"update privilege_l join privilege_r on id=rid set x=11",
++		"update privilege_l l join privilege_r r on id=rid set x=11 where 0",
++		"explain update privilege_l join privilege_r on id=rid set x=11",
++		"explain analyze update privilege_l join privilege_r on id=rid set x=11",
++	} {
++		reader.MustGetErrCode(sql, 8121)
++	}
++	tk.MustExec("grant update on test.privilege_l to 'parity'@'%'")
++	reader.MustExec("update privilege_l join privilege_r on id=rid set x=11")
++	reader.MustExec("prepare s from 'update privilege_l join privilege_r on id=rid set x=?'")
++	reader.MustExec("set @v=12")
++	reader.MustExec("execute s using @v")
++	tk.MustExec("revoke update on test.privilege_l from 'parity'@'%'")
++	reader.MustGetErrCode("execute s using @v", 8121)
++	tk.MustExec("revoke select on test.* from 'parity'@'%'")
++	tk.MustExec("grant select(x) on test.privilege_l to 'parity'@'%'")
++	reader.MustGetErrCode("select x from privilege_l", 1142)
++	tk.MustQuery("select x from privilege_l").Check(testkit.Rows("12"))
++
++	tk.MustExec("grant select on test.* to 'parity'@'%'")
++	tk.MustExec("grant update on test.privilege_l to 'parity'@'%'")
++	reader.MustExec("prepare changed from 'update privilege_l join privilege_r on id=rid set x=?'")
++	tk.MustExec("alter table privilege_l rename column x to old_x")
++	tk.MustExec("alter table privilege_r rename column y to x")
++	reader.MustGetErrCode("execute changed using @v", 8121)
++	tk.MustExec("grant update on test.privilege_r to 'parity'@'%'")
++	reader.MustExec("execute changed using @v")
++	tk.MustQuery("select x from privilege_r").Check(testkit.Rows("12"))
+ }

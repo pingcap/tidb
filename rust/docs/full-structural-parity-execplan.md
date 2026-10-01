@@ -17,6 +17,8 @@ differ. A correct helper bypassed by a live entrypoint does not satisfy parity.
 
 ## Progress
 
+- [x] (2026-10-01, A01 runtime follow-up) Refresh master/integration. Reproduce the ordinary and prepared joined UPDATE privilege bypass before edits; verify Go master rejects it and re-resolves targets after DDL. Disprove the column-only SELECT allegation with a Go oracle.
+- [x] Complete A01 runtime regression validation and correct the audit: 20 table-privilege tests and the Go oracle pass; five fail-before regressions are repaired. Broad grant/prepared/EXPLAIN suites have no new failures versus HEAD (31/1/12 remain). All-target compilation and root lint pass. Publication uses both locked build gates; full planner/session package acceptance remains open.
 - [x] (2026-10-01, system-wide design review) Recheck selectable SQL entrypoints, compiler/transaction boundaries, DML handoff, DDL dispatch, boot composition and client routing. Put the shared cache work inside the wider dependency/risk order below. This source review changes the implementation plan only; no runtime finding is repaired or package accepted.
 - [x] (2026-10-01, shared cache design review) Refresh integration/master; trace all four production Ristretto importers, their configuration and owning lifetimes. Recheck 98 consumer/subpackage artifacts against the existing inventory. Include inference, which is absent from this branch's Go checkout. Record the shared dependency and consumer retirement sequence in `parity/current-audit/shared-cache-owner-review.md`; no runtime/package acceptance is claimed.
 - [ ] Implement and validate the complete pinned Ristretto root package before consumer migration. Remove Stretto and both private FIFO stores only as their whole Go owners and production callers acquire equivalent validated behavior. Keep B01/B02, C03, C04 and inference acceptance separate.
@@ -1572,3 +1574,53 @@ For this plan-only change, validate with `git diff --check` and the required
 before push. Runtime regression suites, Go package tests, root lint and SQL
 benchmarks are not rerun for a documentation-only change; earlier results above
 remain historical. No Go/Bazel metadata changed, so bazel_prepare is not needed.
+
+
+## Resolved UPDATE privilege repair (2026-10-01)
+
+Go master 93a01d31f6da205ae4bf376825293903a6899fdb resolves each
+assignment with expression.FindFieldName over the logical output names before
+recording its base table's UpdatePriv. Rust's session AST collector skips an
+unqualified joined target. Ordinary execution and execution after REVOKE both
+write successfully in the pre-fix regression. EXPLAIN dispatch also bypasses
+the table-privilege boundary, including EXPLAIN ANALYZE writes.
+
+Use the existing logical FROM-plan builder and shared FindFieldName port in
+`tidb-executor/src/driver/planner_bridge.rs`; restrict writable identities to
+the outer base-table sources, as Go's updatableTableListResolver does. Remove
+the session's UPDATE qualifier guesser. Ordinary execution, SQL PREPARE,
+binary PREPARE, and EXPLAIN must share the resulting requests and live grant
+evaluator. Joined DML is not admitted to the physical plan cache and rebuilds
+on each execute; re-resolve its requests too, because DDL can transfer an
+unqualified column to a different table after PREPARE. Keep the fast single
+table path and avoid catalog/planner work when collecting read privileges.
+
+Discovery: the earlier A01 column-only SELECT claim is false. Go buildDataSource
+records table SELECT with an empty column, and the master session oracle rejects
+SELECT x under only SELECT(x), code 1142. Correct the audit, not Rust semantics.
+
+Decision: repair the demonstrated authorization holes using the existing logical
+name owner. Do not claim the complete planner/core or session packages accepted:
+read/DDL/DELETE collectors and the narrower DML executor handoff remain open.
+This replaces the fail-open UPDATE branch, but does not finish the unified Go
+visit-info production lifecycle for all statement kinds.
+
+Validation: table_scope regressions cover aliases, empty sources, multiple
+targets, derived sources, name errors, revocation, schema changes, binary and
+SQL preparation, and EXPLAIN. Run original Go session privilege tests with the
+additional oracle cases. Compare broad Rust suite failures against unchanged
+HEAD before classifying them as pre-existing. Run formatting, root lint, and
+both mandatory locked server builds before commit/push.
+
+Revision note: advance the full-picture plan with an authorization repair and
+correct a disproved audit allegation; retain package-level acceptance boundaries.
+
+
+Outcome: the demonstrated joined UPDATE and EXPLAIN authorization bypasses
+are repaired; five regressions fail on unchanged HEAD and pass after the fix.
+The full table-privilege suite passes 20 tests. The parameterized-derived and
+temporary-overlay controls preserve existing accepted execution. Broader suites
+retain only their reproduced HEAD failures. Exact commands, Go oracle patch,
+remaining risks and comparison names are in
+`parity/current-audit/update-privilege-repair.md`. A01 stays partially repaired;
+the register remains 74 findings, seven repaired and 67 unresolved.

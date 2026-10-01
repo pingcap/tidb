@@ -818,15 +818,13 @@ impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtConte
     }
 }
 
-/// Builds the name-resolution scope of one `FROM` node through Go's logical
-/// `buildResultSetNode` path. Correlation discovery needs the logical schema
-/// and output names, not an executor or a second AST-side join builder.
-pub(crate) fn logical_from_scope(
+fn logical_from_plan(
     join: &tidb_ast::Join,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<FromScope, tidb_planner::plan_base::PlanError> {
+    in_dml: bool,
+) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -841,7 +839,116 @@ pub(crate) fn logical_from_scope(
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    let plan = builder.build_join(join)?;
+    builder.is_for_update_read = in_dml;
+    builder.in_update_or_delete_stmt = in_dml;
+    builder.build_join(join)
+}
+
+/// Resolves UPDATE privilege targets through the logical plan's output names,
+/// as Go `buildUpdateLists` / `buildNewAssignments` do. A source alias is only
+/// a lookup name: authorization always uses the resolved base table identity.
+/// This builds metadata without installing a subquery evaluator or reading rows.
+pub fn update_privilege_tables(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, String)>, super::DriverError> {
+    use super::{split_table_path, DriverError};
+    use tidb_ast::{JoinNode, UpdateKind};
+    use tidb_datatype::QualifiedColumnName;
+
+    // A fast single-table update has only one possible write owner.
+    let from = match &update.kind {
+        UpdateKind::Single(table) => {
+            let (database, name) = split_table_path(&table.name, current_db)?;
+            return Ok(vec![(database.to_owned(), name.to_owned())]);
+        }
+        UpdateKind::Multi { from, .. } => from,
+    };
+    let plan = logical_from_plan(from, catalog, current_db, ctx, true)
+        .map_err(super::planner_error_to_driver)?;
+
+    // Go's updatableTableListResolver visits only the outer table sources;
+    // a derived query's base tables do not make that derived source writable.
+    fn collect_tables<'a>(node: &'a JoinNode, tables: &mut Vec<&'a tidb_ast::TableRef>) {
+        match node {
+            JoinNode::Table(table) => tables.push(table),
+            JoinNode::Join(join) => {
+                collect_tables(&join.left, tables);
+                if let Some(right) = &join.right {
+                    collect_tables(right, tables);
+                }
+            }
+            JoinNode::Derived { .. } => {}
+        }
+    }
+    let mut tables = Vec::new();
+    collect_tables(&from.left, &mut tables);
+    if let Some(right) = &from.right {
+        collect_tables(right, &mut tables);
+    }
+    let mut targets = Vec::new();
+    for assignment in &update.assignments {
+        let column = match assignment.col.as_slice() {
+            [column] => QualifiedColumnName::new("", "", column),
+            [table, column] => QualifiedColumnName::new("", table, column),
+            [database, table, column] => QualifiedColumnName::new(database, table, column),
+            _ => {
+                return Err(DriverError::UnknownColumnInClause {
+                    column: assignment.col.join("."),
+                    clause: "field list".to_owned(),
+                })
+            }
+        };
+        let index = tidb_expr::find_field_name(plan.output_names(), &column)
+            .map_err(|_| DriverError::AmbiguousColumnInClause {
+                column: column.display_name(),
+                clause: "field list".to_owned(),
+            })?
+            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                column: column.column.original.clone(),
+                clause: "field list".to_owned(),
+            })?;
+        let name = &plan.output_names()[index].names;
+        let mut target = None;
+        for table in &tables {
+            let (database, original) = split_table_path(&table.name, current_db)?;
+            let visible = table.alias.as_deref().unwrap_or(original);
+            if !visible.eq_ignore_ascii_case(&name.table.original)
+                || !database.eq_ignore_ascii_case(&name.database.original)
+            {
+                continue;
+            }
+            if matches!(
+                catalog.get_in(database, original),
+                Some(TableEntry::Mem(_) | TableEntry::Kv(_))
+            ) {
+                target = Some((database.to_owned(), original.to_owned()));
+            }
+            break;
+        }
+        let target = target.ok_or_else(|| DriverError::NonUpdatableTable {
+            table: name.table.original.clone(),
+            statement: "UPDATE",
+        })?;
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
+}
+
+/// Builds the name-resolution scope of one `FROM` node through Go's logical
+/// `buildResultSetNode` path. Correlation discovery needs the logical schema
+/// and output names, not an executor or a second AST-side join builder.
+pub(crate) fn logical_from_scope(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<FromScope, tidb_planner::plan_base::PlanError> {
+    let plan = logical_from_plan(join, catalog, current_database, ctx, false)?;
     let schema = plan.schema().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal("FROM logical plan has no schema")
     })?;

@@ -252,8 +252,7 @@ impl Session {
         // statement, its requests and every EXECUTE name the same tables.
         crate::binding::pin_current_database(&mut statement, self.current_database())?;
         let parameter_count = tidb_executor::parsed_parameter_count(&statement);
-        let privilege_requests =
-            crate::table_privilege::required_table_privileges(&statement, self.current_database());
+        let privilege_requests = self.collect_table_privileges(&statement, true)?;
         let planner_context = self.statement_context_for_stmt(&statement, false);
         let (point_get_plan, dml_plan, select_plan) = {
             let catalog = self.lock_catalog()?;
