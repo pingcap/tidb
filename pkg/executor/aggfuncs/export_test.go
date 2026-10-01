@@ -16,3 +16,6 @@ package aggfuncs
 
 // PercentileForTesting exports percentile for testing.
 var PercentileForTesting = percentile
+
+// CalculateMergeForTesting exposes the partial variance merge for numeric regressions.
+var CalculateMergeForTesting = calculateMerge
