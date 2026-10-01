@@ -3563,6 +3563,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-proto",
  "tidb-stats-handle-metrics",
  "tidb-util",
  "tidb-vardef",

@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 12] = [
     SysVarDef {
         name: "tidb_enable_gc_aware_memory_track",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_enable_gogc_tuner",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "-1",
         var_type: VarType::Int,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_enable",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_life_time",
+        global_config_name: "",
         scope: 1,
         value: "10m0s",
         var_type: VarType::Duration,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_max_wait_time",
+        global_config_name: "",
         scope: 1,
         value: "86400",
         var_type: VarType::Int,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_run_interval",
+        global_config_name: "",
         scope: 1,
         value: "10m0s",
         var_type: VarType::Duration,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gc_scan_lock_mode",
+        global_config_name: "",
         scope: 1,
         value: "LEGACY",
         var_type: VarType::Enum,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gogc_tuner_max_value",
+        global_config_name: "",
         scope: 1,
         value: "500",
         var_type: VarType::Int,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gogc_tuner_min_value",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Int,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_gogc_tuner_threshold",
+        global_config_name: "",
         scope: 1,
         value: "0.6",
         var_type: VarType::Float,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
     },
     SysVarDef {
         name: "tidb_server_memory_limit_gc_trigger",
+        global_config_name: "",
         scope: 5,
         value: "0.7",
         var_type: VarType::Str,

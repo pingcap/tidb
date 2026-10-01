@@ -1,5 +1,11 @@
 # `pkg/domain/globalconfigsync` parity receipt
 
+Historical audit, superseded on 2026-10-01 by the
+[complete Rust package and integration repair](../../docs/parity/current-audit/global-config-sync-repair.md).
+The Go-only integration decision below did not establish Rust parity: the
+native server lacked the notification owner. That owner and both original
+test mappings now exist; retain this receipt only as the earlier audit record.
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 

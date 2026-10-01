@@ -21,6 +21,7 @@ use super::super::{SysVarDef, VarType};
 pub(crate) const ENTRIES: &[SysVarDef] = &[
     SysVarDef {
         name: "tidb_mview_enable",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -33,6 +34,7 @@ pub(crate) const ENTRIES: &[SysVarDef] = &[
     },
     SysVarDef {
         name: "tidb_mview_maintain_import_disk_quota",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -45,6 +47,7 @@ pub(crate) const ENTRIES: &[SysVarDef] = &[
     },
     SysVarDef {
         name: "tidb_mview_maintain_import_threads",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Int,
@@ -57,6 +60,7 @@ pub(crate) const ENTRIES: &[SysVarDef] = &[
     },
     SysVarDef {
         name: "tidb_mview_maintain_isolation_read_engines",
+        global_config_name: "",
         scope: 3,
         value: "tikv,tiflash,tidb",
         var_type: VarType::Str,
@@ -69,6 +73,7 @@ pub(crate) const ENTRIES: &[SysVarDef] = &[
     },
     SysVarDef {
         name: "tidb_mview_maintain_mem_quota",
+        global_config_name: "",
         scope: 3,
         value: "2147483648",
         var_type: VarType::Int,

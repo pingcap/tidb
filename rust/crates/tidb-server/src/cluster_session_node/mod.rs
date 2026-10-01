@@ -983,6 +983,7 @@ impl tidb_session::DataLockWaitsProvider for ClusterDataLockWaits {
 
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
 pub struct ClusterSessionFactory {
+    global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
     binding_session_factory: Weak<ClusterSessionFactory>,
     /// The write/read capability every connection's statements open their
@@ -1099,6 +1100,15 @@ pub struct ClusterSessionFactory {
 }
 
 impl ClusterSessionFactory {
+    /// Install the one domain notification queue shared by every session.
+    pub(crate) fn with_global_config_syncer(
+        mut self,
+        syncer: Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>,
+    ) -> Self {
+        self.global_config_syncer = Some(syncer);
+        self
+    }
+
     /// Install the node-owned global-binding authority before opening sessions.
     pub fn with_bindings(
         mut self,
@@ -1150,6 +1160,7 @@ impl ClusterSessionFactory {
         Self {
             transactions,
             bindings: None,
+            global_config_syncer: None,
             binding_session_factory: Weak::new(),
             data_lock_waits,
             ddl,
@@ -3199,6 +3210,9 @@ impl ClusterSessionFactory {
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
+        if let Some(syncer) = &self.global_config_syncer {
+            session.set_global_config_syncer(Arc::clone(syncer));
+        }
         session.set_index_usage_collector(self.stats_usage.index_usage_collector());
         if self
             .stats_usage_workers

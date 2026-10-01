@@ -15,6 +15,7 @@ prometheus = { version = "0.14", default-features = false }
 toml.workspace = true
 tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
 # `serverinfo`'s `getServerInfo` reads the global config, exactly as Go's

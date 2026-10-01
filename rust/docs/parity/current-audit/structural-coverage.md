@@ -7,6 +7,7 @@ This accounts for **all 83 Rust crates and all 856 inventoried TiDB Go package d
 Counts include test/support package directories. The grouping is a work queue, not a semantic mapping or acceptance receipt.
 An entrypoint review can establish a finding but cannot clear the rest of its package.
 Every row still requires complete production, generated/platform/build, original-test, fixture and integration validation.
+The complete [globalconfigsync receipt](global-config-sync-repair.md) records one leaf package and its integration; it does not accept its whole parent crate.
 The exact package/artifact list remains in [package-coverage.json](package-coverage.json); no copy replaces it.
 
 ## Subsystem queues
@@ -18,13 +19,13 @@ The exact package/artifact list remains in [package-coverage.json](package-cover
 | Planning | 93 | 4 | Q01, C02, E02, M01–M02 |
 | Execution | 60 | 4 | E02–E07, K03; E01 repaired |
 | Session and authorization | 44 | 3 | A01–A04, B01–B02, S01–S04, I01–I03, N04; C01 repaired |
-| Domain and shared services | 11 | 5 | O01–O13, I04, C02 |
+| Domain and shared services | 11 | 5 | O01–O11, O13, I04, C02; O12 repaired |
 | Metadata and tables | 27 | 4 | K01–K03, I04, T01, D01–D11 |
 | DDL | 32 | 8 | D01–D11, F01–F03 |
 | Statistics | 40 | 19 | O07; cache/loading/analyze have live owners, full contract review remains |
 | Storage and distributed reads | 34 | 5 | T01–T03, C03, M01–M04, O03, O13 |
 | Protocols and external services | 0 | 3 | P03–P04, T02; P01–P02 repaired; other helpers/variants unreviewed |
-| Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O13 |
+| Server and configuration | 31 | 2 | N01–N05, A02–A03, O01–O11, O13; O12 repaired |
 | Background jobs and bulk data | 182 | 6 | O04–O06, O10, E05, E07, P04; other bulk-data packages unreviewed |
 | Utilities and errors | 137 | 5 | O11; other utility/error contracts unreviewed |
 | Build, tools and test support | 93 | 0 | Original suites/build variants not accepted at current master |

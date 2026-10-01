@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 42] = [
     SysVarDef {
         name: "information_schema_stats_expiry",
+        global_config_name: "",
         scope: 3,
         value: "86400",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_column_options",
+        global_config_name: "",
         scope: 1,
         value: "ALL",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_default_num_buckets",
+        global_config_name: "",
         scope: 1,
         value: "256",
         var_type: VarType::Unsigned,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_default_num_topn",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Unsigned,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_distsql_scan_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "4",
         var_type: VarType::Unsigned,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_partition_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Int,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_skip_column_types",
+        global_config_name: "",
         scope: 3,
         value: "json,blob,mediumblob,longblob,mediumtext,longtext",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_analyze_version",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Int,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_analyze_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "3",
         var_type: VarType::Int,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_analyze_end_time",
+        global_config_name: "",
         scope: 1,
         value: "23:59 +0000",
         var_type: VarType::Time,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_analyze_partition_batch_size",
+        global_config_name: "",
         scope: 1,
         value: "8192",
         var_type: VarType::Unsigned,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_analyze_ratio",
+        global_config_name: "",
         scope: 1,
         value: "0.5",
         var_type: VarType::Float,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_analyze_start_time",
+        global_config_name: "",
         scope: 1,
         value: "00:00 +0000",
         var_type: VarType::Time,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_auto_build_stats_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "2",
         var_type: VarType::Int,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_build_sampling_stats_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Int,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_build_stats_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Int,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_default_string_match_selectivity",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_analyze_snapshot",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_auto_analyze",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_auto_analyze_priority_queue",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_column_tracking",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_extended_stats",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_fast_analyze",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_historical_stats",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_historical_stats_for_capture",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_pseudo_for_outdated_stats",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_enable_stats_owner",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_historical_stats_duration",
+        global_config_name: "",
         scope: 1,
         value: "168h0m0s",
         var_type: VarType::Duration,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_max_auto_analyze_time",
+        global_config_name: "",
         scope: 1,
         value: "43200",
         var_type: VarType::Int,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_mem_quota_analyze",
+        global_config_name: "",
         scope: 1,
         value: "-1",
         var_type: VarType::Int,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_merge_partition_stats_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Int,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_opt_ordering_index_selectivity_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0.01",
         var_type: VarType::Float,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_opt_ordering_index_selectivity_threshold",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_opt_selectivity_factor",
+        global_config_name: "",
         scope: 3,
         value: "0.8",
         var_type: VarType::Float,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_optimizer_selectivity_level",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Unsigned,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_persist_analyze_options",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_plan_cache_invalidation_on_fresh_stats",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_plan_cache_skip_stats_on_binding",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_skip_missing_partition_stats",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_stats_cache_mem_quota",
+        global_config_name: "",
         scope: 5,
         value: "0",
         var_type: VarType::Int,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_stats_load_pseudo_timeout",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
     },
     SysVarDef {
         name: "tidb_stats_update_during_ddl",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,

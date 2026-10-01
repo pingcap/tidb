@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 72 tracked ownership/contract findings (68 unresolved, four repaired), review candidates and the
+consolidates 72 tracked ownership/contract findings (67 unresolved, five repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -29,6 +29,13 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [global-config synchronization repair](global-config-sync-repair.md) implements
+O12's complete three-artifact Go package and its production session/factory/PD
+integration. Explicit validated writes notify one domain keeper; reloads remain
+quiet and failed stores are not retried. Original Go tests and the new Rust
+regressions pass. Three broader session failures reproduce unchanged and remain
+open. Parent-package and benchmark parity are not claimed.
 
 The [subsystem ownership review](subsystem-structure-review.md) compares integration
 `dae65456f9` with the same master and adds 18 findings across optimization,

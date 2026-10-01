@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 28] = [
     SysVarDef {
         name: "basedir",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "datadir",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql/data/",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "eq_range_index_dive_limit",
+        global_config_name: "",
         scope: 3,
         value: "200",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "identity",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Unsigned,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "insert_id",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "last_insert_id",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Unsigned,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "license",
+        global_config_name: "",
         scope: 0,
         value: "Apache License 2.0",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "long_query_time",
+        global_config_name: "",
         scope: 3,
         value: "10.000000",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "lower_case_file_system",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "lower_case_table_names",
+        global_config_name: "",
         scope: 0,
         value: "2",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "min_examined_row_limit",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "open_files_limit",
+        global_config_name: "",
         scope: 0,
         value: "5000",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "pid_file",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql/data/localhost.pid",
         var_type: VarType::Str,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "plugin_dir",
+        global_config_name: "",
         scope: 4,
         value: "/data/deploy/plugin",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "plugin_load",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "protocol_version",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "rand_seed1",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "rand_seed2",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "slow_launch_time",
+        global_config_name: "",
         scope: 1,
         value: "2",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "tidb_config",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "tidb_enable_legacy_instance_scope",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "tidb_enable_noop_functions",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Enum,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "tidb_enable_noop_variables",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Enum,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "version",
+        global_config_name: "",
         scope: 0,
         value: "8.0.11-TiDB-v8.4.0-this-is-a-placeholder",
         var_type: VarType::Str,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "version_comment",
+        global_config_name: "",
         scope: 0,
         value: "TiDB Server (Apache License 2.0) Community Edition, MySQL 8.0 compatible",
         var_type: VarType::Str,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "version_compile_machine",
+        global_config_name: "",
         scope: 0,
         // Go reports `runtime.GOARCH`, whose names differ from Rust's
         // target arch constants (`amd64` vs `x86_64`, `arm64` vs `aarch64`).
@@ -340,6 +366,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "version_compile_os",
+        global_config_name: "",
         scope: 0,
         // Go uses runtime.GOOS; this keeps platform variants out of the
         // captured registry and follows the active Rust target.
@@ -354,6 +381,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     },
     SysVarDef {
         name: "warning_count",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Str,

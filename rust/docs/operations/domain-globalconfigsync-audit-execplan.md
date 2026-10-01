@@ -2,6 +2,12 @@
 
 This living plan follows `PLANS.md` at the repository root.
 
+Historical plan, superseded on 2026-10-01 by the
+[complete Rust package repair](../parity/current-audit/global-config-sync-repair.md)
+and [current ExecPlan](../full-structural-parity-execplan.md).
+Byte-identical Go source did not establish native Rust parity; the earlier
+Go-only integration decision below is no longer the implementation boundary.
+
 ## Purpose / Big Picture
 
 `pkg/domain/globalconfigsync` is the small bridge that sends TiDB global

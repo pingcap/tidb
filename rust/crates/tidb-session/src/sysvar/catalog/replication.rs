@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 48] = [
     SysVarDef {
         name: "enforce_gtid_consistency",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Enum,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "executed_gtids_compression_period",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "gtid_executed_compression_period",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "gtid_mode",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "gtid_next",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "gtid_purged",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "init_slave",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "master_info_repository",
+        global_config_name: "",
         scope: 1,
         value: "FILE",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "master_verify_checksum",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "pseudo_slave_mode",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_enabled",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_timeout",
+        global_config_name: "",
         scope: 1,
         value: "10000",
         var_type: VarType::Int,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_for_slave_count",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Int,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_no_slave",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_point",
+        global_config_name: "",
         scope: 1,
         value: "AFTER_SYNC",
         var_type: VarType::Enum,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_slave_enabled",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "rpl_stop_slave_timeout",
+        global_config_name: "",
         scope: 1,
         value: "31536000",
         var_type: VarType::Str,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "server_id",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "server_id_bits",
+        global_config_name: "",
         scope: 0,
         value: "32",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "server_uuid",
+        global_config_name: "",
         scope: 0,
         value: "00000000-0000-0000-0000-000000000000",
         var_type: VarType::Str,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "session_track_gtids",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Enum,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_allow_batching",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_checkpoint_group",
+        global_config_name: "",
         scope: 1,
         value: "512",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_checkpoint_period",
+        global_config_name: "",
         scope: 1,
         value: "300",
         var_type: VarType::Str,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_compressed_protocol",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_exec_mode",
+        global_config_name: "",
         scope: 1,
         value: "STRICT",
         var_type: VarType::Str,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_load_tmpdir",
+        global_config_name: "",
         scope: 0,
         value: "/var/tmp/",
         var_type: VarType::Str,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_max_allowed_packet",
+        global_config_name: "",
         scope: 1,
         value: "1073741824",
         var_type: VarType::Str,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_net_timeout",
+        global_config_name: "",
         scope: 1,
         value: "3600",
         var_type: VarType::Str,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_parallel_type",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_parallel_workers",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_pending_jobs_size_max",
+        global_config_name: "",
         scope: 1,
         value: "16777216",
         var_type: VarType::Str,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_preserve_commit_order",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_rows_search_algorithms",
+        global_config_name: "",
         scope: 1,
         value: "TABLE_SCAN,INDEX_SCAN",
         var_type: VarType::Str,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_skip_errors",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Str,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_sql_verify_checksum",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "slave_transaction_retries",
+        global_config_name: "",
         scope: 1,
         value: "10",
         var_type: VarType::Str,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "sql_slave_skip_counter",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "sync_frm",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "sync_master_info",
+        global_config_name: "",
         scope: 1,
         value: "10000",
         var_type: VarType::Str,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_cdc_write_source",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_enable_async_commit",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -530,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_enable_async_merge_global_stats",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -542,6 +585,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_load_based_replica_read_threshold",
+        global_config_name: "",
         scope: 3,
         value: "1s",
         var_type: VarType::Duration,
@@ -554,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_replica_read",
+        global_config_name: "",
         scope: 3,
         value: "leader",
         var_type: VarType::Enum,
@@ -574,6 +619,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_source_id",
+        global_config_name: tidb_vardef::tidb_vars::GLOBAL_CONFIG_SOURCE_ID,
         scope: 1,
         value: "1",
         var_type: VarType::Int,
@@ -586,6 +632,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_stats_load_sync_wait",
+        global_config_name: "",
         scope: 3,
         value: "100",
         var_type: VarType::Int,
@@ -598,6 +645,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tiflash_replica_read",
+        global_config_name: "",
         scope: 3,
         value: "all_replicas",
         var_type: VarType::Enum,

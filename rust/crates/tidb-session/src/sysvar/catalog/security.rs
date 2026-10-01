@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 56] = [
     SysVarDef {
         name: "authentication_ldap_sasl_auth_method_name",
+        global_config_name: "",
         scope: 1,
         value: "SCRAM-SHA-1",
         var_type: VarType::Enum,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_base_dn",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_root_dn",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_root_pwd",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_ca_path",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_init_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "10",
         var_type: VarType::Int,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_max_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "1000",
         var_type: VarType::Int,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_server_host",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_server_port",
+        global_config_name: "",
         scope: 1,
         value: "389",
         var_type: VarType::Int,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_tls",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_sasl_user_search_attr",
+        global_config_name: "",
         scope: 1,
         value: "uid",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_auth_method_name",
+        global_config_name: "",
         scope: 1,
         value: "SIMPLE",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_base_dn",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_root_dn",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_root_pwd",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_ca_path",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_init_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "10",
         var_type: VarType::Int,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_max_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "1000",
         var_type: VarType::Int,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_server_host",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_server_port",
+        global_config_name: "",
         scope: 1,
         value: "389",
         var_type: VarType::Int,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_tls",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "authentication_ldap_simple_user_search_attr",
+        global_config_name: "",
         scope: 1,
         value: "uid",
         var_type: VarType::Str,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "automatic_sp_privileges",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "default_authentication_plugin",
+        global_config_name: "",
         scope: 1,
         value: "mysql_native_password",
         var_type: VarType::Enum,
@@ -320,6 +344,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "default_password_lifetime",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Int,
@@ -332,6 +357,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "disconnect_on_expired_password",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -344,6 +370,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "mysql_native_password_proxy_users",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -356,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "old_passwords",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -368,6 +396,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "password_history",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -380,6 +409,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "password_reuse_interval",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -392,6 +422,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "read_only",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -404,6 +435,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "require_secure_transport",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -416,6 +448,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "secure_auth",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -428,6 +461,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "sha256_password_proxy_users",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -440,6 +474,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "skip_name_resolve",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -452,6 +487,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "skip_networking",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -464,6 +500,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "skip_show_database",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -476,6 +513,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "ssl_ca",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -488,6 +526,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "ssl_cert",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -500,6 +539,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "ssl_cipher",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -512,6 +552,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "ssl_key",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -524,6 +565,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "super_read_only",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -536,6 +578,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "tidb_enable_enhanced_security",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Str,
@@ -548,6 +591,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "tidb_restricted_read_only",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -560,6 +604,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "tidb_super_read_only",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -572,6 +617,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "tls_version",
+        global_config_name: "",
         scope: 0,
         value: "TLSv1,TLSv1.1,TLSv1.2",
         var_type: VarType::Str,
@@ -584,6 +630,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "transaction_read_only",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -596,6 +643,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "tx_read_only",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -608,6 +656,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.check_user_name",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -620,6 +669,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.dictionary",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -632,6 +682,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.enable",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -644,6 +695,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.length",
+        global_config_name: "",
         scope: 1,
         value: "8",
         var_type: VarType::Int,
@@ -656,6 +708,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.mixed_case_count",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Int,
@@ -668,6 +721,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.number_count",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Int,
@@ -680,6 +734,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.policy",
+        global_config_name: "",
         scope: 1,
         value: "MEDIUM",
         var_type: VarType::Enum,
@@ -692,6 +747,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
     },
     SysVarDef {
         name: "validate_password.special_char_count",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Int,

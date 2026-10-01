@@ -308,6 +308,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
         &config.pd_endpoints,
         cluster_ddl.clone(),
     );
+    let global_config_keeper = crate::global_config_sync::GlobalConfigKeeper::start(
+        authority.pd_client(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,
@@ -361,6 +365,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             CONTROL_PLANE_TIMEOUT,
         )),
     )
+    .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
     .with_stats_owner(stats_owner)
@@ -465,6 +470,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             schema_sync_ack,
             workload_repository,
             replica_poll,
+            global_config_keeper,
             factory,
             watcher,
             reloader,
@@ -482,6 +488,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             schema_sync_ack,
             workload_repository,
             replica_poll,
+            global_config_keeper,
             factory,
             watcher,
             reloader,
@@ -526,6 +533,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             workload_repository.stop();
             drop(replica_poll);
+            drop(global_config_keeper);
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
             // shutdown drain. The watch goes first: it nudges the reloader,

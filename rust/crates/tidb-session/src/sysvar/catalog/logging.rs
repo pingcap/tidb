@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 73] = [
     SysVarDef {
         name: "back_log",
+        global_config_name: "",
         scope: 0,
         value: "80",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "32768",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_checksum",
+        global_config_name: "",
         scope: 1,
         value: "CRC32",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_direct_non_transactional_updates",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_error_action",
+        global_config_name: "",
         scope: 3,
         value: "IGNORE_ERROR",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_format",
+        global_config_name: "",
         scope: 3,
         value: "STATEMENT",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_group_commit_sync_delay",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_group_commit_sync_no_delay_count",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_gtid_simple_recovery",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_max_flush_queue_time",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_order_commits",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_row_image",
+        global_config_name: "",
         scope: 3,
         value: "FULL",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_rows_query_log_events",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlog_stmt_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "32768",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "binlogging_impossible_mode",
+        global_config_name: "",
         scope: 3,
         value: "IGNORE_ERROR",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "expire_logs_days",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "general_log",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "general_log_file",
+        global_config_name: "",
         scope: 1,
         value: "/usr/local/mysql/data/localhost.log",
         var_type: VarType::Str,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_backward_compatible_user_definitions",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_bin_trust_function_creators",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_bin_use_v1_row_events",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_error",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql/data/localhost.err",
         var_type: VarType::Str,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_error_verbosity",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_output",
+        global_config_name: "",
         scope: 0,
         value: "FILE",
         var_type: VarType::Str,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_queries_not_using_indexes",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_slave_updates",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Bool,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_slow_admin_statements",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_slow_slave_statements",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_syslog",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_syslog_facility",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_syslog_include_pid",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_syslog_tag",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_timestamps",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "log_warnings",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "max_binlog_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "18446744073709547520",
         var_type: VarType::Str,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "max_binlog_size",
+        global_config_name: "",
         scope: 1,
         value: "1073741824",
         var_type: VarType::Str,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "max_binlog_stmt_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "18446744073709547520",
         var_type: VarType::Str,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "max_relay_log_size",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "optimizer_trace",
+        global_config_name: "",
         scope: 3,
         value: "enabled=off,one_line=off",
         var_type: VarType::Str,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "optimizer_trace_features",
+        global_config_name: "",
         scope: 3,
         value: "greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on",
         var_type: VarType::Str,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "optimizer_trace_limit",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Str,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "optimizer_trace_max_mem_size",
+        global_config_name: "",
         scope: 3,
         value: "16384",
         var_type: VarType::Str,
@@ -530,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "optimizer_trace_offset",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Str,
@@ -542,6 +585,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "plugin_audit_log_buffer_size",
+        global_config_name: "",
         scope: 4,
         // go `DefPluginAuditLogBufferSize` (pkg/config/config.go:117) is 0 —
         // the audit-log buffer is disabled unless a plugin turns it on.
@@ -556,6 +600,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "plugin_audit_log_flush_interval",
+        global_config_name: "",
         scope: 4,
         value: "30",
         var_type: VarType::Str,
@@ -568,6 +613,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "relay_log_info_file",
+        global_config_name: "",
         scope: 0,
         value: "relay-log.info",
         var_type: VarType::Str,
@@ -580,6 +626,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "relay_log_info_repository",
+        global_config_name: "",
         scope: 1,
         value: "FILE",
         var_type: VarType::Str,
@@ -592,6 +639,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "relay_log_purge",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -604,6 +652,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "relay_log_recovery",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -616,6 +665,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "relay_log_space_limit",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -628,6 +678,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_master_trace_level",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -640,6 +691,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "rpl_semi_sync_slave_trace_level",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -652,6 +704,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "slow_query_log",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -664,6 +717,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "slow_query_log_file",
+        global_config_name: "",
         scope: 1,
         value: "/usr/local/mysql/data/localhost-slow.log",
         var_type: VarType::Str,
@@ -676,6 +730,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "sql_log_off",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Str,
@@ -688,6 +743,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "sync_binlog",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -700,6 +756,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "sync_relay_log",
+        global_config_name: "",
         scope: 1,
         value: "10000",
         var_type: VarType::Str,
@@ -712,6 +769,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "sync_relay_log_info",
+        global_config_name: "",
         scope: 1,
         value: "10000",
         var_type: VarType::Str,
@@ -724,6 +782,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_enable_slow_log",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -736,6 +795,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_expensive_query_time_threshold",
+        global_config_name: "",
         scope: 4,
         value: "60",
         var_type: VarType::Unsigned,
@@ -748,6 +808,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_expensive_txn_time_threshold",
+        global_config_name: "",
         scope: 4,
         value: "600",
         var_type: VarType::Unsigned,
@@ -760,6 +821,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_general_log",
+        global_config_name: "",
         scope: 4,
         value: "OFF",
         var_type: VarType::Bool,
@@ -772,6 +834,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_log_file_max_days",
+        global_config_name: "",
         scope: 4,
         value: "0",
         var_type: VarType::Int,
@@ -784,6 +847,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_alternative_logical_plans",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -796,6 +860,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_query_log_max_len",
+        global_config_name: "",
         scope: 1,
         value: "4096",
         var_type: VarType::Int,
@@ -808,6 +873,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_record_plan_in_slow_log",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -820,6 +886,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_redact_log",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Enum,
@@ -832,6 +899,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_slow_log_max_per_sec",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Int,
@@ -844,6 +912,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_slow_log_rules",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -856,6 +925,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_slow_log_threshold",
+        global_config_name: "",
         scope: 4,
         value: "300",
         var_type: VarType::Int,
@@ -868,6 +938,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_slow_query_file",
+        global_config_name: "",
         scope: 2,
         value: "tidb-slow.log",
         // go seeds vars.SlowQueryFile from config.Log.SlowQueryFile ("tidb-slow.log").
@@ -881,6 +952,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_slow_txn_log_threshold",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Unsigned,
@@ -893,6 +965,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
     },
     SysVarDef {
         name: "tidb_trace_event",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,

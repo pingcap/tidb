@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, O12 repair) Transcreate the complete `pkg/domain/globalconfigsync` package (all three artifacts), its session metadata/publication and domain keeper integration. Preserve bounded blocking notification, no reload notification, one PD attempt and joined shutdown. Validate original Go cases, SQL regressions and real mock-RPC transport before publication.
+
 - [x] (2026-09-30, subsystem review) Refresh integration/master/native references; trace additional optimizer, table, schema, session, executor and domain owners. Add 18 findings, bringing the register to 72 records / 68 unresolved. Reproduce generated-column strict-mode failure and unsupported session-state/historical/BR job entrypoints.
 - [x] Account for all 83 Rust crates and 856 inventoried TiDB package directories in a checked scope matrix; preserve unreviewed variants/tests/dependencies and exclude disproved candidates. No whole-package acceptance or production repair is claimed.
 - [x] Validate subsystem audit evidence: diagnostic, scope generation, 72 unique IDs, Python syntax, receipt/source links, rustfmt and root lint pass. Publication must use the actual hook and fresh pre-push locked build; the publication response records those results.
@@ -60,6 +62,13 @@ Run regressions before production fixes and afterward. Protocol validation uses 
 
 ## Surprises & Discoveries
 
+O12's source keeper performs no retry: it logs one PD store failure and moves
+on. Go also notifies before global-variable persistence and ignores this RPC's
+response-body Error. The Rust repair preserves those less-obvious contracts.
+The new SQL regression initially produced no notifications; it now passes.
+Three broader sysvar tests fail identically on unchanged 021de80 (60 pass / 3
+fail) and this repair (62 pass / 3 fail), including serial execution.
+
 The subsystem probe stores generated TINYINT 127 from input 1000 under strict
 mode while ordinary TINYINT correctly rejects the same input; the immediate
 warning list is empty. The generated-column owner uses default conversion
@@ -101,6 +110,13 @@ a prior error. Go counts fresh run errors and lets action state control finaliza
 The old testport manifest contains only 45 package mappings and does not describe the current 856-directory Go tree. An initial Rust source search found 2,041 lines matching go-parity-gap, not implemented, not supported yet, or unimplemented!; this is a candidate count, not a mismatch count. Go supports some of those errors itself. The last embedded run has ten failures independently reproduced on unchanged integration HEAD; their names and logs remain in remove-extra-storage-policies-execplan.md.
 
 ## Decision Log
+
+(2026-10-01) Implement O12 as the complete three-artifact globalconfigsync leaf
+plus required production callers. Use generated PD messages and the existing
+PD worker; retain the notification handle on Session, not the scratch/cache
+registry. Remove the two obsolete ignored test placeholders and map the Go
+cases to executable owner/keeper tests. Do not broaden this into TopSQL O11
+or silently change Go's no-retry/pre-persistence contract.
 
 (2026-09-30, subsystem audit) Keep the latest request as a structural review.
 Use one stable register and an exhaustive scope queue, not a claim of exhaustive
@@ -1062,3 +1078,73 @@ publication response records those final gate outcomes.
 
 Revision note: broadened the owner audit and added complete scope accounting,
 retained diagnostics and negative controls for stale comments/partial models.
+
+## Global-config synchronization implementation plan
+
+
+Go master e953a09d9d5e29e60c62f42d3aacebb819af49a5 owns the complete leaf
+package `pkg/domain/globalconfigsync`: globalconfig.go, globalconfig_test.go
+and BUILD.bazel. There is no doc.go, generated/platform variant or fixture in
+that package. Rust will implement it in tidb-domain::globalconfigsync. The
+existing tidb-session registry carries GlobalConfigName for the two source
+variables; explicit validated writes notify the syncer, including DEFAULT,
+while startup/cache rebuilds remain quiet. The existing PD worker performs
+StoreGlobalConfig with an empty config path, source item fields and its usual
+timeout. Go ignores response-body Error for this call and performs no retry.
+The node keeper starts once with the existing PD handle, logs failures and
+joins before PD shutdown. Rust must release blocked senders when the receiver
+is stopped; no statement context is inherited by this background worker.
+
+Milestones: implement the leaf queue/store contract and metadata; retain a
+failing SQL-to-notification regression before connecting explicit SET; compose
+the transport/keeper/factory lifetime; run original Go cases and corresponding
+Rust unit/SQL/RPC/shutdown cases. Record the complete artifact mapping and
+validation receipt, update O12 only after the owner and callers pass, then run
+root lint, actual hook build and fresh pre-push locked build. Other Domain,
+session and PD packages remain outside this leaf's acceptance claim.
+
+## Global-config synchronization outcome
+
+
+The complete leaf and production integration are implemented. O12 is repaired;
+the stable register now has 72 records, 67 unresolved and five repaired.
+`parity/current-audit/global-config-sync-package.json` pins every source/test/
+build artifact and mapping; `global-config-sync-repair.md` records commands,
+semantics and limitations. Ten scoped tests (nine new-contract tests and one
+existing config test), six cluster-global-variable tests, 26 PD library tests
+and 46 PD RPC/lifecycle tests pass. One pre-existing live-PD test is ignored.
+All five affected crate targets check. Both original Go package tests pass
+using master’s Go 1.25.14 toolchain and dependencies; installed Go 1.27 does not
+match its map-ABI variants. Root lint passes. Three unchanged session-suite
+failures are reproduced on isolated baseline and retained without changes.
+
+The Go compiler cache was cleared after the original Go tests completed,
+recovering about 46 GiB (free space increased from 3.2 GiB to 49 GiB). Both
+managed reference checkouts were archived after their processes finished.
+Bazel preparation initially lacked the binary; a checksum-verified pinned
+7.7.1 binary was fetched into a temporary directory and preparation was
+retried. `PATH="/private/tmp/tidb-globalconfig-tools:$PATH" make bazel_prepare`
+passed in the unchanged integration checkout. In the master checkout, Gazelle
+built but repository preparation failed because proxy.golang.org reset the
+downloads of github.com/ajstarks/deck, modernc.org/tcl and modernc.org/ccorpus.
+The original Go package tests independently passed. No Go/Bazel source delta
+belongs to this Rust repair; reference preparation artifacts were not copied.
+The final lint rerun and the PD projection/path regression pass. Mandatory
+hook and fresh pre-push build results are recorded in the publication response.
+
+After the interruption, integration advanced by two non-overlapping commits
+to 1e570fd1e7 and was fast-forwarded before publication; the focused tests and
+all-target check were rerun. The latter initially exposed four incoming test
+constructor calls missing the new collation argument; a complete call-site
+sweep found twelve across executor and planner tests. Passing `None` retains
+their prior scenarios. The repair receipt lists the existing order/TopN/planner
+tests and the expanded six-crate all-target command. Master advanced to
+93a01d31f6. All three leaf
+artifacts, Domain keeper, session publication path and module inputs remain
+byte-identical to the original Go test revision e953a09d9d; the two notification
+metadata entries/constants are also unchanged. The receipt distinguishes that
+source equivalence from an original-Go test rerun, which was not performed.
+
+Revision note: implemented the first complete new leaf owner from the expanded
+review, including tests, generated-protocol transport, caller metadata and
+background lifetime; did not claim broader package or benchmark parity.

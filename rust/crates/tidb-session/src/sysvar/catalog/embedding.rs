@@ -13,6 +13,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 7] = [
     SysVarDef {
         name: "tidb_exp_embed_cohere_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -25,6 +26,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_gemini_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -37,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_huggingface_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -49,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_jina_ai_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -61,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_nvidia_nim_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -73,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_openai_api_base",
+        global_config_name: "",
         scope: 1,
         value: "https://api.openai.com/v1",
         var_type: VarType::Str,
@@ -85,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 7] = [
     },
     SysVarDef {
         name: "tidb_exp_embed_openai_api_key",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,

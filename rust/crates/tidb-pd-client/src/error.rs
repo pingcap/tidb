@@ -35,6 +35,8 @@ pub enum PdOperation {
     Tso,
     /// GC state (txn safe point) lookup.
     GetGcState,
+    /// Publish PD global configuration.
+    StoreGlobalConfig,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -50,6 +52,7 @@ impl std::fmt::Display for PdOperation {
             Self::GetAllStores => formatter.write_str("GetAllStores"),
             Self::Tso => formatter.write_str("Tso"),
             Self::GetGcState => formatter.write_str("GetGCState"),
+            Self::StoreGlobalConfig => formatter.write_str("StoreGlobalConfig"),
         }
     }
 }

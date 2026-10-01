@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 114] = [
     SysVarDef {
         name: "avoid_temporal_upgrade",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "big_tables",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "check_proxy_users",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "completion_type",
+        global_config_name: "",
         scope: 3,
         value: "NO_CHAIN",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "concurrent_insert",
+        global_config_name: "",
         scope: 1,
         value: "AUTO",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "core_file",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Bool,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "debug",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "debug_sync",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "delay_key_write",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Enum,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "delayed_insert_limit",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "delayed_insert_timeout",
+        global_config_name: "",
         scope: 1,
         value: "300",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "delayed_queue_size",
+        global_config_name: "",
         scope: 1,
         value: "1000",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "end_markers_in_json",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "event_scheduler",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "flush",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "flush_time",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ft_boolean_syntax",
+        global_config_name: "",
         scope: 1,
         value: "+ -><()~*:\"\"&|",
         var_type: VarType::Str,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ft_max_word_len",
+        global_config_name: "",
         scope: 0,
         value: "84",
         var_type: VarType::Str,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ft_min_word_len",
+        global_config_name: "",
         scope: 0,
         value: "4",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ft_query_expansion_limit",
+        global_config_name: "",
         scope: 0,
         value: "20",
         var_type: VarType::Str,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ft_stopword_file",
+        global_config_name: "",
         scope: 0,
         value: "(built-in)",
         var_type: VarType::Str,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_compress",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_crypt",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_dynamic_loading",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_geometry",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_openssl",
+        global_config_name: "",
         scope: 0,
         value: "DISABLED",
         var_type: VarType::Bool,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_profiling",
+        global_config_name: "",
         scope: 0,
         value: "NO",
         var_type: VarType::Str,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_rtree_keys",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_ssl",
+        global_config_name: "",
         scope: 0,
         value: "DISABLED",
         var_type: VarType::Bool,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "have_symlink",
+        global_config_name: "",
         scope: 0,
         value: "YES",
         var_type: VarType::Str,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ignore_builtin_innodb",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "key_cache_age_threshold",
+        global_config_name: "",
         scope: 1,
         value: "300",
         var_type: VarType::Str,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "key_cache_block_size",
+        global_config_name: "",
         scope: 1,
         value: "1024",
         var_type: VarType::Str,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "key_cache_division_limit",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Str,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "large_page_size",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "large_pages",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Str,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "local_infile",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "max_points_in_geometry",
+        global_config_name: "",
         scope: 3,
         value: "65536",
         var_type: VarType::Str,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "max_prepared_stmt_count",
+        global_config_name: "",
         scope: 1,
         value: "-1",
         var_type: VarType::Int,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "max_sp_recursion_depth",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "max_write_lock_count",
+        global_config_name: "",
         scope: 1,
         value: "18446744073709551615",
         var_type: VarType::Str,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "metadata_locks_hash_instances",
+        global_config_name: "",
         scope: 0,
         value: "8",
         var_type: VarType::Str,
@@ -530,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "multi_range_count",
+        global_config_name: "",
         scope: 0,
         value: "256",
         var_type: VarType::Str,
@@ -542,6 +585,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_data_pointer_size",
+        global_config_name: "",
         scope: 1,
         value: "6",
         var_type: VarType::Str,
@@ -554,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_max_sort_file_size",
+        global_config_name: "",
         scope: 1,
         value: "9223372036853727232",
         var_type: VarType::Str,
@@ -566,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_mmap_size",
+        global_config_name: "",
         scope: 0,
         value: "18446744073709551615",
         var_type: VarType::Str,
@@ -578,6 +624,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_recover_options",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Str,
@@ -590,6 +637,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_repair_threads",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Str,
@@ -602,6 +650,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_sort_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "8388608",
         var_type: VarType::Str,
@@ -614,6 +663,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_stats_method",
+        global_config_name: "",
         scope: 3,
         value: "nulls_unequal",
         var_type: VarType::Str,
@@ -626,6 +676,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "myisam_use_mmap",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -638,6 +689,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_blob_write_batch_bytes",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -650,6 +702,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_deferred_constraints",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -662,6 +715,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_distribution",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -674,6 +728,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_eventbuffer_free_percent",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -686,6 +741,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_eventbuffer_max_alloc",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -698,6 +754,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_force_send",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -710,6 +767,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_index_stat_enable",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -722,6 +780,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_index_stat_option",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -734,6 +793,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_join_pushdown",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -746,6 +806,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_log_binlog_index",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -758,6 +819,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_log_empty_epochs",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -770,6 +832,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_log_updated_only",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -782,6 +845,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_optimization_delay",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -794,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_recv_thread_cpu_mask",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -806,6 +871,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_show_foreign_key_mock_tables",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -818,6 +884,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_table_no_logging",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -830,6 +897,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndb_use_transactions",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -842,6 +910,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndbinfo_max_rows",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -854,6 +923,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "ndbinfo_show_hidden",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -866,6 +936,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "new",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Str,
@@ -878,6 +949,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "offline_mode",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -890,6 +962,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "old",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -902,6 +975,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "old_alter_table",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -914,6 +988,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema",
+        global_config_name: "",
         scope: 0,
         value: "OFF",
         var_type: VarType::Bool,
@@ -926,6 +1001,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_accounts_size",
+        global_config_name: "",
         scope: 0,
         value: "100",
         var_type: VarType::Str,
@@ -938,6 +1014,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_digests_size",
+        global_config_name: "",
         scope: 0,
         value: "10000",
         var_type: VarType::Str,
@@ -950,6 +1027,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_stages_history_long_size",
+        global_config_name: "",
         scope: 0,
         value: "10000",
         var_type: VarType::Str,
@@ -962,6 +1040,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_stages_history_size",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -974,6 +1053,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_statements_history_long_size",
+        global_config_name: "",
         scope: 0,
         value: "10000",
         var_type: VarType::Str,
@@ -986,6 +1066,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_statements_history_size",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -998,6 +1079,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_waits_history_long_size",
+        global_config_name: "",
         scope: 0,
         value: "10000",
         var_type: VarType::Str,
@@ -1010,6 +1092,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_events_waits_history_size",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -1022,6 +1105,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_hosts_size",
+        global_config_name: "",
         scope: 0,
         value: "100",
         var_type: VarType::Str,
@@ -1034,6 +1118,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_cond_classes",
+        global_config_name: "",
         scope: 0,
         value: "80",
         var_type: VarType::Str,
@@ -1046,6 +1131,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_cond_instances",
+        global_config_name: "",
         scope: 0,
         value: "3504",
         var_type: VarType::Str,
@@ -1058,6 +1144,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_file_classes",
+        global_config_name: "",
         scope: 0,
         value: "50",
         var_type: VarType::Str,
@@ -1070,6 +1157,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_file_handles",
+        global_config_name: "",
         scope: 0,
         value: "32768",
         var_type: VarType::Str,
@@ -1082,6 +1170,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_file_instances",
+        global_config_name: "",
         scope: 0,
         value: "7693",
         var_type: VarType::Str,
@@ -1094,6 +1183,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_mutex_classes",
+        global_config_name: "",
         scope: 0,
         value: "200",
         var_type: VarType::Str,
@@ -1106,6 +1196,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_mutex_instances",
+        global_config_name: "",
         scope: 0,
         value: "15906",
         var_type: VarType::Str,
@@ -1118,6 +1209,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_rwlock_classes",
+        global_config_name: "",
         scope: 0,
         value: "40",
         var_type: VarType::Str,
@@ -1130,6 +1222,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_rwlock_instances",
+        global_config_name: "",
         scope: 0,
         value: "9102",
         var_type: VarType::Str,
@@ -1142,6 +1235,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_socket_classes",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -1154,6 +1248,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_socket_instances",
+        global_config_name: "",
         scope: 0,
         value: "322",
         var_type: VarType::Str,
@@ -1166,6 +1261,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_stage_classes",
+        global_config_name: "",
         scope: 0,
         value: "150",
         var_type: VarType::Str,
@@ -1178,6 +1274,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_statement_classes",
+        global_config_name: "",
         scope: 0,
         value: "168",
         var_type: VarType::Str,
@@ -1190,6 +1287,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_table_handles",
+        global_config_name: "",
         scope: 0,
         value: "4000",
         var_type: VarType::Str,
@@ -1202,6 +1300,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_table_instances",
+        global_config_name: "",
         scope: 0,
         value: "12500",
         var_type: VarType::Str,
@@ -1214,6 +1313,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_thread_classes",
+        global_config_name: "",
         scope: 0,
         value: "50",
         var_type: VarType::Str,
@@ -1226,6 +1326,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_max_thread_instances",
+        global_config_name: "",
         scope: 0,
         value: "402",
         var_type: VarType::Str,
@@ -1238,6 +1339,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_session_connect_attrs_size",
+        global_config_name: "",
         scope: 1,
         value: "4096",
         var_type: VarType::Int,
@@ -1250,6 +1352,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_setup_actors_size",
+        global_config_name: "",
         scope: 0,
         value: "100",
         var_type: VarType::Str,
@@ -1262,6 +1365,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_setup_objects_size",
+        global_config_name: "",
         scope: 0,
         value: "100",
         var_type: VarType::Str,
@@ -1274,6 +1378,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "performance_schema_users_size",
+        global_config_name: "",
         scope: 0,
         value: "100",
         var_type: VarType::Str,
@@ -1286,6 +1391,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "profiling",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1298,6 +1404,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "profiling_history_size",
+        global_config_name: "",
         scope: 3,
         value: "15",
         var_type: VarType::Str,
@@ -1310,6 +1417,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "rewriter_enabled",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -1322,6 +1430,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "rewriter_verbose",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -1334,6 +1443,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "show_compatibility_56",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -1346,6 +1456,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "show_old_temporals",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1358,6 +1469,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "skip_external_locking",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -1370,6 +1482,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "stored_program_cache",
+        global_config_name: "",
         scope: 1,
         value: "256",
         var_type: VarType::Str,
@@ -1382,6 +1495,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
     },
     SysVarDef {
         name: "updatable_views_with_limit",
+        global_config_name: "",
         scope: 3,
         value: "YES",
         var_type: VarType::Str,

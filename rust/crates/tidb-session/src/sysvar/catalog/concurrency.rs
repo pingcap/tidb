@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 19] = [
     SysVarDef {
         name: "low_priority_updates",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "max_execution_time",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "max_statement_time",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "thread_concurrency",
+        global_config_name: "",
         scope: 0,
         value: "10",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_checksum_table_concurrency",
+        global_config_name: "",
         scope: 2,
         value: "4",
         var_type: VarType::Int,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_enable_resource_control",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_enable_tmp_storage_on_oom",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_executor_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "5",
         var_type: VarType::Unsigned,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_force_priority",
+        global_config_name: "",
         scope: 4,
         value: "NO_PRIORITY",
         var_type: VarType::Enum,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_hashagg_final_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_hashagg_partial_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_index_serial_scan_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Unsigned,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_pipelined_dml_resource_policy",
+        global_config_name: "",
         scope: 3,
         value: "standard",
         var_type: VarType::Str,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_pprof_sql_cpu",
+        global_config_name: "",
         scope: 4,
         value: "0",
         var_type: VarType::Int,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_projection_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_resource_control_strict_mode",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_streamagg_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Int,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_sysproc_scan_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "4",
         var_type: VarType::Int,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
     },
     SysVarDef {
         name: "tidb_window_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,

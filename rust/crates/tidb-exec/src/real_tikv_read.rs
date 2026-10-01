@@ -757,6 +757,14 @@ impl ProductionReadProcessAuthority {
         self.opener_ref().clone()
     }
 
+    /// A request-only handle to the process PD owner for domain background work.
+    pub fn pd_client(&self) -> Option<PdClient> {
+        match &self.lifecycle.pd {
+            ProductionPdLifecycle::Running(client) => Some(client.clone()),
+            ProductionPdLifecycle::Closed => None,
+        }
+    }
+
     /// Cloneable write capability over this same authority.
     ///
     /// Reads and writes therefore share one PD worker, one RegionCache, one

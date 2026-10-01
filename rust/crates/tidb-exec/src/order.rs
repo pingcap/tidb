@@ -437,8 +437,8 @@ mod tests {
     #[test]
     fn configured_order_uses_fullschema_offsets_directions_and_stable_ties() {
         let keys = [
-            ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Ascending),
-            ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Descending),
+            ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Ascending, None),
+            ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Descending, None),
         ];
         let mut rows: Vec<Row> = vec![
             vec![Datum::Int(100), Datum::Int(9), Datum::Int(2)],
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn configured_order_rejects_invalid_fullschema_rows_before_sorting() {
-        let key = ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending);
+        let key = ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending, None);
         let mut wrong_width = vec![vec![Datum::Int(2), Datum::Int(1)], vec![Datum::Int(1)]];
         assert_eq!(
             stable_order_configured_rows(&mut wrong_width, 2, &[key]),
@@ -490,7 +490,7 @@ mod tests {
         );
 
         let mut rows = vec![vec![Datum::Int(1), Datum::Int(2)]];
-        let outside = ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Descending);
+        let outside = ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Descending, None);
         assert_eq!(
             stable_order_configured_rows(&mut rows, 2, &[outside]),
             Err(ConfiguredOrderError::FullSchemaOffset {

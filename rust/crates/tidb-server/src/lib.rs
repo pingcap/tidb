@@ -96,6 +96,7 @@ pub mod connection_resultset;
 mod connection_writers;
 mod cursor_state;
 mod distinct_result_set;
+mod global_config_sync;
 pub mod handshake;
 mod handshake_response;
 pub mod http_status;

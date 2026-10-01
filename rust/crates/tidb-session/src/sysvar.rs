@@ -154,6 +154,8 @@ pub enum VarType {
 pub struct SysVarDef {
     /// The variable name, always lowercase in Go's registry.
     pub name: &'static str,
+    /// Go GlobalConfigName: nonempty only for explicit PD-backed global updates.
+    pub global_config_name: &'static str,
     /// Go `Scope`, a bit set of the `SCOPE_*` flags.
     pub scope: u8,
     /// Go `Value`: the default.
@@ -179,6 +181,7 @@ impl SysVarDef {
     /// written. It is never observed: the merge writes exactly `TOTAL` slots.
     pub(crate) const PLACEHOLDER: Self = Self {
         name: "",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,

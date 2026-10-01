@@ -118,6 +118,11 @@ enum WorkerCommand {
         keyspace_id: Option<u32>,
         reply: mpsc::Sender<Result<PdGcState, PdClientError>>,
     },
+    StoreGlobalConfig {
+        deadline: Instant,
+        request: pdpb::StoreGlobalConfigRequest,
+        reply: mpsc::Sender<Result<(), PdClientError>>,
+    },
     Close {
         reply: mpsc::Sender<()>,
     },
@@ -632,6 +637,47 @@ impl PdClient {
             .send(WorkerCommand::GetGcState { keyspace_id, reply })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Go PD client StoreGlobalConfig: one leader RPC with the configured timeout.
+    /// The source returns transport errors without retrying or inspecting the body.
+    pub fn store_global_config(
+        &self,
+        config_path: &str,
+        mut changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<(), PdClientError> {
+        // Go projects name, value, kind and payload; per-item read errors are not sent.
+        for item in &mut changes {
+            item.error = None;
+        }
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::StoreGlobalConfig {
+                deadline: Instant::now() + self.shared.timeout,
+                request: pdpb::StoreGlobalConfigRequest {
+                    changes,
+                    config_path: config_path.to_owned(),
+                },
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        match response.recv_timeout(self.shared.timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(PdClientError::Timeout {
+                operation: PdOperation::StoreGlobalConfig,
+                endpoint: self
+                    .shared
+                    .state
+                    .read()
+                    .expect("PD state lock poisoned")
+                    .members
+                    .leader_url
+                    .clone(),
+                timeout_ms: u64::try_from(self.shared.timeout.as_millis()).unwrap_or(u64::MAX),
+            }),
+        }
     }
 
     fn shutdown_inner(&mut self) -> Result<(), PdClientShutdownError> {

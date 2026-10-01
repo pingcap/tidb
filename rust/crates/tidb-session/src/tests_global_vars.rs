@@ -2656,3 +2656,88 @@ fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
         .unwrap();
     assert_eq!(globals.get("tidb_super_read_only").unwrap(), "OFF");
 }
+
+/// Go globalconfigsync.TestStoreGlobalConfig: explicit SET publishes the
+/// validated PD name/value. Cache/startup writes never use this path.
+#[test]
+fn global_config_explicit_sql_notifies_the_domain_owner() {
+    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    let (syncer, notifications) = GlobalConfigSyncer::new(None);
+    let mut session = Session::new();
+    session.set_global_config_syncer(std::sync::Arc::clone(&syncer));
+    session.run("SET @@global.tidb_enable_top_sql=1").unwrap();
+    session.run("SET @@global.tidb_source_id=2").unwrap();
+    // A sentinel makes absence observable without a timeout or sleeping.
+    assert!(syncer.notify(GlobalConfigItem {
+        name: "barrier".into(),
+        ..Default::default()
+    }));
+    let mut actual = Vec::new();
+    while let Some(item) = notifications.recv() {
+        if item.name == "barrier" {
+            break;
+        }
+        actual.push((item.name, item.value, item.kind));
+    }
+    assert_eq!(
+        actual,
+        vec![
+            ("enable_resource_metering".into(), "true".into(), 0),
+            ("source_id".into(), "2".into(), 0),
+        ]
+    );
+}
+
+#[test]
+fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
+    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    let (syncer, notifications) = GlobalConfigSyncer::new(None);
+    let mut session = Session::new();
+    session.set_global_config_syncer(std::sync::Arc::clone(&syncer));
+    let globals = vars::GlobalSysvars::new();
+    globals.set_startup("tidb_enable_top_sql", "ON".into());
+    globals.load_from_cluster(vec![("tidb_source_id".into(), "3".into())]);
+    let scratch =
+        vars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "4".into())]);
+    globals.replace_from(&scratch);
+    globals.publish_global_changes_from(
+        &vars::GlobalSysvars::from_cluster_rows(vec![("tidb_source_id".into(), "5".into())]),
+        &["tidb_source_id".into()],
+    );
+    session.swap_globals(globals);
+    assert!(session.run("SET SESSION tidb_source_id=2").is_err());
+    assert!(session
+        .run("SET GLOBAL tidb_enable_top_sql='not-a-bool'")
+        .is_err());
+    let live = session.swap_globals(vars::GlobalSysvars::from_cluster_rows(Vec::new()));
+    session.run("SET GLOBAL tidb_source_id=99").unwrap();
+    session.swap_globals(live);
+    session.run("SET GLOBAL tidb_source_id=DEFAULT").unwrap();
+    session
+        .run("SET GLOBAL tidb_enable_top_sql=DEFAULT")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_source_id=2, @@global.not_a_variable=1")
+        .unwrap_err();
+    assert!(syncer.notify(GlobalConfigItem {
+        name: "barrier".into(),
+        ..Default::default()
+    }));
+    let mut actual = Vec::new();
+    while let Some(item) = notifications.recv() {
+        if item.name == "barrier" {
+            break;
+        }
+        actual.push((item.name, item.value));
+    }
+    assert_eq!(
+        actual,
+        vec![
+            ("source_id".into(), "15".into()),
+            ("source_id".into(), "1".into()),
+            ("enable_resource_metering".into(), "false".into()),
+            // Go enqueues each successful assignment before durable publication.
+            ("source_id".into(), "2".into()),
+        ]
+    );
+}

@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 50] = [
     SysVarDef {
         name: "bulk_insert_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "8388608",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "error_count",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "host_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "279",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "internal_tmp_disk_storage_engine",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "join_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "262144",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "key_buffer_size",
+        global_config_name: "",
         scope: 1,
         value: "8388608",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "last_sql_use_alloc",
+        global_config_name: "",
         scope: 2,
         value: "ON",
         // go seeds vars.preUseChunkAlloc from config PreUseChunkAlloc: true.
@@ -111,6 +118,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "locked_in_memory",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -123,6 +131,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_allowed_packet",
+        global_config_name: "",
         scope: 3,
         value: "67108864",
         var_type: VarType::Unsigned,
@@ -135,6 +144,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_digest_length",
+        global_config_name: "",
         scope: 0,
         value: "1024",
         var_type: VarType::Str,
@@ -147,6 +157,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_error_count",
+        global_config_name: "",
         scope: 3,
         value: "64",
         var_type: VarType::Str,
@@ -159,6 +170,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_heap_table_size",
+        global_config_name: "",
         scope: 3,
         value: "16777216",
         var_type: VarType::Str,
@@ -171,6 +183,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_join_size",
+        global_config_name: "",
         scope: 3,
         value: "18446744073709551615",
         var_type: VarType::Str,
@@ -183,6 +196,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_length_for_sort_data",
+        global_config_name: "",
         scope: 3,
         value: "1024",
         var_type: VarType::Str,
@@ -195,6 +209,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_seeks_for_key",
+        global_config_name: "",
         scope: 3,
         value: "18446744073709551615",
         var_type: VarType::Str,
@@ -207,6 +222,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "max_sort_length",
+        global_config_name: "",
         scope: 3,
         value: "1024",
         var_type: VarType::Unsigned,
@@ -219,6 +235,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "net_buffer_length",
+        global_config_name: "",
         scope: 3,
         value: "16384",
         var_type: VarType::Unsigned,
@@ -231,6 +248,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "preload_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "32768",
         var_type: VarType::Str,
@@ -243,6 +261,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "query_alloc_block_size",
+        global_config_name: "",
         scope: 3,
         value: "8192",
         var_type: VarType::Str,
@@ -255,6 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "query_prealloc_size",
+        global_config_name: "",
         scope: 3,
         value: "8192",
         var_type: VarType::Str,
@@ -267,6 +287,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "range_alloc_block_size",
+        global_config_name: "",
         scope: 3,
         value: "4096",
         var_type: VarType::Str,
@@ -279,6 +300,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "read_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "131072",
         var_type: VarType::Str,
@@ -291,6 +313,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "read_rnd_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "262144",
         var_type: VarType::Str,
@@ -303,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "sort_buffer_size",
+        global_config_name: "",
         scope: 3,
         value: "262144",
         var_type: VarType::Str,
@@ -315,6 +339,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "sql_buffer_result",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Str,
@@ -327,6 +352,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "table_definition_cache",
+        global_config_name: "",
         scope: 1,
         value: "2000",
         var_type: VarType::Unsigned,
@@ -339,6 +365,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "table_open_cache",
+        global_config_name: "",
         scope: 1,
         value: "2000",
         var_type: VarType::Str,
@@ -351,6 +378,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "table_open_cache_instances",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -363,6 +391,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "thread_cache_size",
+        global_config_name: "",
         scope: 1,
         value: "9",
         var_type: VarType::Str,
@@ -375,6 +404,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_enable_parallel_hashagg_spill",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -387,6 +417,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_enable_point_get_cache",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -399,6 +430,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_mode",
+        global_config_name: "",
         scope: 1,
         value: "disable",
         var_type: VarType::Str,
@@ -411,6 +443,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_query_reserved",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Str,
@@ -423,6 +456,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_soft_limit",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -435,6 +469,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_wait_averse",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Str,
@@ -447,6 +482,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_oom_action",
+        global_config_name: "",
         scope: 1,
         value: "CANCEL",
         var_type: VarType::Enum,
@@ -459,6 +495,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_quota_apply_cache",
+        global_config_name: "",
         scope: 3,
         value: "33554432",
         var_type: VarType::Unsigned,
@@ -471,6 +508,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_mem_quota_query",
+        global_config_name: "",
         scope: 3,
         value: "1073741824",
         var_type: VarType::Int,
@@ -483,6 +521,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_memory_debug_mode_alarm_ratio",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -495,6 +534,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_memory_debug_mode_min_heap_inuse",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -507,6 +547,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_memory_usage_alarm_keep_record_num",
+        global_config_name: "",
         scope: 1,
         value: "5",
         var_type: VarType::Int,
@@ -519,6 +560,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_memory_usage_alarm_ratio",
+        global_config_name: "",
         scope: 1,
         value: "0.7",
         var_type: VarType::Float,
@@ -531,6 +573,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_schema_cache_size",
+        global_config_name: "",
         scope: 5,
         value: "536870912",
         var_type: VarType::Str,
@@ -543,6 +586,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_server_memory_limit",
+        global_config_name: "",
         scope: 5,
         value: "80%",
         var_type: VarType::Str,
@@ -555,6 +599,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_server_memory_limit_sess_min_size",
+        global_config_name: "",
         scope: 1,
         value: "134217728",
         var_type: VarType::Str,
@@ -567,6 +612,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_shard_allocate_step",
+        global_config_name: "",
         scope: 3,
         value: "9223372036854775807",
         var_type: VarType::Int,
@@ -579,6 +625,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_tmp_table_max_size",
+        global_config_name: "",
         scope: 3,
         value: "67108864",
         var_type: VarType::Unsigned,
@@ -591,6 +638,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tidb_track_aggregate_memory_usage",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -603,6 +651,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tmp_table_size",
+        global_config_name: "",
         scope: 3,
         value: "16777216",
         var_type: VarType::Unsigned,
@@ -615,6 +664,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
     },
     SysVarDef {
         name: "tmpdir",
+        global_config_name: "",
         scope: 0,
         value: "/var/tmp/",
         var_type: VarType::Str,

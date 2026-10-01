@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 49] = [
     SysVarDef {
         name: "autocommit",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "lock_wait_timeout",
+        global_config_name: "",
         scope: 3,
         value: "31536000",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_batch_commit",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_committer_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "128",
         var_type: VarType::Int,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place_pessimistic",
+        global_config_name: "",
         scope: 2,
         value: "ON",
         var_type: VarType::Bool,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_current_ts",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_disable_txn_auto_retry",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_1pc",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_external_ts_read",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_local_txn",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -160,6 +171,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     // Go's table mutation consistency checker when this is enabled.
     SysVarDef {
         name: "tidb_enable_mutation_checker",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -172,6 +184,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_row_level_checksum",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -184,6 +197,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_shared_lock_promotion",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -196,6 +210,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_shared_lock_upgrade",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -208,6 +223,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_enable_tso_follower_proxy",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -220,6 +236,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_external_ts",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -232,6 +249,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_foreign_key_check_in_shared_lock",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -244,6 +262,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_guarantee_linearizability",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -256,6 +275,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_idle_transaction_timeout",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -268,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_isolation_read_engines",
+        global_config_name: "",
         scope: 2,
         value: "tikv,tiflash,tidb",
         var_type: VarType::Str,
@@ -280,6 +301,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_last_txn_info",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -292,6 +314,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_lock_unchanged_keys",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -304,6 +327,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_low_resolution_tso",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -316,6 +340,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_low_resolution_tso_update_interval",
+        global_config_name: "",
         scope: 1,
         value: "2000",
         var_type: VarType::Int,
@@ -328,6 +353,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_nontransactional_ignore_error",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -340,6 +366,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_pessimistic_txn_fair_locking",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -352,6 +379,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_rc_read_check_ts",
+        global_config_name: "",
         scope: 4,
         value: "OFF",
         var_type: VarType::Bool,
@@ -364,6 +392,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_rc_write_check_ts",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -376,6 +405,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_read_consistency",
+        global_config_name: "",
         scope: 2,
         value: "strict",
         var_type: VarType::Str,
@@ -388,6 +418,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_read_staleness",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Int,
@@ -400,6 +431,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_retry_limit",
+        global_config_name: "",
         scope: 3,
         value: "10",
         var_type: VarType::Int,
@@ -412,6 +444,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_skip_isolation_level_check",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -424,6 +457,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_snapshot",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -436,6 +470,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_tso_client_batch_max_wait_time",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Float,
@@ -448,6 +483,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_tso_client_rpc_mode",
+        global_config_name: "",
         scope: 1,
         value: "DEFAULT",
         var_type: VarType::Enum,
@@ -460,6 +496,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_txn_assertion_level",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Enum,
@@ -472,6 +509,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_txn_commit_batch_size",
+        global_config_name: "",
         scope: 1,
         value: "16384",
         var_type: VarType::Unsigned,
@@ -484,6 +522,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_txn_entry_size_limit",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -496,6 +535,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tidb_txn_mode",
+        global_config_name: "",
         scope: 3,
         value: "pessimistic",
         var_type: VarType::Enum,
@@ -508,6 +548,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "transaction_alloc_block_size",
+        global_config_name: "",
         scope: 3,
         value: "8192",
         var_type: VarType::Str,
@@ -520,6 +561,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "transaction_allow_batching",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -532,6 +574,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "transaction_isolation",
+        global_config_name: "",
         scope: 3,
         value: "REPEATABLE-READ",
         var_type: VarType::Enum,
@@ -549,6 +592,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "transaction_prealloc_size",
+        global_config_name: "",
         scope: 3,
         value: "4096",
         var_type: VarType::Str,
@@ -561,6 +605,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "transaction_write_set_extraction",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -573,6 +618,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tx_isolation",
+        global_config_name: "",
         scope: 3,
         value: "REPEATABLE-READ",
         var_type: VarType::Enum,
@@ -590,6 +636,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tx_isolation_one_shot",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -602,6 +649,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "tx_read_ts",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -614,6 +662,7 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
     },
     SysVarDef {
         name: "unique_checks",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,

@@ -35,7 +35,7 @@ fn topn_spec(
 ) -> ConfiguredOrderLimitSpec {
     ConfiguredOrderLimitSpec::new(
         keys.iter()
-            .map(|&(offset, direction)| ConfiguredOrderKey::new(offset, direction))
+            .map(|&(offset, direction)| ConfiguredOrderKey::new(offset, direction, None))
             .collect(),
         ConfiguredLimitWindow::new(offset, count).expect("test window"),
     )

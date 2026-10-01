@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 39] = [
     SysVarDef {
         name: "block_encryption_mode",
+        global_config_name: "",
         scope: 3,
         value: "aes-128-ecb",
         var_type: VarType::Enum,
@@ -51,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_client",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4",
         var_type: VarType::Str,
@@ -63,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_database",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4",
         var_type: VarType::Str,
@@ -75,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_filesystem",
+        global_config_name: "",
         scope: 3,
         value: "binary",
         var_type: VarType::Str,
@@ -87,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_results",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4",
         var_type: VarType::Str,
@@ -99,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_server",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4",
         var_type: VarType::Str,
@@ -111,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_set_system",
+        global_config_name: "",
         scope: 0,
         value: "utf8",
         var_type: VarType::Str,
@@ -123,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "character_sets_dir",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/",
         var_type: VarType::Str,
@@ -135,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "collation_database",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4_bin",
         var_type: VarType::Str,
@@ -147,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "collation_server",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4_bin",
         var_type: VarType::Str,
@@ -159,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "default_collation_for_utf8mb4",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4_bin",
         var_type: VarType::Str,
@@ -171,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "default_week_format",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -183,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "div_precision_increment",
+        global_config_name: "",
         scope: 3,
         value: "4",
         var_type: VarType::Unsigned,
@@ -195,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "explicit_defaults_for_timestamp",
+        global_config_name: "",
         scope: 0,
         value: "ON",
         var_type: VarType::Bool,
@@ -207,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "lc_messages",
+        global_config_name: "",
         scope: 3,
         value: "en_US",
         var_type: VarType::Str,
@@ -219,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "lc_messages_dir",
+        global_config_name: "",
         scope: 0,
         value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/",
         var_type: VarType::Str,
@@ -231,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "lc_time_names",
+        global_config_name: "",
         scope: 3,
         value: "en_US",
         var_type: VarType::Str,
@@ -243,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "sql_safe_updates",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -255,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "system_time_zone",
+        global_config_name: "",
         scope: 0,
         value: "CST",
         var_type: VarType::Str,
@@ -267,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_accelerate_user_creation_update",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -279,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_allow_function_for_expression_index",
+        global_config_name: "",
         scope: 0,
         value: "json_array, json_array_append, json_array_insert, json_contains, json_contains_path, json_depth, json_extract, json_insert, json_keys, json_length, json_merge_patch, json_merge_preserve, json_object, json_pretty, json_quote, json_remove, json_replace, json_schema_valid, json_search, json_set, json_storage_size, json_type, json_unquote, json_valid, lower, md5, reverse, tidb_shard, upper, vitess_hash",
         var_type: VarType::Str,
@@ -291,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_allow_remove_auto_inc",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -303,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_check_mb4_value_in_utf8",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -315,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_no_backslash_escapes_in_like",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -327,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_null_aware_anti_join",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -339,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_pipelined_window_function",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -351,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_strict_double_type_check",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -363,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_strict_not_null_check",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -375,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_unsafe_substitute",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -387,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_vectorized_expression",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -399,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_enable_window_function",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -411,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_hash_exchange_with_new_collation",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -423,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_skip_ascii_check",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -435,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_skip_utf8_check",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -447,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "tidb_sysdate_is_now",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -459,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "time_format",
+        global_config_name: "",
         scope: 0,
         value: "%H:%i:%s",
         var_type: VarType::Str,
@@ -471,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "time_zone",
+        global_config_name: "",
         scope: 3,
         value: "SYSTEM",
         var_type: VarType::Str,
@@ -483,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "timestamp",
+        global_config_name: "",
         scope: 2,
         value: "0",
         var_type: VarType::Float,
@@ -495,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
     },
     SysVarDef {
         name: "windowing_use_high_precision",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,

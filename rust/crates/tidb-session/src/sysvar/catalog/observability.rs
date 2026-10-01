@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 27] = [
     SysVarDef {
         name: "tidb_enable_plan_replayer_capture",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_enable_plan_replayer_continuous_capture",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_enable_stmt_summary",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_enable_telemetry",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_enable_top_sql",
+        global_config_name: tidb_vardef::tidb_vars::GLOBAL_CONFIG_ENABLE_TOP_SQL,
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_last_plan_replayer_token",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_metric_query_range_duration",
+        global_config_name: "",
         scope: 2,
         value: "60",
         var_type: VarType::Unsigned,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_metric_query_step",
+        global_config_name: "",
         scope: 2,
         value: "60",
         var_type: VarType::Unsigned,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_simplified_metrics",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_enable_persistent",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_backups",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_days",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_size",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_filename",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_group_by_user",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_history_size",
+        global_config_name: "",
         scope: 1,
         value: "24",
         var_type: VarType::Int,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_internal_query",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_max_sql_length",
+        global_config_name: "",
         scope: 1,
         value: "32768",
         var_type: VarType::Int,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_max_stmt_count",
+        global_config_name: "",
         scope: 5,
         value: "3000",
         var_type: VarType::Int,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_persist_evicted",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_stmt_summary_refresh_interval",
+        global_config_name: "",
         scope: 1,
         value: "1800",
         var_type: VarType::Int,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_top_sql_max_meta_count",
+        global_config_name: "",
         scope: 1,
         value: "5000",
         var_type: VarType::Int,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_top_sql_max_time_series_count",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Int,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_workload_repository_active_sampling_interval",
+        global_config_name: "",
         scope: 1,
         value: "5",
         var_type: VarType::Int,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_workload_repository_dest",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_workload_repository_retention_days",
+        global_config_name: "",
         scope: 1,
         value: "7",
         var_type: VarType::Int,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
     },
     SysVarDef {
         name: "tidb_workload_repository_snapshot_interval",
+        global_config_name: "",
         scope: 1,
         value: "3600",
         var_type: VarType::Int,

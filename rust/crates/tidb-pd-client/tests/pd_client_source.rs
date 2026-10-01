@@ -96,6 +96,8 @@ struct State {
     all_stores_requests: Vec<pdpb::GetAllStoresRequest>,
     gc_state: Reply<pdpb::GetGcStateResponse>,
     gc_state_requests: Vec<pdpb::GetGcStateRequest>,
+    global_config: Reply<pdpb::StoreGlobalConfigResponse>,
+    global_config_requests: Vec<pdpb::StoreGlobalConfigRequest>,
 }
 
 #[derive(Clone)]
@@ -152,6 +154,18 @@ impl Pd for MockPd {
                         ..Default::default()
                     })
                 })
+        };
+        reply.send().await
+    }
+
+    async fn store_global_config(
+        &self,
+        request: tonic::Request<pdpb::StoreGlobalConfigRequest>,
+    ) -> Result<tonic::Response<pdpb::StoreGlobalConfigResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.global_config_requests.push(request.into_inner());
+            state.global_config.clone()
         };
         reply.send().await
     }
@@ -529,6 +543,8 @@ fn valid_state() -> State {
             ..Default::default()
         }),
         gc_state_requests: Vec::new(),
+        global_config: Reply::Value(pdpb::StoreGlobalConfigResponse::default()),
+        global_config_requests: Vec::new(),
     }
 }
 
@@ -1817,4 +1833,67 @@ fn assert_exact_header(header: &pdpb::RequestHeader) {
     assert_eq!(header.sender_id, 0);
     assert!(header.caller_id.is_empty());
     assert_eq!(header.caller_component, "codec-pd-client");
+}
+
+#[test]
+fn global_config_preserves_the_pd_method_contract_without_retry() {
+    let server = Server::start(valid_state());
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+    let item = pdpb::GlobalConfigItem {
+        name: "source_id".into(),
+        value: "2".into(),
+        kind: pdpb::EventType::Put as i32,
+        payload: vec![1, 2, 3],
+        ..Default::default()
+    };
+    // Go does not inspect the body Error on StoreGlobalConfig.
+    server.state.lock().unwrap().global_config = Reply::Value(pdpb::StoreGlobalConfigResponse {
+        error: Some(pdpb::Error {
+            r#type: 1,
+            message: "ignored by the source client".into(),
+        }),
+    });
+    let mut input = item.clone();
+    input.error = Some(pdpb::Error {
+        r#type: 1,
+        message: "read-side error must not be sent".into(),
+    });
+    client.store_global_config("", vec![input]).unwrap();
+    let requests = server.state.lock().unwrap().global_config_requests.clone();
+    assert_eq!(
+        requests,
+        vec![pdpb::StoreGlobalConfigRequest {
+            config_path: String::new(),
+            changes: vec![item.clone()]
+        }]
+    );
+    server.state.lock().unwrap().global_config =
+        Reply::Status(tonic::Code::Unavailable, "not leader");
+    assert!(client
+        .store_global_config("/alternate", vec![item])
+        .is_err());
+    let requests = server.state.lock().unwrap().global_config_requests.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].config_path, "/alternate");
+    // The PD method also preserves the source client's timeout. No retry is
+    // added by the domain worker or by the transport wrapper.
+    server.state.lock().unwrap().global_config = Reply::Delayed(
+        Duration::from_secs(1),
+        pdpb::StoreGlobalConfigResponse::default(),
+    );
+    let timed = PdClient::connect(&server.address, Duration::from_millis(50)).unwrap();
+    assert!(matches!(
+        timed.store_global_config("", Vec::new()),
+        Err(tidb_pd_client::PdClientError::Timeout {
+            operation: tidb_pd_client::PdOperation::StoreGlobalConfig,
+            ..
+        })
+    ));
+    timed.shutdown().unwrap();
+    let closed = client.clone();
+    client.shutdown().unwrap();
+    assert_eq!(
+        closed.store_global_config("", Vec::new()),
+        Err(tidb_pd_client::PdClientError::Closed)
+    );
 }

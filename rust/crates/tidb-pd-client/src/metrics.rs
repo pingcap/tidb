@@ -178,18 +178,20 @@ pub fn init_dashboard_series() {
 /// The Go `type` label value for one client command
 /// (`initLabelValues`' `CmdDuration*` bindings).
 #[must_use]
-pub fn cmd_type_label(operation: crate::error::PdOperation) -> &'static str {
+pub fn cmd_type_label(operation: crate::error::PdOperation) -> Option<&'static str> {
     match operation {
-        crate::error::PdOperation::GetMembers => "get_member_info",
-        crate::error::PdOperation::GetRegion => "get_region",
-        crate::error::PdOperation::GetPrevRegion => "get_prev_region",
-        crate::error::PdOperation::GetRegionById => "get_region_byid",
-        crate::error::PdOperation::ScanRegions => "scan_regions",
-        crate::error::PdOperation::BatchScanRegions => "batch_scan_regions",
-        crate::error::PdOperation::GetStore => "get_store",
-        crate::error::PdOperation::GetAllStores => "get_all_stores",
-        crate::error::PdOperation::Tso => "tso",
-        crate::error::PdOperation::GetGcState => "get_gc_state",
+        // Go StoreGlobalConfig does not record per-command histograms.
+        crate::error::PdOperation::StoreGlobalConfig => None,
+        crate::error::PdOperation::GetMembers => Some("get_member_info"),
+        crate::error::PdOperation::GetRegion => Some("get_region"),
+        crate::error::PdOperation::GetPrevRegion => Some("get_prev_region"),
+        crate::error::PdOperation::GetRegionById => Some("get_region_byid"),
+        crate::error::PdOperation::ScanRegions => Some("scan_regions"),
+        crate::error::PdOperation::BatchScanRegions => Some("batch_scan_regions"),
+        crate::error::PdOperation::GetStore => Some("get_store"),
+        crate::error::PdOperation::GetAllStores => Some("get_all_stores"),
+        crate::error::PdOperation::Tso => Some("tso"),
+        crate::error::PdOperation::GetGcState => Some("get_gc_state"),
     }
 }
 
@@ -197,7 +199,9 @@ pub fn cmd_type_label(operation: crate::error::PdOperation) -> &'static str {
 /// time, on the success histogram or the failure histogram exactly as the
 /// PD client's per-command defer does.
 pub fn observe_cmd(operation: crate::error::PdOperation, seconds: f64, succeeded: bool) {
-    let label = cmd_type_label(operation);
+    let Some(label) = cmd_type_label(operation) else {
+        return;
+    };
     let duration = if succeeded {
         CMD_HANDLE_DURATION.with_label_values(&[label])
     } else {

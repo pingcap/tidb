@@ -438,3 +438,29 @@ pub(super) fn store_is_removed(
     }
     Ok(false)
 }
+
+/// Unlike most PD methods this source RPC has no request/response header and
+/// Go StoreGlobalConfig deliberately only returns the transport status.
+pub(super) fn store_global_config(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    control: RpcControl<'_>,
+    request: pdpb::StoreGlobalConfigRequest,
+) -> Result<(), PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = block_on_rpc(
+        runtime,
+        control.timeout,
+        control.shutdown,
+        PdOperation::StoreGlobalConfig,
+        client.store_global_config(request),
+    );
+    map_rpc_result(
+        response,
+        PdOperation::StoreGlobalConfig,
+        endpoint,
+        control.timeout,
+    )?;
+    Ok(())
+}

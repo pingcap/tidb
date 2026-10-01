@@ -76,7 +76,7 @@
 //! unported package rather than a value: `infoschema.InfoCache`,
 //! `privileges.Handle`, `statistics/handle.Handle`, `ddl.DDL`,
 //! `ddl.Executor`, `notifier.DDLNotifier`, `infosync.InfoSyncer`,
-//! `issyncer.Syncer`, `globalconfigsync.GlobalConfigSyncer`,
+//! `issyncer.Syncer`,
 //! `syssession.AdvancedSessionPool`, `clientv3.Client` (etcd),
 //! `autoid.ClientDiscover`, `owner.Manager` (three times),
 //! `ttlworker.JobManager`, `runaway.Manager`,
@@ -147,6 +147,8 @@ pub mod cdcutil;
 pub mod disttask;
 pub mod domain_sysvars;
 pub mod domainutil;
+/// Complete Go `pkg/domain/globalconfigsync` queue/store contract.
+pub mod globalconfigsync;
 pub mod historical_stats;
 pub mod metrics;
 pub mod optimize_trace;

@@ -25,9 +25,9 @@ use configured_order_limit_contract::{
 #[test]
 fn by_items_preserve_source_order_offset_and_direction() {
     let keys = [
-        ConfiguredOrderKey::new(4, ConfiguredOrderDirection::from_descending(true)),
-        ConfiguredOrderKey::new(0, ConfiguredOrderDirection::from_descending(false)),
-        ConfiguredOrderKey::new(4, ConfiguredOrderDirection::Descending),
+        ConfiguredOrderKey::new(4, ConfiguredOrderDirection::from_descending(true), None),
+        ConfiguredOrderKey::new(0, ConfiguredOrderDirection::from_descending(false), None),
+        ConfiguredOrderKey::new(4, ConfiguredOrderDirection::Descending, None),
     ];
 
     assert_eq!(keys[0].full_offset(), 4);
@@ -72,8 +72,8 @@ fn limit_window_rejects_offset_count_overflow() {
 fn combined_spec_preserves_identity_and_rejects_limit_only_aliasing() {
     let window = ConfiguredLimitWindow::new(2, 3).expect("checked window");
     let keys = vec![
-        ConfiguredOrderKey::new(3, ConfiguredOrderDirection::Descending),
-        ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending),
+        ConfiguredOrderKey::new(3, ConfiguredOrderDirection::Descending, None),
+        ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending, None),
     ];
     let spec = ConfiguredOrderLimitSpec::new(keys.clone(), window).expect("ordered TopN spec");
 
@@ -83,8 +83,8 @@ fn combined_spec_preserves_identity_and_rejects_limit_only_aliasing() {
         spec,
         ConfiguredOrderLimitSpec::new(
             vec![
-                ConfiguredOrderKey::new(3, ConfiguredOrderDirection::Ascending),
-                ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending),
+                ConfiguredOrderKey::new(3, ConfiguredOrderDirection::Ascending, None),
+                ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending, None),
             ],
             window,
         )

@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 132] = [
     SysVarDef {
         name: "bind_address",
+        global_config_name: "",
         scope: 0,
         value: "*",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "last_plan_from_binding",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "last_plan_from_cache",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "mpp_exchange_compression_mode",
+        global_config_name: "",
         scope: 3,
         value: "UNSPECIFIED",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "mpp_version",
+        global_config_name: "",
         scope: 3,
         value: "UNSPECIFIED",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "optimizer_prune_level",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "optimizer_search_depth",
+        global_config_name: "",
         scope: 3,
         value: "62",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "optimizer_switch",
+        global_config_name: "",
         scope: 0,
         value: "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_allow_mpp",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_broadcast_join_threshold_count",
+        global_config_name: "",
         scope: 3,
         value: "10240",
         var_type: VarType::Int,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_broadcast_join_threshold_size",
+        global_config_name: "",
         scope: 3,
         value: "104857600",
         var_type: VarType::Int,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_capture_plan_baselines",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_cost_model_version",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Int,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_adaptive_limit_scan",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_binding_usage",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_cascades_planner",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_index_merge",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_index_merge_join",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_inl_join_inner_multi_pattern",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_instance_plan_cache",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_new_cost_interface",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_non_prepared_plan_cache",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_non_prepared_plan_cache_for_dml",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_ordered_result_mode",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_outer_join_reorder",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_parallel_apply",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_plan_cache_for_param_limit",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_plan_cache_for_subquery",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_prepared_plan_cache",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enable_prepared_plan_cache_memory_monitor",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_enforce_mpp",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_evolve_plan_baselines",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_hash_join_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_hash_join_version",
+        global_config_name: "",
         scope: 3,
         value: "optimized",
         var_type: VarType::Str,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_ignore_inlist_plan_digest",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_join_batch_size",
+        global_config_name: "",
         scope: 3,
         value: "25000",
         var_type: VarType::Unsigned,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_join_double_read_penalty_cost_rate",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_lookup_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_lookup_join_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_lookup_pushdown_policy",
+        global_config_name: "",
         scope: 3,
         value: "hint-only",
         var_type: VarType::Enum,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_lookup_size",
+        global_config_name: "",
         scope: 3,
         value: "20000",
         var_type: VarType::Unsigned,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_index_merge_intersection_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -530,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_instance_plan_cache_max_size",
+        global_config_name: "",
         scope: 1,
         value: "104857600",
         var_type: VarType::Str,
@@ -542,6 +585,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_instance_plan_cache_reserved_percentage",
+        global_config_name: "",
         scope: 1,
         value: "0.1",
         var_type: VarType::Float,
@@ -554,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_load_binding_timeout",
+        global_config_name: "",
         scope: 1,
         value: "200",
         var_type: VarType::Unsigned,
@@ -566,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_mem_quota_binding_cache",
+        global_config_name: "",
         scope: 5,
         value: "67108864",
         var_type: VarType::Unsigned,
@@ -578,6 +624,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_merge_join_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Int,
@@ -590,6 +637,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_non_prepared_plan_cache_size",
+        global_config_name: "",
         scope: 3,
         value: "100",
         var_type: VarType::Unsigned,
@@ -602,6 +650,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_advanced_join_hint",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -614,6 +663,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_agg_push_down",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -626,6 +676,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_always_keep_join_key",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -638,6 +689,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_broadcast_cartesian_join",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Int,
@@ -650,6 +702,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_cartesian_join_order_threshold",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -662,6 +715,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_concurrency_factor",
+        global_config_name: "",
         scope: 3,
         value: "3",
         var_type: VarType::Float,
@@ -674,6 +728,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_copcpu_factor",
+        global_config_name: "",
         scope: 3,
         value: "3",
         var_type: VarType::Float,
@@ -686,6 +741,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_correlation_exp_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Unsigned,
@@ -698,6 +754,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_correlation_threshold",
+        global_config_name: "",
         scope: 3,
         value: "0.9",
         var_type: VarType::Float,
@@ -710,6 +767,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_cpu_factor",
+        global_config_name: "",
         scope: 3,
         value: "3",
         var_type: VarType::Float,
@@ -722,6 +780,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_derive_topn",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -734,6 +793,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_desc_factor",
+        global_config_name: "",
         scope: 3,
         value: "3",
         var_type: VarType::Float,
@@ -746,6 +806,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_disk_factor",
+        global_config_name: "",
         scope: 3,
         value: "1.5",
         var_type: VarType::Float,
@@ -758,6 +819,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_distinct_agg_push_down",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -770,6 +832,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_advanced_join_reorder",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -782,6 +845,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_correlation_adjustment",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -794,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_fuzzy_binding",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -806,6 +871,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_hash_join",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -818,6 +884,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_late_materialization",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -830,6 +897,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_mpp_shared_cte_execution",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -842,6 +910,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_no_decorrelate_in_select",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -854,6 +923,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_non_eval_scalar_subquery",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -866,6 +936,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_semi_join_rewrite",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -878,6 +949,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_enable_three_stage_multi_distinct_agg",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -890,6 +962,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_fix_control",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -902,6 +975,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_force_inline_cte",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -914,6 +988,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_group_ndv_skew_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -926,6 +1001,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_hash_agg_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -938,6 +1014,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_hash_join_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -950,6 +1027,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_join_build_v2",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -962,6 +1040,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_join_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -974,6 +1053,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_join_max_scan_rows_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -986,6 +1066,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_lookup_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -998,6 +1079,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_merge_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1010,6 +1092,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_prune_threshold",
+        global_config_name: "",
         scope: 3,
         value: "20",
         var_type: VarType::Int,
@@ -1022,6 +1105,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_reader_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1034,6 +1118,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_index_scan_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1046,6 +1131,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_insubq_to_join_and_agg",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1058,6 +1144,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_threshold",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -1070,6 +1157,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_through_proj",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1082,6 +1170,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_through_sel",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1094,6 +1183,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_limit_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1106,6 +1196,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_limit_push_down_threshold",
+        global_config_name: "",
         scope: 3,
         value: "5000",
         var_type: VarType::Unsigned,
@@ -1118,6 +1209,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_memory_factor",
+        global_config_name: "",
         scope: 3,
         value: "0.001",
         var_type: VarType::Float,
@@ -1130,6 +1222,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_merge_join_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1142,6 +1235,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_mpp_outer_join_fixed_build_side",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1154,6 +1248,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_network_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1166,6 +1261,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_objective",
+        global_config_name: "",
         scope: 3,
         value: "moderate",
         var_type: VarType::Enum,
@@ -1178,6 +1274,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_partial_ordered_index_for_topn",
+        global_config_name: "",
         scope: 3,
         value: "DISABLE",
         var_type: VarType::Enum,
@@ -1190,6 +1287,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_prefer_range_scan",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1202,6 +1300,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_prefix_index_single_scan",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1214,6 +1313,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_projection_push_down",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1226,6 +1326,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_range_max_size",
+        global_config_name: "",
         scope: 3,
         value: "67108864",
         var_type: VarType::Int,
@@ -1238,6 +1339,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_risk_eq_skew_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -1250,6 +1352,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_risk_range_skew_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Float,
@@ -1262,6 +1365,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_scale_ndv_skew_ratio",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1274,6 +1378,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_scan_factor",
+        global_config_name: "",
         scope: 3,
         value: "1.5",
         var_type: VarType::Float,
@@ -1286,6 +1391,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_seek_factor",
+        global_config_name: "",
         scope: 3,
         value: "20",
         var_type: VarType::Float,
@@ -1298,6 +1404,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_skew_distinct_agg",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1310,6 +1417,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_sort_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1322,6 +1430,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_stream_agg_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1334,6 +1443,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_table_full_scan_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1346,6 +1456,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_table_range_scan_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1358,6 +1469,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_table_reader_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1370,6 +1482,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_table_rowid_scan_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1382,6 +1495,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_table_tiflash_scan_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1394,6 +1508,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_three_stage_distinct_agg",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1406,6 +1521,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_tiflash_concurrency_factor",
+        global_config_name: "",
         scope: 3,
         value: "24",
         var_type: VarType::Float,
@@ -1418,6 +1534,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_topn_cost_factor",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Float,
@@ -1430,6 +1547,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_use_invisible_indexes",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1442,6 +1560,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_opt_write_row_id",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1454,6 +1573,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_plan_cache_max_plan_size",
+        global_config_name: "",
         scope: 3,
         value: "2097152",
         var_type: VarType::Unsigned,
@@ -1466,6 +1586,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_plan_cache_strategy",
+        global_config_name: "",
         scope: 3,
         value: "all",
         var_type: VarType::Enum,
@@ -1478,6 +1599,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_prefer_broadcast_join_by_exchange_data_size",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1490,6 +1612,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_prepared_plan_cache_memory_guard_ratio",
+        global_config_name: "",
         scope: 1,
         value: "0.1",
         var_type: VarType::Float,
@@ -1502,6 +1625,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_prepared_plan_cache_size",
+        global_config_name: "",
         scope: 3,
         value: "100",
         var_type: VarType::Unsigned,
@@ -1514,6 +1638,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_regard_null_as_point",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1526,6 +1651,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_remove_orderby_in_subquery",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1538,6 +1664,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_runtime_filter_mode",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Str,
@@ -1550,6 +1677,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_runtime_filter_type",
+        global_config_name: "",
         scope: 3,
         value: "IN",
         var_type: VarType::Str,
@@ -1562,6 +1690,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_session_plan_cache_size",
+        global_config_name: "",
         scope: 3,
         value: "100",
         var_type: VarType::Unsigned,
@@ -1574,6 +1703,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_shard_row_id_bits",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Int,
@@ -1586,6 +1716,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tidb_use_plan_baselines",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1598,6 +1729,7 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
     },
     SysVarDef {
         name: "tiflash_hash_join_version",
+        global_config_name: "",
         scope: 3,
         value: "legacy",
         var_type: VarType::Str,

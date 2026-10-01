@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 31] = [
     SysVarDef {
         name: "allow_auto_random_explicit_insert",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "auto_increment_increment",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Unsigned,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "auto_increment_offset",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Unsigned,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "ddl_slow_threshold",
+        global_config_name: "",
         scope: 4,
         value: "300",
         var_type: VarType::Int,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "foreign_key_checks",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "metadata_locks_cache_size",
+        global_config_name: "",
         scope: 0,
         value: "1024",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_disk_quota",
+        global_config_name: "",
         scope: 1,
         value: "107374182400",
         var_type: VarType::Int,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_enable_fast_reorg",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_error_count_limit",
+        global_config_name: "",
         scope: 1,
         value: "512",
         var_type: VarType::Unsigned,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_flashback_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "64",
         var_type: VarType::Unsigned,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_reorg_batch_size",
+        global_config_name: "",
         scope: 3,
         value: "256",
         var_type: VarType::Unsigned,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_reorg_max_write_speed",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_reorg_priority",
+        global_config_name: "",
         scope: 2,
         value: "PRIORITY_LOW",
         var_type: VarType::Enum,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_ddl_reorg_worker_cnt",
+        global_config_name: "",
         scope: 3,
         value: "4",
         var_type: VarType::Unsigned,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_auto_increment_in_generated",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_clustered_index",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Enum,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_ddl",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_exchange_partition",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_fast_table_check",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_foreign_key",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_global_index",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_list_partition",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_metadata_lock",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_enable_table_partition",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Enum,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_last_ddl_info",
+        global_config_name: "",
         scope: 2,
         value: "{\"query\":\"\",\"seq_num\":0}",
         // go marshals the zero LastDDLInfo{Query:"", SeqNum:0}.
@@ -327,6 +352,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_max_delta_schema_count",
+        global_config_name: "",
         scope: 1,
         value: "1024",
         var_type: VarType::Unsigned,
@@ -339,6 +365,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_partition_prune_mode",
+        global_config_name: "",
         scope: 3,
         value: "dynamic",
         var_type: VarType::Enum,
@@ -351,6 +378,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_placement_mode",
+        global_config_name: "",
         scope: 3,
         value: "STRICT",
         var_type: VarType::Enum,
@@ -363,6 +391,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_row_format_version",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Unsigned,
@@ -375,6 +404,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_schema_version_cache_limit",
+        global_config_name: "",
         scope: 1,
         value: "16",
         var_type: VarType::Int,
@@ -387,6 +417,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
     },
     SysVarDef {
         name: "tidb_table_cache_lease",
+        global_config_name: "",
         scope: 1,
         value: "3",
         var_type: VarType::Unsigned,

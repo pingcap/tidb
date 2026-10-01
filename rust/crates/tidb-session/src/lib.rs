@@ -431,6 +431,7 @@ pub trait MdlRelatedTableSink: Send + Sync {
 }
 
 pub struct Session {
+    global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     account_storage_delegated: bool,
     /// Go `session.values`: heterogeneous values addressed by session-context
@@ -869,6 +870,7 @@ impl Session {
             local_temporary_tables: Vec::new(),
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
+            global_config_syncer: None,
             resource_group: "default".to_owned(),
             stmt_hints: tidb_hint::StmtHints::default(),
             active_resource_group: "default".to_owned(),
@@ -1679,6 +1681,14 @@ impl Session {
     /// normal executor lifecycle (for example `SET` and routed DDL).
     pub fn clear_statement_message(&mut self) {
         self.statement_message.clear();
+    }
+
+    /// Install the domain notification owner; it survives scratch globals used by SET.
+    pub fn set_global_config_syncer(
+        &mut self,
+        syncer: Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>,
+    ) {
+        self.global_config_syncer = Some(syncer);
     }
 
     /// The session's variables.
@@ -2585,8 +2595,6 @@ mod tests_domain_domain_utils_source;
 mod tests_domain_domainctx_source;
 #[cfg(test)]
 mod tests_domain_extract_source;
-#[cfg(test)]
-mod tests_domain_globalconfigsync_source;
 #[cfg(test)]
 mod tests_domain_infosync_source;
 #[cfg(test)]

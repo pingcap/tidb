@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 25] = [
     SysVarDef {
         name: "cte_max_recursion_depth",
+        global_config_name: "",
         scope: 3,
         value: "1000",
         var_type: VarType::Int,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "default_storage_engine",
+        global_config_name: "",
         scope: 3,
         value: "InnoDB",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "default_tmp_storage_engine",
+        global_config_name: "",
         scope: 3,
         value: "InnoDB",
         var_type: VarType::Str,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "group_concat_max_len",
+        global_config_name: "",
         scope: 3,
         value: "1024",
         var_type: VarType::Unsigned,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "keep_files_on_create",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "rbr_exec_mode",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_auto_is_null",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_big_selects",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_mode",
+        global_config_name: "",
         scope: 3,
         value: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION",
         var_type: VarType::Str,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_notes",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_quote_show_create",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_require_primary_key",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_select_limit",
+        global_config_name: "",
         scope: 3,
         value: "18446744073709551615",
         var_type: VarType::Unsigned,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "sql_warnings",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "storage_engine",
+        global_config_name: "",
         scope: 3,
         value: "InnoDB",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_cb_pd_metadata_error_rate_threshold_ratio",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Float,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_enable_check_constraint",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_enable_collect_execution_info",
+        global_config_name: "",
         scope: 4,
         value: "ON",
         var_type: VarType::Bool,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_enable_fast_create_table",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_enable_new_only_full_group_by_check",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_enable_ts_validation",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_end_time",
+        global_config_name: "",
         scope: 1,
         value: "23:59 +0000",
         var_type: VarType::Time,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_max_time",
+        global_config_name: "",
         scope: 1,
         value: "600",
         var_type: VarType::Int,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_start_time",
+        global_config_name: "",
         scope: 1,
         value: "00:00 +0000",
         var_type: VarType::Time,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
     },
     SysVarDef {
         name: "tidb_generate_binary_plan",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,

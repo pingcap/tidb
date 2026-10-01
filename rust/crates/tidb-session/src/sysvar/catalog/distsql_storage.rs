@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 51] = [
     SysVarDef {
         name: "pd_enable_follower_handle_region",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_adaptive_closest_read_threshold",
+        global_config_name: "",
         scope: 3,
         value: "4096",
         var_type: VarType::Unsigned,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_advancer_check_point_lag_limit",
+        global_config_name: "",
         scope: 1,
         value: "48h0m0s",
         var_type: VarType::Duration,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_allow_batch_cop",
+        global_config_name: "",
         scope: 3,
         value: "1",
         var_type: VarType::Int,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_allow_fallback_to_tikv",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_allow_tiflash_cop",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_backoff_lock_fast",
+        global_config_name: "",
         scope: 3,
         value: "10",
         var_type: VarType::Unsigned,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_backoff_weight",
+        global_config_name: "",
         scope: 3,
         value: "2",
         var_type: VarType::Unsigned,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_batch_delete",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_batch_insert",
+        global_config_name: "",
         scope: 2,
         value: "OFF",
         var_type: VarType::Bool,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_batch_pending_tiflash_count",
+        global_config_name: "",
         scope: 3,
         value: "4000",
         var_type: VarType::Unsigned,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_cloud_storage_uri",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_columnar_storage_enabled",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_distsql_scan_concurrency",
+        global_config_name: "",
         scope: 3,
         value: "15",
         var_type: VarType::Unsigned,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_dml_batch_size",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_batch_dml",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_batch_query_region",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_chunk_rpc",
+        global_config_name: "",
         scope: 2,
         value: "ON",
         var_type: VarType::Bool,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_dist_task",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_paging",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_rate_limit_action",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_reuse_chunk",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_tiflash_pipeline_model",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_enable_tiflash_read_for_write_stmt",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_init_chunk_size",
+        global_config_name: "",
         scope: 3,
         value: "32",
         var_type: VarType::Unsigned,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_group_by",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_join",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_sort",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_chunk_size",
+        global_config_name: "",
         scope: 3,
         value: "1024",
         var_type: VarType::Unsigned,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_dist_task_nodes",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_keys_read",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_paging_size",
+        global_config_name: "",
         scope: 3,
         value: "50000",
         var_type: VarType::Unsigned,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_max_tiflash_threads",
+        global_config_name: "",
         scope: 3,
         value: "-1",
         var_type: VarType::Int,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_min_paging_size",
+        global_config_name: "",
         scope: 3,
         value: "128",
         var_type: VarType::Unsigned,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_paging_size_bytes",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_pre_split_regions",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Int,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_query_cop_store_limit",
+        global_config_name: "",
         scope: 3,
         value: "15",
         var_type: VarType::Unsigned,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_scatter_region",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -485,6 +523,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_service_scope",
+        global_config_name: "",
         scope: 4,
         value: "",
         var_type: VarType::Str,
@@ -497,6 +536,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_store_batch_size",
+        global_config_name: "",
         scope: 3,
         value: "4",
         var_type: VarType::Int,
@@ -509,6 +549,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_store_limit",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Int,
@@ -521,6 +562,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_wait_split_region_finish",
+        global_config_name: "",
         scope: 2,
         value: "ON",
         var_type: VarType::Bool,
@@ -533,6 +575,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tidb_wait_split_region_timeout",
+        global_config_name: "",
         scope: 2,
         value: "300",
         var_type: VarType::Unsigned,
@@ -545,6 +588,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_compute_dispatch_policy",
+        global_config_name: "",
         scope: 3,
         value: "consistent_hash",
         var_type: VarType::Str,
@@ -557,6 +601,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_fastscan",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -569,6 +614,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_fine_grained_shuffle_batch_size",
+        global_config_name: "",
         scope: 3,
         value: "8192",
         var_type: VarType::Unsigned,
@@ -581,6 +627,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_fine_grained_shuffle_stream_count",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Int,
@@ -593,6 +640,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_hashagg_preaggregation_mode",
+        global_config_name: "",
         scope: 3,
         value: "force_preagg",
         var_type: VarType::Str,
@@ -605,6 +653,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_mem_quota_query_per_node",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Int,
@@ -617,6 +666,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tiflash_query_spill_ratio",
+        global_config_name: "",
         scope: 3,
         value: "0.7",
         var_type: VarType::Float,
@@ -629,6 +679,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
     },
     SysVarDef {
         name: "tikv_client_read_timeout",
+        global_config_name: "",
         scope: 3,
         value: "0",
         var_type: VarType::Unsigned,

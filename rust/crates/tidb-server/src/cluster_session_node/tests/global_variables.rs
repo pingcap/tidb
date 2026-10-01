@@ -248,3 +248,36 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
         );
     }
 }
+
+#[test]
+fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
+    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    let node = MockNode::start();
+    let (syncer, notifications) = GlobalConfigSyncer::new(None);
+    let factory = factory_with_globals(&node, node.sysvars.live.clone())
+        .with_global_config_syncer(Arc::clone(&syncer));
+    let mut first = factory.open_session(session_context(61)).unwrap();
+    let mut second = factory.open_session(session_context(62)).unwrap();
+    first
+        .execute_write("SET GLOBAL tidb_enable_top_sql=1")
+        .unwrap();
+    second.execute_write("SET GLOBAL tidb_source_id=2").unwrap();
+    assert!(syncer.notify(GlobalConfigItem {
+        name: "barrier".into(),
+        ..Default::default()
+    }));
+    let mut actual = Vec::new();
+    while let Some(item) = notifications.recv() {
+        if item.name == "barrier" {
+            break;
+        }
+        actual.push((item.name, item.value));
+    }
+    assert_eq!(
+        actual,
+        vec![
+            ("enable_resource_metering".into(), "true".into()),
+            ("source_id".into(), "2".into())
+        ]
+    );
+}

@@ -189,6 +189,32 @@ pub(crate) fn datum_text(value: &Datum) -> Option<String> {
 }
 
 impl Session {
+    /// Go session.SetGlobalSysVar notifies after validation/hooks and before
+    /// persistence. Cache rebuilds only call the variable hook, never this path.
+    fn notify_global_config_change(&self, name: &str, value: &str) {
+        let Some(syncer) = &self.global_config_syncer else {
+            return;
+        };
+        let Some(definition) = sysvar::get_sys_var(name) else {
+            return;
+        };
+        if definition.global_config_name.is_empty() {
+            return;
+        }
+        let value = match value {
+            "ON" => "true",
+            "OFF" => "false",
+            _ => value,
+        };
+        let _ = syncer.notify(tidb_domain::globalconfigsync::GlobalConfigItem {
+            name: definition.global_config_name.to_owned(),
+            value: value.to_owned(),
+            // Go Domain.NotifyGlobalConfigChange uses EventType_PUT.
+            kind: tidb_domain::globalconfigsync::EventType::Put as i32,
+            ..Default::default()
+        });
+    }
+
     /// Applies a `SET` statement.
     ///
     /// Returns `Some(())` when the SQL is a `SET` this handles and `None`
@@ -464,6 +490,7 @@ impl Session {
                         .expect("the assignment named a registered sysvar")
                         .value;
                     self.apply_workload_repository_global(&assignment.name, default)?;
+                    self.notify_global_config_change(&assignment.name, default);
                 } else if is_instance {
                     self.vars
                         .reset_instance(&assignment.name)
@@ -561,6 +588,7 @@ impl Session {
                 // that the sysvar layer had already accepted and clamped.
                 let stored = self.vars.get_global(&assignment.name).map_err(var_error)?;
                 self.apply_workload_repository_global(&assignment.name, &stored)?;
+                self.notify_global_config_change(&assignment.name, &stored);
             }
             return Ok(());
         }

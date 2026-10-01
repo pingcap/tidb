@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 34] = [
     SysVarDef {
         name: "character_set_connection",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "collation_connection",
+        global_config_name: "",
         scope: 3,
         value: "utf8mb4_bin",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "connect_timeout",
+        global_config_name: "",
         scope: 1,
         value: "10",
         var_type: VarType::Unsigned,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "hostname",
+        global_config_name: "",
         scope: 0,
         value: "localhost",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "init_connect",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "interactive_timeout",
+        global_config_name: "",
         scope: 3,
         value: "28800",
         var_type: VarType::Unsigned,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "large_files_support",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "max_connect_errors",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Unsigned,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "max_connections",
+        global_config_name: "",
         scope: 4,
         value: "0",
         var_type: VarType::Unsigned,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "max_delayed_threads",
+        global_config_name: "",
         scope: 3,
         value: "20",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "max_insert_delayed_threads",
+        global_config_name: "",
         scope: 3,
         value: "20",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "max_user_connections",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "net_read_timeout",
+        global_config_name: "",
         scope: 3,
         value: "30",
         var_type: VarType::Str,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "net_retry_count",
+        global_config_name: "",
         scope: 3,
         value: "10",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "net_write_timeout",
+        global_config_name: "",
         scope: 3,
         value: "60",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "port",
+        global_config_name: "",
         scope: 0,
         value: "4000",
         var_type: VarType::Unsigned,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "pseudo_thread_id",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "report_port",
+        global_config_name: "",
         scope: 0,
         value: "3306",
         var_type: VarType::Str,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "session_track_schema",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "session_track_state_change",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "session_track_system_variables",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "socket",
+        global_config_name: "",
         scope: 0,
         value: "",
         var_type: VarType::Str,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "thread_handling",
+        global_config_name: "",
         scope: 0,
         value: "one-thread-per-connection",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "thread_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "16",
         var_type: VarType::Unsigned,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "thread_stack",
+        global_config_name: "",
         scope: 0,
         value: "262144",
         var_type: VarType::Str,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_dml_type",
+        global_config_name: "",
         scope: 2,
         value: "STANDARD",
         var_type: VarType::Str,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_enable_cache_prepare_stmt",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_enable_lazy_cursor_fetch",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_ignore_prepared_cache_close_stmt",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_last_query_info",
+        global_config_name: "",
         scope: 2,
         value: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"error_count\":0,\"kv_errors\":null,\"fall_back_actions\":null}",
         // go marshals the fresh QueryInfo{TxnScope:"global", StartTS:0, ForUpdateTS:0, ErrorCount:0, KvErrors:nil, FallBackActions:nil} (queryinfo.go).
@@ -387,6 +417,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_multi_statement_mode",
+        global_config_name: "",
         scope: 3,
         value: "OFF",
         var_type: VarType::Enum,
@@ -399,6 +430,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_request_source_type",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Enum,
@@ -425,6 +457,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "tidb_session_alias",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -437,6 +470,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
     },
     SysVarDef {
         name: "wait_timeout",
+        global_config_name: "",
         scope: 3,
         value: "28800",
         var_type: VarType::Unsigned,

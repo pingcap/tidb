@@ -116,6 +116,9 @@ pub(super) fn run_worker(
                 WorkerCommand::GetGcState { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
+                WorkerCommand::StoreGlobalConfig { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
                 WorkerCommand::Close { reply } => {
                     drop(tso_stream.take());
                     let _ = reply.send(());
@@ -371,6 +374,38 @@ pub(super) fn run_worker(
                     &shutdown,
                     keyspace_id,
                 );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::StoreGlobalConfig {
+                deadline,
+                request,
+                reply,
+            } => {
+                let endpoint = state
+                    .read()
+                    .expect("PD state lock poisoned")
+                    .members
+                    .leader_url
+                    .clone();
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let result = if remaining.is_zero() {
+                    Err(PdClientError::Timeout {
+                        operation: PdOperation::StoreGlobalConfig,
+                        endpoint: endpoint.clone(),
+                        timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                    })
+                } else {
+                    super::requests::store_global_config(
+                        &runtime,
+                        &mut clients,
+                        &endpoint,
+                        RpcControl {
+                            timeout: remaining,
+                            shutdown: &shutdown,
+                        },
+                        request,
+                    )
+                };
                 let _ = reply.send(result);
             }
             WorkerCommand::Close { reply } => {

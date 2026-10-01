@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 11] = [
     SysVarDef {
         name: "log_throttle_queries_not_using_indexes",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_mpp_store_fail_ttl",
+        global_config_name: "",
         scope: 3,
         value: "0s",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_delete_batch_size",
+        global_config_name: "",
         scope: 1,
         value: "100",
         var_type: VarType::Int,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_delete_rate_limit",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Int,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_delete_worker_count",
+        global_config_name: "",
         scope: 1,
         value: "4",
         var_type: VarType::Unsigned,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_job_enable",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_end_time",
+        global_config_name: "",
         scope: 1,
         value: "23:59 +0000",
         var_type: VarType::Time,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_start_time",
+        global_config_name: "",
         scope: 1,
         value: "00:00 +0000",
         var_type: VarType::Time,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_running_tasks",
+        global_config_name: "",
         scope: 1,
         value: "-1",
         var_type: VarType::Int,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_scan_batch_size",
+        global_config_name: "",
         scope: 1,
         value: "500",
         var_type: VarType::Int,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
     },
     SysVarDef {
         name: "tidb_ttl_scan_worker_count",
+        global_config_name: "",
         scope: 1,
         value: "4",
         var_type: VarType::Unsigned,

@@ -1,0 +1,34 @@
+{
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "original_go_test_revision": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+  "integration_base": "021de80c8cb40e8c63bbd17f273f13fefcf28354",
+  "publication_base": "1e570fd1e7f2f3ad606c415ff5b9c722e7573fae",
+  "refresh_evidence": "All three package blobs, Domain keeper, session publication path and go.mod/go.sum are unchanged from the original Go test revision. The two GlobalConfigName entries/constants are unchanged. Refreshed integration only changed non-overlapping planner, executor order and prepared-statement files; focused Rust tests and all-target compilation were rerun.",
+  "package": "pkg/domain/globalconfigsync",
+  "artifacts": [
+    [
+      "pkg/domain/globalconfigsync/BUILD.bazel",
+      "a19a4ff533e17f7288f4170f839e42b32d99b021"
+    ],
+    [
+      "pkg/domain/globalconfigsync/globalconfig.go",
+      "6d3bad4e88f6690dbbf2614e8828bef2ef3c9254"
+    ],
+    [
+      "pkg/domain/globalconfigsync/globalconfig_test.go",
+      "ad2cf0283534a59a254c058ae4890c7e18d21968"
+    ]
+  ],
+  "source_membership": "Complete git ls-tree package membership: one production file, one original test/support file and BUILD.bazel; no doc.go, generated files, platform production variants or fixtures.",
+  "rust_owner": "rust/crates/tidb-domain/src/globalconfigsync.rs",
+  "original_test_mapping": {
+    "TestGlobalConfigSyncer": "tidb-domain::globalconfigsync::tests::global_config_syncer_stores_one_notification plus PD wire contract test",
+    "TestStoreGlobalConfig": "tidb-server::global_config_sync::tests::global_config_keeper_consumes_sql_and_continues_after_a_failed_store plus cluster factory integration test",
+    "TestMain": "Native test harness; scoped receiver shutdown, blocked-producer release, in-flight worker join, and PD shutdown tests. Original Go goleak harness executed successfully.",
+    "Windows guards": "Original tests skip Windows due to etcd fixture filenames; native in-memory/RPC tests do not create those files. No Windows runtime execution claimed."
+  },
+  "build_mapping": "BUILD.bazel library/test targets map to tidb-domain Cargo library and the domain/session/server/PD tests; Go deps remain native trait/generated-protocol boundaries.",
+  "integration": "One keeper in cluster-session boot; factory installs the same Arc in all sessions; scratch global registries retain the session notification owner; explicit validated writes only; joins before shared PD authority shutdown.",
+  "acceptance_scope": "This leaf package and listed integration contract only. No acceptance of the complete parent Domain, session, variable, executor, or external PD-client packages.",
+  "validation_receipt": "global-config-sync-repair.md"
+}

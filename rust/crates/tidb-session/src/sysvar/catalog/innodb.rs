@@ -26,6 +26,7 @@ use super::super::{SysVarDef, VarType};
 pub(super) static ENTRIES: [SysVarDef; 115] = [
     SysVarDef {
         name: "innodb_adaptive_flushing",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -38,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_adaptive_flushing_lwm",
+        global_config_name: "",
         scope: 1,
         value: "10",
         var_type: VarType::Str,
@@ -50,6 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_adaptive_hash_index",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -62,6 +65,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_adaptive_max_sleep_delay",
+        global_config_name: "",
         scope: 1,
         value: "150000",
         var_type: VarType::Str,
@@ -74,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_api_bk_commit_interval",
+        global_config_name: "",
         scope: 1,
         value: "5",
         var_type: VarType::Str,
@@ -86,6 +91,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_api_disable_rowlock",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -98,6 +104,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_api_enable_binlog",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -110,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_api_enable_mdl",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -122,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_api_trx_level",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -134,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_autoextend_increment",
+        global_config_name: "",
         scope: 1,
         value: "64",
         var_type: VarType::Str,
@@ -146,6 +156,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_autoinc_lock_mode",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -158,6 +169,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_at_shutdown",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -170,6 +182,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_now",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -182,6 +195,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_pct",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -194,6 +208,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_filename",
+        global_config_name: "",
         scope: 1,
         value: "ib_buffer_pool",
         var_type: VarType::Str,
@@ -206,6 +221,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_instances",
+        global_config_name: "",
         scope: 0,
         value: "8",
         var_type: VarType::Str,
@@ -218,6 +234,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_abort",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -230,6 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_at_startup",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -242,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_now",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -254,6 +273,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_buffer_pool_size",
+        global_config_name: "",
         scope: 1,
         value: "4294967296",
         var_type: VarType::Str,
@@ -266,6 +286,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_change_buffer_max_size",
+        global_config_name: "",
         scope: 1,
         value: "25",
         var_type: VarType::Str,
@@ -278,6 +299,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_change_buffering",
+        global_config_name: "",
         scope: 1,
         value: "all",
         var_type: VarType::Str,
@@ -290,6 +312,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_checksum_algorithm",
+        global_config_name: "",
         scope: 1,
         value: "innodb",
         var_type: VarType::Str,
@@ -302,6 +325,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_cmp_per_index_enabled",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -314,6 +338,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_commit_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Unsigned,
@@ -326,6 +351,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_compression_failure_threshold_pct",
+        global_config_name: "",
         scope: 1,
         value: "5",
         var_type: VarType::Str,
@@ -338,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_compression_level",
+        global_config_name: "",
         scope: 1,
         value: "6",
         var_type: VarType::Str,
@@ -350,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_compression_pad_pct_max",
+        global_config_name: "",
         scope: 1,
         value: "50",
         var_type: VarType::Str,
@@ -362,6 +390,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_concurrency_tickets",
+        global_config_name: "",
         scope: 1,
         value: "5000",
         var_type: VarType::Str,
@@ -374,6 +403,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_create_intrinsic",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -386,6 +416,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_data_file_path",
+        global_config_name: "",
         scope: 0,
         value: "ibdata1:12M:autoextend",
         var_type: VarType::Str,
@@ -398,6 +429,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_default_row_format",
+        global_config_name: "",
         scope: 1,
         value: "dynamic",
         var_type: VarType::Enum,
@@ -410,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_disable_sort_file_cache",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -422,6 +455,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_doublewrite",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -434,6 +468,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_fast_shutdown",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Unsigned,
@@ -446,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_file_per_table",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -458,6 +494,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_fill_factor",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -470,6 +507,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_flush_log_at_timeout",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -482,6 +520,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_flush_log_at_trx_commit",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -494,6 +533,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_flush_neighbors",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -506,6 +546,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_flush_sync",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -518,6 +559,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_flushing_avg_loops",
+        global_config_name: "",
         scope: 1,
         value: "30",
         var_type: VarType::Str,
@@ -530,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_force_load_corrupted",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -542,6 +585,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_force_recovery",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -554,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_aux_table",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -566,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_cache_size",
+        global_config_name: "",
         scope: 0,
         value: "8000000",
         var_type: VarType::Str,
@@ -578,6 +624,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_enable_diag_print",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -590,6 +637,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_enable_stopword",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -602,6 +650,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_max_token_size",
+        global_config_name: "",
         scope: 0,
         value: "84",
         var_type: VarType::Str,
@@ -614,6 +663,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_min_token_size",
+        global_config_name: "",
         scope: 0,
         value: "3",
         var_type: VarType::Str,
@@ -626,6 +676,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_num_word_optimize",
+        global_config_name: "",
         scope: 1,
         value: "2000",
         var_type: VarType::Str,
@@ -638,6 +689,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_result_cache_limit",
+        global_config_name: "",
         scope: 1,
         value: "2000000000",
         var_type: VarType::Str,
@@ -650,6 +702,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_server_stopword_table",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -662,6 +715,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_sort_pll_degree",
+        global_config_name: "",
         scope: 0,
         value: "2",
         var_type: VarType::Str,
@@ -674,6 +728,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_total_cache_size",
+        global_config_name: "",
         scope: 0,
         value: "640000000",
         var_type: VarType::Str,
@@ -686,6 +741,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_ft_user_stopword_table",
+        global_config_name: "",
         scope: 3,
         value: "",
         var_type: VarType::Str,
@@ -698,6 +754,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_io_capacity",
+        global_config_name: "",
         scope: 1,
         value: "200",
         var_type: VarType::Str,
@@ -710,6 +767,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_io_capacity_max",
+        global_config_name: "",
         scope: 1,
         value: "2000",
         var_type: VarType::Str,
@@ -722,6 +780,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_lock_wait_timeout",
+        global_config_name: "",
         scope: 3,
         value: "50",
         var_type: VarType::Unsigned,
@@ -734,6 +793,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_buffer_size",
+        global_config_name: "",
         scope: 0,
         value: "8388608",
         var_type: VarType::Str,
@@ -746,6 +806,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_compressed_pages",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -758,6 +819,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_file_size",
+        global_config_name: "",
         scope: 0,
         value: "50331648",
         var_type: VarType::Str,
@@ -770,6 +832,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_files_in_group",
+        global_config_name: "",
         scope: 0,
         value: "2",
         var_type: VarType::Str,
@@ -782,6 +845,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_group_home_dir",
+        global_config_name: "",
         scope: 0,
         value: "./",
         var_type: VarType::Str,
@@ -794,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_log_write_ahead_size",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -806,6 +871,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_lru_scan_depth",
+        global_config_name: "",
         scope: 1,
         value: "1024",
         var_type: VarType::Str,
@@ -818,6 +884,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_max_dirty_pages_pct",
+        global_config_name: "",
         scope: 1,
         value: "75",
         var_type: VarType::Str,
@@ -830,6 +897,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_max_dirty_pages_pct_lwm",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -842,6 +910,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_max_purge_lag",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -854,6 +923,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_max_purge_lag_delay",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -866,6 +936,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_max_undo_log_size",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -878,6 +949,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_monitor_disable",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -890,6 +962,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_monitor_enable",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -902,6 +975,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_monitor_reset",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -914,6 +988,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_monitor_reset_all",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -926,6 +1001,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_old_blocks_pct",
+        global_config_name: "",
         scope: 1,
         value: "37",
         var_type: VarType::Str,
@@ -938,6 +1014,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_old_blocks_time",
+        global_config_name: "",
         scope: 1,
         value: "1000",
         var_type: VarType::Str,
@@ -950,6 +1027,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_online_alter_log_max_size",
+        global_config_name: "",
         scope: 1,
         value: "134217728",
         var_type: VarType::Str,
@@ -962,6 +1040,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_open_files",
+        global_config_name: "",
         scope: 0,
         value: "2000",
         var_type: VarType::Str,
@@ -974,6 +1053,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_optimize_fulltext_only",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -986,6 +1066,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_optimize_point_storage",
+        global_config_name: "",
         scope: 2,
         value: "",
         var_type: VarType::Str,
@@ -998,6 +1079,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_page_size",
+        global_config_name: "",
         scope: 0,
         value: "16384",
         var_type: VarType::Str,
@@ -1010,6 +1092,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_print_all_deadlocks",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1022,6 +1105,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_purge_batch_size",
+        global_config_name: "",
         scope: 1,
         value: "300",
         var_type: VarType::Str,
@@ -1034,6 +1118,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_purge_rseg_truncate_frequency",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -1046,6 +1131,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_purge_threads",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -1058,6 +1144,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_random_read_ahead",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1070,6 +1157,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_read_ahead_threshold",
+        global_config_name: "",
         scope: 1,
         value: "56",
         var_type: VarType::Str,
@@ -1082,6 +1170,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_read_io_threads",
+        global_config_name: "",
         scope: 0,
         value: "4",
         var_type: VarType::Str,
@@ -1094,6 +1183,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_read_only",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -1106,6 +1196,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_replication_delay",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -1118,6 +1209,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_rollback_on_timeout",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -1130,6 +1222,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_rollback_segments",
+        global_config_name: "",
         scope: 1,
         value: "128",
         var_type: VarType::Str,
@@ -1142,6 +1235,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_sort_buffer_size",
+        global_config_name: "",
         scope: 0,
         value: "1048576",
         var_type: VarType::Str,
@@ -1154,6 +1248,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_spin_wait_delay",
+        global_config_name: "",
         scope: 1,
         value: "6",
         var_type: VarType::Str,
@@ -1166,6 +1261,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_auto_recalc",
+        global_config_name: "",
         scope: 1,
         value: "1",
         var_type: VarType::Str,
@@ -1178,6 +1274,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_method",
+        global_config_name: "",
         scope: 1,
         value: "nulls_equal",
         var_type: VarType::Str,
@@ -1190,6 +1287,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_on_metadata",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -1202,6 +1300,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_persistent",
+        global_config_name: "",
         scope: 1,
         value: "ON",
         var_type: VarType::Bool,
@@ -1214,6 +1313,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_persistent_sample_pages",
+        global_config_name: "",
         scope: 1,
         value: "20",
         var_type: VarType::Str,
@@ -1226,6 +1326,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_stats_transient_sample_pages",
+        global_config_name: "",
         scope: 1,
         value: "8",
         var_type: VarType::Str,
@@ -1238,6 +1339,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_status_output",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1250,6 +1352,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_status_output_locks",
+        global_config_name: "",
         scope: 1,
         value: "OFF",
         var_type: VarType::Bool,
@@ -1262,6 +1365,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_strict_mode",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1274,6 +1378,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_sync_array_size",
+        global_config_name: "",
         scope: 0,
         value: "1",
         var_type: VarType::Str,
@@ -1286,6 +1391,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_sync_spin_loops",
+        global_config_name: "",
         scope: 1,
         value: "30",
         var_type: VarType::Str,
@@ -1298,6 +1404,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_table_locks",
+        global_config_name: "",
         scope: 3,
         value: "ON",
         var_type: VarType::Bool,
@@ -1310,6 +1417,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_thread_concurrency",
+        global_config_name: "",
         scope: 1,
         value: "0",
         var_type: VarType::Str,
@@ -1322,6 +1430,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_thread_sleep_delay",
+        global_config_name: "",
         scope: 1,
         value: "10000",
         var_type: VarType::Str,
@@ -1334,6 +1443,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_undo_directory",
+        global_config_name: "",
         scope: 0,
         value: ".",
         var_type: VarType::Str,
@@ -1346,6 +1456,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_undo_log_truncate",
+        global_config_name: "",
         scope: 1,
         value: "",
         var_type: VarType::Str,
@@ -1358,6 +1469,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_undo_tablespaces",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -1370,6 +1482,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_use_native_aio",
+        global_config_name: "",
         scope: 0,
         value: "0",
         var_type: VarType::Str,
@@ -1382,6 +1495,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_version",
+        global_config_name: "",
         scope: 0,
         value: "5.6.25",
         var_type: VarType::Str,
@@ -1394,6 +1508,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
     },
     SysVarDef {
         name: "innodb_write_io_threads",
+        global_config_name: "",
         scope: 0,
         value: "4",
         var_type: VarType::Str,
