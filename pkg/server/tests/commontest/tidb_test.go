@@ -1183,9 +1183,11 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockStmtSlow", "return(2000)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/skipLoadSysVarCacheLoop"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockStmtSlow"))
 	}()
 
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
@@ -1195,42 +1197,34 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
-	query := "select count(*) from t as t0 join t as t1 on t0.a != t1.a;"
-	needEnableTopSQL := int64(0)
+	query := "select /* sleep */ count(*) from t as t0 join t as t1 on t0.a != t1.a;"
+	queryStarted := make(chan struct{})
+	var notifyQueryStarted sync.Once
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			if atomic.LoadInt64(&needEnableTopSQL) == 1 {
-				time.Sleep(2 * time.Millisecond)
-				topsqlstate.EnableTopSQL()
-				atomic.StoreInt64(&needEnableTopSQL, 0)
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
 	execFn := func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
-		atomic.StoreInt64(&needEnableTopSQL, 1)
+		topsqlstate.DisableTopSQL()
+		notifyQueryStarted.Do(func() { close(queryStarted) })
 		mustQuery(t, dbt, query)
 		topsqlstate.DisableTopSQL()
 	}
 	check := func() {
-		require.NoError(t, ctx.Err())
+		select {
+		case <-queryStarted:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		}
+		require.Eventually(t, func() bool {
+			return processlistCountByInfo(t, dbt, "select /* sleep */ count(*) from t as t0 join t as t1%") > 0
+		}, 10*time.Second, 10*time.Millisecond)
+		require.False(t, topsqlstate.TopSQLEnabled())
+		topsqlstate.EnableTopSQL()
 		stats := mc.GetSQLStatsBySQLWithRetry(query, true)
 		require.Greaterf(t, len(stats), 0, query)
 	}
 	ts.TestCase(t, mc, execFn, check)
 	cancel()
-	wg.Wait()
 }
 
 func TestTopSQLCPUProfile(t *testing.T) {
