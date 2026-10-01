@@ -1905,7 +1905,7 @@ func TestRunGCJob(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
 	})
 
-	s := createGCWorkerSuite(t)
+	s := createGCWorkerSuite(t, withSchemaLease(500*time.Millisecond))
 
 	originalTxnSafePointSyncWaitTime := txnSafePointSyncWaitTime
 	txnSafePointSyncWaitTime = 0
