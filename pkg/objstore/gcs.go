@@ -163,9 +163,9 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 	return nil
 }
 
-// MarkStrongConsistency implements Storage interface.
-func (s *GCSStorage) MarkStrongConsistency() {
-	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+// Features implements FeatureProvider.
+func (s *GCSStorage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
