@@ -15,7 +15,7 @@
 //! Go `br/pkg/rtree/rtree.go`: the range trees themselves.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tidb_codec::table_key::{decode_key_head, KeyHead};
 use tidb_proto::{backup::File, kvrpcpb};
@@ -327,7 +327,7 @@ pub fn needs_merge(
 }
 
 /// Go `rtree.RangeTree`: a sorted tree of non-overlapping [`Range`]s.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RangeTree {
     tree: BTreeMap<Vec<u8>, Range>,
     /// Go `RangeTree.PhysicalID`.
@@ -584,7 +584,7 @@ impl std::fmt::Display for RtreeError {
 impl std::error::Error for RtreeError {}
 
 /// Go `rtree.ProgressRange`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ProgressRange {
     /// Go `ProgressRange.Res`.
     pub res: RangeTree,
@@ -592,10 +592,17 @@ pub struct ProgressRange {
     pub origin: KeyRange,
 }
 
+/// Shared Go `*ProgressRange` identity, retained independently of tree membership.
+///
+/// Callers lock only while accessing the record, then release the guard before
+/// calling tree methods. The start key must stay fixed while the record is in
+/// the tree, as required by Go's B-tree ordering.
+pub type ProgressRangeRef = Arc<Mutex<ProgressRange>>;
+
 /// Go `rtree.ProgressRangeTree`: a sorted tree of non-overlapping
 /// [`ProgressRange`]s.
 pub struct ProgressRangeTree {
-    tree: BTreeMap<Vec<u8>, ProgressRange>,
+    tree: BTreeMap<Vec<u8>, ProgressRangeRef>,
     checksum_map: BTreeMap<i64, ChecksumStats>,
     skip_checksum: bool,
     meta_writer: Option<Box<dyn MetaSink>>,
@@ -642,6 +649,7 @@ impl ProgressRangeTree {
             .range(..=start_key.to_vec())
             .next_back()
             .map(|(_, item)| item)?;
+        let ret = ret.lock().unwrap();
         if ret.origin.contains(start_key) {
             Some(ret.origin.start_key.clone())
         } else {
@@ -655,19 +663,20 @@ impl ProgressRangeTree {
     ///
     /// Returns [`RtreeError::OverlappingRange`] when an existing range already
     /// contains the new range's start key.
-    pub fn insert(&mut self, pr: ProgressRange) -> Result<(), RtreeError> {
-        if let Some(overlap_key) = self.find_key(&pr.origin.start_key) {
-            let overlap = &self.tree[&overlap_key];
+    pub fn insert(&mut self, pr: ProgressRangeRef) -> Result<(), RtreeError> {
+        let start_key = pr.lock().unwrap().origin.start_key.clone();
+        if let Some(overlap_key) = self.find_key(&start_key) {
+            let overlap = self.tree[&overlap_key].lock().unwrap();
             return Err(RtreeError::OverlappingRange(format!(
                 "failed to insert the progress range into range tree, because there is a \
                  overlapping range. The insert item start key: {}; The overlapped item start \
                  key: {}, end key: {}.",
-                tidb_util::redact::key(&pr.origin.start_key),
+                tidb_util::redact::key(&start_key),
                 tidb_util::redact::key(&overlap.origin.start_key),
                 tidb_util::redact::key(&overlap.origin.end_key),
             )));
         }
-        self.tree.insert(pr.origin.start_key.clone(), pr);
+        self.tree.insert(start_key, pr);
         Ok(())
     }
 
@@ -682,17 +691,17 @@ impl ProgressRangeTree {
     /// Returns [`RtreeError::NotContained`] when a progress range was found by
     /// start key but does not contain the whole region.
     pub fn find_contained(
-        &mut self,
+        &self,
         start_key: &[u8],
         end_key: &[u8],
-    ) -> Result<Option<&mut ProgressRange>, RtreeError> {
+    ) -> Result<Option<ProgressRangeRef>, RtreeError> {
         let Some(found_key) = self.find_key(start_key) else {
             // Go logs "Cannot find progress range that contains the start key,
             // maybe the duplicated response" and returns no error.
             return Ok(None);
         };
 
-        let ret = &self.tree[&found_key];
+        let ret = self.tree[&found_key].lock().unwrap();
         if !ret.origin.contains_range(start_key, end_key) {
             return Err(RtreeError::NotContained(format!(
                 "The given region is not contained in the found progress range. The region start \
@@ -703,7 +712,7 @@ impl ProgressRangeTree {
             )));
         }
 
-        Ok(self.tree.get_mut(&found_key))
+        Ok(self.tree.get(&found_key).cloned())
     }
 
     /// Go `(*ProgressRangeTree).GetIncompleteRanges`.
@@ -715,53 +724,34 @@ impl ProgressRangeTree {
     pub fn get_incomplete_ranges(&mut self) -> Result<Vec<kvrpcpb::KeyRange>, RtreeError> {
         // About 64 MB of memory if there are one million ranges.
         let mut incomplete_ranges = Vec::with_capacity(self.tree.len());
-        // Go's `DeletedRange`: the progress range to drop plus its checksum.
-        let mut deleted_ranges: Vec<(Vec<u8>, i64, ChecksumStats)> = Vec::new();
-
-        // Go mutates `rangeTree` fields from inside `rangeTree.Ascend`; Rust
-        // lifts the two mutable fields out for the duration of the walk.
-        let mut writer = self.meta_writer.take();
-        let mut callback = std::mem::replace(&mut self.complete_call_back, Box::new(|| {}));
-        let mut ascend_err = None;
+        // Retain the actual records through the walk, callbacks and deletion.
+        // On a send error, Go leaves every record and checksum unpublished.
+        let mut deleted_ranges = Vec::new();
 
         for item in self.tree.values() {
-            // NOTE: maybe there is a late response whose range overlaps with an
-            // existing item, which may cause the complete range tree to become
-            // incomplete. Therefore `item.Complete` is only for statistics.
-            let incomplete = item
-                .res
-                .get_incomplete_range(&item.origin.start_key, &item.origin.end_key);
+            let incomplete = {
+                let record = item.lock().unwrap();
+                record
+                    .res
+                    .get_incomplete_range(&record.origin.start_key, &record.origin.end_key)
+            };
             if incomplete.is_empty() {
-                match collect_range_files(writer.as_deref_mut(), item) {
-                    Ok(checksum) => {
-                        deleted_ranges.push((
-                            item.origin.start_key.clone(),
-                            item.res.physical_id,
-                            checksum,
-                        ));
-                        callback();
-                    }
-                    Err(err) => {
-                        ascend_err = Some(err);
-                        break;
-                    }
-                }
+                let checksum = collect_range_files(self.meta_writer.as_deref_mut(), item)?;
+                deleted_ranges.push((Arc::clone(item), checksum));
+                // Go invokes the callback before deleting completed records.
+                // It can access retained handles, so no record guard survives here.
+                (self.complete_call_back)();
             } else {
                 incomplete_ranges.extend(incomplete);
             }
         }
 
-        self.meta_writer = writer;
-        self.complete_call_back = callback;
-        if let Some(err) = ascend_err {
-            return Err(err);
-        }
-
-        for (start_key, physical_id, checksum) in deleted_ranges {
-            self.tree.remove(&start_key);
+        for (item, checksum) in deleted_ranges {
+            let item = item.lock().unwrap();
+            self.tree.remove(&item.origin.start_key);
             if !self.skip_checksum {
                 self.update_checksum(
-                    physical_id,
+                    item.res.physical_id,
                     checksum.crc64_xor,
                     checksum.total_kvs,
                     checksum.total_bytes,
@@ -799,25 +789,30 @@ fn summary_files(files: &[Arc<File>]) -> (u64, u64, u64) {
 /// Go `(*ProgressRangeTree).collectRangeFiles`.
 fn collect_range_files(
     meta_writer: Option<&mut (dyn MetaSink + 'static)>,
-    item: &ProgressRange,
+    item: &ProgressRangeRef,
 ) -> Result<ChecksumStats, RtreeError> {
     let mut checksum = ChecksumStats::default();
     let Some(writer) = meta_writer else {
         return Ok(checksum);
     };
-    let mut range_ascend_err = None;
-    item.res.ascend(|r| {
-        let (crc, kvs, bytes) = summary_files(&r.files);
-        if let Err(err) = writer.send(&r.files) {
-            range_ascend_err = Some(err);
-            return false;
-        }
+    // Retain only shared file references across external metadata delivery.
+    // Never hold a record lock while calling a sink that can inspect it.
+    let files: Vec<_> = {
+        let item = item.lock().unwrap();
+        item.res
+            .tree
+            .values()
+            .map(|range| range.files.clone())
+            .collect()
+    };
+    for files in files {
+        let (crc, kvs, bytes) = summary_files(&files);
+        writer.send(&files)?;
         checksum.crc64_xor ^= crc;
         checksum.total_kvs += kvs;
         checksum.total_bytes += bytes;
-        true
-    });
-    range_ascend_err.map_or(Ok(checksum), Err)
+    }
+    Ok(checksum)
 }
 
 #[cfg(test)]
@@ -829,6 +824,129 @@ mod tests {
     use tidb_codec::{encode_int, gen_table_record_prefix};
 
     use super::*;
+
+    #[test]
+    fn retained_progress_observes_updates_before_completion() {
+        let mut tree = ProgressRangeTree::new(None, false);
+        let inserted = build_progress_range("a", "d");
+        tree.insert(Arc::clone(&inserted)).unwrap();
+        let retained = tree.find_contained(b"a", b"d").unwrap().unwrap();
+        assert!(Arc::ptr_eq(&inserted, &retained));
+        assert!(tree.insert(Arc::clone(&inserted)).is_err());
+        assert!(tree.find_contained(b"a", b"e").is_err());
+        assert!(tree.find_contained(b"d", b"e").unwrap().is_none());
+        tree.find_contained(b"a", b"d")
+            .unwrap()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .res
+            .put(b"a", b"c", Vec::new());
+        assert_eq!(
+            tree.get_incomplete_ranges().unwrap(),
+            vec![rpc_range(b"c", b"d")]
+        );
+        assert_eq!(
+            retained
+                .lock()
+                .unwrap()
+                .res
+                .get_incomplete_range(b"a", b"d"),
+            vec![rpc_range(b"c", b"d")],
+            "a retained Go progress pointer observes later responses"
+        );
+    }
+
+    #[test]
+    fn retained_progress_survives_callbacks_completion_and_replacement() {
+        struct InspectSink {
+            record: ProgressRangeRef,
+            expected: Arc<File>,
+        }
+        impl MetaSink for InspectSink {
+            fn send(&mut self, files: &[Arc<File>]) -> Result<(), RtreeError> {
+                let record = self
+                    .record
+                    .try_lock()
+                    .expect("metadata delivery holds no record lock");
+                assert_eq!(record.res.len(), 1);
+                assert_eq!(files.len(), 1);
+                assert!(Arc::ptr_eq(&files[0], &self.expected));
+                Ok(())
+            }
+        }
+
+        let inserted = build_progress_range_with_physical_id("a", "d", 7);
+        let file = get_files(b"a", b"d", &[[3, 5, 11]]).remove(0);
+        inserted
+            .lock()
+            .unwrap()
+            .res
+            .put(b"a", b"d", vec![Arc::clone(&file)]);
+        let mut tree = ProgressRangeTree::new(
+            Some(Box::new(InspectSink {
+                record: Arc::clone(&inserted),
+                expected: file,
+            })),
+            false,
+        );
+        tree.insert(Arc::clone(&inserted)).unwrap();
+        let retained = tree.find_contained(b"b", b"c").unwrap().unwrap();
+        assert!(Arc::ptr_eq(&inserted, &retained));
+        let callback_record = Arc::clone(&retained);
+        let callbacks = Rc::new(RefCell::new(0));
+        let count = Rc::clone(&callbacks);
+        tree.set_call_back(move || {
+            let mut record = callback_record
+                .try_lock()
+                .expect("callback holds no record lock");
+            // Go reads PhysicalID during deferred deletion, after the callback.
+            record.res.physical_id = 8;
+            *count.borrow_mut() += 1;
+        });
+        assert!(tree.get_incomplete_ranges().unwrap().is_empty());
+        assert_eq!(*callbacks.borrow(), 1);
+        assert!(tree.is_empty());
+        assert!(tree.find_contained(b"a", b"d").unwrap().is_none());
+        assert_eq!(tree.get_checksum_map().len(), 1);
+        assert_eq!(
+            tree.get_checksum_map()[&8],
+            ChecksumStats {
+                crc64_xor: 3,
+                total_kvs: 5,
+                total_bytes: 11,
+            }
+        );
+        assert_eq!(inserted.lock().unwrap().res.physical_id, 8);
+
+        // A late response still reaches the removed object, never a replacement
+        // inserted at the same start key, and cannot publish a second checksum.
+        tree.insert(build_progress_range("a", "d")).unwrap();
+        let replacement = tree.find_contained(b"a", b"d").unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&retained, &replacement));
+        retained.lock().unwrap().res.put(b"a", b"b", Vec::new());
+        assert_eq!(
+            inserted
+                .lock()
+                .unwrap()
+                .res
+                .get_incomplete_range(b"a", b"d"),
+            vec![rpc_range(b"b", b"d")]
+        );
+        assert_eq!(
+            tree.get_incomplete_ranges().unwrap(),
+            vec![rpc_range(b"a", b"d")]
+        );
+        assert_eq!(*callbacks.borrow(), 1);
+        assert_eq!(tree.get_checksum_map()[&8].total_kvs, 5);
+        assert!(replacement.lock().unwrap().res.is_empty());
+        let alive = Arc::downgrade(&retained);
+        drop(retained);
+        drop(inserted);
+        assert!(alive.upgrade().is_some()); // callback and sink retain the original
+        drop(tree);
+        assert!(alive.upgrade().is_none());
+    }
 
     #[test]
     fn missing_ranges_are_generated_rpc_messages() {
@@ -849,17 +967,17 @@ mod tests {
 
         let mut progress = ProgressRangeTree::new(None, false);
         progress
-            .insert(ProgressRange {
+            .insert(Arc::new(Mutex::new(ProgressRange {
                 res: tree,
                 origin: KeyRange::new(b"a", b"d"),
-            })
+            })))
             .unwrap();
         let ranges: Vec<tidb_proto::kvrpcpb::KeyRange> = progress.get_incomplete_ranges().unwrap();
         assert_eq!(ranges, expected);
     }
 
     #[test]
-    fn complete_files_survive_tree_copies_and_failed_metadata_delivery() {
+    fn complete_files_survive_shared_ranges_and_failed_metadata_delivery() {
         use tidb_proto::backup::TableMeta;
 
         struct FailSecondSend {
@@ -917,15 +1035,15 @@ mod tests {
                 let mut tree = RangeTree::new_with_physical_id(1);
                 assert!(tree.update(range.clone()));
                 assert!(Arc::ptr_eq(
-                    &tree.clone().get(&file.start_key).unwrap().files[0],
+                    &tree.get(&file.start_key).unwrap().files[0],
                     &file
                 ));
                 assert!(stats.insert_range(&range, 13, 11).is_none());
                 progress
-                    .insert(ProgressRange {
+                    .insert(Arc::new(Mutex::new(ProgressRange {
                         res: tree,
                         origin: range.key_range,
-                    })
+                    })))
                     .unwrap();
                 files.push(file);
             }
@@ -1419,20 +1537,20 @@ mod tests {
         }
     }
 
-    fn build_progress_range(start_key: &str, end_key: &str) -> ProgressRange {
-        ProgressRange {
+    fn build_progress_range(start_key: &str, end_key: &str) -> ProgressRangeRef {
+        Arc::new(Mutex::new(ProgressRange {
             res: RangeTree::new(),
             origin: KeyRange::new(start_key.as_bytes(), end_key.as_bytes()),
-        }
+        }))
     }
 
     fn build_progress_range_with_physical_id(
         start_key: &str,
         end_key: &str,
         physical_id: i64,
-    ) -> ProgressRange {
-        let mut pr = build_progress_range(start_key, end_key);
-        pr.res.physical_id = physical_id;
+    ) -> ProgressRangeRef {
+        let pr = build_progress_range(start_key, end_key);
+        pr.lock().unwrap().res.physical_id = physical_id;
         pr
     }
 
@@ -1457,7 +1575,7 @@ mod tests {
                 .find_contained(s, e)
                 .expect("contained")
                 .expect("found");
-            pr.res.put(s, e, Vec::new());
+            pr.lock().unwrap().res.put(s, e, Vec::new());
         };
 
         put(&mut pr_tree, b"aaa", b"b");
@@ -1480,7 +1598,7 @@ mod tests {
     ///
     /// Go keeps `pr` as a pointer across the tree deletion that completes it,
     /// so the last two `Put`s land on an object the tree no longer holds.
-    /// Rust makes that explicit with `detached`.
+    /// The retained shared handle keeps that same object alive in Rust.
     #[test]
     fn progress_range_tree_call_back() {
         let mut pr_tree: ProgressRangeTree = ProgressRangeTree::new(None, false);
@@ -1493,52 +1611,38 @@ mod tests {
         let counter = Rc::clone(&complete_count);
         pr_tree.set_call_back(move || *counter.borrow_mut() += 1);
 
-        pr_tree
+        let pr = pr_tree
             .find_contained(b"a", b"b")
             .expect("contained")
-            .expect("found")
-            .res
-            .put(b"a", b"aa", Vec::new());
+            .expect("found");
+        pr.lock().unwrap().res.put(b"a", b"aa", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(0, *complete_count.borrow());
         assert_eq!(rpc_range(b"aa", b"b"), ranges[0]);
         assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
-        pr_tree
-            .find_contained(b"a", b"b")
-            .expect("contained")
-            .expect("found")
-            .res
-            .put(b"a", b"ab", Vec::new());
+        pr.lock().unwrap().res.put(b"a", b"ab", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(0, *complete_count.borrow());
         assert_eq!(rpc_range(b"ab", b"b"), ranges[0]);
         assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
-        // This completes "a".."b", so the tree drops it; `detached` is the
-        // object Go's `pr` pointer keeps referring to afterwards.
-        let mut detached = {
-            let pr = pr_tree
-                .find_contained(b"a", b"b")
-                .expect("contained")
-                .expect("found");
-            pr.res.put(b"ab", b"b", Vec::new());
-            pr.clone()
-        };
+        // Completion drops the tree's reference; `pr` still owns the same record.
+        pr.lock().unwrap().res.put(b"ab", b"b", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
-        detached.res.put(b"a", b"abc", Vec::new());
+        pr.lock().unwrap().res.put(b"a", b"abc", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
-        detached.res.put(b"cc", b"cd", Vec::new());
+        pr.lock().unwrap().res.put(b"cc", b"cd", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("no meta writer");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
@@ -1602,10 +1706,12 @@ mod tests {
         let counter = Rc::clone(&complete_count);
         pr_tree.set_call_back(move || *counter.borrow_mut() += 1);
 
-        pr_tree
+        let pr = pr_tree
             .find_contained(b"a", b"b")
             .expect("contained")
-            .expect("found")
+            .expect("found");
+        pr.lock()
+            .unwrap()
             .res
             .put(b"a", b"aa", get_files(b"a", b"aa", &[[1, 1, 1], [2, 2, 2]]));
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
@@ -1614,10 +1720,8 @@ mod tests {
         assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
-        pr_tree
-            .find_contained(b"a", b"b")
-            .expect("contained")
-            .expect("found")
+        pr.lock()
+            .unwrap()
             .res
             .put(b"a", b"ab", get_files(b"a", b"ab", &[[3, 3, 3], [4, 4, 4]]));
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
@@ -1626,15 +1730,10 @@ mod tests {
         assert_eq!(rpc_range(b"c", b"d"), ranges[1]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[2]);
 
-        let mut detached = {
-            let pr = pr_tree
-                .find_contained(b"a", b"b")
-                .expect("contained")
-                .expect("found");
-            pr.res
-                .put(b"ab", b"b", get_files(b"ab", b"b", &[[5, 5, 5], [6, 6, 6]]));
-            pr.clone()
-        };
+        pr.lock()
+            .unwrap()
+            .res
+            .put(b"ab", b"b", get_files(b"ab", b"b", &[[5, 5, 5], [6, 6, 6]]));
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
@@ -1647,13 +1746,13 @@ mod tests {
         assert_eq!(3 + 4 + 5 + 6, checksum.total_bytes);
         assert_eq!(2, sent.borrow().len());
 
-        detached.res.put(b"a", b"abc", Vec::new());
+        pr.lock().unwrap().res.put(b"a", b"abc", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);
         assert_eq!(rpc_range(b"e", b"f"), ranges[1]);
 
-        detached.res.put(b"cc", b"cd", Vec::new());
+        pr.lock().unwrap().res.put(b"cc", b"cd", Vec::new());
         let ranges = pr_tree.get_incomplete_ranges().expect("recording sink");
         assert_eq!(1, *complete_count.borrow());
         assert_eq!(rpc_range(b"c", b"d"), ranges[0]);

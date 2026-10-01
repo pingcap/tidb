@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, retained progress ownership) Recheck the complete seven-artifact `br/pkg/rtree` package against master; reproduce stale retained progress records; replace value copies with shared handles through insertion, lookup, collection and deletion; restore original retained-pointer tests. Forty Rust tests, all original Go race tests, all-target compilation and lint pass. Both locked server-build gates remain required for publication.
+
 - [x] (2026-10-01, rtree follow-up) Review all seven artifacts of `br/pkg/rtree`; remove RangeFile/TestFile, generic file adapters and RPC-range projection; migrate restore callers. Both RPC type regressions, 38 Rust tests, all original Go race tests, update/merge workloads, all-target check and lint pass. Publication requires the hook and fresh pre-push locked build.
 
 - [x] (2026-10-01, P04 repair) Remove both local restore-protocol types and the PITR test projection across the complete eight-artifact `br/pkg/restore/utils` owner; preserve generated payloads/shared references and borrow selected rules. All original Go race tests, 36 Rust tests, five merge workloads, all-target compilation and lint pass. Publication requires both locked-build gates below.
@@ -1255,3 +1257,57 @@ Revision note: extended concrete generated ownership through the full range
 tree package, eliminating the permissive payload layer beneath the P04 repair.
 Publication still requires the actual hook and fresh pre-push locked builds;
 their results are recorded in the final response.
+
+
+## Retained progress ownership follow-up (2026-10-01)
+
+The preceding protocol repair recorded a remaining ownership difference in
+`br/pkg/rtree`. Go inserts and returns the same `*ProgressRange`; Rust stores
+a value and returns an exclusive borrow, and its translated callback tests
+clone the entire record to survive deletion. A retained clone cannot observe
+subsequent backup responses. The acceptance scenario retains two handles,
+updates through one, observes the same coverage through the other and tree,
+and keeps the original object alive after completion without reinserting it.
+
+The complete package inventory remains `rtree-protocol-package.json`: both
+production files, all four original test/support/fuzz/benchmark files and
+BUILD.bazel at master 93a01d31f6da205ae4bf376825293903a6899fdb. Recheck all
+blobs before acceptance. No new package is dispatched as a partial port.
+
+Milestone one adds a regression to the existing Rust rtree tests and runs
+`cd rust && cargo test --locked -p tidb-br --lib retained_progress`. Expect
+the retained copy to report stale coverage before the fix. Milestone two
+changes `ProgressRangeTree` to store and return shared, mutex-protected
+progress handles; removes deep Clone from progress and its result tree;
+migrates all callers and both original callback tests. Keep mutable guards
+out of external callbacks and metadata delivery. Preserve Go's deferred
+deletion and checksum behavior on metadata errors. This is a Rust ownership
+adaptation, not permission to add background synchronization or workers.
+
+Milestone three runs the whole tidb-br unit suite, original Go package tests
+with race detection in the restored master reference checkout after required
+Bazel preparation, all-target compilation, formatting, `make lint`, and
+`git diff --check`. The existing update/merge workloads are unchanged; rerun
+only if changes reach those algorithms. Publication uses the actual commit
+hook locked server build, then a fresh locked server build and normal push
+to hparser-integration. Clean the reference build outputs and archive its
+managed checkout afterward. All commands are repeatable; retain the failing
+test and log on failure instead of weakening its contract.
+
+Decision: share the actual record rather than adding snapshot refresh or
+copy-back helpers. Range and RangeStats remain value containers where Go
+explicitly copies them. Object-storage integration, BRIE dispatch and
+external dependency/lifecycle acceptance remain open. Connection-ID review
+also found that internal tracking depends on the absent Domain SysProcesses
+owner; do not replace its counters alone and claim that lifecycle repaired.
+
+Outcomes: the pre-fix regression reported all `[a,d)` missing through a retained
+copy while the tree reported only `[c,d)`. Forty Rust tests now pass, including
+identity before insertion/after lookup, retained updates, callback/sink lock
+release, deferred PhysicalID reads, same-key replacement and final deallocation.
+All original Go tests pass under the race detector with actual local-storage
+MetaWriter and goleak. Removing temporary callback/writer extraction also
+preserves their ownership on early return. The prior send-failure test still
+verifies Go's repeated callback on retry and deferred checksum publication.
+All-target compilation, lint, formatting, diff and inventory checks pass;
+publication gates are recorded in the linked receipt and publication response. No new complete BR application claim is made.

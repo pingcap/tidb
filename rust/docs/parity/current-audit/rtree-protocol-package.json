@@ -66,7 +66,7 @@
     "TestRangeTreePutForce expectedRange/check": "inline tuple cases and check helper, all 18 files retained",
     "encodeTableRecord": "rtree::tests::encode_table_record",
     "makeEncodeKeyspacedTableRecord/testRangeTreeMerge": "rtree::tests::encode_keyspaced_table_record and range_tree_merge, both classic and V2 subcases with 10,000 ranges each",
-    "buildProgressRange/buildProgressRangeWithPhysicalID": "rtree::tests::build_progress_range/build_progress_range_with_physical_id",
+    "buildProgressRange/buildProgressRangeWithPhysicalID": "rtree::tests::build_progress_range/build_progress_range_with_physical_id return shared records, retained by the original callback tests.",
     "getFiles": "rtree::tests::get_files; full generated files with source bounds and checksums",
     "metautil.MetaWriter + objstore local fixture": "Original Go case exercised the actual temporary local-storage writer. Rust recording MetaSink covers every source checksum/callback assertion plus shared generated payload identity; actual Rust object storage remains unintegrated.",
     "TestMain": "Original SetupForCommonTest/goleak harness executed with its five ignores; Rust standard test harness and synchronous bounded test state, no spawned production worker in this package."
@@ -87,6 +87,19 @@
     "codec_summary_logging": "Existing table-key codec, local V2 decoder and diagnostic/summary integration limits unchanged; those external package owners are not accepted here."
   },
   "integration": "Every range/progress tree, metadata sink and restore caller uses Arc<backup.File>; both gap APIs return generated kvrpcpb.KeyRange. Distinct Go-local algebra KeyRange remains. No external production caller or BRIE dispatch exists.",
-  "acceptance_scope": "Complete package review and atomic P05 file/RPC protocol boundary repair. Progress-record retention remains a native borrowed API with detached test snapshots; no claim of complete progress-handle aliasing, live backup/restore, dependency-package or whole-crate acceptance.",
-  "validation_receipt": "rtree-protocol-repair.md"
+  "acceptance_scope": "Complete package review and atomic P05 protocol/progress-ownership repair. The retained progress-handle limitation is closed by the linked follow-up; no claim of live backup/restore, dependency-package or whole-crate acceptance.",
+  "validation_receipt": "rtree-protocol-repair.md",
+  "progress_ownership_followup": {
+    "integration_base": "df7bd1aefb5b598af8a00ffdf07b6300eed92c58",
+    "source_recheck": "All seven artifact blobs match this complete inventory and current Go master; no variants or fixtures were added.",
+    "removed_owners": [
+      "ProgressRange and RangeTree deep Clone",
+      "detached progress snapshots in both original callback tests",
+      "copied deferred-deletion identity/physical-ID tuples",
+      "temporary extraction/replacement of metadata sink and completion callback"
+    ],
+    "replacement": "Arc<Mutex<ProgressRange>> identity shared by insertion, lookup and deferred deletion; guard-free metadata delivery and callbacks.",
+    "original_callback_mapping": "Both TestProgreeRangeTreeCallBack and TestProgreeRangeTreeCallBack2 now retain the same handle from first lookup through partial updates, completion and late responses, exactly as the original pointer tests do.",
+    "validation_receipt": "rtree-progress-ownership-repair.md"
+  }
 }

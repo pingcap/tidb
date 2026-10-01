@@ -419,3 +419,9 @@ assertions remain enabled. See the [cache repair receipt](shared-session-plan-ca
 for the commands and independent baseline evidence. The broader MySQL pipeline
 test also reproduces its existing account-name quoting assertion on unchanged
 source; this is not counted as a passing protocol suite.
+
+The [progress-ownership follow-up](rtree-progress-ownership-repair.md) rechecks
+the same complete range-tree package and removes deep progress/result-tree
+clones and detached test snapshots. Inserted, returned and completed progress
+handles now share the original record. This closes the recorded P05 ownership
+limitation without changing the unresolved-finding count.

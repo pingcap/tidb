@@ -9,7 +9,7 @@ An entrypoint review can establish a finding but cannot clear the rest of its pa
 Every row still requires complete production, generated/platform/build, original-test, fixture and integration validation.
 The complete [globalconfigsync receipt](global-config-sync-repair.md) records one leaf package and its integration; it does not accept its whole parent crate.
 The [restore-utils receipt](restore-utils-protocol-repair.md) records the complete package review and P04 protocol repair; live BRIE and other BR owners remain open.
-The [range-tree receipt](rtree-protocol-repair.md) records the complete package review and P05 protocol boundary repair; dependency and live backup/restore acceptance remain open.
+The [range-tree receipt](rtree-protocol-repair.md) and [progress-ownership follow-up](rtree-progress-ownership-repair.md) record the complete package review and P05 protocol/retained-record repair; dependency and live backup/restore acceptance remain open.
 The exact package/artifact list remains in [package-coverage.json](package-coverage.json); no copy replaces it.
 
 ## Subsystem queues

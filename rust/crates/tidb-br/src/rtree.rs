@@ -21,6 +21,10 @@
 //! - [`rtree`] <- `rtree.go`
 //! - [`logging`] <- `logging.go`
 //!
+//! Progress records have shared identity: insertion and lookup retain the same
+//! [`ProgressRangeRef`], which survives completion independently of membership.
+//! Release its mutex guard before invoking tree methods.
+//!
 //! # Narrowings and boundaries
 //!
 //! - Go's `Range` carries `Files []*backuppb.File`. All range/progress trees
@@ -57,6 +61,6 @@ pub mod rtree;
 
 pub use logging::zap_ranges;
 pub use rtree::{
-    needs_merge, ChecksumStats, KeyRange, MetaSink, ProgressRange, ProgressRangeTree, Range,
-    RangeStats, RangeStatsTree, RangeTree, RtreeError,
+    needs_merge, ChecksumStats, KeyRange, MetaSink, ProgressRange, ProgressRangeRef,
+    ProgressRangeTree, Range, RangeStats, RangeStatsTree, RangeTree, RtreeError,
 };

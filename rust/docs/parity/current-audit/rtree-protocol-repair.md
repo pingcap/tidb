@@ -1,5 +1,9 @@
 # Range-tree protocol boundary repair
 
+Follow-up: [retained progress ownership](rtree-progress-ownership-repair.md)
+removes the detached snapshots and progress-handle limitation recorded below.
+The rest of this receipt describes the original protocol repair.
+
 Baseline: integration `566163c58cb5ad4f72cd127ebfc421ca83b50273` and freshly
 fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`. The integration
 pull was already current. Every artifact in `br/pkg/rtree` is identical between
