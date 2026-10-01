@@ -794,6 +794,7 @@ func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 
 	result.ReserveString(n)
 	sc := b.ctx.GetSessionVars().StmtCtx
+	var out bytes.Buffer
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -813,9 +814,13 @@ func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-		bytes, err := inflate([]byte(payload[4:]))
+		bytes, err := inflate([]byte(payload[4:]), length, sc.MemTracker, &out)
 		if err != nil {
-			sc.AppendWarning(errZlibZData)
+			if errZlibZBuf.Equal(err) {
+				sc.AppendWarning(errZlibZBuf)
+			} else {
+				sc.AppendWarning(errZlibZData)
+			}
 			result.AppendNull()
 			continue
 		}
