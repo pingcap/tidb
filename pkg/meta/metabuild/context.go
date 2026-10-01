@@ -84,6 +84,14 @@ func WithPreSplitRegions(regions uint64) Option {
 	})
 }
 
+// WithTiDBDefaultAutoIDCache sets the default cache for CREATE TABLE statements.
+// Other metadata builders keep the default of zero unless explicitly opted in.
+func WithTiDBDefaultAutoIDCache(cache int) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.tidbDefaultAutoIDCache = cache
+	})
+}
+
 // WithSuppressTooLongIndexErr sets whether to suppress too long index error.
 func WithSuppressTooLongIndexErr(suppress bool) Option {
 	return funcOpt(func(ctx *Context) {
@@ -106,6 +114,7 @@ type Context struct {
 	clusteredIndexDefMode          vardef.ClusteredIndexDefMode
 	shardRowIDBits                 uint64
 	preSplitRegions                uint64
+	tidbDefaultAutoIDCache         int
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
 }
@@ -118,6 +127,7 @@ func NewContext(opts ...Option) *Context {
 		clusteredIndexDefMode:          vardef.DefTiDBEnableClusteredIndex,
 		shardRowIDBits:                 vardef.DefShardRowIDBits,
 		preSplitRegions:                vardef.DefPreSplitRegions,
+		tidbDefaultAutoIDCache:         vardef.DefTiDBDefaultAutoIDCache,
 		suppressTooLongIndexErr:        false,
 	}
 
@@ -151,6 +161,11 @@ func (ctx *Context) GetExprCtx() exprctx.ExprContext {
 // GetDefaultCollationForUTF8MB4 returns the default collation for utf8mb4.
 func (ctx *Context) GetDefaultCollationForUTF8MB4() string {
 	return ctx.exprCtx.GetDefaultCollationForUTF8MB4()
+}
+
+// GetTiDBDefaultAutoIDCache returns the default cache for this metadata build.
+func (ctx *Context) GetTiDBDefaultAutoIDCache() int {
+	return ctx.tidbDefaultAutoIDCache
 }
 
 // GetSQLMode returns the SQL mode.

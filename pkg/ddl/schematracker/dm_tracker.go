@@ -198,6 +198,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 
 	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
 		ctx,
+		metabuild.WithTiDBDefaultAutoIDCache(ctx.GetSessionVars().TiDBDefaultAutoIDCache),
 		// suppress ErrTooLongKey
 		metabuild.WithSuppressTooLongIndexErr(true),
 		// support drop PK

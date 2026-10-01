@@ -118,6 +118,17 @@ func TestMetaBuildContext(t *testing.T) {
 			testVals: []any{uint64(123), uint64(456)},
 		},
 		{
+			name: "tidbDefaultAutoIDCache",
+			getter: func(ctx *metabuild.Context) any {
+				return ctx.GetTiDBDefaultAutoIDCache()
+			},
+			checkDefault: vardef.DefTiDBDefaultAutoIDCache,
+			option: func(val any) metabuild.Option {
+				return metabuild.WithTiDBDefaultAutoIDCache(val.(int))
+			},
+			testVals: []any{0, 1, 100},
+		},
+		{
 			name: "suppressTooLongIndexErr",
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.SuppressTooLongIndexErr()
