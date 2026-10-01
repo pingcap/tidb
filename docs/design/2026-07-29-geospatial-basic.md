@@ -176,7 +176,7 @@ literal is always MySQL's format, and the stored format stays off the user surfa
 what makes a Dumpling to Lightning round-trip work with no function call, and what lets a
 `mysqldump` load unchanged. The SRID in those bytes is validated against `SRID n` like any
 other ingest path, and the geometry has to consume the input exactly: a byte short or a
-byte long is rejected, as MySQL rejects both with `ERROR 3037`.
+byte long is rejected, as MySQL rejects both with `ERROR 1416`.
 
 **MySQL has one binary representation**, `<srid u32 LE><WKB>`, and uses it everywhere:
 what it stores, what a bare `SELECT` returns over the wire, what it accepts as a literal,
@@ -215,9 +215,7 @@ MySQL's storage limit, so it never persists a value it cannot read.
 **Size.** An XY vertex is 16 bytes and compresses poorly, 24 with Z or M and 32 with both.
 This design adds no point-count cap, since TiDB's entry size limit already bounds a stored
 value. Unlike most types, geometry reaches that limit with ordinary data: national
-boundaries at OSM resolution run to hundreds of thousands of vertices. Hence
-`ST_Subdivide`, PostGIS's remedy for oversized polygons, is deferred rather than
-dismissed.
+boundaries at OSM resolution run to hundreds of thousands of vertices.
 
 Why EWKB rather than the alternatives:
 [Investigation & Alternatives](#investigation--alternatives).
@@ -227,9 +225,9 @@ Why EWKB rather than the alternatives:
 | | SRID 0 | SRID 4326 |
 | --- | --- | --- |
 | Coordinate system | abstract Cartesian plane, unitless X/Y | WGS 84 geographic, latitude/longitude |
-| Bounds | none, the full finite IEEE-754 double range, as MySQL | latitude `[-90, 90]`, longitude `(-180, 180]` |
+| Bounds | none, the full finite IEEE-754 double range, as MySQL | latitude `[-90, 90]`, longitude `[-180, 180]`, except `(-180, 180]` through GeoJSON, as MySQL |
 | Rejected on ingest | Inf/NaN, `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
-| Measurement | planar (Cartesian) | geodesic on the WGS 84 ellipsoid for distance and length, as MySQL; stated per operation in *Reference surface* below |
+| Measurement | planar (Cartesian) | Andoyer on the WGS 84 ellipsoid for distance and length, as MySQL; stated per operation in *Reference surface* below |
 
 Codes and wording are matched as closely as possible on every ingest path:
 `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`, and the MySQL-specific
@@ -301,11 +299,11 @@ from documentation.
 geodesic on purpose, since a more accurate library would be off from MySQL by exactly this
 much:
 
-| Separation | MySQL minus an exact geodesic |
+| Separation | MySQL minus an exact geodesic, over random pairs |
 | --- | --- |
-| 10 km | 9.9 cm |
-| 9,810 km | -7.9 m |
-| near-antipodal | +5,973 m |
+| 10 km | -12 to +8 cm |
+| 9,810 km | -66 to +6.5 m |
+| near-antipodal | up to +5,973 m |
 
 **The alternatives, and why not.**
 
@@ -337,13 +335,13 @@ still hold values of any SRID (see [Types and storage](#types-and-storage)).
 
 ### Function set
 
-v1 is the minimal set needed to store, read, inspect, measure and filter geometry, all of
-it present in MySQL 8.0.46 / 8.4 / 9.7 except the EWKB pair, whose spatial function sets
-are identical in *membership*; signatures are not, so **9.7 is the baseline** and version
-deltas are called out where they bite. `ST_GeomFromWKB` is the known one: 8.0 accepted a
-geometry argument, where 8.4 and 9.7 reject it with `ERROR 3037`. The list is an
-**allowlist**: only these are registered, and anything else spatial is an unknown function
-until a later milestone adds it.
+v1 is the minimal set needed to store, read, inspect, measure and filter geometry. Apart
+from the EWKB pair, all of it is present in MySQL 8.0.46, 8.4 and 9.7, whose spatial
+function sets are identical in *membership*; signatures are not, so **9.7 is the
+baseline** and version deltas are called out where they bite. `ST_GeomFromWKB` is the
+known one: 8.0 accepted a geometry argument, where 8.4 and 9.7 reject it with
+`ERROR 3037`. The list is an **allowlist**: only these are registered, and anything else
+spatial is an unknown function until a later milestone adds it.
 
 - **`ST_GeomFrom*`**, a geometry from an external format: `ST_GeomFromText`,
   `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`, plus MySQL's plain synonyms
@@ -769,12 +767,11 @@ and no stored value has to be rewritten.
 **Predicates between two extended geometries.** v1 answers the eight DE-9IM predicates on
 4326 only for pairs with a point operand ([Reference surface](#srid-model)). Widening that
 to line and polygon pairs needs geodesic segment intersection over Andoyer edges,
-assembled into a 9-intersection matrix, which replaces the planar evaluator rather than
-extending it. `ST_IsValid` on 4326 polygons waits on it too, and `ST_Distance` to a line
-or polygon lands in the same step, since it needs the nearest point on an Andoyer edge.
-All are additive for users, since they only make queries that were rejected start
-answering, and none needs a format change. Karney's intersection and point-to-line work
-supplies the algorithms.
+assembled into a 9-intersection matrix. `ST_IsValid` on 4326 polygons waits on it too, and
+`ST_Distance` to a line or polygon lands in the same step, since it needs the nearest
+point on an Andoyer edge. All are additive for users, since they only make queries that
+were rejected start answering, and none needs a format change. Karney's intersection and
+point-to-line work supplies the algorithms.
 
 `ST_Covers` and `ST_CoveredBy` are PostGIS spellings with no MySQL equivalent, worth
 adding once the spatial index lands. Other functions outside MySQL's set follow the same
@@ -802,8 +799,7 @@ unreadable, even by `root` (`ERROR 3554`).
 Filling the catalog from the [EPSG dataset](https://epsg.org/) later brings its terms with
 it: IOGP's ownership has to be acknowledged wherever the data is published, and anyone
 given the data has to be told those terms. That work therefore carries a
-`LICENSES/EPSG-TERMS-OF-USE` entry beside the existing `QL-LICENSE` and
-`Unicode-DFS-2016-LICENSE`.
+`LICENSES/EPSG-TERMS-OF-USE` entry beside the existing ones.
 
 ## Appendix: PostGIS delta for the type layer
 
@@ -879,7 +875,7 @@ becomes a field type of its own or a flag over `mysql.TypeGeometry` touches the 
 | Predicate operands | Any pair | On 4326, v1 needs a point operand, a `POINT` or `MULTIPOINT`; other pairs raise `ERROR 3618` rather than being answered on a cheaper surface ([Reference surface](#srid-model)). `ST_Distance` takes only point operands. SRID 0 is unrestricted |
 | Axis order | Longitude first everywhere | Stored longitude first, as PostGIS; WKT, WKB and `ST_X`/`ST_Y` latitude first on a geographic SRS, as MySQL |
 | SRID / CRS | Full EPSG catalog in `spatial_ref_sys`, on-the-fly `ST_Transform` | SRID 0 and 4326 only; other codes rejected by DDL but storable in an unrestricted column; no `ST_Transform`. Both are in [Future extensions](#future-extensions) |
-| Function breadth | 300+ `ST_*` | The v1 allowlist, then MySQL's ~70. Absent families include buffer/convex-hull/simplify, overlay set operations, spatial clustering and aggregates, linear referencing, `ST_MakeValid`, and the `ST_AsMVT`/KML/GML/SVG output formats |
+| Function breadth | 300+ `ST_*` | The v1 allowlist, then MySQL's ~75. Absent even from MySQL's set: spatial clustering, `ST_MakeValid`, and the `ST_AsMVT`/KML/GML/SVG output formats |
 | Function spelling | `ST_DistanceSphere`, `ST_DistanceSpheroid` | MySQL's `ST_Distance_Sphere`; the underscore differs, and no spheroid variant exists separately because `ST_Distance` on 4326 is already ellipsoidal |
 | Geometry types | Adds CIRCULARSTRING, COMPOUNDCURVE, CURVEPOLYGON, POLYHEDRALSURFACE, TIN, TRIANGLE | OGC Simple Features only; no curved or TIN geometries |
 | Dimensionality | XYZ / XYM / XYZM, with ND indexing | Stored losslessly; no v1 function computes on it, and MySQL has no Z/M at all |
