@@ -1567,6 +1567,38 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 		"  KEY `b` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`tt1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table p1 (id int primary key)")
+	tk.MustExec("create table p2 (id int primary key)")
+	tk.MustExec("create table p3 (id int primary key)")
+	tk.MustExec("create table c1 (id int primary key, pid int, index(pid), constraint fk_c1 foreign key(pid) references p1(id))")
+	tk.MustExec("insert into p1 values (1)")
+	tk.MustExec("insert into p3 values (3)")
+	tk.MustExec("insert into c1 values (1, 1)")
+
+	tk.MustExec("rename table p1 to tmp, p2 to p1, tmp to p2, p3 to tmp")
+	tk.MustQuery("select referenced_table_name from information_schema.referential_constraints where constraint_schema = 'test' and constraint_name = 'fk_c1'").Check(testkit.Rows("p2"))
+	tk.MustGetDBError("insert into c1 values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustQuery("select * from c1").Check(testkit.Rows("1 1"))
+
+	// Move both the parent and its child through reused intermediate names.
+	tk.MustExec("rename table p2 to tmp_parent, c1 to tmp_child, tmp_parent to p2_final, tmp_child to c1_final")
+	child := getTableInfo(t, dom, "test", "c1_final")
+	require.Equal(t, "test", child.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "p2_final", child.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("insert into c1_final values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2_final where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	tk.MustExec("create table self_ref (id int primary key, pid int, foreign key(pid) references self_ref(id))")
+	tk.MustExec("insert into self_ref values (1, null), (2, 1)")
+	tk.MustExec("rename table self_ref to self_tmp, self_tmp to self_final")
+	self := getTableInfo(t, dom, "test", "self_final")
+	require.Equal(t, "test", self.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "self_final", self.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("delete from self_final where id = 1", plannererrors.ErrRowIsReferenced2)
 }
 
 func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
