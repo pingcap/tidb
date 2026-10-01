@@ -247,7 +247,9 @@ type StatementContext struct {
 	// this cache is set on `StatementContext` because it has to be updated after each statement.
 	distSQLCtxCache struct {
 		init sync.Once
-		dctx *distsqlctx.DistSQLContext
+		// Publish the context for reads that do not initialize it. This does not
+		// synchronize changes to its fields or make statement resets concurrent-safe.
+		dctx atomic.Pointer[distsqlctx.DistSQLContext]
 	}
 
 	// rangerCtxCache is used to persist all variables and tools needed by the `ranger`
@@ -1283,6 +1285,7 @@ func (sc *StatementContext) ResetForRetry() {
 
 	// `TaskID` is reset, we'll need to reset distSQLCtx
 	sc.distSQLCtxCache.init = sync.Once{}
+	sc.distSQLCtxCache.dctx.Store(nil)
 }
 
 // GetExecDetails gets the execution details for the statement.
@@ -1462,14 +1465,19 @@ func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 	return types.DefaultStmtNoWarningContext
 }
 
+// GetDistSQLFromCache returns the cached DistSQL context without initializing it.
+func (sc *StatementContext) GetDistSQLFromCache() *distsqlctx.DistSQLContext {
+	return sc.distSQLCtxCache.dctx.Load()
+}
+
 // GetOrInitDistSQLFromCache returns the `DistSQLContext` inside cache. If it didn't exist, return a new one created by
 // the `create` function.
 func (sc *StatementContext) GetOrInitDistSQLFromCache(create func() *distsqlctx.DistSQLContext) *distsqlctx.DistSQLContext {
 	sc.distSQLCtxCache.init.Do(func() {
-		sc.distSQLCtxCache.dctx = create()
+		sc.distSQLCtxCache.dctx.Store(create())
 	})
 
-	return sc.distSQLCtxCache.dctx
+	return sc.distSQLCtxCache.dctx.Load()
 }
 
 // GetOrInitRangerCtxFromCache returns the `RangerContext` inside cache. If it didn't exist, return a new one created by
