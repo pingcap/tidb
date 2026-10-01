@@ -224,3 +224,11 @@ the private region-cache state machine and restores the shared execution,
 settings, context and metric owner. Source, regression, complete-library and
 TiDB integration evidence and publication gates are recorded there. Full grpcutil per-RPC placement, root/TSO/discovery and
 parent-package acceptance remain open; finding counts are unchanged.
+
+
+The [retry value-ownership re-review](pd-retry-value-ownership-repair.md) corrects
+the earlier unrestricted retry acceptance. Go copies backoffers for each RPC;
+Rust needed shared callback identity with independent scalar state, signed timing
+arithmetic and reusable constructor options. The entire retry package and source
+support are revalidated before implementing grpcutil. Parent ownership and
+finding counts remain open and unchanged.

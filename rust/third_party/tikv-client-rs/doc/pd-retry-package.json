@@ -6,7 +6,7 @@
     "package": "pkg/retry"
   },
   "native_baseline": "bcf74b7282b01372f93fb814ba601eb4c22b5d12",
-  "claim": "Complete pkg/retry implementation, artifact inventory and original-case validation, with native default PD initialization integration. No PD root, service discovery, opt or TSO parent acceptance.",
+  "claim": "Complete pkg/retry implementation revalidated across signed duration/count inputs, ordered reusable constructor options, value-copy callback ownership and original cases. Default initialization remains integrated; grpcutil/root/discovery/TSO packages remain open.",
   "package_artifacts": [
     {
       "path": "pkg/retry/backoff.go",
@@ -58,7 +58,7 @@
     },
     {
       "owner": "time.Duration, Timer and Ticker",
-      "native": "Lazily initialize and reuse one pinned Tokio Sleep for exponential waits. Fixed retry uses one reusable Sleep and Go runtime ticker phase arithmetic without Tokio Interval's five-millisecond burst tolerance. Duration::ZERO total is unbounded; negative durations/counts have no unsigned representation. Saturating doubling prevents Rust overflow."
+      "native": "All timing/count state and API inputs use signed i64 nanoseconds/isize, with source wrapping arithmetic and positive-only total/log-budget checks. Non-positive Timer intervals map to immediately eligible Tokio deadlines; a non-positive Ticker interval panics before checking attempt count. Keep one lazy reusable timer and original-phase ticker scheduling; native runtime timer resolution remains Tokio's. Removed unsigned Duration::MAX/saturation policy."
     },
     {
       "owner": "runtime function names and logging",
@@ -71,6 +71,10 @@
     {
       "owner": "test support and goleak",
       "native": "All five source support files inventoried; this package owns no worker, and timer/operation drop tests verify resource release. Original unchanged source runs under Go race/goleak with failpoint enable/disable. Linux execution is not claimed."
+    },
+    {
+      "owner": "Go value copies and Option callbacks",
+      "native": "Backoffer::clone copies all scalar config/execution state and shares only the checker closure through Arc. The existing Box-accepting setter transfers its function into Arc; later replacement affects only that copy. Context identity remains Arc<Mutex<Backoffer>>; copy briefly under guard, then execute copies independently. BackofferOption is a reusable Arc<Fn(&mut Backoffer)>; new_with_options normalizes first then applies caller options in order. The private withMinLogInterval helper is needed only by tests and maps to cfg(test) with_min_log_interval, not a native-only public builder."
     }
   ],
   "test_support": [
@@ -184,7 +188,7 @@
       "path": "pkg/utils/grpcutil/grpcutil.go",
       "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
       "kind": "parent input, not accepted",
-      "integration": "All source imports inventoried. Native initialization uses source initRetry/default MaxRetryTimes policy; remaining discovery/microservice/dispatcher/root/context consumers stay parent obligations."
+      "integration": "UnaryBackofferInterceptor copies *bo by value for each RPC. Clone now preserves scalar snapshot/callback identity; concurrent context-copy tests prove owner isolation. Full interceptor, last-error/cancellation adaptation, connection/backoff/TLS/metadata composition remain grpcutil obligations, not dispatched here."
     },
     {
       "path": "servicediscovery/resource_manager_service_discovery.go",
@@ -221,9 +225,62 @@
     "doc/pd-retry-owner.md",
     "doc/pd-retry-package.json",
     "Cargo.toml",
-    "Cargo.lock"
+    "Cargo.lock",
+    "src/pd/opt_tests.rs",
+    "doc/pd-retry-value-ownership.md",
+    "doc/pd-retry-value-oracle/oracle_test.go.txt",
+    "doc/pd-retry-value-oracle/intervals.json"
   ],
-  "validation": {
+  "revision_baseline": "44afb53ffadfb5a711fa9c459d95fd197a3adb1a",
+  "declaration_mapping": {
+    "withMinLogInterval": "private cfg(test) with_min_log_interval -> BackofferOption; source has only test callers",
+    "Backoffer.Exec": "Backoffer::exec/exec_with_logger and ResetOnDrop; source error/cancellation/reset semantics",
+    "InitialBackoffer": "Backoffer::new_with_options; new is the empty-options convenience",
+    "Backoffer.SetRetryableChecker": "Backoffer::set_retryable_checker; Box transfers to shared Arc closure",
+    "Backoffer.isRetryable": "exec_with_logger optional checker predicate",
+    "Backoffer.nextInterval": "Backoffer::next_interval",
+    "Backoffer.exponentialInterval": "Backoffer::next_interval signed wrapping and source conditional order",
+    "Backoffer.resetBackoff": "Backoffer::reset and ResetOnDrop",
+    "TestBackOffExecute": "test_backoff_execute",
+    "getFunctionName": "function_name::<F>, native Rust diagnostic name",
+    "FromContext": "from_context, including nil/absent context values",
+    "WithBackoffer": "with_backoffer",
+    "WithConfig": "with_config",
+    "Retry": "retry, signed attempt count/interval and source ticker phase"
+  },
+  "type_mapping": {
+    "Option": "BackofferOption (reusable callback handle, ordered slice application)",
+    "Backoffer": "Backoffer, Clone copies value state and retains function environment identity",
+    "boCtxKey": "private BackofferKey; existing TraceContext handles typed immutable derivation"
+  },
+  "field_mapping": {
+    "base": "base:i64",
+    "max": "max:i64",
+    "total": "total:i64",
+    "retryableChecker": "Option<Arc<RetryCheck>>",
+    "logInterval": "log_interval:i64",
+    "nextLogTime": "next_log_time:i64",
+    "attempt": "attempt:isize",
+    "next": "next:i64",
+    "currentTotal": "current_total:i64"
+  },
+  "global_mapping": {
+    "testBackOffExecuteFlag": "BACKOFF_EXECUTED AtomicBool",
+    "backofferKey": "BackofferKey marker",
+    "queryRetryMaxTimes": "with_config default 10; Go package-private and never modified by source callers",
+    "queryRetryInterval": "with_config default 500_000_000ns; Go package-private and never modified by source callers"
+  },
+  "original_test_mapping": {
+    "TestMain": "Unchanged Go goleak TestMain with failpoint enable/disable and race; native implementation spawns no worker",
+    "TestBackoffer": "original_test_backoffer + original_checker_overwrite_cases",
+    "TestBackofferWithLog": "original_test_backoffer_with_log",
+    "isBackofferReset": "reset helper includes all reset fields",
+    "errTest/testFn": "error/test_fn",
+    "testingWriter/newTestingWriter/Write/Sync": "Capture Log implementation and synchronized message vector; original writer behavior read through source logger oracle",
+    "verifyLogger/Message/Messages/newZapTestLogger": "Capture and exec_with_logger; source logger setup/helpers retained and executed unchanged. Message is an unused upstream helper."
+  },
+  "compatibility": "Backoffer::new/new_with_options and fixed retry durations are signed nanoseconds, not std::time::Duration; max_times is isize. The public hidden with_min_log_interval builder is removed: Go has only a private option helper. Box-accepting checker API is retained. All existing native/TiDB source callers are inventoried/migrated; no lockfile dependency or worker is added.",
+  "prior_validation": {
     "status": "original, final native and timer self-review gates passed; TiDB integration publication pending",
     "red": "source_retry_ on unchanged native production: two regressions fail (first-error initialization and ignored GetMembers timeout), existing retry-config control passes; /private/tmp/pd-retry-red.log",
     "original": "go test -mod=readonly -race ./pkg/retry -count=1: passed with isolated failpoint enable/disable and all source bytes restored",
@@ -237,5 +294,22 @@
       "sysbench/TPC-C/TPC-H/YCSB performance"
     ],
     "self_review_red": "Immediate success without a Tokio driver panicked before lazy timer allocation; a 1ms ticker with a 3ms operation completed three failed attempts at 3ms instead of Go phase 5ms before explicit missed-tick scheduling. Both fail before and pass after repair; /private/tmp/pd-retry-lazy-timer-red.log and /private/tmp/pd-retry-ticker-red.log."
+  },
+  "validation": {
+    "status": "Original source/oracles, final native focused/library/static gates passed; publication and TiDB integration use the recorded gates.",
+    "red": "source_retry_duration_doubling_matches_signed_go failed at runtime on unchanged production: [MaxInt64,MaxInt64,MaxInt64] != [MaxInt64,-2,-4]. /private/tmp/pd-retry-values-red.log. Green test preserves the expected sequence after adapting its input/output representation to signed nanoseconds.",
+    "original": "go test -mod=readonly -race ./pkg/retry -count=1: original two cases, TestMain/goleak and four oracle extensions pass; scoped failpoints enabled then disabled with byte-identical source restoration.",
+    "focused": "cargo test --locked --lib pd:: -- --test-threads=1: 136 passed, including all 23 retry cases, original initialization/timeout/TSO/option/circuit-breaker/metrics cases.",
+    "oracle": "pd-retry-value-oracle/intervals.json generated by unchanged Go production plus oracle_test.go.txt; 9 constructor/state cases and 45 next intervals, plus source value-copy/concurrency/negative-domain/option ordering oracles.",
+    "unverified": [
+      "Linux execution",
+      "native ThreadSanitizer",
+      "live PD/service topology",
+      "whole grpcutil per-RPC composition and connection lifecycle",
+      "complete root/discovery/TSO/locate acceptance",
+      "sysbench/TPC-C/TPC-H/YCSB performance"
+    ],
+    "native_library": "cargo test --locked --lib -- --test-threads=1: 1512 passed, 2 existing ignored.",
+    "static": "Strict Clippy, all-target compilation, formatting, diff checks, source restoration/inventory and regenerated oracle comparison passed."
   }
 }

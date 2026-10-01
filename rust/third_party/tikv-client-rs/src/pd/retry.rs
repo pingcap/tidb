@@ -296,8 +296,8 @@ impl RetryClient<Cluster> {
         let connected = std::sync::Mutex::new(None);
         super::backoff::retry(
             std::future::pending(),
-            usize::try_from(options.max_retry_times).unwrap_or_default(),
-            Duration::from_secs(1),
+            options.max_retry_times,
+            1_000_000_000,
             || async {
                 let cluster = connection
                     .connect_cluster(endpoints, options.timeout)

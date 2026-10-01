@@ -95,9 +95,9 @@ fn static_options_keep_defaults_order_and_shared_identity() {
     assert!(o.backoffer.is_none());
     let labels = Arc::new(RwLock::new(Default::default()));
     let backoffer = Arc::new(Mutex::new(Backoffer::new(
-        Duration::from_millis(1),
-        Duration::from_millis(10),
-        Duration::from_secs(1),
+        1_000_000,
+        10_000_000,
+        1_000_000_000,
     )));
     let constructors = [
         with_custom_timeout_option(Duration::from_secs(7)),

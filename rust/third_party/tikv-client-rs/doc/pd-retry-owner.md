@@ -134,3 +134,17 @@ Go timer activation and exact missed-tick semantics.
 Native publication and TiDB integration still use the gates above. All 77 known findings remain open in their existing
 workstream assignments. No live PD, Linux, sysbench, TPC-C, TPC-H or YCSB result
 is claimed by this deterministic dependency repair.
+
+
+## Revision — 2026-10-01 value ownership and signed domain
+
+
+The grpcutil review invalidated the earlier unrestricted acceptance claim: the
+previous implementation covered nonnegative timing but replaced signed wrapping
+with saturation and could not copy its retry callback as Go does per RPC. See
+`pd-retry-value-ownership.md` for the complete package re-review and replacement
+evidence. Shared Arc callback identity, copied scalar state, ordered reusable
+constructor options and signed inputs now replace those restrictions. The public
+hidden logging builder and Go-absent Duration::MAX saturation assertion are
+removed; original valid cap behavior/tests remain. Historical validation above
+remains evidence for that earlier revision, not proof of the newly checked domain.

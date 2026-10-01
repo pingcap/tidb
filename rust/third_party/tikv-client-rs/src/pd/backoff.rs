@@ -14,54 +14,70 @@ use tokio::time::Instant;
 use crate::trace::TraceContext;
 use crate::{Error, Result};
 
-type RetryableChecker = Box<dyn Fn(&Error) -> bool + Send + Sync>;
+type RetryCheck = dyn Fn(&Error) -> bool + Send + Sync;
+type RetryableChecker = Box<RetryCheck>;
+
+/// A reusable constructor option, applied in order as in Go's `Option`.
+pub type BackofferOption = Arc<dyn Fn(&mut Backoffer) + Send + Sync>;
+
+#[cfg(test)]
+fn with_min_log_interval(interval: i64) -> BackofferOption {
+    Arc::new(move |bo| bo.log_interval = interval)
+}
 
 /// Exponential wait policy, reset after each execution, including a dropped future.
+/// All durations are signed nanoseconds, matching Go's `time.Duration`.
+/// Cloning copies execution state but shares the callback's captured environment,
+/// as the value copy in PD's per-RPC backoffer interceptor does.
+#[derive(Clone)]
 pub struct Backoffer {
-    base: Duration,
-    max: Duration,
-    total: Duration,
-    retryable_checker: Option<RetryableChecker>,
-    log_interval: Duration,
-    next_log_time: Duration,
-    attempt: usize,
-    next: Duration,
-    current_total: Duration,
+    base: i64,
+    max: i64,
+    total: i64,
+    retryable_checker: Option<Arc<RetryCheck>>,
+    log_interval: i64,
+    next_log_time: i64,
+    attempt: isize,
+    next: i64,
+    current_total: i64,
 }
 
 impl Backoffer {
-    /// Initialize Go's bounded exponential policy. Zero total means no wait budget.
-    pub fn new(base: Duration, max: Duration, total: Duration) -> Self {
+    /// Initialize Go's exponential policy in signed nanoseconds. A non-positive
+    /// total has no wait budget; a non-positive interval is immediately eligible.
+    pub fn new(base: i64, max: i64, total: i64) -> Self {
+        Self::new_with_options(base, max, total, &[])
+    }
+
+    /// Go `InitialBackoffer`, including ordered, reusable caller options.
+    pub fn new_with_options(base: i64, max: i64, total: i64, options: &[BackofferOption]) -> Self {
         let base = base.min(max);
-        let total = if total.is_zero() {
-            total
+        let total = if total > 0 && total < base {
+            base
         } else {
-            total.max(base)
+            total
         };
-        Self {
+        let mut backoffer = Self {
             base,
             max,
             total,
             retryable_checker: None,
-            log_interval: Duration::ZERO,
-            next_log_time: Duration::ZERO,
+            log_interval: 0,
+            next_log_time: 0,
             attempt: 0,
             next: base,
-            current_total: Duration::ZERO,
+            current_total: 0,
+        };
+        for option in options {
+            option(&mut backoffer);
         }
-    }
-
-    /// Configure the package's minimum warning interval.
-    #[doc(hidden)]
-    pub fn with_min_log_interval(mut self, interval: Duration) -> Self {
-        self.log_interval = interval;
-        self
+        backoffer
     }
 
     /// Preserve a supplied checker unless overwrite is requested; None clears it.
     pub fn set_retryable_checker(&mut self, checker: Option<RetryableChecker>, overwrite: bool) {
         if overwrite || self.retryable_checker.is_none() {
-            self.retryable_checker = checker;
+            self.retryable_checker = checker.map(Arc::from);
         }
     }
 
@@ -98,7 +114,7 @@ impl Backoffer {
         tokio::pin!(timer);
         loop {
             let result = f().await;
-            bo.attempt += 1;
+            bo.attempt = bo.attempt.wrapping_add(1);
             let error = match result {
                 Ok(()) => return Ok(()),
                 Err(error) => error,
@@ -111,9 +127,9 @@ impl Backoffer {
                 return Err(error);
             }
             let interval = bo.next_interval();
-            bo.next_log_time = bo.next_log_time.saturating_add(interval);
-            if !bo.log_interval.is_zero() && bo.next_log_time >= bo.log_interval {
-                bo.next_log_time = duration_remainder(bo.next_log_time, bo.log_interval);
+            bo.next_log_time = bo.next_log_time.wrapping_add(interval);
+            if bo.log_interval > 0 && bo.next_log_time >= bo.log_interval {
+                bo.next_log_time %= bo.log_interval;
                 let metadata = Metadata::builder()
                     .level(Level::Warn)
                     .target(module_path!())
@@ -125,7 +141,8 @@ impl Backoffer {
                     )).build());
                 }
             }
-            let deadline = Instant::now() + interval;
+            // Go Timer treats non-positive durations as immediately ready.
+            let deadline = Instant::now() + Duration::from_nanos(interval.max(0) as u64);
             if let Some(timer) = timer.as_mut().as_pin_mut() {
                 timer.reset(deadline);
             } else {
@@ -139,8 +156,8 @@ impl Backoffer {
                     });
                 }
             }
-            if !bo.total.is_zero() {
-                bo.current_total += interval;
+            if bo.total > 0 {
+                bo.current_total = bo.current_total.wrapping_add(interval);
                 if bo.current_total >= bo.total {
                     return Err(error);
                 }
@@ -148,23 +165,25 @@ impl Backoffer {
         }
     }
 
-    fn next_interval(&mut self) -> Duration {
-        let interval = if self.total.is_zero() {
-            self.next
+    fn next_interval(&mut self) -> i64 {
+        let interval = if self.total > 0 && self.current_total.wrapping_add(self.next) > self.total
+        {
+            self.total.wrapping_sub(self.current_total)
         } else {
-            self.next.min(self.total.saturating_sub(self.current_total))
+            self.next
         };
-        // Go durations are signed. Saturation avoids a Rust overflow for
-        // unrepresentable Go inputs without changing valid PD timing values.
-        self.next = self.next.saturating_mul(2).min(self.max);
+        self.next = self.next.wrapping_mul(2);
+        if self.next > self.max {
+            self.next = self.max;
+        }
         interval
     }
 
     fn reset(&mut self) {
         self.next = self.base;
-        self.current_total = Duration::ZERO;
+        self.current_total = 0;
         self.attempt = 0;
-        self.next_log_time = Duration::ZERO;
+        self.next_log_time = 0;
     }
 }
 
@@ -218,17 +237,17 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    retry(context_done, 10, Duration::from_millis(500), f).await
+    retry(context_done, 10, 500_000_000, f).await
 }
 
 /// Fixed-interval retry, including the final failed attempt's wait. A canceled
 /// context returns the operation's last error, unlike [`Backoffer::exec`].
-/// Zero attempts succeed without invoking the operation. A zero interval panics
+/// Non-positive attempts succeed without invoking the operation. A non-positive interval panics
 /// like Go's NewTicker. Slow operations do not add a fresh interval to each retry.
 pub async fn retry<C, F, Fut>(
     context_done: C,
-    max_times: usize,
-    interval: Duration,
+    max_times: isize,
+    interval: i64,
     mut f: F,
 ) -> Result<()>
 where
@@ -236,7 +255,8 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    assert!(!interval.is_zero(), "non-positive interval for ticker");
+    assert!(interval > 0, "non-positive interval for ticker");
+    let interval = Duration::from_nanos(interval as u64);
     let mut next_tick = Instant::now() + interval;
     let ticker = tokio::time::sleep_until(next_tick);
     tokio::pin!(ticker, context_done);

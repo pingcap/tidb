@@ -210,3 +210,14 @@ checker pass. The final publication response records the actual merge hook,
 fresh pre-push build and published commit. This inherited SQL limitation leaves W03 and the 77-finding register
 open; the complete retry package and its callers passed their own source,
 regression, library and integration gates.
+
+
+## Later re-review — 2026-10-01
+
+
+The grpcutil review found that this revision could not copy backoffers by value
+as Go requires and restricted signed durations to unsigned saturation. Its
+unrestricted completion claim was too broad. The [value-ownership repair](pd-retry-value-ownership-repair.md)
+revalidates the complete package with copied scalar state/shared callbacks, signed
+arithmetic and reusable constructor options. Earlier test results above remain
+historical evidence; they do not prove the previously excluded source domain.

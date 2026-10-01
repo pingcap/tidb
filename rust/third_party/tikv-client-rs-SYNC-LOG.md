@@ -76,3 +76,4 @@ currently built against" — see `docs/client-rust-migration-execplan.md`.
 - 2026-10-01T20:15:05Z: synced to ngaut/client-rust@61e9a86b9261aff9588597a5899941df57f15b38 (committed 2026-10-01T17:14:47-03:00), patches: 4 applied
 - 2026-10-01T20:23:29Z: synced to ngaut/client-rust@e3e8de80f2791ed725b6f06c25dfe4ed339ce564 (committed 2026-10-01T17:23:10-03:00), patches: 4 applied
 - 2026-10-01T20:49:02Z: synced to ngaut/client-rust@44afb53ffadfb5a711fa9c459d95fd197a3adb1a (committed 2026-10-01T17:48:31-03:00), patches: 4 applied
+- 2026-10-01T22:41:54Z: synced to ngaut/client-rust@69877b9cc651c07d0643c968c194bd8ced88daba (committed 2026-10-01T19:38:52-03:00), patches: 4 applied

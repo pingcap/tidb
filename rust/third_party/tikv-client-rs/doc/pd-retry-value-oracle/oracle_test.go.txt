@@ -1,0 +1,142 @@
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
+package retry
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+type nativeIntervalCase struct {
+	Base         int64    `json:"base"`
+	Max          int64    `json:"max"`
+	Total        int64    `json:"total"`
+	CurrentTotal int64    `json:"current_total"`
+	Normalized   [3]int64 `json:"normalized"`
+	Intervals    []int64  `json:"intervals"`
+}
+
+func TestNativeSignedIntervalOracle(t *testing.T) {
+	cases := []nativeIntervalCase{
+		{Base: math.MaxInt64, Max: math.MaxInt64},
+		{Base: 1 << 62, Max: math.MaxInt64, Total: math.MaxInt64, CurrentTotal: math.MaxInt64},
+		{Base: 10, Max: 100, Total: 7},
+		{Base: -4, Max: 100, Total: -1},
+		{Base: 10, Max: -1, Total: 5},
+		{Base: 1, Max: 10},
+		{Base: math.MinInt64, Max: math.MaxInt64},
+		{Base: 1, Max: 1, Total: math.MaxInt64, CurrentTotal: math.MaxInt64},
+		{Base: 0, Max: 100},
+	}
+	for i := range cases {
+		c := &cases[i]
+		bo := InitialBackoffer(time.Duration(c.Base), time.Duration(c.Max), time.Duration(c.Total))
+		c.Normalized = [3]int64{int64(bo.base), int64(bo.max), int64(bo.total)}
+		bo.currentTotal = time.Duration(c.CurrentTotal)
+		for range 5 {
+			c.Intervals = append(c.Intervals, int64(bo.nextInterval()))
+		}
+	}
+	require.Equal(t, []int64{math.MaxInt64, -2, -4, -8, -16}, cases[0].Intervals)
+	if output := os.Getenv("PD_RETRY_VALUE_ORACLE"); output != "" {
+		data, err := json.MarshalIndent(cases, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(output, "intervals.json"), append(data, '\n'), 0600))
+	}
+}
+
+func TestNativeValueCopyOracle(t *testing.T) {
+	original := InitialBackoffer(time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	var calls atomic.Int32
+	original.SetRetryableChecker(func(error) bool { calls.Add(1); return false }, true)
+	original.attempt = 5
+	original.next = 3 * time.Millisecond
+	original.currentTotal = 4 * time.Millisecond
+	original.nextLogTime = 7 * time.Millisecond
+	first, second := *original, *original
+	require.Equal(t, original.attempt, first.attempt)
+	require.Equal(t, original.next, first.next)
+	require.Equal(t, original.currentTotal, first.currentTotal)
+	require.Equal(t, original.nextLogTime, first.nextLogTime)
+	// Replacing the original callback does not replace either copied function.
+	original.SetRetryableChecker(nil, true)
+	err := errors.New("call")
+	var wg sync.WaitGroup
+	for _, bo := range []*Backoffer{&first, &second} {
+		wg.Add(1)
+		go func(bo *Backoffer) {
+			defer wg.Done()
+			require.ErrorIs(t, bo.Exec(context.Background(), func() error { return err }), err)
+		}(bo)
+	}
+	wg.Wait()
+	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, 5, original.attempt)
+	require.Equal(t, 3*time.Millisecond, original.next)
+	require.Equal(t, 4*time.Millisecond, original.currentTotal)
+	require.Equal(t, 7*time.Millisecond, original.nextLogTime)
+	require.True(t, isBackofferReset(&first))
+	require.True(t, isBackofferReset(&second))
+}
+
+func TestNativeSignedExecutionOracle(t *testing.T) {
+	for _, total := range []time.Duration{0, -1} {
+		bo := InitialBackoffer(-1, 100, total)
+		calls := 0
+		require.NoError(t, bo.Exec(context.Background(), func() error {
+			calls++
+			if calls < 4 {
+				return errors.New("retry")
+			}
+			return nil
+		}))
+		require.Equal(t, 4, calls)
+		require.True(t, isBackofferReset(bo))
+	}
+	for _, attempts := range []int{0, -1, -math.MaxInt} {
+		require.NoError(t, Retry(context.Background(), attempts, time.Millisecond, func() error { panic("must not execute") }))
+	}
+	require.Panics(t, func() { _ = Retry(context.Background(), -1, -1, func() error { return nil }) })
+	require.Panics(t, func() { _ = Retry(context.Background(), -1, 0, func() error { return nil }) })
+	bo := InitialBackoffer(1, 1, 1)
+	bo.attempt = math.MaxInt
+	observed := 0
+	bo.SetRetryableChecker(func(error) bool { observed = bo.attempt; return false }, true)
+	require.Error(t, bo.Exec(context.Background(), func() error { return errors.New("done") }))
+	require.Equal(t, math.MinInt, observed)
+	require.True(t, isBackofferReset(bo))
+}
+
+func TestNativeReusableOptionsOracle(t *testing.T) {
+	calls := 0
+	options := []Option{
+		func(bo *Backoffer) {
+			require.Equal(t, [3]time.Duration{10, 10, 10}, [3]time.Duration{bo.base, bo.max, bo.total})
+			require.Zero(t, bo.logInterval)
+			calls++
+			bo.SetRetryableChecker(func(error) bool { return false }, true)
+		},
+		withMinLogInterval(7), withMinLogInterval(11),
+		func(bo *Backoffer) {
+			require.False(t, bo.isRetryable(errTest))
+			bo.SetRetryableChecker(func(error) bool { return true }, false)
+			require.False(t, bo.isRetryable(errTest))
+		},
+	}
+	for range 2 {
+		bo := InitialBackoffer(100, 10, 1, options...)
+		require.Equal(t, time.Duration(11), bo.logInterval)
+		require.False(t, bo.isRetryable(errTest))
+		require.True(t, isBackofferReset(bo))
+	}
+	require.Equal(t, 2, calls)
+}
