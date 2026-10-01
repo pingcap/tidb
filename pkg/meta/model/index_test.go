@@ -101,5 +101,6 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		require.True(t, GetGlobalIndexV1Supported())
+		require.True(t, GetClusteredGlobalIndexV1Supported())
 	}
 }
