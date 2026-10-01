@@ -501,6 +501,12 @@ func TestRepeat(t *testing.T) {
 		{[]any{"a", int64(2)}, false, "aa"},
 		{[]any{"a", uint64(16777217)}, false, strings.Repeat("a", 16777217)},
 		{[]any{"a", int64(16777216)}, false, strings.Repeat("a", 16777216)},
+		{[]any{"abc", int64(5592406)}, false, strings.Repeat("abc", 5592406)},
+		{[]any{"毅", int64(5592406)}, false, strings.Repeat("毅", 5592406)},
+		{[]any{"", int64(1<<63 - 1)}, false, ""},
+		{[]any{"a", int64(1 << 31)}, true, ""},
+		{[]any{nil, int64(2)}, true, ""},
+		{[]any{"a", nil}, true, ""},
 		{[]any{"a", int64(-1)}, false, ""},
 		{[]any{"a", int64(0)}, false, ""},
 		{[]any{"a", uint64(0)}, false, ""},
@@ -509,6 +515,7 @@ func TestRepeat(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Repeat]
 	for _, c := range cases {
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.args...)))
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -517,6 +524,26 @@ func TestRepeat(t *testing.T) {
 			require.True(t, v.IsNull())
 		} else {
 			require.Equal(t, v.GetString(), c.res)
+		}
+
+		colTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeLonglong)}
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		args := make([]Expression, len(colTypes))
+		for i, d := range types.MakeDatums(c.args...) {
+			input.AppendDatum(i, &d)
+			args[i] = &Column{Index: i, RetType: colTypes[i]}
+		}
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		vec, err := fc.getFunction(ctx, args)
+		require.NoError(t, err)
+		require.True(t, vec.isChildrenVectorized())
+		result := chunk.NewColumn(vec.getRetTp(), 1)
+		require.NoError(t, vec.vecEvalString(ctx, input, result))
+		require.Equal(t, warnings, ctx.GetSessionVars().StmtCtx.GetWarnings())
+		require.Equal(t, c.isNull, result.IsNull(0))
+		if !c.isNull {
+			require.Equal(t, c.res, result.GetString(0))
 		}
 	}
 }
