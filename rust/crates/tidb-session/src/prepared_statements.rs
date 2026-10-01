@@ -182,6 +182,23 @@ impl Session {
         let (cacheable, select_plan, dml_plan, skip_reason) = {
             let catalog = self.lock_catalog()?;
             let cacheable = self.prepared_statement_cacheable(&mut statement, &catalog);
+            // go's PrepareExec builds the plan AT PREPARE, so plan errors
+            // surface here rather than at the first EXECUTE (oracle m21:
+            // `PREPARE st2 FROM 'SELECT no_such_col'` answers 1054 with the
+            // error row). Marker-carrying statements plan against BOUND
+            // parameters at EXECUTE, so only marker-free ones validate here.
+            // The built plan is discarded -- the cache envelope above and
+            // the EXECUTE-time plan remain the execution source.
+            if param_count == 0 {
+                if let tidb_ast::Stmt::Query(query) = &statement {
+                    tidb_executor::plan_query_meta_stmt(
+                        query,
+                        &catalog,
+                        self.current_database(),
+                        &planner_context,
+                    )?;
+                }
+            }
             // go's plan cache records the refusal as a statement warning at
             // PREPARE too (oracle m21: PREPARE st3 FROM 'CREATE TABLE ...'
             // answers (ok) with `skip prepared plan-cache: not a
