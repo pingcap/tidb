@@ -312,6 +312,31 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 	})
 }
 
+func TestStatementsSummaryExtractorPreparedTimeRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("prepare stmt from 'select digest, sum(exec_count) from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?) group by digest'")
+	tk.MustExec("set @end = 1577923200, @begin = 1577836800")
+	tk.MustQuery("execute stmt using @end, @begin")
+	preparedPlan := tk.Session().ShowProcess().Plan
+	if execute, ok := preparedPlan.(*plannercore.Execute); ok {
+		preparedPlan = execute.Plan
+	}
+	plan, ok := preparedPlan.(base.PhysicalPlan)
+	require.True(t, ok, "%T", preparedPlan)
+	for len(plan.Children()) > 0 {
+		plan = plan.Children()[0]
+	}
+	memTable, ok := plan.(*physicalop.PhysicalMemTable)
+	require.True(t, ok)
+	extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+	require.NotNil(t, extractor.CoarseTimeRange)
+	require.Equal(t, time.Unix(1577836800, 0).UTC(), extractor.CoarseTimeRange.StartTime.UTC())
+	require.Equal(t, time.Unix(1577923200, 0).UTC(), extractor.CoarseTimeRange.EndTime.UTC())
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

@@ -8,7 +8,7 @@ go_test(
         "table_test.go",
     ],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -18,6 +18,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "@com_github_pingcap_failpoint//:failpoint",
