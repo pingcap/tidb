@@ -59,15 +59,19 @@ func (o *OverRegionsInRangeController) onError(ctx context.Context, result RPCRe
 
 func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
 	var leader *metapb.Peer
-	failed := false
+	var epochNotMatchErr error
 	leaderRs := utils.InitialRetryState(4, 5*time.Second, 10*time.Second)
 	err := utils.WithRetry(ctx, func() error {
 		r, err := o.metaClient.GetRegionByID(ctx, region.Region.Id)
 		if err != nil {
 			return err
 		}
+		if r == nil || r.Region == nil {
+			epochNotMatchErr = errors.Annotatef(berrors.ErrKVEpochNotMatch, "region %d is not found", region.Region.Id)
+			return nil
+		}
 		if !split.CheckRegionEpoch(r, region) {
-			failed = true
+			epochNotMatchErr = errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s is changed", region)
 			return nil
 		}
 		if r.Leader != nil {
@@ -76,8 +80,8 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 		}
 		return errors.Annotatef(berrors.ErrPDLeaderNotFound, "there is no leader for region %d", region.Region.Id)
 	}, &leaderRs)
-	if failed {
-		return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s is changed", region)
+	if epochNotMatchErr != nil {
+		return nil, epochNotMatchErr
 	}
 	if err != nil {
 		return nil, err

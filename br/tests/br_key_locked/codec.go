@@ -81,7 +81,7 @@ func processRegionResult(region *pd.Region, err error) (*pd.Region, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if region == nil {
+	if region == nil || region.Meta == nil {
 		return nil, nil
 	}
 	err = decodeRegionMetaKey(region.Meta)

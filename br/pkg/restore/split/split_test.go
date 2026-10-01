@@ -10,7 +10,28 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type nilMetaPDClient struct {
+	pd.Client
+}
+
+func (c *nilMetaPDClient) GetRegionByID(
+	ctx context.Context,
+	regionID uint64,
+	opts ...pd.GetRegionOption,
+) (*pd.Region, error) {
+	return &pd.Region{}, nil
+}
+
+func TestGetRegionByIDWithNilMeta(t *testing.T) {
+	client := split.NewSplitClient(&nilMetaPDClient{}, nil, false)
+
+	region, err := client.GetRegionByID(context.Background(), 1)
+	require.NoError(t, err)
+	require.Nil(t, region)
+}
 
 func TestScanRegionBackOfferWithSuccess(t *testing.T) {
 	var counter int
