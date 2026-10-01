@@ -70,6 +70,10 @@ var (
 	CPUProfileCounter               prometheus.Counter
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+
+	// TLS
+	TLSVersion *prometheus.CounterVec
+	TLSCipher  *prometheus.CounterVec
 )
 
 // InitServerMetrics initializes server metrics.
@@ -373,6 +377,20 @@ func InitServerMetrics() {
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+	TLSVersion = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_version",
+			Help:      "Counter per TLS Version.",
+		}, []string{LblVersion})
+	TLSCipher = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tls_cipher",
+			Help:      "Counter per TLS Cipher.",
+		}, []string{LblCipher})
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

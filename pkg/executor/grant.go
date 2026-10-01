@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"go.uber.org/zap"
 )
 
@@ -406,8 +407,8 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 		case ast.Cipher:
 			gp.SSLType = privileges.SslTypeSpecified
 			if len(opt.Value) > 0 {
-				if _, ok := util.SupportCipher[opt.Value]; !ok {
-					err = errors.Errorf("Unsupported cipher suit: %s", opt.Value)
+				if _, ok := tlsutil.SupportCipher[opt.Value]; !ok {
+					err = errors.Errorf("Unsupported cipher suite: %s", opt.Value)
 					return
 				}
 				gp.SSLCipher = opt.Value
