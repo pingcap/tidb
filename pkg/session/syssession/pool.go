@@ -40,9 +40,10 @@ type Pool interface {
 	Get() (*Session, error)
 	// Put puts the session back to the pool.
 	Put(*Session)
-	// WithForceBlockGCSession executes the input function with the session and ensures the session is registered to
-	// the session manager so GC can be blocked safely.
-	WithForceBlockGCSession(ctx context.Context, fn func(*Session) error) error
+	// WithRegisteredSession executes the input function with a session registered
+	// to the session manager. Registration makes the session visible to
+	// process-wide coordination such as GC and metadata lock.
+	WithRegisteredSession(ctx context.Context, fn func(*Session) error) error
 	// WithSession executes the input function with the session.
 	// After the function called, the session will be returned to the pool automatically.
 	WithSession(func(*Session) error) error
@@ -278,9 +279,9 @@ func (p *AdvancedSessionPool) WithSession(fn func(*Session) error) error {
 	return nil
 }
 
-// WithForceBlockGCSession executes the input function with the session and ensures the internal session is
-// registered to the session manager so GC can be blocked safely.
-func (p *AdvancedSessionPool) WithForceBlockGCSession(ctx context.Context, fn func(*Session) error) error {
+// WithRegisteredSession executes the input function with an internal session
+// registered to the session manager.
+func (p *AdvancedSessionPool) WithRegisteredSession(ctx context.Context, fn func(*Session) error) error {
 	se, err := p.Get()
 	if err != nil {
 		return err
@@ -299,14 +300,14 @@ func (p *AdvancedSessionPool) WithForceBlockGCSession(ctx context.Context, fn fu
 	const retryInterval = 100 * time.Millisecond
 	if !infosync.ContainsInternalSession(se.internal.sctx) {
 		for !infosync.StoreInternalSession(se.internal.sctx) {
-			// In most cases, the session manager is not set, so this step will be skipped.
-			// It is only enabled explicitly in tests through a failpoint.
+			// Most unit tests don't install a session manager, so skip waiting unless
+			// the registration behavior is explicitly under test.
 			if intest.InTest {
-				forceBlockGCInTest := false
-				failpoint.Inject("ForceBlockGCInTest", func(val failpoint.Value) {
-					forceBlockGCInTest = val.(bool)
+				forceRegisterInTest := false
+				failpoint.Inject("ForceRegisterInTest", func(val failpoint.Value) {
+					forceRegisterInTest = val.(bool)
 				})
-				if !forceBlockGCInTest {
+				if !forceRegisterInTest {
 					break
 				}
 			}

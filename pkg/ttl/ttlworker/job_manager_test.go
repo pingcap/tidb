@@ -287,7 +287,7 @@ type TTLJob = ttlJob
 
 // WithSessionForTest is used for test
 func WithSessionForTest(pool syssession.Pool, fn func(session.Session) error) error {
-	return withSession(pool, fn)
+	return withSession(context.Background(), pool, fn)
 }
 
 // LockJob is an exported version of lockNewJob for test
