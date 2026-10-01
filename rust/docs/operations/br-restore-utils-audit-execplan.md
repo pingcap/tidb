@@ -1,5 +1,9 @@
 # Align Rust return contracts for `br/pkg/restore/utils`
 
+Historical plan. The [2026-10-01 P04 receipt](../parity/current-audit/restore-utils-protocol-repair.md)
+supersedes its local-protobuf ownership and complete-parity claims; the
+current plan is `../full-structural-parity-execplan.md`.
+
 This ExecPlan is a living document maintained according to `PLANS.md` at the
 repository root. Keep `Progress`, `Surprises & Discoveries`, `Decision Log`,
 and `Outcomes & Retrospective` current while the rolling audit continues.

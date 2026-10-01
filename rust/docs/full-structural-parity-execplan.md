@@ -9,6 +9,8 @@ The user requests every mismatch to be listed and removed, following TiDB Go mas
 
 ## Progress
 
+- [x] (2026-10-01, P04 repair) Remove both local restore-protocol types and the PITR test projection across the complete eight-artifact `br/pkg/restore/utils` owner; preserve generated payloads/shared references and borrow selected rules. All original Go race tests, 36 Rust tests, five merge workloads, all-target compilation and lint pass. Publication requires both locked-build gates below.
+
 - [x] (2026-10-01, O12 repair) Transcreate the complete `pkg/domain/globalconfigsync` package (all three artifacts), its session metadata/publication and domain keeper integration. Preserve bounded blocking notification, no reload notification, one PD attempt and joined shutdown. Validate original Go cases, SQL regressions and real mock-RPC transport before publication.
 
 - [x] (2026-09-30, subsystem review) Refresh integration/master/native references; trace additional optimizer, table, schema, session, executor and domain owners. Add 18 findings, bringing the register to 72 records / 68 unresolved. Reproduce generated-column strict-mode failure and unsupported session-state/historical/BR job entrypoints.
@@ -1148,3 +1150,55 @@ source equivalence from an original-Go test rerun, which was not performed.
 Revision note: implemented the first complete new leaf owner from the expanded
 review, including tests, generated-protocol transport, caller metadata and
 background lifetime; did not claim broader package or benchmark parity.
+
+## Restore-utils protocol ownership plan
+
+
+Starting from integration aa7b8d864d and Go master 93a01d31f6, inventory all
+eight artifacts of br/pkg/restore/utils (four production files, three original
+test files and BUILD.bazel). There is no doc.go, platform variant or fixture.
+The current native owner declares a seven-field File and a duplicate RewriteRule
+in restore_utils/proto.rs. Go takes generated backup.File pointers, retains all
+metadata through range merging, and clones generated rules only at its explicit
+Clone boundary.
+
+Remove proto.rs and share the existing complete native protocol package via
+tidb-proto. Carry Arc<File> through grouping/range merging, so copying range
+containers preserves payload identity and does not copy checksums, encryption
+metadata or per-table metadata. Match/rewrite lookup returns borrowed generated
+rules; explicit go_clone remains a deep copy. Keep source equality's explicit
+field policy and timestamp-reset behavior. Extend existing package tests with
+a failing full-generated-file API/identity regression before replacement and
+cover rule lookup/clone/filter behavior. Re-run every original Rust case, the
+original Go package (including its race case), and the five source benchmark
+sizes as executable workloads, without claiming workload performance parity.
+
+Record all artifacts, original test/benchmark mappings, dependencies and seed
+integration status. This removes P04's narrowed payload contract; BRIE execution
+and acceptance of metautil/rtree/spans remain separate. Update the old receipts
+that called this narrowing harmless. Root lint, the actual locked server build
+hook and a fresh locked build before push remain mandatory.
+
+Decision: reuse generated types instead of appending currently missing fields
+to the local structs. That removes the duplicate schema owner and ensures
+future generated fields survive grouping/return without a handwritten mapping.
+Native shared file handles preserve Go's pointer flow while avoiding repeated
+large-message clones. No Go/Bazel production files are changed.
+
+Outcome: deleted the local File/RewriteRule owner and test DataFileInfo; all
+original cases now consume complete generated protocols. The new API regression
+failed before replacement and passes afterward. The source gate includes
+import_sstpb and all 139 kvproto artifacts. The Go-master reference passed its
+required Bazel preparation and original race suite, then its disposable outputs
+were cleaned and the worktree archived. All five source merge workloads run
+instead of an empty placeholder. Package inventory, case/support mapping,
+commands and remaining limits are in
+`parity/current-audit/restore-utils-protocol-repair.md` and its JSON inventory.
+P04 is repaired, leaving 66 unresolved registered findings. Historical parity
+claims are marked superseded; no live BRIE or benchmark parity is claimed.
+The commit hook and separate pre-push build results belong to the publication
+response, and must both pass before this repair is pushed.
+
+Revision note: completed the full restore-utils protocol-consumer review and
+repair rather than adding missing fields to the old projection. Other BR
+packages and live integration remain explicit separate owners.

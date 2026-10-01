@@ -1,5 +1,11 @@
 # `br/pkg/restore/utils` — Rust return-contract alignment
 
+Historical return-contract receipt. Its local protobuf owner and accessor
+discussion is superseded by the [2026-10-01 complete package review and P04
+repair](../../docs/parity/current-audit/restore-utils-protocol-repair.md):
+`proto.rs` is deleted; full generated types now supply these contracts.
+This earlier receipt does not establish live BRIE or current-master parity.
+
 The complete Go-package inventory was established by the original package
 landing at `e40dbe9f6a7a41f910450b9874fdfddeaacc484c`: exactly eight artifacts,
 comprising `common.go`, `merge.go`, `misc.go`, `rewrite_rule.go`, their three

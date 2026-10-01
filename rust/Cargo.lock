@@ -3388,6 +3388,7 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-model",
+ "tidb-proto",
  "tidb-util",
 ]
 

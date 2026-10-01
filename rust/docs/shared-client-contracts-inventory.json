@@ -1,5 +1,5 @@
 {
-  "go_master": "e953a09d9d5e29e60c62f42d3aacebb819af49a5",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
   "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
   "integration": "complete native packages; shared types and descriptor-derived TiKV transport",
   "packages": {
@@ -129,6 +129,19 @@
       "rust_output": {
         "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/backup.rs",
         "sha256": "905e60ab406dd971be438a2be2b176752ade39642973972b686c4ccb7cde6250"
+      },
+      "integration": "whole-package re-export and prost extern_path"
+    },
+    "import_sstpb": {
+      "go_artifacts": [
+        {
+          "path": "pkg/import_sstpb/import_sstpb.pb.go",
+          "sha256": "b1eead0689aba679736b824a671c857c809902a91913030c5d2d6ddc4469658e"
+        }
+      ],
+      "rust_output": {
+        "path": "rust/third_party/tikv-client-rs/kvproto/src/generated/import_sstpb.rs",
+        "sha256": "467796907d05344614a3af9a3b0a5169114d6c9554912d55acd2a0bc00d5da6f"
       },
       "integration": "whole-package re-export and prost extern_path"
     }

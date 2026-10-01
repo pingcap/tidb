@@ -15,19 +15,19 @@
 //! BR's key-range algebra: the interval maps, range trees, and prefix rewrites
 //! that backup and restore reason about key space with.
 //!
-//! Three Go packages land here, each as one Rust module, each a *complete
-//! package*:
+//! Three Go packages map here, each as one Rust module:
 //!
-//! | Rust module | Go package | Labeling |
-//! | --- | --- | --- |
-//! | [`spans`] | `br/pkg/streamhelper/spans` | complete package |
-//! | [`rtree`] | `br/pkg/rtree` | complete package |
-//! | [`restore_utils`] | `br/pkg/restore/utils` | complete package |
+//! | Rust module | Go package |
+//! | --- | --- |
+//! | [`spans`] | `br/pkg/streamhelper/spans` |
+//! | [`rtree`] | `br/pkg/rtree` |
+//! | [`restore_utils`] | `br/pkg/restore/utils` |
 //!
 //! Every production symbol of each Go package is present, and every Go test
 //! function is ported; the two Go benchmark sets and the one Go fuzz target
 //! are accounted for at their own definition sites (`BenchmarkRangeTreeUpdate`
-//! and `BenchmarkMergeRanges*` as named `#[ignore]` tests, `FuzzMerge` as a
+//! as a named `#[ignore]` test, `BenchmarkMergeRanges*` as executable workload
+//! cases run explicitly, and `FuzzMerge` as a
 //! table-driven test over its `f.Add` seed corpus).
 //!
 //! They are one crate because they are one subject and they depend on each
@@ -37,9 +37,10 @@
 //!
 //! # Dependencies and boundaries
 //!
-//! No external crate is used; the only dependencies are workspace paths
-//! (`tidb-codec`, `tidb-model`, `tidb-util`). Go's `github.com/google/btree`
-//! maps onto [`std::collections::BTreeMap`] throughout.
+//! Direct dependencies are workspace crates (`tidb-codec`, `tidb-model`,
+//! `tidb-proto`, `tidb-util`). Go's `github.com/google/btree` maps onto
+//! [`std::collections::BTreeMap`] throughout. The helpers are not integrated
+//! into live BRIE execution; source test mappings do not certify that path.
 //!
 //! Go's `pkg/tablecodec` import is served by `tidb-codec`'s `table_key` and
 //! `row_index` modules, which is where this workspace put the table-key framing
@@ -49,10 +50,11 @@
 //!
 //! Each module header names the boundaries it declares. In summary:
 //!
-//! - kvproto (`brpb.File`, `import_sstpb.RewriteRule`, `kvrpcpb.KeyRange`) is
-//!   never linked. [`rtree::Range`] is generic over its file payload; the two
-//!   flat message shapes this subject reads are declared in
-//!   [`restore_utils::proto`]; `kvrpcpb.KeyRange` becomes [`rtree::KeyRange`].
+//! - kvproto `backup.File` and `import_sstpb.RewriteRule` share the complete
+//!   generated contracts through `tidb-proto`. Restore ranges carry `Arc<File>`
+//!   so merging and cloning containers retain the original file metadata.
+//!   [`rtree::Range`] remains generic over its payload; `kvrpcpb.KeyRange`
+//!   currently maps to [`rtree::KeyRange`], a separate boundary.
 //! - `br/pkg/metautil` (`MetaWriter`, `ChecksumStats`, `Table`) is narrowed to
 //!   the [`rtree::MetaSink`] trait, the flat [`rtree::ChecksumStats`] struct,
 //!   and an opaque payload on [`restore_utils::CreatedTable`].

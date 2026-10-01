@@ -71,6 +71,9 @@ pub mod etcdserverpb {
     include!(concat!(env!("OUT_DIR"), "/etcdserverpb.rs"));
 }
 
+/// Complete SST import contracts shared with the native client.
+pub use tikv_client_kvproto::import_sstpb;
+
 /// Complete BR contracts shared with the native client.
 pub use tikv_client_kvproto::backup;
 

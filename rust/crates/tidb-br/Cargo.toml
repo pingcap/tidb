@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]

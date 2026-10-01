@@ -85,10 +85,9 @@ impl KeyRange {
 
 /// The payload contract of a [`Range`].
 ///
-/// KEY NARROWING: Go carries `[]*backuppb.File` here. Everything this package
-/// does with a file is read these three scalars, so the payload stays an
-/// opaque generic and no protobuf dependency is needed. See
-/// [`crate::restore_utils::File`] for the concrete declaration.
+/// Go carries `[]*backuppb.File` here. Restore uses shared handles to the
+/// complete generated file; this trait reads statistics without projecting
+/// away the remaining payload when range containers are cloned.
 pub trait RangeFile: Clone {
     /// Go `File.GetTotalKvs`.
     fn total_kvs(&self) -> u64;
@@ -96,6 +95,34 @@ pub trait RangeFile: Clone {
     fn total_bytes(&self) -> u64;
     /// Go `File.GetCrc64Xor`.
     fn crc64_xor(&self) -> u64;
+}
+
+impl RangeFile for tidb_proto::backup::File {
+    fn total_kvs(&self) -> u64 {
+        self.total_kvs
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
+    fn crc64_xor(&self) -> u64 {
+        self.crc64xor
+    }
+}
+
+impl<F: RangeFile> RangeFile for std::sync::Arc<F> {
+    fn total_kvs(&self) -> u64 {
+        self.as_ref().total_kvs()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.as_ref().total_bytes()
+    }
+
+    fn crc64_xor(&self) -> u64 {
+        self.as_ref().crc64_xor()
+    }
 }
 
 /// Go `rtree.Range`: a backup response.
@@ -840,7 +867,7 @@ mod tests {
     use super::*;
 
     /// The `backuppb.File` fields the `rtree` tests actually set. The full
-    /// declaration lives in [`crate::restore_utils::File`]; these tests only
+    /// generated type is re-exported as [`crate::restore_utils::File`]; these tests only
     /// need a payload that satisfies [`RangeFile`] plus a name to assert on.
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct TestFile {

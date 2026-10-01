@@ -16,10 +16,11 @@
 //! into region-sized ranges before restore splits regions.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::misc::{DEFAULT_CF_NAME, WRITE_CF_NAME};
-use super::proto::File;
 use super::rewrite_rule::{rewrite_range, RestoreError, RestoreErrorKind, RewriteRules};
+use super::File;
 use crate::rtree::{Range, RangeStats, RangeStatsTree};
 
 /// Go `utils.MergeRangesStat`: statistics for `MergeAndRewriteFileRanges`.
@@ -68,11 +69,11 @@ pub struct MergeRangesStat {
 /// Panics (Go: `log.Panic`) when two files share a start key but disagree on
 /// the end key.
 pub fn merge_and_rewrite_file_ranges(
-    files: &[File],
+    files: &[Arc<File>],
     rewrite_rules: Option<&RewriteRules>,
     split_size_bytes: u64,
     split_key_count: u64,
-) -> Result<(Vec<RangeStats<File>>, MergeRangesStat), RestoreError> {
+) -> Result<(Vec<RangeStats<Arc<File>>>, MergeRangesStat), RestoreError> {
     if files.is_empty() {
         return Ok((Vec::new(), MergeRangesStat::default()));
     }
@@ -84,7 +85,7 @@ pub fn merge_and_rewrite_file_ranges(
 
     // Go uses a `map[string][]*File`; a `BTreeMap` only makes the iteration
     // order deterministic, which the result does not otherwise depend on.
-    let mut files_map: BTreeMap<Vec<u8>, Vec<File>> = BTreeMap::new();
+    let mut files_map: BTreeMap<Vec<u8>, Vec<Arc<File>>> = BTreeMap::new();
     for file in files {
         let entry = files_map.entry(file.start_key.clone()).or_default();
         entry.push(file.clone());
@@ -99,9 +100,9 @@ pub fn merge_and_rewrite_file_ranges(
             entry[0].end_key
         );
         // All default-CF files are skipped because their ranges do not overlap.
-        if file.cf == WRITE_CF_NAME || file.get_name().contains(WRITE_CF_NAME) {
+        if file.cf == WRITE_CF_NAME || file.name.contains(WRITE_CF_NAME) {
             write_cf_file += 1;
-        } else if file.cf == DEFAULT_CF_NAME || file.get_name().contains(DEFAULT_CF_NAME) {
+        } else if file.cf == DEFAULT_CF_NAME || file.name.contains(DEFAULT_CF_NAME) {
             default_cf_file += 1;
         }
         total_bytes += file.total_bytes;
@@ -118,7 +119,7 @@ pub fn merge_and_rewrite_file_ranges(
     let total_regions = default_cf_file.max(write_cf_file);
 
     // Check whether the files overlap.
-    let mut range_tree: RangeStatsTree<File> = RangeStatsTree::new();
+    let mut range_tree: RangeStatsTree<Arc<File>> = RangeStatsTree::new();
     for grouped in files_map.values() {
         let mut range_size = 0u64;
         let mut range_count = 0u64;
@@ -127,8 +128,8 @@ pub fn merge_and_rewrite_file_ranges(
             range_count += f.total_kvs;
         }
         let rg = Range::with_files(
-            grouped[0].get_start_key().to_vec(),
-            grouped[0].get_end_key().to_vec(),
+            grouped[0].start_key.clone(),
+            grouped[0].end_key.clone(),
             grouped.clone(),
         );
         // Rewrite the range for the split, so that `splitRanges` no longer has
@@ -178,11 +179,62 @@ pub fn merge_and_rewrite_file_ranges(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tidb_codec::table_key::encode_index_seek_key;
     use tidb_codec::table_key::RecordHandle;
     use tidb_codec::{encode_int, encode_row_key, INT_FLAG};
 
     use super::*;
+
+    #[test]
+    fn merged_ranges_preserve_complete_shared_backup_files() {
+        use tidb_proto::backup::{File as BackupFile, TableMeta};
+
+        let files: Vec<_> = (0..3)
+            .map(|index| {
+                Arc::new(BackupFile {
+                    name: format!("{index}_write.sst"),
+                    sha256: vec![index as u8; 32],
+                    start_key: encode_row_key(1, &RecordHandle::Int(index).encoded()),
+                    end_key: encode_row_key(1, &RecordHandle::Int(index + 1).encoded()),
+                    start_version: 41,
+                    end_version: 79,
+                    crc64xor: 17,
+                    total_kvs: 11,
+                    total_bytes: 23,
+                    cf: "write".into(),
+                    size: 101,
+                    cipher_iv: vec![index as u8; 16],
+                    table_metas: vec![TableMeta {
+                        physical_id: 1,
+                        ..Default::default()
+                    }],
+                })
+            })
+            .collect();
+        let rules = super::super::get_rewrite_rule_of_table(1, 2, &BTreeMap::new(), false);
+        let (ranges, stat) = merge_and_rewrite_file_ranges(&files, Some(&rules), 100, 100)
+            .expect("the shared generated file is the restore payload");
+        assert_eq!(stat.total_files, 3);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            ranges[0].start_key(),
+            encode_row_key(2, &RecordHandle::Int(0).encoded())
+        );
+        assert_eq!(
+            ranges[0].end_key(),
+            encode_row_key(2, &RecordHandle::Int(3).encoded())
+        );
+        for (actual, expected) in ranges[0].files().iter().zip(&files) {
+            assert!(
+                Arc::ptr_eq(actual, expected),
+                "merging retains Go's file references"
+            );
+            assert_eq!(actual.as_ref(), expected.as_ref());
+        }
+        assert_eq!(ranges[0].files().len(), files.len());
+    }
 
     /// Go `conn.DefaultMergeRegionSizeBytes`: the default region split size,
     /// 96 MiB.
@@ -217,7 +269,7 @@ mod tests {
             num: i64,
             bytes: i64,
             kv: i64,
-        ) -> Vec<File> {
+        ) -> Vec<Arc<File>> {
             assert!(num == 1 || num == 2, "num must be 1 or 2");
 
             // Rotate the table ID.
@@ -226,9 +278,11 @@ mod tests {
                 self.start_key_offset = 0;
             }
 
-            let low = encode_int_datum_key(self.start_key_offset);
+            let mut low = Vec::new();
+            encode_int(&mut low, self.start_key_offset);
             self.start_key_offset += 10;
-            let high = encode_int_datum_key(self.start_key_offset);
+            let mut high = Vec::new();
+            encode_int(&mut high, self.start_key_offset);
 
             let mut start_key = encode_row_key(self.table_id, &low);
             let mut end_key = encode_row_key(self.table_id, &high);
@@ -247,10 +301,11 @@ mod tests {
                 total_kvs: u64::try_from(kv).expect("kv fits"),
                 total_bytes: u64::try_from(bytes).expect("bytes fits"),
                 cf: "write".to_owned(),
-                crc64_xor: 0,
+                crc64xor: 0,
+                ..Default::default()
             }];
             if num == 1 {
-                return files;
+                return files.into_iter().map(Arc::new).collect();
             }
 
             // To match TiKV's behavior.
@@ -264,9 +319,10 @@ mod tests {
                 total_kvs: u64::try_from(kv).expect("kv fits"),
                 total_bytes: u64::try_from(bytes).expect("bytes fits"),
                 cf: "default".to_owned(),
-                crc64_xor: 0,
+                crc64xor: 0,
+                ..Default::default()
             });
-            files
+            files.into_iter().map(Arc::new).collect()
         }
     }
 
@@ -475,8 +531,9 @@ mod tests {
     fn invalid_ranges() {
         let mut fb = FileBuilder::default();
         let mut files = fb.build(1, 0, 1, 1, 1);
-        files[0].name = "invalid.sst".to_owned();
-        files[0].cf = "invalid".to_owned();
+        let file = Arc::get_mut(&mut files[0]).expect("unshared fixture");
+        file.name = "invalid.sst".to_owned();
+        file.cf = "invalid".to_owned();
         let err = merge_and_rewrite_file_ranges(
             &files,
             None,
@@ -487,11 +544,32 @@ mod tests {
         assert_eq!(RestoreErrorKind::RestoreInvalidBackup, err.kind());
     }
 
-    /// Go `BenchmarkMergeRanges100`/`1k`/`10k`/`50k`/`100k`: skipped.
-    /// Benchmarks are a Go `testing` harness feature with no assertion.
+    /// Execute each original Go benchmark workload once. This checks that
+    /// large merges retain every shared file; it is not a timing comparison.
     #[test]
-    #[ignore = "Go BenchmarkMergeRanges*: benchmarks, no assertions"]
-    fn benchmark_merge_ranges() {}
+    #[ignore = "Go BenchmarkMergeRanges* workloads; run explicitly"]
+    fn benchmark_merge_ranges() {
+        for count in [100, 1_000, 10_000, 50_000, 100_000] {
+            let mut builder = FileBuilder::default();
+            let files: Vec<_> = (0..count)
+                .flat_map(|_| builder.build(1, 0, 1, 1, 1))
+                .collect();
+            let (ranges, stats) = merge_and_rewrite_file_ranges(
+                &files,
+                None,
+                DEFAULT_MERGE_REGION_SIZE_BYTES,
+                DEFAULT_MERGE_REGION_KEY_COUNT,
+            )
+            .expect("original merge benchmark workload");
+            assert_eq!(stats.total_files, count);
+            let actual: Vec<_> = ranges.iter().flat_map(|range| range.files()).collect();
+            assert_eq!(actual.len(), files.len());
+            assert!(actual
+                .iter()
+                .zip(&files)
+                .all(|(actual, expected)| Arc::ptr_eq(actual, expected)));
+        }
+    }
 
     /// Keeps the record-handle import honest: `encode_row_key` frames an
     /// already-encoded handle, which is what Go's `EncodeRowKey` does.

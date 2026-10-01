@@ -18,6 +18,7 @@ RECEIPT = ROOT / "rust/docs/shared-client-contracts-inventory.json"
 MODULE = "github.com/pingcap/kvproto"
 PACKAGES = {name: name for name in ("kvrpcpb", "errorpb", "metapb", "encryptionpb", "coprocessor", "mpp", "pdpb", "tikvpb")}
 PACKAGES["brpb"] = "backup"
+PACKAGES["import_sstpb"] = "import_sstpb"
 
 
 def run(*args):

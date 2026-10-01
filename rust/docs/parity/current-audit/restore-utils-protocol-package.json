@@ -1,0 +1,117 @@
+{
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "original_go_test_revision": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "integration_base": "aa7b8d864d8568b0546dc580f3cd56357fac9bc0",
+  "package": "br/pkg/restore/utils",
+  "finding": "P04",
+  "artifacts": [
+    [
+      "br/pkg/restore/utils/BUILD.bazel",
+      "a005aa80163bf2ab8d1ffd3f6b28324fe0946b5c"
+    ],
+    [
+      "br/pkg/restore/utils/common.go",
+      "90ca5528cfa4005bba896c830b73974993439fe2"
+    ],
+    [
+      "br/pkg/restore/utils/merge.go",
+      "1ef6371e3e5e13209aa117584aa2d83a2d8dedda"
+    ],
+    [
+      "br/pkg/restore/utils/merge_test.go",
+      "fe387e729a99c577f04eda460343e24333f9a125"
+    ],
+    [
+      "br/pkg/restore/utils/misc.go",
+      "2135206531ce6faa1b59c6e6ccbd1862370cb5d6"
+    ],
+    [
+      "br/pkg/restore/utils/misc_test.go",
+      "e094774224fcdb6e3a9c7f60e71940c21db31782"
+    ],
+    [
+      "br/pkg/restore/utils/rewrite_rule.go",
+      "c83ea7fa95536e0dd17ffc2d366f871714adb69d"
+    ],
+    [
+      "br/pkg/restore/utils/rewrite_rule_test.go",
+      "8e6cb5547438acffcf25899a4064576d3fd32c90"
+    ]
+  ],
+  "source_membership": "Complete recursive git ls-tree: four production files, three original test/support files and BUILD.bazel. No doc.go, generated source/input, platform/build-tag variant, fixture/testdata, TestMain or fuzz target in this package.",
+  "rust_owner": [
+    "rust/crates/tidb-br/src/restore_utils.rs",
+    "rust/crates/tidb-br/src/restore_utils/common.rs",
+    "rust/crates/tidb-br/src/restore_utils/merge.rs",
+    "rust/crates/tidb-br/src/restore_utils/misc.rs",
+    "rust/crates/tidb-br/src/restore_utils/rewrite_rule.rs"
+  ],
+  "removed_owner": "rust/crates/tidb-br/src/restore_utils/proto.rs (File and RewriteRule); test-local DataFileInfo projection also removed",
+  "original_test_mapping": {
+    "TestMergeRanges": "tidb-br::restore_utils::merge::tests::merge_ranges",
+    "TestMergeRawKVRanges": "tidb-br::restore_utils::merge::tests::merge_raw_kv_ranges",
+    "TestInvalidRanges": "tidb-br::restore_utils::merge::tests::invalid_ranges",
+    "TestTruncateTS": "tidb-br::restore_utils::misc::tests::truncate_ts_drops_the_commit_timestamp",
+    "TestEncodeKeyPrefix": "tidb-br::restore_utils::misc::tests::encode_key_prefix_keeps_the_ungrouped_tail_raw",
+    "TestValidateFileRewriteRule": "tidb-br::restore_utils::rewrite_rule::tests::validate_file_rewrite_rule_cases",
+    "TestRewriteFileKeys": "tidb-br::restore_utils::rewrite_rule::tests::rewrite_file_keys",
+    "TestRewriteRange": "tidb-br::restore_utils::rewrite_rule::tests::rewrite_range_cases",
+    "TestGetRewriteTableID": "tidb-br::restore_utils::rewrite_rule::tests::get_rewrite_table_id_cases",
+    "TestGetRewriteRules": "tidb-br::restore_utils::rewrite_rule::tests::get_rewrite_rules_cases",
+    "TestGetRewriteRulesMap": "tidb-br::restore_utils::rewrite_rule::tests::get_rewrite_rules_map_cases",
+    "TestGetRewriteRuleOfTable": "tidb-br::restore_utils::rewrite_rule::tests::get_rewrite_rule_of_table_cases",
+    "TestFindMatchedRewriteRule": "tidb-br::restore_utils::rewrite_rule::tests::find_matched_rewrite_rule_cases",
+    "TestGetRewriteKeyWithDifferentTable": "tidb-br::restore_utils::rewrite_rule::tests::get_rewrite_key_with_different_table",
+    "TestSetTimeRangeFilter": "tidb-br::restore_utils::rewrite_rule::tests::set_time_range_filter_cases",
+    "TestSetTimeRangeFilterRace": "tidb-br::restore_utils::rewrite_rule::tests::set_time_range_filter_does_not_mutate_shared_rules"
+  },
+  "original_benchmark_mapping": {
+    "BenchmarkMergeRanges100": {
+      "rust": "tidb-br::restore_utils::merge::tests::benchmark_merge_ranges",
+      "file_count": 100,
+      "validation": "Executed once as a deterministic workload; no timing parity claim."
+    },
+    "BenchmarkMergeRanges1k": {
+      "rust": "tidb-br::restore_utils::merge::tests::benchmark_merge_ranges",
+      "file_count": 1000,
+      "validation": "Executed once as a deterministic workload; no timing parity claim."
+    },
+    "BenchmarkMergeRanges10k": {
+      "rust": "tidb-br::restore_utils::merge::tests::benchmark_merge_ranges",
+      "file_count": 10000,
+      "validation": "Executed once as a deterministic workload; no timing parity claim."
+    },
+    "BenchmarkMergeRanges50k": {
+      "rust": "tidb-br::restore_utils::merge::tests::benchmark_merge_ranges",
+      "file_count": 50000,
+      "validation": "Executed once as a deterministic workload; no timing parity claim."
+    },
+    "BenchmarkMergeRanges100k": {
+      "rust": "tidb-br::restore_utils::merge::tests::benchmark_merge_ranges",
+      "file_count": 100000,
+      "validation": "Executed once as a deterministic workload; no timing parity claim."
+    }
+  },
+  "original_support_mapping": {
+    "fileBulder": "merge::tests::FileBuilder, with plain codec.EncodeInt row handles and datum-framed index keys; deterministic CF-bearing unique names",
+    "benchmarkMergeRanges": "merge::tests::benchmark_merge_ranges, all five original file counts",
+    "getNewKeyPrefix": "rewrite_rule::tests::get_new_key_prefix",
+    "generateRewriteTableInfos": "rewrite_rule::tests::generate_rewrite_table_infos with index/partition helpers",
+    "fakeApplyFile": "rewrite_rule::tests::FakeApplyFile (the original Go test fake, not a protocol projection)",
+    "rewriteKey": "rewrite_rule::tests::rewrite_key",
+    "brpb.DataFileInfo": "Complete generated type in original-case fixtures and AppliedFile implementation",
+    "TestSetTimeRangeFilterRace": "Original 100-goroutine test ran under Go -race; Rust retains 100 iterations and shared-input assertions with immutable borrowing."
+  },
+  "build_mapping": "BUILD.bazel utils library and 16-shard utils_test map to the tidb-br Cargo library and inline tests. No feature/build.rs/platform input in tidb-br. Existing workspace Cargo.toml/Cargo.lock and tidb-proto/native generation own dependencies; main-tree Go/Bazel inputs unchanged.",
+  "dependencies": {
+    "kvproto": "v0.0.0-20260820070758-623e58e60fa9",
+    "native_client": "b2b3783 (unchanged)",
+    "generated_owner": "tidb-proto re-exports native backup and import_sstpb; complete shared-client-contracts-inventory.json includes every generated/input/module artifact and source gate",
+    "rtree": "Existing Range/RangeStatsTree; Arc<File> implements RangeFile without metadata projection. No new acceptance of the complete rtree package.",
+    "metautil": "CreatedTable<Old> preserves opaque old-table metadata; metautil and object-storage integration are not accepted here.",
+    "model_codec_errors_logging": "Existing tidb-model, tidb-codec, tidb-util and normalized error boundaries reviewed; log integration and Debug/Go error rendering are not certified."
+  },
+  "integration": "All restore-utils consumers remain within tidb-br. File grouping and result ranges share complete generated payloads, rule lookup borrows, explicit Clone deep-copies, equality retains Go field policy and timestamp resets. No live BRIE dispatch is enabled.",
+  "acceptance_scope": "Complete package review and atomic P04 protocol-consumer repair. Not a claim that BRIE, diagnostics, parent crate, metautil/rtree/spans or entire external modules have full current-master parity.",
+  "validation_receipt": "restore-utils-protocol-repair.md"
+}

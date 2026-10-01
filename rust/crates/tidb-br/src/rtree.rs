@@ -23,14 +23,13 @@
 //!
 //! # Narrowings and boundaries
 //!
-//! - KEY NARROWING: Go's `Range` carries `Files []*backuppb.File`, a kvproto
+//! - Go's `Range` carries `Files []*backuppb.File`, a kvproto
 //!   message. Every use inside this package reads exactly three scalars from
 //!   it (`TotalKvs`, `TotalBytes`, `Crc64Xor`) and otherwise moves the slice
 //!   around untouched. [`Range`] is therefore generic over its payload type
-//!   `F: RangeFile`, and [`RangeFile`] is that three-method contract. No
-//!   protobuf dependency crosses into this crate; the concrete `brpb.File`
-//!   shape is declared once, next to the code that actually needs its other
-//!   fields, in [`crate::restore_utils::File`].
+//!   `F: RangeFile`, and [`RangeFile`] is that three-method contract. Restore
+//!   supplies shared handles to the complete generated [`crate::restore_utils::File`],
+//!   preserving all metadata while containers are cloned.
 //! - boundary: `br/pkg/metautil`'s `MetaWriter` reaches object storage and
 //!   serializes backup metafiles — entirely outside this package's subject.
 //!   `ProgressRangeTree` only ever calls `Send(files, AppendDataFile)` on it,

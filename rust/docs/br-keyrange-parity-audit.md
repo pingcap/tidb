@@ -1,5 +1,11 @@
 # br key-range packages parity audit (baseline a85e0fd5df)
 
+Historical audit: its complete-parity conclusion does not certify current
+master. P04 subsequently found that restore's handwritten File lost metadata.
+The [2026-10-01 repair](parity/current-audit/restore-utils-protocol-repair.md)
+removes both protocol projections and supersedes this audit's protocol claims.
+The other boundary and integration gaps still require current-source review.
+
 Audit of the three Go packages tidb-br claims ported complete —
 `br/pkg/streamhelper/spans`, `br/pkg/rtree`, `br/pkg/restore/utils`
 (all production + test files read) — against `rust/crates/tidb-br`.

@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 72 tracked ownership/contract findings (67 unresolved, five repaired), review candidates and the
+consolidates 72 tracked ownership/contract findings (66 unresolved, six repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -29,6 +29,13 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [restore-utils protocol repair](restore-utils-protocol-repair.md) removes
+P04's two handwritten protocol owners after reviewing the complete eight-artifact
+Go package at master `93a01d31f6`. Complete generated files retain shared identity
+through merging; lookups borrow generated rules. All original Go tests pass with
+the race detector, and Rust tests plus all five source merge workloads pass.
+Live BRIE execution remains open as E07.
 
 The [global-config synchronization repair](global-config-sync-repair.md) implements
 O12's complete three-artifact Go package and its production session/factory/PD

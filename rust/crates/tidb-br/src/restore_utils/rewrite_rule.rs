@@ -24,7 +24,7 @@ use tidb_model::TableInfo;
 use tidb_util::redact;
 
 use super::misc::{get_index_id_map, get_table_id_map, DEFAULT_CF_NAME, WRITE_CF_NAME};
-use super::proto::{File, RewriteRule};
+use super::{File, RewriteRule};
 use crate::rtree::{Range, RangeFile};
 
 /// boundary: the `br/pkg/errors` sentinels this package raises.
@@ -126,6 +126,16 @@ impl AppliedFile for File {
     }
 }
 
+impl AppliedFile for tidb_proto::backup::DataFileInfo {
+    fn get_start_key(&self) -> &[u8] {
+        &self.start_key
+    }
+
+    fn get_end_key(&self) -> &[u8] {
+        &self.end_key
+    }
+}
+
 /// Go `utils.TableIDRemap`: a remapping of a table ID during rewriting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableIdRemap {
@@ -213,7 +223,15 @@ impl RewriteRules {
         {
             return false;
         }
-        self.table_id_remap_hint == rhs.table_id_remap_hint && self.data == rhs.data
+        self.table_id_remap_hint == rhs.table_id_remap_hint
+            && self.data.len() == rhs.data.len()
+            && self.data.iter().zip(&rhs.data).all(|(left, right)| {
+                left.old_key_prefix == right.old_key_prefix
+                    && left.new_key_prefix == right.new_key_prefix
+                    && left.new_timestamp == right.new_timestamp
+                    && left.ignore_after_timestamp == right.ignore_after_timestamp
+                    && left.ignore_before_timestamp == right.ignore_before_timestamp
+            })
     }
 
     /// Go `(*RewriteRules).Append`.
@@ -461,11 +479,11 @@ pub fn validate_file_rewrite_rule(
     // The rewrite rules of the start key and the end key should be equal: there
     // should be only one rewrite rule per file, and a file should be imported
     // into exactly one region.
-    let start_new = RewriteRule::get_new_key_prefix(start_rule.as_ref());
-    let end_new = RewriteRule::get_new_key_prefix(end_rule.as_ref());
+    let start_new = start_rule.map_or(&[][..], |rule| rule.new_key_prefix.as_slice());
+    let end_new = end_rule.map_or(&[][..], |rule| rule.new_key_prefix.as_slice());
     if start_new != end_new {
-        let start = start_rule.unwrap_or_default();
-        let end = end_rule.unwrap_or_default();
+        let start = start_rule.expect("different prefixes require a start rule");
+        let end = end_rule.expect("different prefixes require an end rule");
         return Err(RestoreError::annotate(
             RestoreErrorKind::RestoreInvalidRewrite,
             format!(
@@ -487,10 +505,10 @@ fn hex_upper(bytes: &[u8]) -> String {
 }
 
 /// Go `rewriteEncodedKey`: rewrites an encoded key and returns an encoded key.
-fn rewrite_encoded_key(
+fn rewrite_encoded_key<'a>(
     key: &[u8],
-    rewrite_rules: Option<&RewriteRules>,
-) -> (Option<Vec<u8>>, Option<RewriteRule>) {
+    rewrite_rules: Option<&'a RewriteRules>,
+) -> (Option<Vec<u8>>, Option<&'a RewriteRule>) {
     let Some(rules) = rewrite_rules else {
         return (Some(key.to_vec()), None);
     };
@@ -503,26 +521,26 @@ fn rewrite_encoded_key(
 
 /// Go `rewriteRawKey`: rewrites a raw key with a raw-key rewrite rule and
 /// returns an encoded key.
-fn rewrite_raw_key(
+fn rewrite_raw_key<'a>(
     key: &[u8],
-    rewrite_rules: Option<&RewriteRules>,
-) -> (Option<Vec<u8>>, Option<RewriteRule>) {
+    rewrite_rules: Option<&'a RewriteRules>,
+) -> (Option<Vec<u8>>, Option<&'a RewriteRule>) {
     let Some(rules) = rewrite_rules else {
         let mut encoded = Vec::new();
         encode_bytes(&mut encoded, key);
         return (Some(encoded), None);
     };
     if !key.is_empty() {
-        let rule = match_old_prefix(key, rules).cloned();
-        return (Some(rewrite_and_encode_raw_key(key, rule.as_ref())), rule);
+        let rule = match_old_prefix(key, rules);
+        return (Some(rewrite_and_encode_raw_key(key, rule)), rule);
     }
     (None, None)
 }
 
 /// Go `RewriteAndEncodeRawKey`.
 pub fn rewrite_and_encode_raw_key(key: &[u8], rule: Option<&RewriteRule>) -> Vec<u8> {
-    let old = RewriteRule::get_old_key_prefix(rule);
-    let new = RewriteRule::get_new_key_prefix(rule);
+    let old = rule.map_or(&[][..], |rule| rule.old_key_prefix.as_slice());
+    let new = rule.map_or(&[][..], |rule| rule.new_key_prefix.as_slice());
     // Go `bytes.Replace(key, old, new, 1)`: replaces the first occurrence, and
     // an empty `old` inserts `new` at the front.
     let ret = replace_first(key, old, new);
@@ -565,10 +583,10 @@ pub fn get_rewrite_table_id(table_id: i64, rewrite_rules: &RewriteRules) -> i64 
 
 /// Go `FindMatchedRewriteRule`.
 #[must_use]
-pub fn find_matched_rewrite_rule(
+pub fn find_matched_rewrite_rule<'a>(
     file: &dyn AppliedFile,
-    rules: Option<&RewriteRules>,
-) -> Option<RewriteRule> {
+    rules: Option<&'a RewriteRules>,
+) -> Option<&'a RewriteRule> {
     let start_id = decode_table_id(file.get_start_key());
     let end_id = decode_table_id(file.get_end_key());
     if start_id != end_id {
@@ -715,6 +733,49 @@ mod tests {
     use tidb_model::{IndexInfo, PartitionDefinition, PartitionInfo};
 
     use super::*;
+    use tidb_proto::backup::DataFileInfo;
+
+    #[test]
+    fn generated_log_files_borrow_rules_and_explicit_clone_is_independent() {
+        let mut rules = get_rewrite_rule_of_table(1, 2, &BTreeMap::new(), false);
+        rules.data[0].new_timestamp = 41;
+        rules.data[0].ignore_before_timestamp = 17;
+        rules.data[0].ignore_after_timestamp = 79;
+        rules.set_ts_range(11, 23, 101);
+        let file = tidb_proto::backup::DataFileInfo {
+            path: "backup.log".into(),
+            start_key: encoded(&gen_table_record_prefix(1)),
+            end_key: encoded(&prefix_next(&gen_table_record_prefix(1))),
+            ..Default::default()
+        };
+        let matched: &tidb_proto::import_sstpb::RewriteRule =
+            find_matched_rewrite_rule(&file, Some(&rules)).expect("encoded PITR rule");
+        assert!(std::ptr::eq(matched, &rules.data[0]));
+        assert_eq!(
+            get_rewrite_encoded_keys(&file, Some(&rules)).unwrap(),
+            (
+                Some(encoded(&gen_table_record_prefix(2))),
+                Some(encoded(&prefix_next(&gen_table_record_prefix(2))))
+            )
+        );
+        let mut cloned = rules.go_clone();
+        assert_eq!(cloned.data, rules.data);
+        assert_eq!(
+            (cloned.shift_start_ts, cloned.start_ts, cloned.restored_ts),
+            (0, 0, 0)
+        );
+        assert!(!std::ptr::eq(
+            cloned.data[0].old_key_prefix.as_ptr(),
+            rules.data[0].old_key_prefix.as_ptr()
+        ));
+        cloned.data[0].new_key_prefix.push(0xff);
+        assert_ne!(cloned.data[0], rules.data[0]);
+        cloned = rules.go_clone();
+        cloned.set_ts_range(11, 23, 101);
+        assert!(cloned.equal(&rules));
+        cloned.data[0].ignore_after_timestamp += 1;
+        assert!(!cloned.equal(&rules));
+    }
 
     fn rule(old: Vec<u8>, new: Vec<u8>) -> RewriteRule {
         RewriteRule {
@@ -815,22 +876,6 @@ mod tests {
         assert!(err.to_string().contains("rewrite rule mismatch"));
     }
 
-    /// boundary: `brpb.DataFileInfo`, the PITR log-file descriptor. Only its
-    /// two key bounds matter to [`AppliedFile`].
-    struct DataFileInfo {
-        start_key: Vec<u8>,
-        end_key: Vec<u8>,
-    }
-
-    impl AppliedFile for DataFileInfo {
-        fn get_start_key(&self) -> &[u8] {
-            &self.start_key
-        }
-        fn get_end_key(&self) -> &[u8] {
-            &self.end_key
-        }
-    }
-
     fn encoded(key: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         encode_bytes(&mut out, key);
@@ -862,8 +907,10 @@ mod tests {
         assert_eq!(prefix_next(&gen_table_record_prefix(2)), end);
 
         let encode_key_file = DataFileInfo {
+            path: "bakcup.log".into(),
             start_key: encoded(&gen_table_record_prefix(1)),
             end_key: encoded(&prefix_next(&gen_table_record_prefix(1))),
+            ..Default::default()
         };
         let (start, end) =
             get_rewrite_encoded_keys(&encode_key_file, Some(&rewrite_rules)).expect("rules match");
@@ -875,8 +922,10 @@ mod tests {
 
         // Table ID 767.
         let encode_key_file767 = DataFileInfo {
+            path: "bakcup.log".into(),
             start_key: encoded(&gen_table_record_prefix(767)),
             end_key: encoded(&prefix_next(&gen_table_record_prefix(767))),
+            ..Default::default()
         };
         // The raw rewrite should not error, but must not match either.
         let (start, end) =
@@ -1186,8 +1235,8 @@ mod tests {
 
     /// Go `rewriteKey` (`rewrite_rule_test.go`).
     fn rewrite_key(key: &[u8], rule: Option<&RewriteRule>) -> Option<Vec<u8>> {
-        let old = RewriteRule::get_old_key_prefix(rule);
-        let new = RewriteRule::get_new_key_prefix(rule);
+        let old = rule.map_or(&[][..], |rule| rule.old_key_prefix.as_slice());
+        let new = rule.map_or(&[][..], |rule| rule.new_key_prefix.as_slice());
         if key.starts_with(old) {
             let mut out = new.to_vec();
             out.extend_from_slice(&key[new.len()..]);
@@ -1210,10 +1259,7 @@ mod tests {
                 end_key: row_key(2, 200),
             };
             let rule = find_matched_rewrite_rule(&apply_file, Some(&rules));
-            assert_eq!(
-                Some(row_key(1, 100)),
-                rewrite_key(&row_key(2, 100), rule.as_ref())
-            );
+            assert_eq!(Some(row_key(1, 100)), rewrite_key(&row_key(2, 100), rule));
         }
 
         {
@@ -1224,7 +1270,7 @@ mod tests {
             let rule = find_matched_rewrite_rule(&apply_file, Some(&rules));
             assert_eq!(
                 Some(encode_index_seek_key(1, 10, b"test-1")),
-                rewrite_key(&encode_index_seek_key(2, 1, b"test-1"), rule.as_ref())
+                rewrite_key(&encode_index_seek_key(2, 1, b"test-1"), rule)
             );
         }
 

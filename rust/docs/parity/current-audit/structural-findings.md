@@ -15,7 +15,9 @@ The complete artifact inventories cover 856 TiDB package directories, 41
 client-go directories, 41 kvproto directories, 24 PD-client directories, 7
 etcd-API directories and all 83 Rust manifests.
 These are inventory snapshots; current-master package acceptance is established
-only by complete linked receipts, including [globalconfigsync](global-config-sync-repair.md). The 2,047 search
+only by complete linked receipts, including [globalconfigsync](global-config-sync-repair.md).
+The [restore-utils receipt](restore-utils-protocol-repair.md) records P04's
+complete package review and protocol repair with explicit integration limits. The 2,047 search
 candidate lines are not a defect count. Historical receipts and ignored-test
 comments can be stale; they are not substituted for current source review.
 
@@ -24,9 +26,9 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **72 tracked findings: 67 unresolved (including E02's
-partial repair) and five repaired ownership/contract findings (C01, E01,
-O12, P01, P02)**. This is not a count of accepted packages. E02 has a runtime
+The register contains **72 tracked findings: 66 unresolved (including E02's
+partial repair) and six repaired ownership/contract findings (C01, E01,
+O12, P01, P02, P04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 The latest 18 additions are Q01, X01, C03, K01–K03, I04, S03–S04, E06–E07,
 N04–N05, O10–O13 and P04; see [the subsystem review](subsystem-structure-review.md).
@@ -211,7 +213,7 @@ limits and the complete [scope matrix](structural-coverage.md).
 | O11 | **P2; source-confirmed:** TopSQL has data models and metrics but no composed SQL/plan registration, profiling collector, aggregation, sink and reporter lifecycle. | `rust/crates/tidb-util/src/topsql_reporter/mod.rs`; `datamodel.rs`; `rust/crates/tidb-server/src/lib.rs:273` | `pkg/util/topsql/topsql.go::SetupTopProfiling`, `RegisterSQL`/`RegisterPlan`, reporter/collector packages and execution hooks. Wire the complete lifetime and generated TiPB boundary. A registered metric or resource-group tag is not a running reporting pipeline. |
 | O12 | **Repaired:** the complete globalconfigsync leaf and explicit session-to-PD notification path are implemented. One eight-item blocking queue, metadata-driven normalized notifications, a shared-PD keeper and joined shutdown replace the missing owner. Cache reloads remain quiet; failed stores are logged without retry, as Go does. | `rust/crates/tidb-domain/src/globalconfigsync.rs`; `rust/crates/tidb-session/src/variables.rs`; `rust/crates/tidb-server/src/global_config_sync.rs`; shared factory/boot and PD worker | `pkg/domain/globalconfigsync` (all three artifacts), `pkg/session/session.go::SetGlobalSysVar` and `Domain.globalConfigSyncerKeeper`. See [complete package/integration receipt](global-config-sync-repair.md). Original Go tests and Rust regressions pass; the three broader unchanged session failures remain explicit. Parent Domain/session/PD package acceptance and O11 are not implied. |
 | O13 | **P2; source-confirmed:** closest-adaptive is mapped to mixed replica reads, but production does not provide the domain AZ-distribution decision, local-zone label or request adjuster that completes that policy. Injected-label transport tests cover only the lower-level selector. | `rust/crates/tidb-session/src/vars.rs:2438`; `rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs:133`, `:785`, `:1554`; `rust/crates/tidb-txnkv/src/kv_contract.rs:714` | `pkg/domain/domain.go::closestReplicaReadCheckLoop`/`checkReplicaRead` compare TiDB/TiKV AZ distribution and enable the adaptive request policy. Compose distribution refresh, session policy, labels and request adjustment. No live AZ or locality benchmark was run. |
-| P04 | **P2; source-confirmed seed contract:** BR restore utilities still accept and return a narrowed handwritten File, so their public range results cannot retain the full backup file metadata. Complete generated brpb ownership does not reach these consumers. | `rust/crates/tidb-br/src/restore_utils/proto.rs:78`; `restore_utils/merge.rs:70` takes File and returns RangeStats<File>; `rewrite_rule.rs` uses the local RewriteRule | Master `br/pkg/restore/utils/merge.go::MergeAndRewriteFileRanges` retains generated `backuppb.File` pointers in ranges. Pinned brpb includes SHA-256, version bounds, table metadata, size and cipher IV absent from the local File. Use the complete generated value or a view retaining it through grouping/cloning and importer handoff. This helper is not integrated into live BRIE; no production file loss is claimed. P02 remains repaired for the compared schemas. |
+| P04 | **Contract repaired:** both handwritten restore protocol types are removed. Range merging retains shared complete generated files; lookup borrows generated rules and explicit cloning deep-copies them. SHA-256, versions, table metadata, size and cipher IV survive by identity. | `rust/crates/tidb-br/src/restore_utils.rs`; `restore_utils/merge.rs`; `restore_utils/rewrite_rule.rs`; generated exports in `tidb-proto` | Current master `93a01d31f6`, complete eight-artifact `br/pkg/restore/utils` review and original Go race tests: [receipt](restore-utils-protocol-repair.md). All original Rust cases and five merge workloads pass. P04's protocol consumer boundary is repaired; live BRIE (E07), diagnostics and external package acceptance are not implied. |
 
 ## Review candidates, not yet established defects
 

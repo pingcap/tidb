@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `br/pkg/restore/utils` lands as a complete package: the rewrite rules
+//! Go `br/pkg/restore/utils`: the rewrite rules
 //! that translate a backup's table and index key prefixes into the IDs the
 //! restore target actually allocated, and the range merging that turns a
 //! backup's many small SST ranges into region-sized split points.
@@ -22,18 +22,15 @@
 //! - [`merge`] <- `merge.go`
 //! - [`misc`] <- `misc.go`
 //! - [`common`] <- `common.go`
-//! - [`proto`] holds the two kvproto messages this package treats as flat
-//!   structs; see below.
+//! The public File and RewriteRule types are the complete generated native
+//! protocol values, shared through tidb-proto.
 //!
 //! # Narrowings and boundaries
 //!
-//! - NARROWING: `import_sstpb.RewriteRule` and `brpb.File` are flat protobuf
-//!   messages that this package only ever reads and writes field by field.
-//!   They are declared locally in [`proto`] with `// boundary:` notes, so no
-//!   protobuf runtime or generated code crosses into this crate. Go's
-//!   generated `GetXxx()` accessors return the zero value for a `nil` message;
-//!   Rust spells the same thing with `Option<&RewriteRule>` plus the
-//!   [`proto::RewriteRule::get_old_key_prefix`] family of nil-tolerant helpers.
+//! - File ranges retain shared generated `backup.File` values with `Arc`, as
+//!   Go carries `*backuppb.File` through grouping and merging. Rules use the
+//!   generated `import_sstpb.RewriteRule`; lookups borrow the selected rule,
+//!   and `go_clone` deep-copies it at Go's explicit clone boundary.
 //! - boundary: `br/pkg/errors`' normalized sentinels become
 //!   [`rewrite_rule::RestoreErrorKind`] carried inside
 //!   [`rewrite_rule::RestoreError`]. `errors.Annotate(kind, msg).Error()`
@@ -52,13 +49,12 @@
 //!   result deterministic: duplicate ranges are an error either way.
 //! - `log.Panic` on two files sharing a start key but not an end key becomes a
 //!   Rust `panic!` with the same three values.
-//! - `zap`/`logutil` logging calls carry no semantics and are dropped; the
-//!   branches they sit in are preserved.
+//! - `zap`/`logutil` logging is not integrated; the branches are preserved,
+//!   but diagnostic output is not claimed to match Go.
 
 pub mod common;
 pub mod merge;
 pub mod misc;
-pub mod proto;
 pub mod rewrite_rule;
 
 pub use common::CreatedTable;
@@ -67,7 +63,6 @@ pub use misc::{
     encode_key_prefix, get_index_id_map, get_partition_id_map, get_table_id_map, truncate_ts,
     DEFAULT_CF_NAME, WRITE_CF_NAME,
 };
-pub use proto::{File, RewriteRule};
 pub use rewrite_rule::{
     empty_rewrite_rule, empty_rewrite_rules_map, find_matched_rewrite_rule,
     get_rewrite_encoded_keys, get_rewrite_raw_keys, get_rewrite_rule_of_table, get_rewrite_rules,
@@ -75,6 +70,7 @@ pub use rewrite_rule::{
     set_time_range_filter, validate_file_rewrite_rule, AppliedFile, RestoreError, RestoreErrorKind,
     RewriteRules, RewrittenKeys, TableIdRemap,
 };
+pub use tidb_proto::{backup::File, import_sstpb::RewriteRule};
 
 #[cfg(test)]
 mod return_contract_tests {
