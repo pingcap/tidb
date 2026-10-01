@@ -412,7 +412,9 @@ func TestJobOrchestratorSubmitGraceStartsAfterContextCancel(t *testing.T) {
 func TestJobOrchestratorRecordSubmissionGetsFreshGraceTimeout(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("50ms")`))
+	// Each probe is below the grace timeout, while both probes together exceed it.
+	// This still catches reusing the submit grace window for recordSubmission.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("150ms")`))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout"))
 	})
@@ -495,13 +497,13 @@ func TestJobOrchestratorRecordSubmissionGetsFreshGraceTimeout(t *testing.T) {
 	<-submitCheckedAfterCancel
 	require.Never(t, func() bool {
 		return channelClosed(submitCtxDone)
-	}, 40*time.Millisecond, 5*time.Millisecond)
+	}, 80*time.Millisecond, 5*time.Millisecond)
 	close(allowSubmitReturn)
 
 	<-updateStarted
 	require.Never(t, func() bool {
 		return channelClosed(updateCtxDone)
-	}, 20*time.Millisecond, 5*time.Millisecond)
+	}, 80*time.Millisecond, 5*time.Millisecond)
 	close(allowUpdateReturn)
 
 	err := <-errCh
