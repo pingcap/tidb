@@ -76,6 +76,15 @@ const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
 const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
 
+fn wait_ddl_retry(stopped: &Receiver<()>, delay: Duration) -> Result<(), String> {
+    match stopped.recv_timeout(delay) {
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+        Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("DDL worker stopped or ownership lost".to_owned())
+        }
+    }
+}
+
 fn handle_server_state_watch<T>(
     poll: Result<T, std::sync::mpsc::TryRecvError>,
     rewatch: impl FnOnce(),
@@ -248,6 +257,7 @@ where
                             &KvTableIndexBackfiller,
                             schema_sync.as_ref(),
                             &check_owner,
+                            &|delay| wait_ddl_retry(&stopped, delay),
                         ) {
                             Ok(PersistedDdlJobOutcome::Finished | PersistedDdlJobOutcome::Paused) => {}
                             Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
@@ -678,6 +688,18 @@ mod schema_sync_tests {
     }
 
     #[test]
+    fn worker_retry_wait_uses_owner_retirement() {
+        let (stop, stopped) = channel();
+        assert!(wait_ddl_retry(&stopped, Duration::ZERO).is_ok());
+        // A queued retirement and a disconnected owner both interrupt even
+        // an arbitrarily long retry delay; no elapsed-time assertion is needed.
+        stop.send(()).unwrap();
+        assert!(wait_ddl_retry(&stopped, Duration::from_secs(3600)).is_err());
+        drop(stop);
+        assert!(wait_ddl_retry(&stopped, Duration::from_secs(3600)).is_err());
+    }
+
+    #[test]
     fn persisted_worker_recovers_schema_barriers_before_history() {
         if crate::isolate_process_globals() {
             return;
@@ -774,6 +796,7 @@ mod schema_sync_tests {
                 &KvTableIndexBackfiller,
                 &barrier,
                 check,
+                &|_| panic!("this job must not wait after an action error"),
             )
         };
         let before = tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
@@ -1111,6 +1134,23 @@ mod schema_sync_tests {
         failed.type_ = ActionType::ACTION_CREATE_SCHEMA;
         failed.state = JobState::QUEUEING;
         failed.fill_v2_arg(serde_json::from_str("{}").unwrap());
+        // Committing an action error is a successful worker step. The same
+        // worker must carry it through cancellation and durable history.
+        set_limit(0);
+        failed.id = 604;
+        seed(&mut failed);
+        assert_eq!(
+            run(604, None, &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Finished
+        );
+        let history = load_history_persisted_ddl_job(opener.clone(), 604, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, 2);
+        assert!(history.error.is_some());
+        failed.id = 602;
+        set_limit(1);
         seed(&mut failed);
         let checks = std::sync::atomic::AtomicUsize::new(0);
         let lost_before_error_commit = || {
@@ -1124,9 +1164,22 @@ mod schema_sync_tests {
         let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
         assert_eq!(active[0].error_count, 0);
         assert_eq!(active[0].state, JobState::QUEUEING);
+        let run_until_error_count = |count| {
+            run(602, None, &|| {
+                let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+                if active
+                    .iter()
+                    .any(|job| job.id == 602 && job.error_count >= count)
+                {
+                    Err("owner retired after error checkpoint".into())
+                } else {
+                    Ok(())
+                }
+            })
+        };
         assert!(matches!(
-            run(602, None, &|| Ok(())),
-            Err(ClusterDdlError::Plan(_))
+            run_until_error_count(1),
+            Err(ClusterDdlError::SchemaSync(_))
         ));
         let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
         assert_eq!(active[0].error_count, 1);
@@ -1136,8 +1189,8 @@ mod schema_sync_tests {
         set_limit(0);
         tidb_vardef::set_ddl_error_count_limit(100);
         assert!(matches!(
-            run(602, None, &|| Ok(())),
-            Err(ClusterDdlError::Plan(_))
+            run_until_error_count(2),
+            Err(ClusterDdlError::SchemaSync(_))
         ));
         let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
         assert_eq!(active[0].error_count, 2);
@@ -1156,6 +1209,63 @@ mod schema_sync_tests {
             .read()
             .message()
             .starts_with("DDL job rollback, error msg:"));
+
+        // A retry wait sees the committed error and current count. Retiring
+        // the owner in that wait leaves a replacement the same durable job.
+        for (id, interrupt) in [(605, true), (606, false)] {
+            set_limit(3);
+            failed.id = id;
+            seed(&mut failed);
+            let waits = std::cell::Cell::new(0);
+            let result = run_persisted_ddl_job(
+                opener.clone(),
+                id,
+                timeout,
+                None,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &barrier,
+                &|| Ok(()),
+                &|delay| {
+                    assert_eq!(delay, Duration::from_secs(1));
+                    waits.set(waits.get() + 1);
+                    let active =
+                        load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+                    let active = active.iter().find(|job| job.id == id).unwrap();
+                    assert_eq!(active.error_count, 1, "wait must follow the first commit");
+                    assert!(active.error.is_some());
+                    assert!(load_history_persisted_ddl_job(opener.clone(), id, timeout)
+                        .unwrap()
+                        .is_none());
+                    if interrupt {
+                        Err("owner retired during retry wait".into())
+                    } else {
+                        // The next step reloads the new process limit; it
+                        // must not keep a per-job copy of the old budget.
+                        set_limit(2);
+                        Ok(())
+                    }
+                },
+            );
+            assert_eq!(waits.get(), 1);
+            if interrupt {
+                assert!(matches!(result, Err(ClusterDdlError::SchemaSync(_))));
+                set_limit(0);
+                assert_eq!(
+                    run(id, None, &|| Ok(())).unwrap(),
+                    PersistedDdlJobOutcome::Finished
+                );
+            } else {
+                assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Finished);
+            }
+            let history = load_history_persisted_ddl_job(opener.clone(), id, timeout)
+                .unwrap()
+                .unwrap();
+            assert_eq!(history.state, JobState::CANCELLED);
+            assert_eq!(history.error_count, if interrupt { 3 } else { 4 });
+            assert!(history.error.is_some());
+        }
 
         // An ADMIN pause committed during validation must win over a stale
         // validation error. A detached checkpoint would overwrite PAUSING.
@@ -1246,6 +1356,7 @@ mod schema_sync_tests {
             &validator,
             &barrier,
             &|| Ok(()),
+            &|_| panic!("this job must not wait after an action error"),
         );
         assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Paused);
         let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
@@ -1277,6 +1388,7 @@ mod schema_sync_tests {
         ));
         // Without a racing control command, the very same error checkpoint
         // drives ordinary rollback and history, even with the retry limit 0.
+        set_limit(0);
         let result = run_persisted_ddl_job(
             opener.clone(),
             700,
@@ -1287,11 +1399,9 @@ mod schema_sync_tests {
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
+            &|_| panic!("this job must not wait after an action error"),
         );
-        assert!(matches!(
-            result,
-            Err(ClusterDdlError::CheckConstraintValidation(_))
-        ));
+        assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Finished);
         let history = load_history_persisted_ddl_job(opener.clone(), 700, timeout)
             .unwrap()
             .unwrap();
@@ -1300,6 +1410,60 @@ mod schema_sync_tests {
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
             tidb_error::tidb::errcode::ErrCheckConstraintViolated as isize
+        );
+        let sql_error = persisted_job_error(&history.error.as_ref().unwrap().read());
+        assert_eq!(sql_error.code, 3819);
+        assert_eq!(sql_error.message, "Check constraint 'c' is violated.");
+
+        // Owner replacement between rollback publication and acknowledgement
+        // must produce exactly the same worker outcome and SQL history error.
+        set_limit(5);
+        let tx = opener.begin().unwrap();
+        assert!(matches!(
+            tx.commit(
+                vec![tidb_txnkv::transaction::BufferMutation::set(
+                    tidb_meta::key::table_kv_key(505, 701),
+                    tidb_meta::value::serialize_table_info(&table).unwrap(),
+                )
+                .unwrap()],
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        check_job.id = 704;
+        seed(&mut check_job);
+        barrier.fail.store(true, Ordering::Relaxed);
+        let result = run_persisted_ddl_job(
+            opener.clone(),
+            704,
+            timeout,
+            None,
+            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
+            &PauseDuringValidation(|_: &MutationBuffer| {}),
+            &barrier,
+            &|| Ok(()),
+            &|_| panic!("CHECK failure is not retryable"),
+        );
+        assert!(matches!(result, Err(ClusterDdlError::SchemaSync(_))));
+        assert!(load_history_persisted_ddl_job(opener.clone(), 704, timeout)
+            .unwrap()
+            .is_none());
+        barrier.fail.store(false, Ordering::Relaxed);
+        assert_eq!(
+            run(704, None, &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Finished
+        );
+        let history = load_history_persisted_ddl_job(opener.clone(), 704, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::ROLLBACK_DONE);
+        assert_eq!(history.error_count, 1);
+        let recovered = persisted_job_error(&history.error.as_ref().unwrap().read());
+        assert_eq!(
+            (recovered.code, recovered.state, recovered.message),
+            (sql_error.code, sql_error.state, sql_error.message)
         );
 
         // Restore the CHECK intermediate state and force its validator to
@@ -1353,6 +1517,7 @@ mod schema_sync_tests {
             &panicking,
             &barrier,
             &lost_owner,
+            &|_| panic!("lost owner must not wait"),
         )
         .is_err());
         let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
@@ -1368,6 +1533,7 @@ mod schema_sync_tests {
             &panicking,
             &barrier,
             &|| Ok(()),
+            &|_| panic!("this job must not wait after an action error"),
         );
         assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Finished);
         let history = load_history_persisted_ddl_job(opener.clone(), 702, timeout)
@@ -1442,6 +1608,7 @@ mod schema_sync_tests {
                 &pause_then_panic,
                 &barrier,
                 &|| Ok(()),
+                &|_| panic!("this job must not wait after an action error"),
             )
             .unwrap(),
             PersistedDdlJobOutcome::Paused
@@ -1464,6 +1631,7 @@ mod schema_sync_tests {
                 &panicking,
                 &barrier,
                 &|| Ok(()),
+                &|_| panic!("this job must not wait after an action error"),
             )
             .unwrap(),
             PersistedDdlJobOutcome::Finished

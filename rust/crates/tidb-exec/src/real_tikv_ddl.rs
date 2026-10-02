@@ -679,7 +679,26 @@ enum DdlPhase<'statement> {
 struct CommittedDdlPhase {
     report: ClusterDdlReport,
     persisted_job_terminal: bool,
-    run_error: Option<DdlPlanError>,
+    run_error: Option<(DdlPlanError, i64)>,
+}
+
+// Go isRetryableJobError tests the next error against the CURRENT process
+// limit, after the checkpoint committed. Match the original error: a plain
+// action failure is retryable even though toTError persists it as DDL/-1.
+fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) -> bool {
+    if error_count.wrapping_add(1) >= limit {
+        return false;
+    }
+    let message = error.to_string();
+    if tidb_util::dbterror::REORG_RETRYABLE_ERR_MSGS
+        .iter()
+        .any(|pattern| message.contains(pattern))
+    {
+        return true;
+    }
+    error
+        .mysql_error_code()
+        .is_none_or(|code| tidb_util::dbterror::REORG_RETRYABLE_ERR_CODES.contains(&code))
 }
 
 // Go worker.loadGlobalVars uses an independent session: a SET GLOBAL committed
@@ -805,6 +824,8 @@ pub enum PersistedDdlJobOutcome {
 /// Runs an integrated persisted action until it finishes or pauses. A durable
 /// MDL row always takes precedence over the next action or history transaction.
 /// Returning Paused releases the worker without completing the submitting SQL.
+/// `wait_retry` waits for the requested interval or returns an error when this
+/// owner's worker context is cancelled. It must not use statement cancellation.
 #[allow(clippy::too_many_arguments)]
 pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
@@ -816,8 +837,8 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
     check_owner: &dyn Fn() -> Result<(), String>,
+    wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
-    let mut validation_failure = None;
     let mut previously_synced_version = None;
     loop {
         let outcome = commit_cluster_ddl_phase_with_retry(
@@ -863,25 +884,21 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                     eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
                         serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
                 }
-                return validation_failure.map_or(Ok(PersistedDdlJobOutcome::Finished), |error| {
-                    Err(ClusterDdlError::CheckConstraintValidation(error))
-                });
+                return Ok(PersistedDdlJobOutcome::Finished);
             }
             DdlPhaseOutcome::Committed(committed) => {
-                if let Some(error) = committed.run_error {
-                    if let DdlPlanError::Admission(failure) = &error {
-                        if failure.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated {
-                            validation_failure = Some(LockSqlError {
-                                code: failure.code,
-                                state: *b"HY000",
-                                message: failure.reason.clone(),
-                            });
-                            continue;
-                        }
+                if let Some((error, error_count)) = committed.run_error {
+                    if is_retryable_job_error(
+                        &error,
+                        error_count,
+                        tidb_vardef::ddl_error_count_limit(),
+                    ) {
+                        check_owner().map_err(ClusterDdlError::SchemaSync)?;
+                        // Go WaitTimeWhenErrorOccurred defaults to one second.
+                        // This wait belongs to the committed job step, not the
+                        // scheduler's scan cadence or the submitting session.
+                        wait_retry(Duration::from_secs(1)).map_err(ClusterDdlError::SchemaSync)?;
                     }
-                    // The retry belongs to a new job step. Returning before
-                    // this checkpoint committed would lose the error budget.
-                    return Err(ClusterDdlError::Plan(error));
                 }
             }
             DdlPhaseOutcome::AlreadySatisfied(_) => {
@@ -1314,7 +1331,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     Ok(PersistedDdlJobPlan::Step(step)) => Ok((
                         DdlPlan::Write(Box::new(step.write)),
                         step.terminal,
-                        step.run_error,
+                        step.run_error.map(|error| (error, step.error_count)),
                     )),
                     Err(error) => Err(error),
                 }
@@ -1423,7 +1440,9 @@ fn commit_cluster_ddl_with_backfill_once<
             buffer = MutationBuffer::new();
             write = checkpoint.write;
             persisted_job_terminal = checkpoint.terminal;
-            run_error = checkpoint.run_error;
+            run_error = checkpoint
+                .run_error
+                .map(|error| (error, checkpoint.error_count));
         }
     }
     let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
@@ -1641,6 +1660,32 @@ fn classify(planned_version: i64, cause: &TransactionCause) -> ClusterDdlError {
 mod tests {
     use super::*;
     use tidb_txnkv::transaction::{OptimisticTransactionReceipt, UndeterminedTransaction};
+
+    #[test]
+    fn committed_action_retry_matches_go_classification_and_budget() {
+        let coded = |code, message: &str| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(code, message))
+        };
+        for &code in tidb_util::dbterror::REORG_RETRYABLE_ERR_CODES.iter() {
+            let error = coded(code, "temporary source error");
+            assert!(is_retryable_job_error(&error, 1, 3), "{code}");
+            assert!(!is_retryable_job_error(&error, 2, 3), "{code}");
+        }
+        for code in [1049, 1061, 3819, 1105] {
+            assert!(!is_retryable_job_error(&coded(code, "permanent"), 1, 3));
+        }
+        for pattern in tidb_util::dbterror::REORG_RETRYABLE_ERR_MSGS {
+            // Go tests messages before the typed code, but after the limit.
+            let error = coded(1105, &format!("wrapped: {pattern}: failed"));
+            assert!(is_retryable_job_error(&error, 0, 3));
+            assert!(!is_retryable_job_error(&error, 2, 3));
+        }
+        let plain = DdlPlanError::Encode("unknown action failure".into());
+        assert!(is_retryable_job_error(&plain, 1, 3));
+        for limit in [0, 1, 2] {
+            assert!(!is_retryable_job_error(&plain, 1, limit));
+        }
+    }
 
     #[test]
     fn a_write_conflict_on_a_catalog_change_is_named_a_concurrent_ddl() {

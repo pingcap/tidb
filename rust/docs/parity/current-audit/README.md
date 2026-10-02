@@ -604,3 +604,12 @@ DDL/CodeUnknown as Go does. Legacy coded envelopes remain readable. This does no
 restore RFC/class identity already erased by admission/storage producers, so D05
 and the 75-unresolved count remain unchanged. Mixed-node error interoperability,
 retry policy and whole-package acceptance are still open.
+
+The [shared worker continuation repair](../../ddl-worker-continuation-execplan.md)
+removes CHECK's private validation-failure memory and the escape of committed
+action errors to scheduler polling. All live persisted actions continue through
+the shared worker; retry waiting follows a successful checkpoint, uses the
+committed count/current limit, and is interrupted by owner retirement. Failed SQL
+results remain in durable history, including after owner replacement. D05 remains
+partial and counts stay unchanged: source identity, complete error taxonomy,
+configurable wait/metrics, transaction-reset policy and whole-action effects are open.

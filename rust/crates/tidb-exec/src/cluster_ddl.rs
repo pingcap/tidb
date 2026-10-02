@@ -2868,7 +2868,7 @@ impl fmt::Display for DdlPlanError {
 impl DdlPlanError {
     /// The existing SQL contract is owned with the error, so direct execution
     /// and persisted action checkpoints cannot select different error numbers.
-    fn mysql_error_code(&self) -> Option<u16> {
+    pub(crate) fn mysql_error_code(&self) -> Option<u16> {
         use tidb_error::tidb::errcode;
         Some(match self {
             Self::UnknownDatabase(_) => errcode::ErrBadDB,
@@ -3002,8 +3002,11 @@ pub struct PersistedDdlJobStep {
     pub write: DdlWrite,
     /// Whether this transaction removes the job from the active table.
     pub terminal: bool,
-    /// Action error to report only after committing this checkpoint.
+    /// Action error for the worker's post-commit retry policy. SQL results
+    /// come from durable history, not this step's return value.
     pub run_error: Option<DdlPlanError>,
+    /// Error count saved in this checkpoint, including the current action.
+    pub error_count: i64,
 }
 
 // Action handlers only plan metadata and update the in-memory job. The worker
@@ -3347,6 +3350,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             write: job_only_write(ddl_job_id, mutations),
             terminal: false,
             run_error: None,
+            error_count: active.job.error_count,
         }));
     }
     let cancelling = active.job.is_cancelling();
@@ -3415,6 +3419,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         write: step.write,
         terminal: false,
         run_error: step.run_error,
+        error_count: active.job.error_count,
     }))
 }
 
@@ -3457,6 +3462,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         write: job_only_write(active.job.id, mutations),
         terminal: true,
         run_error: None,
+        error_count: active.job.error_count,
     })
 }
 
@@ -6228,6 +6234,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
         write: job_only_write(ddl_job_id, mutations),
         terminal: false,
         run_error,
+        error_count: active.job.error_count,
     })
 }
 

@@ -2267,3 +2267,21 @@ remains partial: admission/storage producers still erase source RFC/class
 identities, and numeric compatibility does not prove mixed-node interoperability.
 Rollback-transaction classification, retry timing and complete action owners remain
 open. Counts remain 85 tracked, 75 unresolved and ten repaired.
+
+
+### Shared DDL worker continuation, 2026-10-02
+
+
+Starting at 77683d6dfb4b77ae11e14fba70e165a648200387 with unchanged Go/native
+pins, remove the worker's private CHECK validation result and its escape of other
+committed action errors to scheduler polling. The existing shared worker now
+continues all live actions after their checkpoint, applies source retry code/message
+classification and current-limit rules, and waits through the owner's stop channel.
+Worker completion means history was committed; SQL success/failure comes from that
+history consistently with and without owner replacement. See
+ddl-worker-continuation-execplan.md for red/green and publication evidence.
+
+D05 remains partial. Source error identity, full taxonomy, rollback-transaction
+classification, configurable retry timing/metrics and missing action effects remain
+open. This is live-path maintenance, not pkg/ddl acceptance; the register remains
+85 tracked, 75 unresolved and ten repaired.
