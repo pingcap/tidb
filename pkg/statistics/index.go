@@ -212,3 +212,38 @@ func (idx *Index) GetTopN() *TopN {
 func (idx *Index) IsAnalyzed() bool {
 	return IsAnalyzed(idx.StatsVer)
 }
+
+// IsColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
+// single-column unique index whose only column has the given offset.
+func IsColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if IsSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSingleColNonPrefixUniqueIndex returns true if the index is public, unique
+// (or primary), has exactly one column, and uses neither a prefix nor a
+// partial-index condition.
+func IsSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
+	return idx.State == model.StatePublic &&
+		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
+		!idx.HasPrefixIndex() && !idx.HasCondition()
+}
+
+// UniqueByDefinition reports whether a public single-column unique index
+// without a prefix or a condition keeps every non-NULL value of the column or
+// index distinct, the rule that ANALYZE uses to skip TopN.
+func UniqueByDefinition(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+	if isIndex {
+		idx := tblInfo.FindIndexByID(id)
+		return idx != nil && IsSingleColNonPrefixUniqueIndex(idx)
+	}
+	col := model.FindColumnInfoByID(tblInfo.Columns, id)
+	return col != nil && IsColumnCoveredBySingleColUniqueIndex(tblInfo, col.Offset)
+}

@@ -867,16 +867,12 @@ workLoop:
 				collector.Destroy()
 				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
+			// A unique column or index has no frequent value for TopN, and its
+			// row count is its NDV.
+			collector.Unique = statistics.UniqueByDefinition(e.tableInfo, !task.isColumn, task.id)
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
-			if task.isColumn {
-				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
-					numTopN = 0
-				}
-			} else {
-				idx := e.indexes[task.slicePos-colLen]
-				if isSingleColNonPrefixUniqueIndex(idx) {
-					numTopN = 0
-				}
+			if collector.Unique {
+				numTopN = 0
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {

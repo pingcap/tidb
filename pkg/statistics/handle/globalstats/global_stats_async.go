@@ -581,7 +581,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 			// we just set the table-level NDV.
 			if *globalHg != nil {
-				(*globalHg).NDV = a.globalStatsNDV[item.idx]
+				ndv := a.globalStatsNDV[item.idx]
+				if statistics.UniqueByDefinition(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
+					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
+				}
+				(*globalHg).NDV = ndv
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil

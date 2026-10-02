@@ -639,6 +639,29 @@ func TestGlobalStatsNDV(t *testing.T) {
 	tk.MustExec("insert into t values (31), (33), (34)")
 	tk.MustExec("insert into t values (1), (2), (3)")
 	checkNDV(13, 3, 3, 3, 4)
+
+	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV here,
+	// except for the column and index of the single-column unique key, which
+	// take the exact row count on partitions and on the global stats.
+	tk.MustExec(`create table tu (a int, b int not null, c int, primary key (a) nonclustered,
+	unique key ab(a, b), key ic(c)) partition by hash(a) partitions 2`)
+	tk.MustExec("insert into tu values (1, 1, 1)")
+	for n := 1; n < 1<<15; n *= 2 {
+		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
+	}
+	for _, async := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
+		tk.MustExec("analyze table tu")
+		var ndvs []string
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tu'").Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v %v", r[2], r[3], r[6]))
+		}
+		require.Equal(t, []string{
+			"global PRIMARY 32768", "global a 32768", "global ab 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"p0 PRIMARY 16384", "p0 a 16384", "p0 ab 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
+			"p1 PRIMARY 16384", "p1 a 16384", "p1 ab 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+		}, ndvs)
+	}
 }
 
 func TestGlobalStatsIndexNDV(t *testing.T) {
