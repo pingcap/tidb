@@ -19,9 +19,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -177,5 +179,20 @@ func SubTestSampledNDV() func(*testing.T) {
 		for _, counts := range []ndvCounts{{rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
 			require.Zero(t, newSampledFMSketch(&tipb.FMSketch{}, counts).NDV())
 		}
+
+		// Values the schema keeps unique need no estimate.
+		singles := make([]uint64, 0, 14)
+		for i := range 14 {
+			singles = append(singles, uint64(i+1))
+		}
+		distinct := make([]*SampleItem, 0, 300)
+		for i := range 300 {
+			distinct = append(distinct, &SampleItem{Value: types.NewIntDatum(int64(i)), Ordinal: i})
+		}
+		sketch := newSampledFMSketch(&tipb.FMSketch{Hashset: singles}, ndvCounts{rows: 3000, samples: 15})
+		collector := &SampleCollector{Samples: distinct, FMSketch: sketch, Count: 3000, Unique: true}
+		hist, _, err := BuildHistAndTopN(mock.NewContext(), 256, 0, 1, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(3000), hist.NDV)
 	}
 }
