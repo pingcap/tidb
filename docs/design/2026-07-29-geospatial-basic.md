@@ -266,8 +266,8 @@ or polygon does.
 
 **One edge model, everywhere.** All 4326 topology uses a single edge model, so:
 
-> `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every pair of
-> geometry types, and likewise for its negation `ST_Disjoint`.
+> `ST_Distance(g1, g2) = 0` if and only if `ST_Intersects(g1, g2)`, for every operand
+> pair both accept, and likewise for its negation `ST_Disjoint`.
 
 The boundary-sensitive predicates keep their DE-9IM definitions: a point on a polygon's
 boundary is at distance zero and correctly not `ST_Within`.
