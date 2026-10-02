@@ -43,9 +43,12 @@ impl KeySetShard {
     }
 
     fn shard(&self, key: i64) -> &RwLock<HashMap<i64, Arc<Table>>> {
-        // Match Go's signed remainder. Negative multiples of 256 reach shard
-        // zero; other negative remainders are invalid array indexes.
-        let index = (key % KEY_SET_COUNT as i64) as usize;
+        // `rem_euclid` keeps every i64 key in `[0, 256)`: identical to the
+        // signed remainder for non-negative keys, and a valid shard for the
+        // negative ids the cluster allocator can hand the stats cache (a
+        // bare `%` wraps `as usize` into an out-of-bounds index — the
+        // g-admin2 analyze panic).
+        let index = key.rem_euclid(KEY_SET_COUNT as i64) as usize;
         &self.shards[index]
     }
 
