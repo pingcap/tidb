@@ -70,6 +70,21 @@ pub fn run_alter_table_in(
     let atomic_foreign_key_actions = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::AlterTable(alter) => {
+                // Online repartition requires Go's durable reorganization
+                // owner. Refuse the entire statement before any other action
+                // can mutate the table while that owner is unavailable.
+                if alter.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        tidb_ast::AlterTableAction::Partition(
+                            tidb_ast::AlterPartitionAction::Repartition(_)
+                        )
+                    )
+                }) {
+                    return Err(DriverError::unsupported(
+                        "ALTER TABLE ... PARTITION BY requires durable partition reorganization",
+                    ));
+                }
                 alter.actions.len() > 1
                     && alter.actions.iter().any(|action| match action {
                         tidb_ast::AlterTableAction::AddForeignKey(_) => true,
@@ -644,24 +659,6 @@ fn run_alter_table_in_inner(
             }) => {
                 reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
             }
-            // `ALTER TABLE ... PARTITION BY ...` on an existing table: go
-            // builds the new partitioning through the same
-            // `buildTablePartitionInfo` path a CREATE uses, then swaps the
-            // table's partition info. `build_partition_metadata` needs a
-            // `CreateTableStmt` to read `partitioning` from, so the
-            // Repartition payload is transplanted onto a shell statement
-            // carrying this table's real names and types.
-            tidb_ast::AlterTableAction::Partition(
-                tidb_ast::AlterPartitionAction::Repartition(partitioning),
-            ) => {
-                repartition_partition_action(
-                    catalog,
-                    &database,
-                    &name,
-                    partitioning,
-                    ctx,
-                )?
-            }
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -1082,83 +1079,6 @@ fn add_hash_partitions_action(
     std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("add partition", error))
-}
-
-/// `ALTER TABLE ... PARTITION BY ...` on an existing table: go builds the
-/// new partitioning through the same path a CREATE uses, then swaps the
-/// table's partition info. `build_partition_metadata` needs a
-/// `CreateTableStmt` to read `partitioning` from, so the Repartition payload
-/// is transplanted onto a shell statement carrying this table's real names
-/// and types. The table's data rows keep their keys; go's reorganize moves
-/// them during the job's backfill, which a synchronous catalog writer does
-/// not reproduce — the bounds alone define where future rows route.
-fn repartition_partition_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    partitioning: &tidb_ast::TablePartitioning,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-        return Err(DriverError::PartitionManagementOnNonpartitioned);
-    };
-    let names: Vec<String> = table
-        .columns
-        .iter()
-        .map(|column| column.name.clone())
-        .collect();
-    let types: Vec<FieldType> = table
-        .columns
-        .iter()
-        .map(|column| column.field_type.clone())
-        .collect();
-    let handle_offsets: Vec<usize> = Vec::new();
-    let create = tidb_ast::CreateTableStmt {
-        temporary: tidb_ast::CreateTableTemporary::None,
-        on_commit_delete: false,
-        if_not_exists: false,
-        name: vec![database.to_owned(), table_name.to_owned()],
-        like_table: None,
-        columns: Vec::new(),
-        table_constraints: Vec::new(),
-        table_options: Vec::new(),
-        partitioning: Some(partitioning.clone()),
-        splits: Vec::new(),
-        ctas: None,
-    };
-    let empty_indexes: Vec<super::KvIndex> = Vec::new();
-    let Some((_metadata, spec)) = super::table_partition::build_partition_metadata(
-        &create,
-        &names,
-        &types,
-        // The existing indexes' KV shapes are unchanged by a repartition
-        // that keeps the same partitioning columns; an empty index set
-        // skips the unique-key-includes-partition-columns check, which is
-        // the strictness CREATE enforces and this action re-checks per go.
-        &empty_indexes,
-        &handle_offsets,
-        &mut || catalog.allocate_table_id(),
-        ctx,
-    )?
-    else {
-        return Err(DriverError::PartitionManagementOnNonpartitioned);
-    };
-
-    // `set_partition` stores the SPEC (the routing source of truth); the
-    // stored TEXT metadata rides the definitions it carries.
-    match catalog.table_mut_in(database, table_name) {
-        Some(crate::TableEntry::Kv(table)) => {
-            std::sync::Arc::make_mut(table).set_partition(spec);
-        }
-        _ => return Err(DriverError::PartitionManagementOnNonpartitioned),
-    }
-    // go's ALTER ... PARTITION BY warns "NEW partitions" (its own wording,
-    // distinct from the REORGANIZE arm's "related" — oracle g-partition).
-    ctx.append_warning_parts(
-        1105,
-        "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
-    );
-    Ok(())
 }
 
 fn reorganize_partition_action(

@@ -47,3 +47,40 @@ fn add_and_truncate_partition_lifecycle() {
     session.run("insert into t values (12)").unwrap();
     assert_eq!(rows(&mut session, "select a from t partition (p1)"), "12");
 }
+
+/// Containment until the complete durable partition owner is available.
+/// Go supports these changes through online reorganization; silently swapping
+/// routing without that owner must not lose access to the existing records.
+#[test]
+fn repartition_refusal_preserves_rows_and_schema() {
+    for create in [
+        "CREATE TABLE t (a INT)",
+        "CREATE TABLE t (a INT) PARTITION BY RANGE(a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    ] {
+        for alter in [
+            "ALTER TABLE t PARTITION BY HASH(a) PARTITIONS 2",
+            "ALTER TABLE t ADD COLUMN b INT PARTITION BY HASH(a) PARTITIONS 2",
+        ] {
+            tidb_parser::parse(alter).expect("the refused action list must reach DDL admission");
+            let mut session = Session::new();
+            session.run(create).unwrap();
+            session.run("INSERT INTO t VALUES (1),(11)").unwrap();
+            let schema_before = format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap());
+
+            let outcome = session.run(alter);
+            assert_eq!(rows(&mut session, "SELECT a FROM t ORDER BY a"), "1;11");
+            assert_eq!(
+                format!("{:?}", session.run("SHOW CREATE TABLE t").unwrap()),
+                schema_before,
+                "a refused repartition must preserve the whole schema: {alter}"
+            );
+            assert!(
+                outcome.is_err(),
+                "unaccepted repartition was dispatched: {alter}"
+            );
+            session.run("INSERT INTO t VALUES (2)").unwrap();
+            assert_eq!(rows(&mut session, "SELECT a FROM t ORDER BY a"), "1;2;11");
+        }
+    }
+}

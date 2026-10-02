@@ -2120,20 +2120,6 @@ pub struct StoredPartitionMetadata {
 /// # Errors
 ///
 /// Whatever [`build_table_partitioning`] raises for the clause.
-thread_local! {
-    /// The metadata the most recent `build_partition_metadata` produced on
-    /// this thread, stashed for callers (the ALTER PARTITION BY apply) that
-    /// need the type/expr/columns alongside the spec.
-    static LAST_BUILT_METADATA: std::cell::RefCell<
-        Option<StoredPartitionMetadata>,
-    > = const { std::cell::RefCell::new(None) };
-}
-
-/// The metadata the most recent [`build_partition_metadata`] produced.
-pub fn last_built_partition_metadata() -> Option<StoredPartitionMetadata> {
-    LAST_BUILT_METADATA.with(|slot| slot.borrow().clone())
-}
-
 pub fn build_partition_metadata(
     create: &CreateTableStmt,
     names: &[String],
@@ -2193,7 +2179,6 @@ pub fn build_partition_metadata(
         is_empty_columns,
         definitions,
     };
-    LAST_BUILT_METADATA.with(|slot| *slot.borrow_mut() = Some(built.clone()));
     Ok(Some((built, spec)))
 }
 

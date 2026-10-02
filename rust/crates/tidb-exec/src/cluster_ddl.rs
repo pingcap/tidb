@@ -396,15 +396,6 @@ pub enum DdlStatement {
     },
     /// `ALTER TABLE ... DROP PARTITION`, through the ordinary partition DDL
     /// implementation.
-    RepartitionPartitions {
-        /// The resolved database name.
-        schema: String,
-        /// The table name as written.
-        table: String,
-        /// Canonical SQL retained so the shared partition DDL implementation
-        /// parses and applies exactly the source action.
-        sql: String,
-    },
     DropPartitions {
         /// The resolved database name.
         schema: String,
@@ -1959,24 +1950,6 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add { .. }) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::AddPartitions {
-                schema,
-                table,
-                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
-                    alter.clone(),
-                ))))
-                .restore(),
-            }))
-        }
-        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Repartition(_)) => {
-            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-            // go's ALTER ... PARTITION BY warns that the new partitions'
-            // statistics are outdated (its own wording, distinct from the
-            // REORGANIZE arm's "related" — oracle g-partition line 7).
-            context.append_error_parts(
-                1105,
-                "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
-            );
-            Ok(Some(DdlStatement::RepartitionPartitions {
                 schema,
                 table,
                 sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
@@ -6272,20 +6245,10 @@ fn apply_partition_change(
     schema: &str,
     table: &str,
     sql: &str,
-    repartitioning: bool,
-) -> Result<
-    (
-        tidb_executor::partition_routing::PartitionSpec,
-        tidb_executor::ddl::StoredPartitionMetadata,
-    ),
-    DdlPlanError,
-> {
+) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
     use tidb_executor::ddl::StoredPartitionDefinition;
     use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
 
-    if repartitioning {
-        return apply_repartition_change(stored, schema, table, sql);
-    }
     let partition = stored.partition.as_ref().ok_or_else(|| {
         DdlPlanError::Admission(DdlAdmissionError::with_code(
             1505,
@@ -6394,84 +6357,10 @@ fn apply_partition_change(
     let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
         unreachable!("the temporary partition catalog retains its table")
     };
-    let (spec, metadata) = (
-        table
-            .partition()
-            .expect("ALTER ADD/DROP PARTITION retains partitioning")
-            .clone(),
-        tidb_executor::ddl::last_built_partition_metadata()
-            .expect("ALTER PARTITION BY built partition metadata"),
-    );
-    Ok((spec, metadata))
-}
-
-/// `ALTER TABLE ... PARTITION BY ...` on an existing table: builds the new
-/// partitioning through the same metadata path a CREATE uses and returns the
-/// transformed spec for the plan's meta writes (the table-info JSON carries
-/// the new definitions; go's ALTER PARTITION BY keeps the table's rows and
-/// reorganizes them during the job's backfill).
-fn apply_repartition_change(
-    stored: &TableInfo,
-    schema: &str,
-    table: &str,
-    sql: &str,
-) -> Result<
-    (
-        tidb_executor::partition_routing::PartitionSpec,
-        tidb_executor::ddl::StoredPartitionMetadata,
-    ),
-    DdlPlanError,
-> {
-    use tidb_executor::ddl::StoredPartitionDefinition;
-    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
-
-    let context = tidb_executor::StmtContext::for_query();
-    let mut catalog = Catalog::default();
-    catalog.create_database(schema);
-    let kv_columns = stored
-        .columns
-        .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            KvColumn {
-                name: column.name.original().to_owned(),
-                id: column.id,
-                field_type: column.field_type.clone(),
-                column_info_version: column.version,
-                default_value: None,
-                origin_default: None,
-                comment: column.comment.clone(),
-                generated: None,
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut kv_table = KvTable::new(stored.id, kv_columns);
-    kv_table.name = table.to_owned();
-    catalog
-        .register_kv_in(schema, table, kv_table)
-        .map_err(|error| {
-            let error = error.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
-        })?;
-    tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, &context).map_err(
-        |error| {
-            let error = error.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
-        },
-    )?;
-    let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
-        unreachable!("the temporary repartition catalog retains its table")
-    };
-    // The routing spec AND the stored metadata both feed the plan's meta
-    // writes: the spec re-folds bounds for row routing, the metadata carries
-    // the type/expr/columns the TableInfo JSON serializes.
-    let spec = table
+    Ok(table
         .partition()
-        .expect("ALTER PARTITION BY retains partitioning")
-        .clone();
-    let metadata = tidb_executor::ddl::last_built_partition_metadata()
-        .expect("ALTER PARTITION BY built partition metadata");
-    Ok((spec, metadata))
+        .expect("ALTER ADD/DROP PARTITION retains partitioning")
+        .clone())
 }
 
 fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
@@ -7793,13 +7682,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             }
         }
         DdlStatement::AddPartitions { schema, table, sql }
-        | DdlStatement::RepartitionPartitions { schema, table, sql }
         | DdlStatement::DropPartitions { schema, table, sql } => {
             let adding = matches!(statement, DdlStatement::AddPartitions { .. });
-            let repartitioning =
-                matches!(statement, DdlStatement::RepartitionPartitions { .. });
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let (transformed, repartition_metadata) = apply_partition_change(stored, schema, table, sql, repartitioning)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
             let old_names = stored
                 .partition
                 .as_ref()
@@ -8177,7 +8063,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         }
         DdlStatement::TruncatePartitions { schema, table, sql } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let (transformed, _metadata) = apply_partition_change(stored, schema, table, sql, false)?;
+            let transformed = apply_partition_change(stored, schema, table, sql)?;
             let old_ids = stored
                 .partition
                 .as_ref()

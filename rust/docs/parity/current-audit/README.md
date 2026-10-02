@@ -42,6 +42,13 @@ shapes; this strengthens D01 without counting its missing DDL owner twice.
 [Current per-ID continuity](structural-recheck/source-continuity.json) preserves
 the previous source evidence separately from those new observations.
 
+The [partition shortcut removal](../../partition-owner-removal-execplan.md)
+subsequently withdraws unsafe local repartition and cluster direct planning,
+and removes their thread-local metadata dependency. Refused operations preserve
+existing rows/schema; ordinary ADD/DROP/TRUNCATE work on fresh threads again.
+Go's supported online repartition still requires the complete durable owner.
+D01 remains open, and all 77 unresolved structural IDs retain their status.
+
 The [full-picture repair sequence](repair-sequence.md) starts from the published
 integration audit `4285385fad20855487ec1d8ff113290d48f949a5` and maps all 77 open
 IDs exactly once into 12 workstreams. It identifies complete source owners,

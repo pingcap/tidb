@@ -2760,6 +2760,54 @@ fn workload_repository_partition_changes_use_cluster_ddl() {
     assert_eq!(names, ["p20260831", "p20260901"]);
 }
 
+#[test]
+fn cluster_repartition_has_no_direct_metadata_plan() {
+    for sql in [
+        "ALTER TABLE u6.t PARTITION BY HASH(a) PARTITIONS 2",
+        "ALTER TABLE u6.t PARTITION BY RANGE(a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("Go repartition syntax parses");
+        // This is a containment boundary, not a Go parity claim: the complete
+        // durable reorganization owner must precede a replacement live route.
+        assert!(lower_ddl(&parsed, "u6").unwrap().is_none(), "{sql}");
+    }
+}
+
+#[test]
+fn cluster_partition_changes_do_not_require_prior_thread_metadata() {
+    let mut store = bootstrapped();
+    let created = plan(
+        &mut store,
+        "CREATE TABLE u6.t (a INT) PARTITION BY RANGE(a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        470_100_020,
+    );
+    apply(&mut store, &created);
+    for (sql, action) in [
+        (
+            "ALTER TABLE u6.t ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))",
+            ActionType::ACTION_ADD_TABLE_PARTITION,
+        ),
+        (
+            "ALTER TABLE u6.t DROP PARTITION p0",
+            ActionType::ACTION_DROP_TABLE_PARTITION,
+        ),
+        (
+            "ALTER TABLE u6.t TRUNCATE PARTITION p0",
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION,
+        ),
+    ] {
+        let mut snapshot = store.clone();
+        std::thread::spawn(move || {
+            let write = plan(&mut snapshot, sql, 470_100_021);
+            assert_eq!(write.diff.action_type, action);
+        })
+        .join()
+        .expect("planning must depend only on its explicit snapshot, not thread history");
+    }
+}
+
 /// Pinned Go `onExchangeTablePartition` swaps the standalone table's physical
 /// ID with the named partition, preserves the logical partitioned-table ID,
 /// raises all three allocators on both results to their pairwise maximum, and

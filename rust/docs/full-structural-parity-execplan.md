@@ -2140,3 +2140,17 @@ prototype identity, wrapped causes and classifier/logging behavior; the previous
 uncoded breaker adapter is removed. Exact scope, language adapters and independent
 source/runtime evidence are recorded in the linked receipt. The full transport
 package and its callers remain the next unit; no top-level finding closes here.
+
+
+## Revision note — 2026-10-01 withdraw unsafe repartition execution
+
+
+The full-register review at b01f97d6b5 reproduced accepted repartition making
+existing rows invisible. The [removal ExecPlan](partition-owner-removal-execplan.md)
+withdraws that complete unaccepted local/cluster shortcut and its thread-local
+metadata handoff. Three regressions fail before removal; five scoped tests pass
+afterward, including ordinary ADD/DROP/TRUNCATE on fresh threads. Parser and AST
+support remain, but execution refuses repartition before mutating rows or schema.
+This is a correctness containment step while the full Go DDL owner is incomplete;
+it does not close D01, accept a partial package or replace Go's reorganization
+with another private algorithm. All 77 unresolved structural findings remain.
