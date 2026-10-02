@@ -1,0 +1,34 @@
+{
+  "status": "preface experiment passed; complete production package remains open",
+  "candidate_tests": {
+    "passed": 14,
+    "failed": [],
+    "ignored": 0
+  },
+  "go_source_contracts": "passed with race/goleak under both dependency selections",
+  "clippy_and_format": "passed",
+  "first_frame_observations": {
+    "ping_then_settings": {
+      "go_ready": false,
+      "candidate_ready": false
+    },
+    "unknown_then_settings": {
+      "go_ready": false,
+      "candidate_ready": false
+    },
+    "settings_ack": {
+      "go_ready": true,
+      "candidate_ready": true
+    }
+  },
+  "input_sha256": {
+    "h2-preface.patch": "a772b4ffef00c19cdd6114e1b566c44ee690fe8aad85893791278562d8d88919",
+    "h2-inputs.json": "c191608ec646c3eeee367847ae974b351989f3e25924b05345ee3668fd8cb55f",
+    "h2_owner_probe.rs.txt": "4d1c6c5a1ce22593aa7c94ab382b1d88a2d3e37f80c723ea563ff2994f2d46f4",
+    "h2-probe.Cargo.toml.txt": "cc64481c2aed92f0cea1d6c1d2496d1585f1f02d3297aa1ec2aea7126fb88ba3",
+    "h2-probe.Cargo.lock": "4ded5507e180193f090d858819196b6d92b8ef8f1c99a55a220a86fd707867d9",
+    "lifecycle_test.go.txt": "7e8c44dad9de5da3e702dae76623c2943be6d42016c7abd33182cede2e59a068",
+    "h2-preface-owner.patch": "c10efe8353b343c866e6b2372aa136d73e394e8af9662c8ee7230fe7320cd3df",
+    "preface_test.go.txt": "2d637e60150dc2b2670be6ae87f3e222a30f88c2cb8fe7704009c302c56406a8"
+  }
+}

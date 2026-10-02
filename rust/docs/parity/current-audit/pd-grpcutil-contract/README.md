@@ -60,6 +60,10 @@ It is saved as text and is not part of either production build.
 - [x] Correct the reconnection design from Go source and a fail-before oracle:
   established default-policy connections remain Idle until demand. The corrected
   candidate follows that lifecycle; initial retry/backoff acceptance remains open.
+- [x] Prove opt-in server-preface validation inside h2's protocol owner; the
+  [separate preface candidate](h2-preface-review.md) passes all 14 tests and the
+  extended Go oracle. The rejected accessor remains independently reproducible.
+  This clears only the first-frame feasibility gap, not complete adapter acceptance.
 - [ ] Implement all eleven functions and three constants as one owner, migrate
   every existing native caller, and remove their displaced policies atomically.
 - [ ] Complete native/TiDB integration validation and publish the whole package.

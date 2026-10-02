@@ -49,6 +49,13 @@ existing rows/schema; ordinary ADD/DROP/TRUNCATE work on fresh threads again.
 Go's supported online repartition still requires the complete durable owner.
 D01 remains open, and all 77 unresolved structural IDs retain their status.
 
+The [PD preface ownership experiment](pd-grpcutil-contract/h2-preface-review.md)
+subsequently resolves the isolated candidate's two HTTP/2 readiness failures.
+Opt-in validation inside the protocol decoder passes 14 tests and the extended
+Go race/goleak oracle; the rejected baseline remains reproducible. This is not a
+production grpcutil integration: TLS, backoff, GOAWAY, options, interception and
+connection-cache gates remain. Native client-rust and the 77 statuses are unchanged.
+
 The [full-picture repair sequence](repair-sequence.md) starts from the published
 integration audit `4285385fad20855487ec1d8ff113290d48f949a5` and maps all 77 open
 IDs exactly once into 12 workstreams. It identifies complete source owners,

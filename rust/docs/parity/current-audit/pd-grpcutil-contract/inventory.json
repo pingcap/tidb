@@ -392,5 +392,12 @@
     "go_reconnect_correction": "Default pick_first transitions established transport loss to Idle and reconnects on demand; unconditional idle reconnection is not required.",
     "experiment": "probe_h2.py",
     "source_artifacts": "h2-inputs.json"
+  },
+  "preface_candidate": {
+    "receipt": "h2-preface-review.md",
+    "status": "isolated preface experiment passed; complete package unaccepted",
+    "observations": "preface-observations.json",
+    "experiment": "probe_h2.py --preface",
+    "source_artifacts": "h2-inputs.json"
   }
 }

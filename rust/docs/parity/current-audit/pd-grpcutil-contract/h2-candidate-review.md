@@ -7,6 +7,11 @@ were refreshed before the experiment. The entire pinned PD grpcutil package
 remains the atomic implementation/acceptance unit. No production owner or
 dependency is changed by these files.
 
+The subsequent [opt-in preface experiment](h2-preface-review.md) resolves this
+candidate's two known readiness failures inside the protocol decoder. This
+receipt and its rejected accessor remain historical, reproducible evidence;
+the newer experiment also leaves complete production acceptance open.
+
 The experiment changes the implementation direction in two concrete ways.
 First, the planned unconditional background reconnection after losing a Ready
 connection was incorrect for Go's default balancer. Second, exposing h2's existing

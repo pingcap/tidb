@@ -2154,3 +2154,16 @@ support remain, but execution refuses repartition before mutating rows or schema
 This is a correctness containment step while the full Go DDL owner is incomplete;
 it does not close D01, accept a partial package or replace Go's reorganization
 with another private algorithm. All 77 unresolved structural findings remain.
+
+
+## Revision note — 2026-10-01 PD protocol-preface feasibility
+
+
+The [preface-owner experiment](parity/current-audit/pd-grpcutil-contract/h2-preface-review.md)
+resolves the prior candidate's two readiness failures in the shared HTTP/2 decoder.
+All 14 isolated tests and the extended pinned Go race/goleak comparison pass,
+including fragmented/malformed SETTINGS and preserving h2's default policy.
+The old eight-pass/two-fail accessor remains reproducible. This completes the
+preface feasibility milestone only; the whole grpcutil package still requires
+its remaining transport and integration gates before replacing native owners.
+No partial production package, dependency update or structural closure follows.
