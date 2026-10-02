@@ -161,5 +161,10 @@ the push was rejected because the branch advanced to `11d1727fea563da7d64e9ee42f
 That non-overlapping schema acknowledgement change was inspected and rebased
 without conflict. Its schema-sync tests and this batch's statistics lifecycle
 tests pass together (17 tests; eight additional distinct tests), as does lint.
-The amended commit and remote verification follow fresh required build gates;
-no force-push is used. Final publication evidence follows here after the push.
+The amended code commit **`f8b02a07d1826285c96907e074c9cd6b88eeffca`** is pushed to
+`origin/hparser-integration`; `git ls-remote origin refs/heads/hparser-integration`
+returned that exact SHA. The actual pre-commit hook ran
+`cd rust && cargo build --locked -p tidb-server` successfully, and the same
+locked build passed again immediately before the successful normal push. No
+force-push was used. This publication receipt follows the same hook and fresh
+pre-push build requirements; the task thread records its final remote SHA.

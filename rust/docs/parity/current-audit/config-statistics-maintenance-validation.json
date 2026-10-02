@@ -370,7 +370,37 @@
     "Final lint first encountered sandbox DNS restrictions while fetching its pinned tool; the authorized network-enabled rerun passed."
   ],
   "publication": {
-    "status": "pending_actual_hook_commit_and_fresh_pre_push_build"
+    "status": "code_committed_pushed_and_remote_verified",
+    "code_commit": "f8b02a07d1826285c96907e074c9cd6b88eeffca",
+    "target": "origin/hparser-integration",
+    "remote_sha": "f8b02a07d1826285c96907e074c9cd6b88eeffca",
+    "force_push": false,
+    "commit_command": "TERM=xterm git -c core.hooksPath=hooks commit --amend --no-edit",
+    "commit_hook": "cd rust && cargo build --locked -p tidb-server",
+    "fresh_pre_push_command": "cargo build --locked -p tidb-server",
+    "fresh_pre_push_working_directory": "/Users/qiliu/projects/tidb/rust",
+    "push_command": "git push origin HEAD:hparser-integration",
+    "verification_command": "git ls-remote origin refs/heads/hparser-integration",
+    "commit_hook_evidence": {
+      "local_log": "/private/tmp/config-stats-rebase-commit.log",
+      "sha256": "f79e12517a9aaa5812838a94f7f6f2bdbcaae8d1ec3d2549fed53391fc7b4199",
+      "exit_code": 0
+    },
+    "fresh_pre_push_evidence": {
+      "local_log": "/private/tmp/config-stats-rebase-pre-push-build.log",
+      "sha256": "efe9684839c2f1eea0bbf52fdba1e82b4bb58007ad57f8c0278690196368f90e",
+      "exit_code": 0
+    },
+    "push_evidence": {
+      "local_log": "/private/tmp/config-stats-rebase-push.log",
+      "sha256": "3ab96dd67f7c19b3092237baedc2df2efdb41dfed7ab12e9c73844b7da8dcc0d",
+      "exit_code": 0
+    },
+    "remote_evidence": {
+      "local_log": "/private/tmp/config-stats-remote.log",
+      "sha256": "4444c04d5882b8b52c863dc4fb5355b4ee6b6ce023c57d057ccce24314f58d00",
+      "exit_code": 0
+    }
   },
   "self_review": [
     "All production changes reviewed against the named master source owners.",

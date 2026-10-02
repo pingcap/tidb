@@ -26,7 +26,8 @@ overrides, then compose Go's statistics maintenance lifecycle for both stores.
   unistore process check; see the linked receipt for exact commands.
 - [x] Update findings and validation receipt; O07 repaired, N03 partial.
 - [x] Run final lint, self-review the diff, and verify register/link consistency.
-- [ ] Run actual hook build, commit, freshly build and push.
+- [x] Actual hook locked build and fresh pre-push locked build passed; code
+  `f8b02a07d1826285c96907e074c9cd6b88eeffca` pushed and exact remote SHA verified.
 
 ## Context and Orientation
 
@@ -132,7 +133,8 @@ O07 is repaired and N03 advances to partial, leaving 66 unresolved findings
 The [repair receipt](parity/current-audit/config-statistics-maintenance-repair.md)
 records files, Go source pins, before/after evidence, exact checks and limits.
 Live multi-node TiKV, full original Go suites and benchmark performance remain
-unverified. Publication gates are pending.
+unverified. Code publication passed the actual hook and fresh pre-push build
+gates; the repair receipt records the verified remote commit.
 
 ## Interfaces and Dependencies
 
@@ -149,3 +151,7 @@ complete-consumer criterion.
 Publication update (2026-10-02): the first push met a concurrent schema-acknowledgement
 commit `11d1727fea`. Rebased without conflicts; 17 combined schema/statistics tests
 and lint passed. The register count is unchanged by that upstream commit.
+
+Publication outcome (2026-10-02): code commit `f8b02a07d1826285c96907e074c9cd6b88eeffca`
+is on `origin/hparser-integration` with exact remote verification. The publication
+receipt also uses the actual hook and a fresh locked build before its push.
