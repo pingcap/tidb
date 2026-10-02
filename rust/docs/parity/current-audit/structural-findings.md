@@ -1,9 +1,9 @@
-# Remaining structural mismatches, 2026-10-01
+# Remaining structural mismatches, reviewed 2026-10-02
 
-Latest follow-up compared integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60` with freshly fetched
+Latest follow-up compared integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0` with freshly fetched
 TiDB master `93a01d31f6da205ae4bf376825293903a6899fdb`. Both implementation
 branches were already current; native client-rust is `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
-The [current follow-up](post-removal-structural-review.md) reviews every unresolved ID, retains six fresh diagnostics, and separates retired unsafe shortcuts from their still-missing Go owners.
+The [current follow-up](worker-followup-structural-review.md) rechecks all 75 unresolved IDs after the shared worker repairs: 73 concern live behavior or missing runtime integration; D09/D10 are disabled seeds. Six SQL/wire diagnostics and a controlled cache regression supply fresh observations for 14 IDs; 59 others retain source/caller evidence. No entire unresolved ID is disproved or closed by this review.
 Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
 `v0.0.0-20260820070758-623e58e60fa9`, PD client
@@ -50,7 +50,7 @@ The [earlier register expansion](remaining-structure-review.md) reconciles all 7
 older entries and adds 11 source-confirmed boundaries: T04, P06–P07, O14–O19,
 X02 and M05. The [machine-readable register](structural-findings.json) lists
 every entry and status. The old source locations below retain historical line
-numbers; [source continuity](post-removal-recheck/source-continuity.json) records exact
+numbers; [source continuity](worker-followup-recheck/source-continuity.json) records exact
 reviewed file blobs and changes since the previous review. Six retained SQL/wire
 diagnostics were rerun as described in the current follow-up; other reproductions
 remain historical evidence.
@@ -134,7 +134,7 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 | --- | --- | --- | --- |
 | C01 | **Ownership repaired:** one session physical-entry LRU now serves prepared/non-prepared SELECT/DML, with shared capacity, recency, pressure, close and flush. Separate per-statement vectors and the DML-only metadata LRU are removed. See the [repair receipt](shared-session-plan-cache-repair.md) for regressions and limits; this is not whole-package acceptance. | `rust/crates/tidb-executor/src/driver/plan_cache.rs`, `rust/crates/tidb-planner/src/plan_cache_lru.rs`, `rust/crates/tidb-session/src/session_plan_cache.rs`; server factory and COM_STMT_CLOSE callers | `pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache` and `prepared.go::DeallocateExec.Next`. C02 remains open. |
 | C02 | Instance-plan-cache variables are registered, but no domain-scoped shared cache or instance hit/clone/eviction path is composed into production. Enabling the flag cannot select Go's instance owner. | `rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:256`; C01's owners; production reference audit in the review receipt | `pkg/planner/core/plan_cache.go::lookupPlanCache`/`clonePlanForInstancePlanCache`, `plan_cache_instance.go`, Domain: shared ownership plus per-execution cloning. Reuse admission/key/rebuild contracts; another ad hoc global map is insufficient. |
-| C04 | **P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, signed shards, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. A [controlled follow-up](lfu-review-followup.md) also proves eager primary visibility with the admission worker paused and fixes two public paths missed by the shutdown guard. Native policy metrics are also not exposed. | `rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs` and `source_tests.rs::concurrent_small_capacity`; complete inventory and red/green evidence in [receipt](lfu-lifecycle-repair.md) | Complete `pkg/statistics/handle/cache/internal/lfu` plus pinned `github.com/dgraph-io/ristretto v0.1.1`. Accept or replace the whole dependency lifecycle/admission owner; do not add special-case eviction in the TiDB wrapper. Native lifetime repairs are not package acceptance. |
+| C04 | **P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, sharded storage, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. A [controlled follow-up](lfu-review-followup.md) also proves eager primary visibility with the admission worker paused and fixes two public paths missed by the shutdown guard. Native policy metrics are also not exposed. | `rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs` and `source_tests.rs::concurrent_small_capacity`; complete inventory and red/green evidence in [receipt](lfu-lifecycle-repair.md) | Complete `pkg/statistics/handle/cache/internal/lfu` plus pinned `github.com/dgraph-io/ristretto v0.1.1`. Accept or replace the whole dependency lifecycle/admission owner; do not add special-case eviction in the TiDB wrapper. Native lifetime repairs are not package acceptance. |
 
 ## DML and executor handoff
 
@@ -186,15 +186,16 @@ acceptance count is unchanged.
 The [store-health follow-up](store-health-owner-repair.md) deletes TiDB's
 parallel slow-score implementation and aliases native health/load state.
 Topology copies retain a native health handle; native feedback and decay skip
-contended updates. Native 6f663b3 is synchronized. Production TiDB latency,
+contended updates. Native 6f663b3 was synchronized at that historical checkpoint. Production TiDB latency,
 feedback and periodic health-tick wiring still need migration; native client
 cache wiring already exists. This remains part of T02, not a new package claim.
 
 The five earlier reviewer defects have their own regression receipts. Retry
 limits, secondary retry history, locked-entry timestamps, mock normal wake-up
 and detached read-resolution fixes are not reopened merely because T02 remains.
-The operation-lifetime continuation used native `488bb73`; the current synchronized
-dependency is `6f663b3` after the error, candidate and health follow-ups.
+The operation-lifetime continuation used native `488bb73`; the synchronized
+dependency at that checkpoint was `6f663b3` after those error, candidate and health follow-ups;
+the current reviewed dependency is `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
 
 ### Native client concurrency still requiring repair
 
@@ -309,10 +310,10 @@ limits and the complete [scope matrix](structural-coverage.md).
 | Candidate | Why it needs review before removal |
 | --- | --- |
 | Remaining configured-session transaction cases | S01/S02 establish the alternate owners and missing two-table refresh. Full transaction/autocommit semantics and all configured/test callers still need review before deletion. |
-| DML identity edge cases | E01/E02 establish alias merging and multi-update FK failures; E03 records the materialized handoff. The USING probe passes. Derived/outer joins, pruning and partitioned handles still need a complete plan-schema comparison; do not infer failure from a different data representation alone. |
+| DML identity edge cases | E01 alias merging and the E02 orphan-acceptance symptom are repaired; fresh alias/FK/USING controls still hold. E02 retains its planner FK contract gap and E03 the materialized handoff. Derived/outer joins, pruning and partitioned handles still need a complete plan-schema comparison; do not infer failure from a different data representation alone. |
 | Cluster multi-action ALTER failure paths | D11 reproduces leakage in the in-process dispatcher. Cluster persisted metadata/data rollback is a separate path requiring failure injection before any partial-commit claim. |
-| Error identity and required system-table errors | Fresh cancellation codes/history propagation were repaired. `record_ddl_plan_error` still maps other errors to 1105; Go error classes/identity and each required table failure need original-test comparison. A textual difference alone is insufficient. |
-| Partition/catalog/statistics integration | Existing failures may share a catalog/publication cause. The newly rerun system-table test fails because p1 is missing after ADD PARTITION, not because a system event was emitted. Current source already filters system-schema events. Do not implement another notifier exclusion to hide this failure. |
+| Error identity and required system-table errors | Shared cancellation, coded error/SQLSTATE conversion, checkpoints and worker continuation are repaired. The old blanket-1105 allegation is stale. D05 still loses source RFC/class identity at coded-admission/storage boundaries; complete taxonomy, transaction classification, configurable retry timing and metrics remain open. Required-table error cases need original-test comparison; a textual difference alone is insufficient. |
+| Partition/catalog/statistics integration | Existing failures may share a catalog/publication cause. The [fresh rerun](worker-followup-recheck/system-table-ddl.txt) still fails at the `p1 exists` catalog lookup after ADD PARTITION, before proving a notifier violation. Its root cause remains unclassified and it is not an additional counted structural ID. Current source already filters system-schema events. Do not implement another notifier exclusion to hide this failure. |
 | Remaining parser/planner/expression/executor behavior | Current candidate inventory and historical package receipts require source/test reconciliation. An unsupported branch or a different Rust representation is not automatically a mismatch. |
 | Remaining client-go, PD, etcd, BR and other external packages | Inventoried module artifacts do not imply complete original-test/variant/integration review. PD/etcd now have complete module artifact inventories, but original-test/variant integration remains unreviewed. Dependencies beyond the recorded modules also remain acceptance work. |
 

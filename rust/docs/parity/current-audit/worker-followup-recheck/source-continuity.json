@@ -1,0 +1,1768 @@
+{
+  "reviewed_at": "2026-10-02",
+  "baseline": {
+    "tidb_integration": "cfc6a174bb3e46312dae48a7b85a53053b2f5ea0",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "6163ecfc587b248dcbf0e30c1c9d905b4bc5a665",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "previous_full_review": {
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "tidb_integration": "68d6de685a5e58c559a861ec7b85d10bc8a2aa60",
+    "client_rust": "6163ecfc587b248dcbf0e30c1c9d905b4bc5a665",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "method": "Reconcile every current finding, every prior source reference and every intervening runtime diff. Unchanged source carries prior source/oracle evidence. Fresh observations prove only the named symptom/refusal, not an entire package. Source-only consequences are not fresh runtime tests.",
+  "counts": {
+    "tracked": 85,
+    "still_unresolved": 75,
+    "open": 69,
+    "partial": 6,
+    "repaired": 10,
+    "unresolved_live_or_missing_runtime": 73,
+    "unresolved_disabled_seed": 2,
+    "unresolved_ids_with_fresh_observations": 14,
+    "other_unresolved_source_findings": 59
+  },
+  "prior_reference_comparison": {
+    "prior_reference_occurrences": 124,
+    "changed_reference_occurrences": 22,
+    "ids_with_changed_prior_references": 16
+  },
+  "changed_tidb_crate_paths": [
+    "rust/crates/tidb-exec/src/cluster_ddl.rs",
+    "rust/crates/tidb-exec/src/order.rs",
+    "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+    "rust/crates/tidb-exec/tests/cluster_ddl_source.rs",
+    "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/topn.rs",
+    "rust/crates/tidb-expr/src/simple_expr.rs",
+    "rust/crates/tidb-planner/src/plan_builder.rs",
+    "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+    "rust/crates/tidb-server/src/server_metrics.rs",
+    "rust/crates/tidb-server/src/sql_node.rs",
+    "rust/crates/tidb-session/src/tests_global_vars.rs",
+    "rust/crates/tidb-session/src/vars.rs",
+    "rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs",
+    "rust/crates/tidb-util/src/lib.rs",
+    "rust/crates/tidb-util/src/panic_metrics.rs",
+    "rust/crates/tidb-vardef/src/lib.rs"
+  ],
+  "other_runtime_input_changes": [],
+  "findings": [
+    {
+      "id": "A01",
+      "status": "partial",
+      "assessment": "UPDATE's resolved privilege path remains repaired; other statements still derive privilege visits outside the shared planner owner. Fresh denial controls do not close those producers.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "previous_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "current_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/table_privilege.rs",
+          "previous_blob_or_tree": "08baf83dd24f2b5dfbb2fedaaa1cb342a1c7d706",
+          "current_blob_or_tree": "08baf83dd24f2b5dfbb2fedaaa1cb342a1c7d706",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "A02",
+      "status": "open",
+      "assessment": "The durable loader still omits mysql.global_priv and policy fields; registry reconstruction and empty-user handling remain unchanged. No mixed-node authentication test was run.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "previous_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "current_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_privileges.rs",
+          "previous_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "current_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege.rs",
+          "previous_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "current_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "A03",
+      "status": "open",
+      "assessment": "TLS still uses with_no_client_auth and REQUIRE X509 still refuses. Certificate verification, policy propagation and rotation remain incomplete.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "expanded-ownership",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_tls.rs",
+          "previous_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "current_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege/privs.rs",
+          "previous_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "current_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "A04",
+      "status": "open",
+      "assessment": "Fresh SQL accepts PASSWORD HISTORY 3, reuses the first password and reads NULL policy. Account option handling still ignores the history/reuse fields.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "expanded-ownership",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/account.rs",
+          "previous_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "current_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "B01",
+      "status": "open",
+      "assessment": "CostLruStore.get only reads the map; insertion-order eviction and unconditional fitting admission remain the live binding store.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/binding_cache.rs",
+          "previous_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "current_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "B02",
+      "status": "open",
+      "assessment": "The lease reloader still constructs a full BindingCache from storage rows; no incremental watermark, usage writer or owner GC loop was added.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_binding_seam.rs",
+          "previous_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "current_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/binding_arm.rs",
+          "previous_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "current_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "N01",
+      "status": "open",
+      "assessment": "The wire diagnostic still converts raw Latin-1 E9 to C3A9. UTF-8 String ingress and literal representation are unchanged.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "expanded-server",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_connection.rs",
+          "previous_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "current_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "N02",
+      "status": "open",
+      "assessment": "The token-limit flag remains accepted without a command permit acquire/release path. Connection-count admission is not that missing contract.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/main_flags.rs",
+          "previous_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "current_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "N03",
+      "status": "open",
+      "assessment": "Fresh TOML still rejects token-limit, performance.stats-lease and security.ssl-ca; auto_tls remains true. The second NodeConfig authority remains.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "expanded-server",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/bin/tidb-server.rs",
+          "previous_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "current_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D01",
+      "status": "open",
+      "assessment": "Only CHECK SQL submits through the durable worker; other DDL uses the direct transaction route. Fresh repartition refusals preserve rows but leave Go-supported reorganization absent.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "partition-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "previous_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "current_blob_or_tree": "0e4228ee24e55ff7b89c5277d14d969ae2f624ca",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+          "previous_blob_or_tree": "d5d31fe12540a8b437d9b5f5e2315a380d78ad59",
+          "current_blob_or_tree": "e18db6252eecfb8a78c70dc0359513835a4c8b4f",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/table_partition.rs",
+          "previous_blob_or_tree": "8583e21ba9322496d762d35ef16bf1ad5c3d2e99",
+          "current_blob_or_tree": "8583e21ba9322496d762d35ef16bf1ad5c3d2e99",
+          "changed": false
+        }
+      ],
+      "additional_current_references": [
+        {
+          "path": "rust/crates/tidb-session/tests/add_truncate_partition_source.rs",
+          "current_blob_or_tree": "08c0183fc09a76fef3e4b1002420577d46322ae6"
+        },
+        {
+          "path": "rust/crates/tidb-exec/tests/cluster_ddl_source.rs",
+          "current_blob_or_tree": "f4c1467deff77baea423be8907dec89863334259"
+        }
+      ]
+    },
+    {
+      "id": "D02",
+      "status": "open",
+      "assessment": "Index entries still backfill in the publication transaction through a default statement context; no complete durable index/reorg lifecycle was added.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "previous_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "current_blob_or_tree": "0e4228ee24e55ff7b89c5277d14d969ae2f624ca",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D03",
+      "status": "open",
+      "assessment": "run_loop still iterates jobs serially and calls run_persisted_ddl_job to completion, skipping unsupported action types. Worker error continuation did not introduce worker pools.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D04",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        }
+      ],
+      "additional_current_references": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "current_blob_or_tree": "0e4228ee24e55ff7b89c5277d14d969ae2f624ca"
+        }
+      ]
+    },
+    {
+      "id": "D05",
+      "status": "partial",
+      "assessment": "Checkpointing, panic/cancel handling, SQLSTATE/code projection and post-commit retry waiting are repaired. Admission errors still hold only reason/code; compatible job errors lack source RFC identity. Full transaction/error/metrics policy remains open.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        }
+      ],
+      "additional_current_references": [
+        {
+          "path": "rust/crates/tidb-server/src/sql_node.rs",
+          "current_blob_or_tree": "c070cb1c7d57b4569240932b7a466c80081fffcd"
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834"
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "current_blob_or_tree": "0e4228ee24e55ff7b89c5277d14d969ae2f624ca"
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834"
+        }
+      ]
+    },
+    {
+      "id": "D06",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        }
+      ],
+      "additional_current_references": [
+        {
+          "path": "rust/crates/tidb-exec/tests/cluster_ddl_source.rs",
+          "current_blob_or_tree": "f4c1467deff77baea423be8907dec89863334259"
+        }
+      ]
+    },
+    {
+      "id": "D07",
+      "status": "open",
+      "assessment": "The common planner still constructs MDL information and the worker always uses the MDL barrier. No source-mode branch for disabled MDL is present.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "current_blob_or_tree": "e04be73f627940a4ed63bd61bef11efb56caf834",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D08",
+      "status": "open",
+      "assessment": "Finalization still lacks the complete typed delete-range registration; direct index/partition paths retain eager key removal. This is distinct from the absent GC worker.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/partition_maintenance.rs",
+          "previous_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "current_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D09",
+      "status": "open",
+      "assessment": "The in-memory materialized-view build seed remains, but supports_persisted_ddl_job excludes its action. This is an inactive implementation gap, not an admitted production failure.",
+      "evidence_kind": "disabled_seed_source",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mview_build_engine.rs",
+          "previous_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "current_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D10",
+      "status": "open",
+      "assessment": "The MV/MLog dependency seed still lacks the full dependent-ID/publication/rollback lifecycle and remains excluded from live dispatch. This is an inactive implementation gap.",
+      "evidence_kind": "disabled_seed_source",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "D11",
+      "status": "open",
+      "assessment": "The only alter_table.rs change adds a COALESCE warning. Fresh multi-action ADD COLUMN still publishes the first column before the second raises duplicate-column.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "session-ownership",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+          "previous_blob_or_tree": "d5d31fe12540a8b437d9b5f5e2315a380d78ad59",
+          "current_blob_or_tree": "e18db6252eecfb8a78c70dc0359513835a4c8b4f",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "C01",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/plan_cache.rs",
+          "previous_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "current_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/plan_cache_lru.rs",
+          "previous_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "current_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/session_plan_cache.rs",
+          "previous_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "current_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "C02",
+      "status": "open",
+      "assessment": "Instance-cache variables and metric selectors still have no domain cache consumer. The working session cache is a separate repaired owner.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "previous_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "current_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "C04",
+      "status": "partial",
+      "assessment": "The changed rem_euclid shard calculation does not change Stretto admission. The controlled ignored regression still fails because a nonresident primary is visible before admission.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "lfu-admission",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs",
+          "previous_blob_or_tree": "54aebf777d6d32539987de7172f10a5905be3d14",
+          "current_blob_or_tree": "0c4884a45e72856b97594d4d790558ed9426de4b",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E01",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/multi_dml.rs",
+          "previous_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "current_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E02",
+      "status": "partial",
+      "assessment": "Fresh joined UPDATE rejects an orphan as repaired. Physical UPDATE still omits Go's per-table FK plans, so the plan-to-execution contract remains incomplete.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/dml.rs",
+          "previous_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "current_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E03",
+      "status": "open",
+      "assessment": "execute_dml_source still returns a fully drained Vec of datum rows; multi-DML reconstructs target handles and charges after collection. No streaming handoff was added.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver.rs",
+          "previous_blob_or_tree": "1e08a9bd09ce37d444027cec85a157e8ded391cc",
+          "current_blob_or_tree": "1e08a9bd09ce37d444027cec85a157e8ded391cc",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "previous_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "current_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E04",
+      "status": "open",
+      "assessment": "The physical Apply builder still creates NestedLoopApplyExec; concurrency metadata and the setting have no parallel execution consumer.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "previous_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "current_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/physical/mod.rs",
+          "previous_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "current_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E05",
+      "status": "open",
+      "assessment": "Fresh IMPORT refuses and leaves its target empty. The removed parser/INSERT pipeline stays removed; Go's import controller and durable tasks remain absent.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "expanded-ownership",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "S01",
+      "status": "open",
+      "assessment": "The optional configured server still selects its one/two-table private read/write planner rather than ordinary session/compiler ownership.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "previous_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "current_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "S02",
+      "status": "open",
+      "assessment": "The two-table startup branch still drops its initial catalog snapshot and installs no shared catalog reloader, unlike the one-table branch.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/real_tikv_node/mod.rs",
+          "previous_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "current_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "I01",
+      "status": "open",
+      "assessment": "Fresh SEQUENCES remains empty for a created sequence and CLUSTER_LOG ignores supplied bounds; CLUSTER_CONFIG now refuses. Missing live retrievers remain.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "session-ownership",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "I02",
+      "status": "open",
+      "assessment": "cluster_info_table_rows still builds only TiDB server entries. Fake stores and swallowed discovery errors remain removed, but six source retrievers remain absent.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/lib.rs",
+          "previous_blob_or_tree": "7894453a8ae9967656d5615057ead6201d43b059",
+          "current_blob_or_tree": "7894453a8ae9967656d5615057ead6201d43b059",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "I03",
+      "status": "open",
+      "assessment": "CLUSTER_PROCESSLIST still decorates local process rows; no complete peer fanout task/retrieval lifecycle is composed.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "T01",
+      "status": "open",
+      "assessment": "BufferMutation::insert still couples presume-not-exists to AssertNotExist; the configured INSERT planner has no source transaction-mode policy input.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "previous_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "current_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/transaction/mutation.rs",
+          "previous_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "current_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "T02",
+      "status": "partial",
+      "assessment": "ClientPd still delegates to TiDB routing while native client-rust retains its own region/cache/RPC owners. Repaired backoff, replica selection and shared health types remain repaired.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "previous_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "current_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/region",
+          "previous_blob_or_tree": "c393df3aab3d4962193d582d3bd85bacabeabdcb",
+          "current_blob_or_tree": "c393df3aab3d4962193d582d3bd85bacabeabdcb",
+          "changed": false
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/region_cache.rs",
+          "previous_blob_or_tree": "98f177812ee4858a1c22ffd00c4908140c69405e",
+          "current_blob_or_tree": "98f177812ee4858a1c22ffd00c4908140c69405e",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "T03",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "previous_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "current_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "T04",
+      "status": "open",
+      "assessment": "needs_active_feedback still returns false on a contended feedback mutex; pinned client-go reads atomic metadata and requests feedback before taking the update mutex.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/locate.rs",
+          "previous_blob_or_tree": "633a592e2f3867c34e99e9c66ecd2e8c8a305cfe",
+          "current_blob_or_tree": "633a592e2f3867c34e99e9c66ecd2e8c8a305cfe",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O01",
+      "status": "open",
+      "assessment": "The sql_node.rs changes remove DDL error mapping only. Numeric server-ID leasing is absent and the connection allocator still uses standalone identity.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/serverinfo_etcd.rs",
+          "previous_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "current_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/sql_node.rs",
+          "previous_blob_or_tree": "9242f174cbaca1c452680fe724fb573a7d903c82",
+          "current_blob_or_tree": "c070cb1c7d57b4569240932b7a466c80081fffcd",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O02",
+      "status": "open",
+      "assessment": "Boot still checks already_bootstrapped rather than selecting a versioned upgrade/recovery workflow. A pre-existing bootstrap version skips publication.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "previous_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "current_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mysql_bootstrap.rs",
+          "previous_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "current_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O03",
+      "status": "open",
+      "assessment": "Server startup still has no store GC worker construction. Native GC methods and metrics are present but not that runtime owner.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/client_go_metrics.rs",
+          "previous_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "current_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_api.rs",
+          "previous_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "current_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O04",
+      "status": "open",
+      "assessment": "TTL helpers/metadata remain without a server-composed TTL job/task manager and owned periodic execution.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-ttl/src/lib.rs",
+          "previous_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "current_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O05",
+      "status": "open",
+      "assessment": "There is still no Rust-crate caller of set_resource_control_interceptor. New vars.rs code concerns DDL limits, not PD resource control/runaway integration.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "a78f0b1d7e78234c96721de33d20e6375fe3462e",
+          "changed": true
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/resource_control.rs",
+          "previous_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "current_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O06",
+      "status": "open",
+      "assessment": "RuStatsWriter is still constructed only in source tests; startup does not run the owner-gated request-unit persistence/retention loop.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/ru_stats.rs",
+          "previous_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "current_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O07",
+      "status": "open",
+      "assessment": "gc_stats remains a public helper called by tests; existing startup workers do not periodically invoke it. Analyze-job cleanup is a separate responsibility.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+          "previous_blob_or_tree": "fba945b7239420ed2c9526633aac43c2e650c568",
+          "current_blob_or_tree": "fba945b7239420ed2c9526633aac43c2e650c568",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O08",
+      "status": "open",
+      "assessment": "Plan replayer collectors/dumpers remain helpers and test constructions, without server startup, capture production or file-GC integration.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/plan_replayer.rs",
+          "previous_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "current_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O09",
+      "status": "open",
+      "assessment": "ServerInfoSyncer still explicitly excludes ReportMinStartTS and no live reporter composes session/cursor/internal/schema timestamps. No premature-GC reproduction is claimed.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/serverinfo_syncer.rs",
+          "previous_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "current_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O14",
+      "status": "open",
+      "assessment": "Affinity still reaches metadata and plan carriers without a PD group manager or complete DDL lifecycle; CPU affinity is unrelated.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-planner/src/plan_builder/catalog.rs",
+          "previous_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "current_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "previous_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "current_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O15",
+      "status": "open",
+      "assessment": "No cross-keyspace runtime/session manager was added; codecs alone do not provide holder/eviction/virtual-server/min-start-ts ownership. This is conditional on source variants supporting it.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/lib.rs",
+          "previous_blob_or_tree": "43aed7fd0d94dca10cc934f3faa519add2be7d17",
+          "current_blob_or_tree": "43aed7fd0d94dca10cc934f3faa519add2be7d17",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O16",
+      "status": "open",
+      "assessment": "The live workload-repository sampler remains distinct from workload-learning read-cost analysis, persistence and cache refresh, which remain absent.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O17",
+      "status": "open",
+      "assessment": "Telemetry settings/admission remain without a production counter/window collector and periodic log reporter. Go's present contract does not require an external uploader.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "previous_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "current_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O18",
+      "status": "open",
+      "assessment": "With both summary switches enabled, fresh SQL still leaves cumulative statement stats at zero. Production still does not submit StmtExecInfo or compose the v2 sink lifetime.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "remaining-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/adapter.rs",
+          "previous_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "current_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs",
+          "previous_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "current_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O19",
+      "status": "open",
+      "assessment": "Statistics load metrics still have no production request/wait/dedup/read observation calls; running load workers and initialized collectors do not close this gap.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/catalog/sync_load.rs",
+          "previous_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "current_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-stats-handle-metrics/src/lib.rs",
+          "previous_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "current_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "F01",
+      "status": "open",
+      "assessment": "Classic placement rule creation/repair/removal is still performed by poll_once rather than the complete DDL/GC owner.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "previous_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "current_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "F02",
+      "status": "open",
+      "assessment": "SetTiFlashReplica still rebuilds unavailable metadata and the poller tracks logical table IDs; physical-partition availability/reset policy is incomplete.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "current_blob_or_tree": "06eac50ff7ff9117ea42ccd1357a212ddf7e0e03",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "F03",
+      "status": "open",
+      "assessment": "poll_once still requests and filters gRPC Up stores on each pass without the source progress cache/backoff/HTTP-discovery lifecycle.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "previous_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "current_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "M01",
+      "status": "open",
+      "assessment": "MPP remains scan-only, selects one Up TiFlash store, builds one task and refuses pushed Selection/TopN/aggregation.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "M02",
+      "status": "open",
+      "assessment": "table_regions still collapses disjoint ranges into one min/max envelope and uses a 10000-region query without continuation.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "M03",
+      "status": "open",
+      "assessment": "open_mpp still drains the complete response into VecDeque; closing the returned stream only drops local packets, without a remote cancellation owner.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "M04",
+      "status": "open",
+      "assessment": "MPP still connects directly to http:// endpoints; stale regions are logged outside the shared routing/security/recovery owner.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "M05",
+      "status": "open",
+      "assessment": "Disaggregated settings still have no composed compute topology/cache/dispatch consumer; the live scan selects ordinary PD stores.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-config/src/tiflash.rs",
+          "previous_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "current_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "current_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "previous_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "current_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P01",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/requests.rs",
+          "previous_blob_or_tree": "736d5dfbd415a5548d9c93af31735e35cd12ebbb",
+          "current_blob_or_tree": "736d5dfbd415a5548d9c93af31735e35cd12ebbb",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-proto/src/lib.rs",
+          "previous_blob_or_tree": "b3e615562ee30bdc6118fecba035c87d0ce3b38b",
+          "current_blob_or_tree": "b3e615562ee30bdc6118fecba035c87d0ce3b38b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P02",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [],
+      "additional_current_references": []
+    },
+    {
+      "id": "P03",
+      "status": "open",
+      "assessment": "PD member/leader discovery and classic Tso remain the only active discovery path; no service-mode/independent TSO service switch is composed.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/topology.rs",
+          "previous_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "current_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-pd-client/src/tso.rs",
+          "previous_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "current_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P06",
+      "status": "partial",
+      "assessment": "Native public close still stops region/TiKV owners without retiring its PD/TSO owner. Published deadline/batch/retry prerequisites and isolated grpcutil experiments do not close it.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/timestamp.rs",
+          "previous_blob_or_tree": "6ddf200fac706f7866950e6d51f9fb33f0a51e6d",
+          "current_blob_or_tree": "6ddf200fac706f7866950e6d51f9fb33f0a51e6d",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P07",
+      "status": "open",
+      "assessment": "retry_mut still holds cluster.write() across call.await; metadata RPCs serialize and conflict with TSO read-side ownership. Throughput was not measured.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/retry.rs",
+          "previous_blob_or_tree": "d51bd4c62caeae64d038c1c752eb23d875b8da72",
+          "current_blob_or_tree": "d51bd4c62caeae64d038c1c752eb23d875b8da72",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P05",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/rtree/rtree.rs",
+          "previous_blob_or_tree": "960420948a81760e80821101bbb6f5fff8fcd013",
+          "current_blob_or_tree": "960420948a81760e80821101bbb6f5fff8fcd013",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "Q01",
+      "status": "open",
+      "assessment": "Cascades is accepted as a setting, but planner_bridge still uses logical_optimize/find_best_task. Recent COLLATE construction edits do not add memo exploration.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "previous_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "current_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "previous_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "current_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "X01",
+      "status": "open",
+      "assessment": "SQL new_function and PB-selected builtins still construct/evaluate separately; numeric fast paths do not provide the shared typed scalar/vector owner for all types.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-expr/src/new_function.rs",
+          "previous_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "current_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "X02",
+      "status": "open",
+      "assessment": "The only expression change exposes build_cast_function. Provider registration, embedding cache/batcher, caller-isolated cancellation and EMBED_TEXT runtime remain absent.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-expr/src",
+          "previous_blob_or_tree": "9bceb6b30f83fa198696b8a3fd5b78cb95e5f5f0",
+          "current_blob_or_tree": "5db3718ae9249b8f5f9f53562e71444367d15edb",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "current_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-vardef/src/tidb_vars.rs",
+          "previous_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "current_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "C03",
+      "status": "open",
+      "assessment": "CoprCache.get does not update admission/recency; set evicts insertion_order and the read authority retains fixed configuration.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-distsql/src/copr_cache.rs",
+          "previous_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "current_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_read.rs",
+          "previous_blob_or_tree": "a0c7ae45e28176abf6ca6bb5ed02420ae26441eb",
+          "current_blob_or_tree": "a0c7ae45e28176abf6ca6bb5ed02420ae26441eb",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "K01",
+      "status": "open",
+      "assessment": "ClusterTableAutoIds still selects the cached allocator; step_for maps AUTO_ID_CACHE <= 1 to DEFAULT_AUTO_ID_STEP. The single-point service allocator is uncomposed.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_auto_id.rs",
+          "previous_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "current_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_auto_id_seam.rs",
+          "previous_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "current_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "K02",
+      "status": "open",
+      "assessment": "CACHE changes metadata after admission checks; reads/writes still lack leased cache wrappers and commit-time renewal. Fresh acceptance is not a stale-read reproduction.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/cache.rs",
+          "previous_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "current_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "previous_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "current_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "K03",
+      "status": "open",
+      "assessment": "Fresh strict ordinary TINYINT rejects 1000; generated TINYINT stores 127 without warnings. Shared materialization still uses default conversion policy.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "subsystem-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table.rs",
+          "previous_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "current_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "I04",
+      "status": "open",
+      "assessment": "Catalog publication remains a latest materialized image; vars.rs changed only the DDL error-limit publication, not versioned InfoCache/V2 loading.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/catalog_watch.rs",
+          "previous_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "current_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "a78f0b1d7e78234c96721de33d20e6375fe3462e",
+          "changed": true
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "S03",
+      "status": "open",
+      "assessment": "Both SHOW SESSION_STATES and SET SESSION_STATES still refuse; variable helpers do not compose complete session migration.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "subsystem-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "S04",
+      "status": "open",
+      "assessment": "tidb_read_staleness remains accepted but the next ordinary read refuses. The separate historical catalog path is still local rather than Domain timestamp/schema ownership.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "subsystem-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E06",
+      "status": "open",
+      "assessment": "Projection close drops the parallel receiver and closes its child; queued evaluation tasks have no joined cancellation. This proves the ownership difference, not memory unsafety.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/projection.rs",
+          "previous_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "current_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "E07",
+      "status": "open",
+      "assessment": "SHOW BR JOB still refuses; no live BRIE queue/executor replaced the constant information-schema providers. Helper protocol repairs do not compose backup/restore.",
+      "evidence_kind": "fresh_observed_symptom_or_refusal",
+      "fresh_observation": "subsystem-structure",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/lib.rs",
+          "previous_blob_or_tree": "23dfb4b29beec367becb52d59367fb8b91489672",
+          "current_blob_or_tree": "23dfb4b29beec367becb52d59367fb8b91489672",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "current_blob_or_tree": "7a7329b3d725638297956554203d6e66d50e68a2",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "N04",
+      "status": "open",
+      "assessment": "KILL still validates IDs then operates on the local registry; no decoded-server remote dispatch/configuration lifecycle was added.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/process_arm.rs",
+          "previous_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "current_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "N05",
+      "status": "open",
+      "assessment": "HTTP status still uses the fixed route dispatcher/read-only settings; full Go admin/configuration handlers remain absent.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/http_status.rs",
+          "previous_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "current_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O10",
+      "status": "open",
+      "assessment": "DXF metrics/helpers remain without production manager, executor/storage/resource startup and close.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-dxf-operator/src/lib.rs",
+          "previous_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "current_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-dxf/src/lib.rs",
+          "previous_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "current_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O11",
+      "status": "open",
+      "assessment": "TopSQL startup still initializes metrics only; SQL/plan registration, profiling collection, aggregation and reporting remain uncomposed.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "current_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-util/src/topsql_reporter/mod.rs",
+          "previous_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "current_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O12",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/globalconfigsync.rs",
+          "previous_blob_or_tree": "bd5c3155578fe743446daf8b93f18c2e8e1b4c11",
+          "current_blob_or_tree": "bd5c3155578fe743446daf8b93f18c2e8e1b4c11",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/global_config_sync.rs",
+          "previous_blob_or_tree": "e51e2add67db2ea3a4980386a07137bfcc440119",
+          "current_blob_or_tree": "e51e2add67db2ea3a4980386a07137bfcc440119",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/variables.rs",
+          "previous_blob_or_tree": "fdff03cb3f780ac220ded7b4d64f20e983488cde",
+          "current_blob_or_tree": "fdff03cb3f780ac220ded7b4d64f20e983488cde",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "O13",
+      "status": "open",
+      "assessment": "closest-adaptive still maps to mixed reads without the domain AZ distribution and request adjustment producer. DDL-limit publication did not change that path.",
+      "evidence_kind": "source_and_caller_review_with_continuity",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+          "previous_blob_or_tree": "30385f0ed4c2c5110892591f1db18145107c2a7c",
+          "current_blob_or_tree": "30385f0ed4c2c5110892591f1db18145107c2a7c",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "current_blob_or_tree": "a78f0b1d7e78234c96721de33d20e6375fe3462e",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_contract.rs",
+          "previous_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "current_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    },
+    {
+      "id": "P04",
+      "status": "repaired",
+      "assessment": "Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance.",
+      "evidence_kind": "repaired_receipt_retained",
+      "fresh_observation": null,
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/restore_utils.rs",
+          "previous_blob_or_tree": "58667c2c416f953a18b946d682f7a98a79128214",
+          "current_blob_or_tree": "58667c2c416f953a18b946d682f7a98a79128214",
+          "changed": false
+        }
+      ],
+      "additional_current_references": []
+    }
+  ]
+}

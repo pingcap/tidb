@@ -76,6 +76,26 @@ keep known passing controls and source-only limits. The review should make clear
 which code is already retired, which needs replacement before retirement, and
 which useful owner merely lacks production construction/callers.
 
+### Review after shared worker repairs at cfc6a174bb
+
+
+- [x] Fetch integration and Go master; both are unchanged at cfc6a174bb and 93a01d31. Native dependency remains 6163ecfc.
+- [x] Read every current unresolved description and inventory all 18 changed crate paths since the previous full review at 68d6de685a.
+- [x] Reconcile every unresolved ID against current owners, production consumers and source continuity; distinguish inactive seeds, missing runtime and reproduced failures.
+- [x] Rerun the six retained SQL/wire diagnostics and the controlled C04 admission probe; review DDL repair regressions and remaining source boundaries.
+- [x] Publish the supported count and per-ID evidence; correct stale descriptions without inflating closure into package acceptance.
+- [x] Validate evidence/counts/links and pass the actual locked-build hook plus a fresh post-commit build. The final receipt amendment repeats both gates before push; remote verification is recorded in the completion message.
+
+This review asks whether the existing 75 unresolved findings remain true, rather
+than assuming an unaccepted package proves a defect. Carry prior evidence only
+where source, inputs and callers remain unchanged. Inspect all intervening runtime
+changes, including source sites outside each finding's original reference list.
+Record current observations under parity/current-audit/worker-followup-recheck;
+do not overwrite historical diagnostic outputs. Retain repaired D04/D06 and the
+repaired portions of D05 explicitly. Inactive MV seeds must not be counted as live
+runtime defects. No production repair is included in this review.
+
+
 ## Plan of Work and Milestones
 
 
@@ -141,6 +161,13 @@ was run. Earlier privilege and FK runtime repairs remain intact in the probes.
 ## Decision Log
 
 
+- Decision: keep 75 unresolved IDs while separating 73 live/missing-runtime
+  contracts from two disabled MV seeds; remove repaired symptoms from current
+  allegations without treating a partial repair as whole-ID closure.
+  Rationale: the current source and diagnostics support each remaining contract,
+  but only 14 IDs have fresh symptom/refusal observations. Old D05 blanket error
+  conversion and E02 orphan acceptance are no longer valid allegations.
+  Date: 2026-10-02, follow-up at cfc6a174bb.
 - Decision: retain all existing IDs and distinguish partial from repaired.
   Rationale: source continuity and regression receipts must remain traceable.
   Date: 2026-10-01.
@@ -238,3 +265,37 @@ The post-removal review's actual hook passed cd rust && cargo build --locked
 reruns both gates, recorded with -commit-final.log and -prepush-final.log, before
 git push origin HEAD:hparser-integration. No production or native-client change
 is included in this review commit.
+
+
+### Review outcome at cfc6a174bb
+
+
+All 75 unresolved IDs remain valid unmet contracts: 69 open, six partial; 73
+concern live paths or missing runtime integration and D09/D10 are disabled seeds.
+Ten repaired IDs remain repaired. Six diagnostics completed and the controlled
+LFU admission regression remains red, providing fresh symptom/refusal evidence
+for 14 IDs. The other 59 live/missing-runtime gaps retain source/caller evidence.
+The old system-table DDL test still fails at the p1 catalog lookup; its cause
+remains unclassified rather than becoming another structural ID.
+
+Current evidence includes all 85 dispositions, 124 prior source references for
+unresolved entries (22 changed across 16 IDs), all 18 intervening crate paths,
+and a specific assessment for each unresolved ID. The review corrects stale D05
+blanket-1105 and E02 orphan-acceptance wording and distinguishes retired unsafe
+shortcuts from complete missing owners. No production code or acceptance claim
+changes. The receipt is parity/current-audit/worker-followup-structural-review.md.
+The checker command python3 /private/tmp/check-worker-followup-review.py passes
+all ID/status/row/source/link/output/cleanup assertions; git diff --check also
+passes. The actual commit hook passed its locked server build in 0.68 seconds;
+the separate post-commit locked build passed in 20.43 seconds. Logs are
+/private/tmp/tidb-worker-followup-review-commit.log and
+/private/tmp/tidb-worker-followup-review-prepush.log. The final receipt amendment
+repeats the actual hook and fresh build with -commit-final.log and
+-prepush-final.log before the normal push. No production code changed, so no
+additional lint or broad suite is required. The two reviewed failing tests remain
+explicit unresolved evidence, not a successful test-suite claim.
+
+Only the six fresh diagnostic executables and their six dependency files were
+removed, reclaiming 932,683,776 allocated bytes (about 890 MiB). Sources, outputs,
+compiler logs and shared build objects remain; the exact local cleanup manifest
+is /private/tmp/worker-followup-cleanup.json.

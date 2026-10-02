@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-01",
+  "date": "2026-10-02",
   "baseline": {
+    "tidb_integration": "cfc6a174bb3e46312dae48a7b85a53053b2f5ea0",
     "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
-    "tidb_integration": "68d6de685a5e58c559a861ec7b85d10bc8a2aa60",
     "client_rust": "6163ecfc587b248dcbf0e30c1c9d905b4bc5a665",
     "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
   },
@@ -20,7 +20,7 @@
       "finding": "**P1; partially repaired:** UPDATE privileges now bind through logical output names, including unqualified joined targets, SQL/binary PREPARE, schema changes and EXPLAIN. The fail-open UPDATE qualifier collector is removed. Other statement kinds still collect AST visits, so the shared planner-owned visit-info lifecycle remains open. The earlier column-only SELECT allegation was disproved against master.",
       "rust_evidence": "`rust/crates/tidb-executor/src/driver/planner_bridge.rs::update_privilege_tables`; `rust/crates/tidb-session/src/table_privilege.rs`; `identity.rs`; `explain_arm.rs`; receipt `update-privilege-repair.md`",
       "go_owner": "Master `pkg/planner/core/logical_plan_builder.go::buildUpdateLists` resolves target columns and `buildNewAssignments` appends their UpdatePriv; `optimizer.go::CheckPrivilege` verifies the resulting visits. `buildDataSource` requests table SELECT with an empty column, so SELECT(x) alone does not authorize ordinary SELECT x in Go either. Continue migration of all visit-info producers with their complete package owners.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: UPDATE's resolved privilege path remains repaired; other statements still derive privilege visits outside the shared planner owner. Fresh denial controls do not close those producers. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "A02",
@@ -29,16 +29,16 @@
       "finding": "**P1; source-confirmed:** the durable account image omits `mysql.global_priv`, password-change time/lifetime, failed-login policy/state and other user attributes. Rebuilding the registry supplies `SslType::None`, a fresh password timestamp and no lock policy. The live authentication code therefore cannot enforce the policies loaded from a Go peer. Empty usernames are also discarded.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs:120`, `:191`, `:294`, `:428`; `rust/crates/tidb-server/src/cluster_privileges.rs:88`, `:381`, `:702`; `rust/crates/tidb-session/src/privilege.rs:262`",
       "go_owner": "`pkg/privilege/privileges/cache.go::LoadAll`, `decodeUserTableRow`, `decodeGlobalPrivTableRow`, and `privileges.go::ConnectionVerification`/`checkSSL`. Carry the complete policy image through read, publication and writeback; preserve expiry/lock epochs. Policy loss is source-confirmed; no live mixed-node authentication exploit was run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The durable loader still omits mysql.global_priv and policy fields; registry reconstruction and empty-user handling remain unchanged. No mixed-node authentication test was run. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "A03",
       "status": "open",
       "group": "Privilege and account policy owners",
       "finding": "**P2; partially reproduced:** MySQL TLS always uses `with_no_client_auth`; authentication receives only a TLS boolean. X509/specified requirements are refused, configured certificates are loaded once, and CA/min-version/reload policy has no corresponding transport lifecycle.",
-      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs:118`, `:161`; `configured_user_store.rs:479`; `rust/crates/tidb-session/src/privilege/privs.rs:127`. `CREATE USER … REQUIRE X509` refusal reproduced.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs:118`, `:161`; `configured_user_store.rs:479`; `rust/crates/tidb-session/src/privilege/privs.rs:127`. `CREATE USER \u2026 REQUIRE X509` refusal reproduced.",
       "go_owner": "`pkg/util/misc.go::LoadTLSCertificates` loads CA/client verification, minimum TLS version and reloadable certificates; `pkg/privilege/privileges/privileges.go::checkSSL` checks verified chains/cipher/issuer/subject/SAN. Preserve that state through the TLS/account boundary. This is separate from A02 losing stored policies.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: TLS still uses with_no_client_auth and REQUIRE X509 still refuses. Certificate verification, policy propagation and rotation remain incomplete. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "A04",
@@ -47,7 +47,7 @@
       "finding": "**P1; reproduced:** account SQL accepts PASSWORD HISTORY and REUSE options as no-ops. Creating history=3, changing the password, then reusing the first password succeeds; `password_reuse_history` remains NULL.",
       "rust_evidence": "`rust/crates/tidb-session/src/account.rs:145`; `expanded-ownership-probe.txt`",
       "go_owner": "`pkg/executor/simple.go::whetherSavePasswordHistory`, `checkPasswordHistoryRule`, `checkPasswordReusePolicy` persist and check `mysql.password_history` and user policy. Move full account policy validation and storage together; parsing or SHOW output alone is insufficient.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Fresh password-history/reuse probe still accepts reuse and stores NULL policy; preserve full account-policy persistence/verification scope. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh SQL accepts PASSWORD HISTORY 3, reuses the first password and reads NULL policy. Account option handling still ignores the history/reuse fields. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "B01",
@@ -56,7 +56,7 @@
       "finding": "**P2; source-confirmed:** live BindingCache uses an insertion-order CostLruStore; reads never influence admission/eviction. Every fitting insertion is admitted. Go's Ristretto cache has frequency admission and asynchronous Set/Wait. This can retain different hints under pressure, affecting chosen plans.",
       "rust_evidence": "`rust/crates/tidb-session/src/binding_cache.rs:283`, `:313`, `:317`, `:413`; cluster binding image publication",
       "go_owner": "`pkg/bindinfo/binding_cache.go::newBindingCache`, `GetBinding`, `SetBinding`. Preserve the complete admission, access, replacement, accounting and publication contract. No particular probabilistic Go victim or measured workload slowdown is claimed.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: CostLruStore.get only reads the map; insertion-order eviction and unconditional fitting admission remain the live binding store. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "B02",
@@ -65,7 +65,7 @@
       "finding": "**P2; source-confirmed:** the binding worker rebuilds the full table/cache image every lease; it has no incremental watermark, binding owner GC timer or usage persistence loop. A new cache on every reload would discard access history even after replacing the FIFO engine. Tombstone GC instead runs on subsequent global-binding writes; usage helper code has no production caller.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_binding_seam.rs:76`, `:169`; `rust/crates/tidb-session/src/binding_arm.rs:684`; `binding_utils.rs:459`",
       "go_owner": "`pkg/bindinfo/binding_cache.go::LoadFromStorageToCache`, `UpdateBindingUsageInfoToStorage`, `pkg/domain/domain.go::globalBindHandleWorkerLoop`. Keep the existing independent global-binding writer; migrate refresh/GC/usage scheduling to the shared owner before deleting write-triggered GC.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The lease reloader still constructs a full BindingCache from storage rows; no incremental watermark, usage writer or owner GC loop was added. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "N01",
@@ -74,7 +74,7 @@
       "finding": "**P1; reproduced:** SQL ingress forces a Rust UTF-8 String and converts Latin-1 bytes into Unicode characters. Raw COM_QUERY `SELECT HEX('<E9>')` returns `C3A9`; Go's Latin-1 compatibility encoding preserves `E9`. Text rendering alone hides byte/length/storage differences.",
       "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs:86`, `:1702`, `:2140`; `expanded-server-probe.txt`",
       "go_owner": "`pkg/parser/charset/encoding_latin1.go::Transform` and the parser/server input boundary. Preserve source bytes/charset through lexing, literals, datum storage and result conversion; a HEX-specific patch would not fix the contract.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Fresh raw Latin-1 COM_QUERY probe still changes E9 into C3A9; the source-byte ownership gap remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The wire diagnostic still converts raw Latin-1 E9 to C3A9. UTF-8 String ingress and literal representation are unchanged. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "N02",
@@ -83,7 +83,7 @@
       "finding": "**P2; source-confirmed:** the main flag accepts token-limit and its gauge exists, but command dispatch has no shared command permit owner. Connection-count admission is implemented and is a different limit.",
       "rust_evidence": "`rust/crates/tidb-server/src/main_flags.rs:281`, `lib.rs:420`, `mysql_connection.rs` command loop, `sql_node.rs:1904`, `:2090`; token-limit flag admission reproduced",
       "go_owner": "`pkg/server/server.go::concurrentLimiter`/`getToken`/`releaseToken`, `pkg/server/conn.go` dispatch acquires and releases a token per command. Wire the existing configured limit to command lifetime. Concurrent workload effects were not measured.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The token-limit flag remains accepted without a command permit acquire/release path. Connection-count admission is not that missing contract. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "N03",
@@ -92,7 +92,7 @@
       "finding": "**P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as token-limit, performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true.",
       "rust_evidence": "`rust/crates/tidb-server/src/bin/tidb-server.rs:60`; `node_config.rs:399`, `:441`, `:920`; `expanded-server-probe.txt`",
       "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Use the complete validated configuration as the runtime authority, including CLI precedence and consumers; merely accepting ignored fields would preserve the gap. Removed performance.run-auto-analyze is correctly refused and is not a finding.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh TOML still rejects token-limit, performance.stats-lease and security.ssl-ca; auto_tls remains true. The second NodeConfig authority remains. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D01",
@@ -101,7 +101,7 @@
       "finding": "**P1; durable owner still open:** ordinary SQL DDL still uses a direct metadata transaction; only CHECK SQL submits to the persisted worker. The unsafe ALTER TABLE PARTITION BY shortcut has been withdrawn from local execution and cluster lowering/planning. Repartition now remains unsupported until the complete durable owner is ready; existing rows and schema survive refusal. The thread-local metadata handoff that also broke fresh-thread ADD/DROP/TRUNCATE planning is removed. Earlier row-loss observations remain historical evidence, not current admitted behavior. Existing worker handlers still do not establish general SQL integration.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs::RealClusterDdl`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs`; `rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`; `rust/crates/tidb-exec/src/cluster_ddl.rs::lower_alter_table_catalog` / `apply_partition_change`; safety regressions in `rust/crates/tidb-session/tests/add_truncate_partition_source.rs` and `rust/crates/tidb-exec/tests/cluster_ddl_source.rs`; [removal receipt](../../partition-owner-removal-execplan.md)",
       "go_owner": "`pkg/ddl/executor.go`, `pkg/ddl/jobsubmit`, `pkg/ddl/job_worker.go` and `pkg/ddl/partition.go::onReorganizePartition`: typed job submission, persisted schema transitions, index/row reorganization, rollback and completion. Go StateWriteReorganization calls doPartitionReorgWork before publication. Replace the direct publisher after all callers migrate; do not treat syntactic acceptance or metadata replacement as complete partition DDL. Live TiKV repartition and crash recovery were not exercised in this review.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Repartition shortcuts and thread-local handoff are retired. Fresh refusal preserves rows; general non-CHECK direct DDL and durable owner obligations remain. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Only CHECK SQL submits through the durable worker; other DDL uses the direct transaction route. Fresh repartition refusals preserve rows but leave Go-supported reorganization absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D02",
@@ -110,7 +110,7 @@
       "finding": "Online index construction/removal remains a whole-table operation in the DDL transaction; its backfiller also synthesizes default statement context. It lacks the source's durable schema phases, resumable reorg and persisted evaluation context. This is a concurrency/scale boundary, not just duplicate helper code.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs:1155`, `rust/crates/tidb-exec/src/real_tikv_ddl.rs:1342`, `rust/crates/tidb-exec/src/cluster_ddl.rs:9349`",
       "go_owner": "`pkg/ddl/index.go::onCreateIndex`, `pkg/ddl/reorg.go`: DeleteOnly, WriteOnly, WriteReorganization, reorg workers, rollback and delete-range registration. Shares D01's migration prerequisite.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Index entries still backfill in the publication transaction through a default statement context; no complete durable index/reorg lifecycle was added. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D03",
@@ -119,7 +119,7 @@
       "finding": "The scheduler runs each supported job to completion serially; it skips unsupported persisted jobs. It has no equivalent of the complete running-job/conflict/reorg-worker lifecycle. This limits independent DDL and mixed Go/Rust owner recovery.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs:212`",
       "go_owner": "`pkg/ddl/job_scheduler.go`: job admission, running jobs, worker pools and dependency checks must own dispatch. Do not merely add more cases to the current loop.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: run_loop still iterates jobs serially and calls run_persisted_ddl_job to completion, skipping unsupported action types. Worker error continuation did not introduce worker pools. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D04",
@@ -128,7 +128,7 @@
       "finding": "**Recorded control-gate mismatch repaired:** all nine integrated action kinds dispatch CANCELLING through Go-derived conversion before any forward action. Reversible DROP cancels; irreversible DROP resumes on the next step; CHECK rollback preserves schema barriers, raw arguments and the original error. PAUSING/PAUSED remain shared worker outcomes. The detached CHECK rollback transaction is removed, so a concurrent pause/cancel conflicts with the original action transaction instead of being overwritten. Missing action/scheduler owners remain D01/D03; this is not complete pkg/ddl acceptance.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::plan_persisted_ddl_job_with`, `plan_cancel_persisted_ddl_job`, `plan_persisted_ddl_job_failure`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::run_persisted_ddl_job`; receipts `../../ddl-pause-lifecycle-execplan.md`, `../../ddl-cancellation-lifecycle-execplan.md`",
       "go_owner": "`pkg/ddl/job_worker.go::processJobPausingRequest`, `runOneJobStep`, `transitOneJobStep`; `pkg/ddl/rollingback.go::convertJob2RollbackJob`. Existing live control paths now use one checkpoint/commit owner. External error handling and complete runtime ownership remain D05 and D03.",
-      "review_basis": "Maintenance after 7a7c756a390008771fb327942e95ff8a826a25c2 against unchanged Go/native pins. Cancelling CREATE and the detached validation/pause race fail before and pass after. Tests cover all live action conversions, physical DROP state, CHECK schema publication before history, raw arguments, error preservation, budgets and owner loss. The earlier pause receipt remains valid. No upstream package acceptance."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D05",
@@ -137,7 +137,7 @@
       "finding": "**Partially repaired:** returned planner/validation errors and recovered action panics use the original transaction's shared checkpoint. Panic recovery preserves prior errors/raw arguments and Go count/state/current-limit rules. Direct execution, checkpoints and history share error codes/SQLSTATE; plain errors use DDL/CodeUnknown. Committed action errors now continue inside the shared worker, with source code/message retry classification and current-limit checks after commit. Retry waiting uses owner retirement; private CHECK failure memory and scheduler-mediated action retries are removed. Source RFC/class identity still disappears at coded-admission/storage boundaries; full taxonomy, rollback-transaction classification, configurable retry timing/metrics and missing whole-action effects remain unresolved. All nine live persisted handlers emit no placement/label requests.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::DdlPlanError`, `ddl_job_error_to_sql_error`, `count_ddl_action_error`, `count_ddl_action_panic`, `plan_persisted_ddl_job_failure`; `rust/crates/tidb-server/src/sql_node.rs::cluster_ddl_error`; `rust/crates/tidb-server/src/cluster_session_node/ddl.rs::persisted_job_error`; receipts `../../ddl-cancellation-lifecycle-execplan.md`, `../../ddl-panic-owner-execplan.md`, `../../ddl-error-conversion-execplan.md`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::run_persisted_ddl_job`, `is_retryable_job_error`; `rust/crates/tidb-server/src/cluster_session_node/ddl.rs::wait_ddl_retry`; receipt `../../ddl-worker-continuation-execplan.md`",
       "go_owner": "`pkg/ddl/job_worker.go::countForError`, `countForPanic`, `loadGlobalVars`, `transitOneJobStep` and `isRollbackTxnError`; `pkg/ddl/index.go::isRetryableJobError`; `pkg/util/misc.go::Recover`. Complete source error producers and their transaction/observability contracts under the same worker; do not add detached checkpoints or statement-local job results.",
-      "review_basis": "Maintenance after 77683d6dfb4b77ae11e14fba70e165a648200387 against unchanged Go/native pins. Private CHECK worker-result and committed-action escape regressions fail before and pass after. Checkpoint visibility, code/message retry classification, count-plus-one cutoff, current-limit changes, owner retirement and resumed CHECK rollback/history are covered. Prior checkpoint/error-conversion receipts remain valid. Legacy numeric classification does not recover erased source identities or establish mixed-Go/Rust error interoperability; no complete upstream package acceptance."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Checkpointing, panic/cancel handling, SQLSTATE/code projection and post-commit retry waiting are repaired. Admission errors still hold only reason/code; compatible job errors lack source RFC identity. Full transaction/error/metrics policy remains open. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D06",
@@ -146,7 +146,7 @@
       "finding": "**Recorded object-validation mismatch repaired:** CHECK missing database/table/constraint, renamed-table and non-public-table failures select CANCELLED before shared history persistence. ADD constraint duplicate/name checks run before cancellation conversion, and its submitted argument shares the initial metadata pointer as Go does. This closes the recorded terminal-outcome gap, not complete CHECK expression/reorganization parity.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::checked_job_table`, `plan_persisted_check_constraint_job_step`; `rust/crates/tidb-exec/tests/cluster_ddl_source.rs::persisted_check_lookup_failures_cancel_before_retry`; receipt `../../ddl-cancellation-lifecycle-execplan.md`",
       "go_owner": "`pkg/ddl/constraint.go::checkAddCheckConstraint`, `checkDropCheckConstraint`, `checkAlterCheckConstraint`; `pkg/ddl/table.go::GetTableInfoAndCancelFaultJob`. Object validation, action state and the common worker jointly own cancellation and terminal history.",
-      "review_basis": "Maintenance after 7a7c756a390008771fb327942e95ff8a826a25c2. The original CHECK lookup path fails the terminal-history regression. The final matrix covers all three CHECK actions for table failures and DROP/ALTER for absent constraints, with source error codes and one durable error count. Full pkg/ddl and dependency acceptance remain open."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D07",
@@ -155,7 +155,7 @@
       "finding": "Persisted planning always obtains MDL table information and uses the MDL barrier. There is no equivalent MDL-disabled branch in this owner.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs:3229`, `rust/crates/tidb-server/src/cluster_session_node/ddl.rs::ClusterSchemaSync`",
       "go_owner": "`pkg/ddl/job_worker.go`, `pkg/ddl/schema_version.go`: select MDL or lease-based schema synchronization from the real operation mode.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The common planner still constructs MDL information and the worker always uses the MDL barrier. No source-mode branch for disabled MDL is present. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D08",
@@ -164,7 +164,7 @@
       "finding": "DROP completion does not register all of Go's typed delete-range work with its durable GC owner. The direct index/partition path can perform immediate local key deletion instead.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs:4429`, `:9349`, `rust/crates/tidb-executor/src/kv_table/partition_maintenance.rs:20`",
       "go_owner": "`pkg/ddl/delete_range.go`, `pkg/ddl/job_worker.go::finishDDLJob`, typed job arguments and `pkg/store/gcworker`. Registration and the worker in O03 are separate required responsibilities.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Finalization still lacks the complete typed delete-range registration; direct index/partition paths retain eager key removal. This is distinct from the absent GC worker. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D09",
@@ -173,7 +173,7 @@
       "finding": "Materialized-view build evaluates a snapshot copied into memory and emits the built rows in the completion transaction; Go has distinct build/reorg sessions and transactions. **Seed only; live dispatch remains disabled.**",
       "rust_evidence": "`rust/crates/tidb-exec/src/mview_build_engine.rs`, `rust/crates/tidb-exec/src/cluster_ddl.rs::plan_create_materialized_view_job_step`",
       "go_owner": "`pkg/ddl/mview_worker.go` build/reorg lifecycle. Remove the seed evaluator as a live integration candidate until the owner is complete.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The in-memory materialized-view build seed remains, but supports_persisted_ddl_job excludes its action. This is an inactive implementation gap, not an admitted production failure. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D10",
@@ -182,7 +182,7 @@
       "finding": "MV/MV-log actions maintain some base backreferences inline but lack the complete shared base-and-log dependent-ID lifecycle, affected-table publication and rollback fallback. **Seed only.**",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs:5011`, `:5712`",
       "go_owner": "`pkg/ddl/mview_worker.go::updateMaterializedViewBaseInfoOnCreate`, `updateMaterializedViewBaseInfoOnDrop`: migrate create/drop/rollback together, including MLogTableIDs and DependentMViewIDs.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The MV/MLog dependency seed still lacks the full dependent-ID/publication/rollback lifecycle and remains excluded from live dispatch. This is an inactive implementation gap. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "D11",
@@ -191,7 +191,7 @@
       "finding": "The in-process ALTER dispatcher stages only selected multi-action statements containing foreign keys. **Reproduced:** `ADD COLUMN added INT, ADD COLUMN id INT` errors on existing `id` but leaves `added` installed.",
       "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs:58`; ordinary Session::run probe",
       "go_owner": "`pkg/ddl/executor.go::alterTable` collects all subjobs before submission; `multi_schema_change.go::onMultiSchemaChange` owns combined transitions and rollback. Atomicity must cover every action list. The reproduction is in-process, not proof of a partial cluster metadata commit.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Freshly reproduces partial multi-action ALTER after duplicate-column failure. FK-only staging and repartition withdrawal do not close general atomicity. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The only alter_table.rs change adds a COALESCE warning. Fresh multi-action ADD COLUMN still publishes the first column before the second raises duplicate-column. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "C01",
@@ -200,7 +200,7 @@
       "finding": "**Ownership repaired:** one session physical-entry LRU now serves prepared/non-prepared SELECT/DML, with shared capacity, recency, pressure, close and flush. Separate per-statement vectors and the DML-only metadata LRU are removed. See the [repair receipt](shared-session-plan-cache-repair.md) for regressions and limits; this is not whole-package acceptance.",
       "rust_evidence": "`rust/crates/tidb-executor/src/driver/plan_cache.rs`, `rust/crates/tidb-planner/src/plan_cache_lru.rs`, `rust/crates/tidb-session/src/session_plan_cache.rs`; server factory and COM_STMT_CLOSE callers",
       "go_owner": "`pkg/session/session.go::GetSessionPlanCache`, `pkg/planner/core/plan_cache_lru.go`, `pkg/executor/simple.go::executeAdminFlushPlanCache` and `prepared.go::DeallocateExec.Next`. C02 remains open.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "C02",
@@ -209,16 +209,16 @@
       "finding": "Instance-plan-cache variables are registered, but no domain-scoped shared cache or instance hit/clone/eviction path is composed into production. Enabling the flag cannot select Go's instance owner.",
       "rust_evidence": "`rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:256`; C01's owners; production reference audit in the review receipt",
       "go_owner": "`pkg/planner/core/plan_cache.go::lookupPlanCache`/`clonePlanForInstancePlanCache`, `plan_cache_instance.go`, Domain: shared ownership plus per-execution cloning. Reuse admission/key/rebuild contracts; another ad hoc global map is insufficient.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Instance-cache variables and metric selectors still have no domain cache consumer. The working session cache is a separate repaired owner. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "C04",
       "status": "partial",
       "group": "Session plan-cache ownership",
-      "finding": "**P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, signed shards, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. A [controlled follow-up](lfu-review-followup.md) also proves eager primary visibility with the admission worker paused and fixes two public paths missed by the shutdown guard. Native policy metrics are also not exposed.",
+      "finding": "**P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, sharded storage, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. A [controlled follow-up](lfu-review-followup.md) also proves eager primary visibility with the admission worker paused and fixes two public paths missed by the shutdown guard. Native policy metrics are also not exposed.",
       "rust_evidence": "`rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs` and `source_tests.rs::concurrent_small_capacity`; complete inventory and red/green evidence in [receipt](lfu-lifecycle-repair.md)",
       "go_owner": "Complete `pkg/statistics/handle/cache/internal/lfu` plus pinned `github.com/dgraph-io/ristretto v0.1.1`. Accept or replace the whole dependency lifecycle/admission owner; do not add special-case eviction in the TiDB wrapper. Native lifetime repairs are not package acceptance.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The changed rem_euclid shard calculation does not change Stretto admission. The controlled ignored regression still fails because a nonresident primary is visible before admission. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E01",
@@ -227,7 +227,7 @@
       "finding": "**Repaired in the shared UPDATE owner follow-up (historical evidence below).** Multi-update writes each alias's full row from the original join output, lacking shared merge state for aliases of one physical row. **Reproduced:** `a.x=11,b.y=21` through two aliases of `(1,10,20)` succeeds but leaves `(1,10,21)`.",
       "rust_evidence": "`rust/crates/tidb-executor/src/driver/multi_dml.rs:897`, `:918`, `:1066`",
       "go_owner": "`pkg/executor/update.go::mergeNonGenerated`, `mergeGenerated`, `updateRows`: merge by table ID/handle while retaining per-target-position changed-row rules. Changing only the deduplication key would lose legitimate assignments.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E02",
@@ -236,7 +236,7 @@
       "finding": "**Runtime bypass repaired; FK plan integration remains open.** The shared runtime now enforces multi-update checks/cascades, but the physical UPDATE handoff still lacks the Go per-table FK plans. **Historical reproduction, repaired:** single-table `pid=999` raised an FK error while joined UPDATE stored the orphan. Retain that regression; migrate plan metadata and the remaining producer/consumer contract.",
       "rust_evidence": "`rust/crates/tidb-executor/src/driver/dml.rs:2954`; `driver/multi_dml.rs:828`, `:1066`, `:1337`; contrast `driver/dml.rs:3434`",
       "go_owner": "Go `buildUpdate` and `pkg/executor/update.go::exec` pass per-table FK plans into shared `updateRecord`. Move the complete UPDATE policy into that shared owner. Multi-DELETE already enforces referred checks/cascades; its control probe fails correctly.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh joined UPDATE rejects an orphan as repaired. Physical UPDATE still omits Go's per-table FK plans, so the plan-to-execution contract remains incomplete. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E03",
@@ -245,7 +245,7 @@
       "finding": "The DML-source helper drains the entire physical read into datum vectors before writes; multi-DML then reconstructs target layouts/handles from catalog metadata. Multi-DML charges joined rows after collection; the collection vector is not charged during growth. Matrix sources retain a separate join/filter interpreter.",
       "rust_evidence": "`rust/crates/tidb-executor/src/driver/physical_builder.rs:5514`, `rust/crates/tidb-executor/src/driver.rs:960`, `driver/multi_dml.rs:814`, `:1265`, `:1351`",
       "go_owner": "Go's planner retains finalized TblColPosInfos/handle columns; `updateRows` consumes and charges chunks. Multi-DELETE also buffers, but deduplicates into tblRowMap as chunks arrive. Migrate the complete handoff. A USING-layout corruption is not established: that probe passes.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: execute_dml_source still returns a fully drained Vec of datum rows; multi-DML reconstructs target handles and charges after collection. No streaming handoff was added. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E04",
@@ -254,7 +254,7 @@
       "finding": "Physical Apply retains concurrency/keep-order metadata, but its builder always constructs serial NestedLoopApplyExec. The parallel-apply variable has no production execution consumer.",
       "rust_evidence": "`rust/crates/tidb-planner/src/physical/mod.rs:1986`, `rust/crates/tidb-executor/src/driver/physical_builder.rs:3356`, `:3432`; optimizer sysvar catalog",
       "go_owner": "`pkg/executor/builder.go::buildApply` clones eligible inner plans for ParallelNestedLoopApplyExec; `parallel_apply.go` owns ordered workers, cache, errors and cleanup. Rust needs worker-safe contexts and Go's serial fallback. Serial result tests do not validate this path; performance is unmeasured.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The physical Apply builder still creates NestedLoopApplyExec; concurrency metadata and the setting have no parallel execution consumer. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E05",
@@ -263,7 +263,7 @@
       "finding": "**P1; complete import owner still open:** the unsafe private IMPORT INTO file/SELECT execution pipeline is withdrawn. Its local CSV parser, nested precheck/INSERT loop and SELECT-to-INSERT rewrite are removed; execution now explicitly refuses before reading files or modifying tables. The prior skip_rows/assignment omissions are historical observations of the removed pipeline. Go supports both forms through its import controller, with durable job/task lifecycle for file imports; that complete owner and runtime integration remain absent.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::DmlStmt::ImportInto`; `src/tests_core/dml.rs::import_into_refusal_preserves_file_targets_and_options`; `::import_into_refusal_preserves_select_targets_and_transaction`; receipt `../../import-shortcut-removal-execplan.md`; historical `expanded-ownership-probe.txt`",
       "go_owner": "`pkg/executor/import_into.go::ImportIntoExec.Next`/`submitTask`, `pkg/executor/importer` controller and `pkg/dxf/importinto` (including standalone tasks). Replace the complete import lifecycle and option/encoding ownership; SELECT import has its own Go path and is not used to infer file-import result shape.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Private IMPORT file/SELECT pipeline is removed. Fresh file probe refuses without changing the target; complete Go import runtime remains missing. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh IMPORT refuses and leaves its target empty. The removed parser/INSERT pipeline stays removed; Go's import controller and durable tasks remain absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "S01",
@@ -272,7 +272,7 @@
       "finding": "Optional non-cluster-session mode selects a separate session/optimizer by configured table count. ASTs lower to ReadOnlyScanPlan/ConfiguredOrderedJoinPlan and a separate write planner, bypassing ordinary physical planning. It imposes one/two-table admission and refuses autocommit locking reads.",
       "rust_evidence": "`rust/crates/tidb-server/src/lib.rs:291`, `:338`; `real_tikv_multi_node.rs:308`, `:575`; `rust/crates/tidb-exec/src/real_tikv_dml.rs:1940`",
       "go_owner": "Go session ExecuteStmt, planner Optimize, executor compiler and TxnManager are shared across stores. Move these selectable entrypoints and consumers to regular session/storage adapters before deleting their configured planner/dispatcher family. This does not describe the default cluster-session path.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The optional configured server still selects its one/two-table private read/write planner rather than ordinary session/compiler ownership. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "S02",
@@ -281,7 +281,7 @@
       "finding": "With two loaded tables in that mode, startup discards the catalog snapshot and retains static descriptors; only the one-table branch installs schema/stats reloaders. Peer DDL can leave the two-table route stale.",
       "rust_evidence": "`rust/crates/tidb-server/src/real_tikv_node/mod.rs:1940`, `:1966`; RealTiKvMultiSessionFactory",
       "go_owner": "Go Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Fold consumers into that owner with S01; adding another table-count-specific reloader preserves duplication. Peer-DDL reproduction not run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The two-table startup branch still drops its initial catalog snapshot and installs no shared catalog reloader, unlike the one-table branch. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "I01",
@@ -290,7 +290,7 @@
       "finding": "Dynamic virtual tables still use constant empty/default rows or unconditional captured errors. The compiled CLUSTER_CONFIG capture and synthetic store1 warning have been removed; reads now explicitly refuse unavailable live retrieval. **Earlier reproductions still open:** an existing sequence is absent from SEQUENCES; CLUSTER_LOG reports missing start time even with start/end/pattern predicates. Other affected providers are enumerated in the review receipt.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `infoschema.rs::sequences_rows`; removal receipt `rust/docs/cluster-fixture-removal-execplan.md`",
       "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. CLUSTER_CONFIG still needs the complete fetchClusterConfig owner; safe refusal is not Go parity. Static column definitions/charset/metrics descriptions are not inherently wrong.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Compiled configuration capture and warning are retired. Fresh queries still expose absent sequence rows and unconditional log refusal; live configuration now explicitly unsupported. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh SEQUENCES remains empty for a created sequence and CLUSTER_LOG ignores supplied bounds; CLUSTER_CONFIG now refuses. Missing live retrievers remain. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "I02",
@@ -299,7 +299,7 @@
       "finding": "CLUSTER_INFO still reads only TiDB records and lacks six real service/store retrievers. The unconditional mock tikv/store1 row and discovery-error-to-empty fallbacks in CLUSTER_INFO and TIDB_SERVERS_INFO have been removed. SQL regressions cover live registry changes and error propagation/recovery; complete cluster discovery remains unimplemented.",
       "rust_evidence": "`rust/crates/tidb-session/src/lib.rs::cluster_info_table_rows`, `tidb_servers_info_table_rows`; `tests_domain_serverinfo_syncer_source.rs::cluster_metadata_contains_only_discovered_nodes`; removal receipt `rust/docs/cluster-fixture-removal-execplan.md`",
       "go_owner": "`pkg/infoschema/tables.go::GetClusterServerInfo` composes seven retrievers and propagates errors; `dataForTiDBClusterInfo` renders output. Keep mock facts in the mock provider. Complete discovery, version/identity rendering, privileges/redaction and runtime lifetime still require package acceptance; this removal does not close I02.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Fake store row and error suppression are removed, with prior red/green regressions. Six additional discovery sources and full owner integration remain; those regressions were not rerun in this review. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: cluster_info_table_rows still builds only TiDB server entries. Fake stores and swallowed discovery errors remain removed, but six source retrievers remain absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "I03",
@@ -308,7 +308,7 @@
       "finding": "CLUSTER_PROCESSLIST decorates only this process's rows with its address. Other listed cluster tables lack remote retrieval; table-name presence does not provide fanout.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:670`, `infoschema.rs:1034`; existing CLUSTER_STATEMENTS_SUMMARY_HISTORY test expects refusal",
       "go_owner": "`pkg/infoschema/cluster.go`, `pkg/executor/table_reader.go`, `pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks`: discover and dispatch to peers or DDL owner, with cancellation and memory tracking. Multi-node fanout not exercised.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: CLUSTER_PROCESSLIST still decorates local process rows; no complete peer fanout task/retrieval lifecycle is composed. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "T01",
@@ -317,7 +317,7 @@
       "finding": "Generic `BufferMutation::insert` chooses both presume-not-exists and AssertNotExist. The configured INSERT planner does not read a snapshot and its planning interface lacks transaction-mode policy. A lazy optimistic miss requires a different assertion from an eager/pessimistic insert.",
       "rust_evidence": "`rust/crates/tidb-txnkv/src/transaction/mutation.rs:47`, `rust/crates/tidb-exec/src/real_tikv_dml.rs:402`",
       "go_owner": "`pkg/table/tables` owns uniqueness checking and assertion selection; the KV buffer transports the flags. Review table, index and system-row callers together; blanket AssertUnknown is also incorrect.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: BufferMutation::insert still couples presume-not-exists to AssertNotExist; the configured INSERT planner has no source transaction-mode policy input. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "T02",
@@ -326,7 +326,7 @@
       "finding": "TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. The native region-metadata circuit breaker now delegates to the shared PD package; that removed duplicate is not part of the remaining routing allegation.",
       "rust_evidence": "`rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs`",
       "go_owner": "Pinned client-go owns storage routing/recovery; TiDB coprocessor code consumes it. Move all consumers before deleting the TiDB owner. Native RetryBackoffer already owns the retry budget and must not be duplicated again.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: ClientPd still delegates to TiDB routing while native client-rust retains its own region/cache/RPC owners. Repaired backoff, replica selection and shared health types remain repaired. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "T03",
@@ -335,7 +335,7 @@
       "finding": "Repaired the listed request-type and client-mode lifetime heuristics in this continuation. Native owners now distinguish explicit rollback, initialization rollback, failed-commit cleanup, secondary completion and pipelined TTL work; native transport also observes cancellation.",
       "rust_evidence": "`rust/crates/tidb-txnkv/src/driver/client_bridge.rs`, client-rust `488bb73`, and `operation-lifetime-repair.md`",
       "go_owner": "Pinned client-go transaction/lock owners select the context. The bridge's heartbeat exception and `transaction_tasks` flag are removed. This closes the listed workaround, not the broader shutdown/foreground-context audit or a complete-package parity claim.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "T04",
@@ -344,7 +344,7 @@
       "finding": "**P2; source-confirmed:** active health-feedback admission now returns false whenever the feedback mutex is held. Go reads its last-feedback time and score atomically and may request feedback before attempting the update mutex. Rust can omit an otherwise due network probe during an overlapping update. This is a read/admission boundary left different by the recent health repair; feedback writes and decay correctly remain nonblocking.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/locate.rs::StoreHealthStatus::needs_active_feedback`; native `src/region_cache.rs::tick_store_health_with_callback`",
       "go_owner": "Pinned client-go `internal/locate/store_cache.go::updateTiKVServerSideSlowScoreOnTick`: publish sufficient read-side metadata independently of the update lock and preserve callback-before-update ordering. This is a source scheduling comparison, not a demonstrated outage.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: needs_active_feedback still returns false on a contended feedback mutex; pinned client-go reads atomic metadata and requests feedback before taking the update mutex. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O01",
@@ -353,7 +353,7 @@
       "finding": "Numeric server-ID allocation/lease renewal/loss recovery is absent. Server info defaults to zero and the connection allocator uses standalone ID 1. Independent nodes cannot rely on Go's cluster-wide identity guarantee.",
       "rust_evidence": "`rust/crates/tidb-server/src/serverinfo_etcd.rs:303`, `rust/crates/tidb-server/src/sql_node.rs:50`, `:1499`",
       "go_owner": "`pkg/domain/domain.go::acquireServerID`, `refreshServerIDTTL`, `globalconn` allocator. The already repaired MPP statement IDs must consume this shared identity.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The sql_node.rs changes remove DDL error mapping only. Numeric server-ID leasing is absent and the connection allocator still uses standalone identity. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O02",
@@ -362,7 +362,7 @@
       "finding": "Startup distinguishes only bootstrapped/not bootstrapped: any Bootstrapped version skips work. Partial bootstrap objects are refused. There is no versioned upgrade/recovery owner on this live boot path.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs:89`, `rust/crates/tidb-exec/src/cluster_privilege_load.rs:334`, `rust/crates/tidb-exec/src/mysql_bootstrap.rs:444`",
       "go_owner": "`pkg/session/session.go::runInBootstrapSession` chooses Bootstrap/Upgrade/Normal under the owner/version checks; `pkg/session/bootstrap.go` and upgrade files execute the required steps. Fresh empty-store tests do not validate upgrades.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Boot still checks already_bootstrapped rather than selecting a versioned upgrade/recovery workflow. A pre-existing bootstrap version skips publication. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O03",
@@ -371,7 +371,7 @@
       "finding": "A native GC client and metric families exist, but the Rust server does not start TiDB's store GC worker. Safe-point reads and region-cache eviction are not cluster GC leadership, scheduling and delete-range execution.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs`, `rust/crates/tidb-txnkv/src/kv_api.rs:587` (trait declaration), `rust/crates/tidb-txnkv/src/client_go_metrics.rs`",
       "go_owner": "`pkg/store/driver/tikv_driver.go::StartGCWorker`, `pkg/store/gcworker`, session startup. A Rust-only deployment lacks this server responsibility; a Go peer may mask it.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Server startup still has no store GC worker construction. Native GC methods and metrics are present but not that runtime owner. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O04",
@@ -380,7 +380,7 @@
       "finding": "TTL metadata, variables and SQL/session/cache helpers exist, but no TTL job/task manager is composed into the server. TTL configuration therefore does not establish automatic expiry work.",
       "rust_evidence": "`rust/crates/tidb-ttl/src/lib.rs:17`, `rust/crates/tidb-server/src/cluster_session_node/boot.rs`; worker implementation absent from the Rust source inventory",
       "go_owner": "`pkg/domain/domain.go::StartTTLJobManager`, `pkg/ttl/ttlworker`, including current external-workload role gating and owned shutdown. Do not remove useful helpers; implement their missing owner.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: TTL helpers/metadata remain without a server-composed TTL job/task manager and owned periodic execution. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O05",
@@ -389,7 +389,7 @@
       "finding": "Native resource-control callbacks exist but TiDB never installs a controller. Rust sysvars publish flags only. Resource-group names on requests do not implement PD token admission, settlement or runaway policy.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/resource_control.rs:323`, `:345`, `rust/crates/tidb-session/src/vars.rs:1315`; no Rust-crate caller of `set_resource_control_interceptor`",
       "go_owner": "`pkg/domain/runaway.go::initResourceGroupsController` constructs/starts the PD controller and runaway manager, then calls `tikv.SetResourceControlInterceptor`. Preserve native hooks and wire the actual owner.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: There is still no Rust-crate caller of set_resource_control_interceptor. New vars.rs code concerns DDL limits, not PD resource control/runaway integration. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O06",
@@ -398,7 +398,7 @@
       "finding": "RU statistics helpers have no production writer-loop caller, owner gating or scheduled shutdown in the server. The existence of RuStatsWriter alone does not populate/expire the history.",
       "rust_evidence": "`rust/crates/tidb-domain/src/ru_stats.rs:34`, `:442`, `rust/crates/tidb-server/src/cluster_session_node/boot.rs`",
       "go_owner": "`pkg/domain/ru_stats.go::requestUnitsWriterLoop`, `pkg/domain/domain.go` startup. Shares O05's controller dependency but has a separate persistence/maintenance responsibility.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: RuStatsWriter is still constructed only in source tests; startup does not run the owner-gated request-unit persistence/retention loop. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O07",
@@ -407,7 +407,7 @@
       "finding": "**P2; source-confirmed:** statistics GC has a callable implementation and direct tests, but no production caller starts its periodic lifecycle. The existing analyze-job cleanup worker only removes job history; it does not run table/column statistics GC.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/mod.rs:1438`, `:2059`, `:2587`; boot.rs startup list; all other `gc_stats` callers are tests",
       "go_owner": "`pkg/domain/domain.go::LoadAndUpdateStatsLoop`/`gcStatsWorker`: owner-gated GC, auto-analyze window checks, cache memory eviction and health updates. Keep existing workers; compose the missing lifecycle and shutdown. No long-running retention experiment was run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: gc_stats remains a public helper called by tests; existing startup workers do not periodically invoke it. Analyze-job cleanup is a separate responsibility. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O08",
@@ -416,7 +416,7 @@
       "finding": "**P2; source-confirmed:** plan-replayer collectors, dump workers and file-GC helpers exist, but the server constructs none of these owners and has no producer-to-dumper integration. Capture variables alone cannot produce replay archives.",
       "rust_evidence": "`rust/crates/tidb-domain/src/plan_replayer.rs:802`, `:901`, `:1097`; no production server references; session stmt_ctx.rs only propagates capture flags",
       "go_owner": "`pkg/domain/domain.go::StartPlanReplayerHandle`, `DumpFileGcCheckerLoop`, session capture submission and executor dump/load owners. Integrate the complete task/status/archive lifetime; do not substitute a token string for an archive.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Plan replayer collectors/dumpers remain helpers and test constructions, without server startup, capture production or file-GC integration. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O09",
@@ -425,7 +425,7 @@
       "finding": "**P1; source-confirmed:** server-info publication does not report the node's minimum active start timestamp to the cluster. Session, cursor, internal-transaction and recent schema timestamps never reach the shared reporting owner.",
       "rust_evidence": "`rust/crates/tidb-domain/src/serverinfo_syncer.rs:40`, `:629`; Rust production/vendor reference search and boot wiring",
       "go_owner": "`pkg/domain/infosync/info.go::ReportMinStartTS`/`storeMinStartTS` and server-info synchronization. Restore reporting under the leased owner, including shutdown and transaction/cursor lifetimes. This is independent of O03's missing GC worker: a Go peer's GC also needs Rust-node reporting. Actual premature collection was not reproduced.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: ServerInfoSyncer still explicitly excludes ReportMinStartTS and no live reporter composes session/cursor/internal/schema timestamps. No premature-GC reproduction is claimed. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O14",
@@ -434,7 +434,7 @@
       "finding": "**P2; source-confirmed:** affinity metadata reaches table/planner carriers, but there is no PD affinity-group manager or shared create/drop/retry lifecycle. Affinity-aware plan flags do not create or maintain the placement groups they describe.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session.rs::cluster_table` (the `set_has_affinity` call); `rust/crates/tidb-planner/src/plan_builder/catalog.rs`; server/DDL/PD production scan; existing `domain_affinity.md` receipt",
       "go_owner": "`pkg/domain/affinity`, `pkg/domain/infosync/info.go::Init`, `pkg/ddl/affinity.go`: connect PD HTTP manager initialization, idempotent DDL group creation and cleanup, queries and compatibility fallbacks. CPU affinity is unrelated.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Affinity still reaches metadata and plan carriers without a PD group manager or complete DDL lifecycle; CPU affinity is unrelated. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O15",
@@ -443,7 +443,7 @@
       "finding": "**P2; source-confirmed:** keyspace codecs exist, but Rust has no cross-keyspace runtime/session manager, holder accounting, idle eviction, submit-only DDL sessions or associated virtual server-info cleanup/reporting.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs`; `rust/crates/tidb-domain/src/lib.rs`; current production inventory and `domain_crossks.md` receipt",
       "go_owner": "`pkg/domain/crossks`, Domain `AcquireKSRuntime`/manager creation, acquisition and close paths: migrate the complete runtime, schema/session, min-start-TS and lease lifecycle. Only the Go variants that enable this owner require it.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: No cross-keyspace runtime/session manager was added; codecs alone do not provide holder/eviction/virtual-server/min-start-ts ownership. This is conditional on source variants supporting it. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O16",
@@ -452,7 +452,7 @@
       "finding": "**P2; source-confirmed:** workload-learning settings have no table-read-cost analysis, versioned workload-value persistence or cache-refresh worker. The already running workload-repository sampling worker implements a different responsibility.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs`; Rust production search for workload learning/read-cost owners; `workloadlearning.md` receipt",
       "go_owner": "`pkg/workloadlearning` and `pkg/domain/domain.go::SetupWorkloadBasedLearningWorker`/`readTableCostWorker`: compose source plan-stat extraction, owner gating, persistence and cache refresh with joined shutdown.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The live workload-repository sampler remains distinct from workload-learning read-cost analysis, persistence and cache refresh, which remain absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O17",
@@ -461,7 +461,7 @@
       "finding": "**P2; source-confirmed:** telemetry configuration and startup-admission helpers have no production feature-counter/window collection and periodic telemetry-log reporting lifecycle.",
       "rust_evidence": "`rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::telemetry_enabled`; server boot and Rust production inventory; `telemetry.md` receipt",
       "go_owner": "`pkg/telemetry` and `pkg/domain/domain.go::TelemetryLoop`: preserve source opt-in gates, restricted-session collection, initial report, window rotation, log output and shutdown. Go currently logs the report; this finding does not call for an external telemetry uploader.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Telemetry settings/admission remain without a production counter/window collector and periodic log reporter. Go's present contract does not require an external uploader. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O18",
@@ -470,7 +470,7 @@
       "finding": "**P2; reproduced in the in-process SQL owner:** statement-summary data structures, settings and readers exist, but completed production SQL never constructs/submits `StmtExecInfo`. The persistent v2 owner also lacks server setup/close and reader selection. Tests directly inject records and therefore do not establish the live pipeline.",
       "rust_evidence": "`rust/crates/tidb-exec/src/adapter.rs::decide_summary_stmt` and its explicit population boundary; `rust/crates/tidb-session/src/dispatch.rs::tidb_statements_stats_table_rows`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; no production add/setup/close callers",
       "go_owner": "`pkg/executor/adapter.go::SummaryStmt`, `pkg/util/stmtsummary/v2::Add`, `cmd/tidb-server/main.go::setupStmtSummary`/`closeStmtSummary`, `pkg/executor/stmtsummary.go::buildStmtSummaryRetriever`: connect statement completion, summary-mode dispatch, reader and sink lifetime together. Keep the existing v1/v2 stores.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Fresh enabled-summary SQL probe still returns zero cumulative rows. Producer, mode selection and sink lifetime remain open. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: With both summary switches enabled, fresh SQL still leaves cumulative statement stats at zero. Production still does not submit StmtExecInfo or compose the v2 sink lifetime. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O19",
@@ -479,7 +479,7 @@
       "finding": "**P2; source-confirmed:** statistics sync-load collectors are registered/materialized but their production request/wait/dedup/read events never record observations. A metrics endpoint can expose these zero-valued families despite real work. This is specifically the load-event integration, not absence of the already running workers or all statistics metrics.",
       "rust_evidence": "`rust/crates/tidb-stats-handle-metrics/src/lib.rs::SYNC_LOAD_TOTAL`, `SYNC_LOAD_TIMEOUT_TOTAL`, `SYNC_LOAD_DEDUP_TOTAL`, `READ_STATS_HISTOGRAM`; `rust/crates/tidb-executor/src/driver/catalog/sync_load.rs`; all-reference scan",
       "go_owner": "`pkg/statistics/handle/syncload/stats_syncload.go::SendLoadRequests`/`SyncWaitStatsLoad` and the shared `pkg/metrics` collectors: attach event recording at the source-owned lifecycle points, retaining one registry identity.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Statistics load metrics still have no production request/wait/dedup/read observation calls; running load workers and initialized collectors do not close this gap. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "F01",
@@ -488,7 +488,7 @@
       "finding": "Classic placement creation/repair/deletion and acceleration remain owned by each poll pass. Logical-table-only stale detection does not cover physical partitions/keyspaces.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_replica_manager.rs:167`",
       "go_owner": "`pkg/ddl/tiflash_replica.go`, infosync and GC: create rules before metadata publication; GC handles retired tables. Periodic rule refresh is a NextGen path in Go. Migrate all DDL/partition/drop consumers before deleting reconciliation.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Classic placement rule creation/repair/removal is still performed by poll_once rather than the complete DDL/GC owner. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "F02",
@@ -497,7 +497,7 @@
       "finding": "SetTiFlashReplica rebuilds unavailable metadata instead of preserving/resetting availability under Go's explicit policy; status/polling operate on logical IDs rather than the full physical partition lifecycle.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs` SetTiFlashReplica/UpdateTiFlashReplicaStatus branches and the poller above",
       "go_owner": "Go onSetTableFlashReplica, ResetAvailable and partition availability updates. Requires F01's complete DDL integration.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: SetTiFlashReplica still rebuilds unavailable metadata and the poller tracks logical table IDs; physical-partition availability/reset policy is incomplete. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "F03",
@@ -506,7 +506,7 @@
       "finding": "Polling lacks the shared progress cache, unavailable-table backoff and periodic PD HTTP store-discovery policy. It rediscovers/filter Up stores through gRPC each tick.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_replica_manager.rs:167`, `:318`",
       "go_owner": "`pkg/ddl/tiflash_replica.go::refreshTiFlashTicker`, `pkg/domain/infosync` HTTP/security owner, including Down/Disconnected status handling.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: poll_once still requests and filters gRPC Up stores on each pass without the source progress cache/backoff/HTTP-discovery lifecycle. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "M01",
@@ -515,7 +515,7 @@
       "finding": "MPP lowering is a separately built scan-only tree, with one selected Up TiFlash store and one task. Selection, TopN and aggregation are refused there. It does not consume Go's complete physical fragment/task graph or replica/balancing policy.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:94`, `:152`, `:219`",
       "go_owner": "`pkg/planner/core` MPP fragment/task generation, `pkg/executor/internal/mpp/local_mpp_coordinator.go`, `pkg/store/copr/mpp.go::ConstructMPPTasks`. This constrains TPCH pushdown and parallelism; no benchmark measurement is claimed.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: MPP remains scan-only, selects one Up TiFlash store, builds one task and refuses pushed Selection/TopN/aggregation. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "M02",
@@ -524,7 +524,7 @@
       "finding": "Range construction reduces all requested ranges to min(start)/max(end), issues one limited 10,000-region query and dispatches the envelope. Gaps between requested ranges are lost; continuation/completeness is not checked.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:117`, `:341`",
       "go_owner": "`pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksCore` splits and preserves each range with the shared region cache. Contract mismatch is confirmed; an end-to-end disjoint-range SQL reproduction has not run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: table_regions still collapses disjoint ranges into one min/max envelope and uses a 10000-region query without continuation. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "M03",
@@ -533,7 +533,7 @@
       "finding": "`open_mpp` drains the complete network stream into VecDeque before returning a row stream. Close only clears local packets. There is no coordinator memory accounting, statement cancellation while draining or remote cancel owner.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:378`, `:423`, `:495`, `:568`",
       "go_owner": "Go local coordinator `sendToRespCh`, `receiveResults`, `Close`, `cancelMppTasks`: incremental delivery, tracker charging, finish signal, joined cancellation and remote task cancellation. First-row latency and memory scale with the entire Rust response.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: open_mpp still drains the complete response into VecDeque; closing the returned stream only drops local packets, without a remote cancellation owner. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "M04",
@@ -542,16 +542,16 @@
       "finding": "MPP constructs a new plaintext client directly and handles RPC errors outside the shared client recovery policy; retry_regions are logged without cache invalidation.",
       "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs:386`, `:405`",
       "go_owner": "`pkg/store/copr/mpp.go::DispatchMPPTask`/`EstablishMPPConns` use the TiKV client security/context/backoff and invalidate stale regions. Reuse the storage transport/security owner; do not add another MPP-only retry/cache implementation.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: MPP still connects directly to http:// endpoints; stale regions are logged outside the shared routing/security/recovery owner. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "M05",
       "status": "open",
       "group": "TiFlash and MPP",
-      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01–F03.",
+      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01\u2013F03.",
       "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::watch_disaggregated_tiflash`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
       "go_owner": "`pkg/util/tiflashcompute`, startup topology initialization and `pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHash`: integrate configured topology discovery, fixed-pool cache, recovery and dispatch selection with the complete MPP owner. Do not add unsupported Go provider modes.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Disaggregated settings still have no composed compute topology/cache/dispatch consumer; the live scan selects ordinary PD stores. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P01",
@@ -560,7 +560,7 @@
       "finding": "**Repaired:** PD scope now shares the complete native oneof. Explicit zero, keyspace identity, global-barrier fields and store stats survive encoding.",
       "rust_evidence": "`rust/crates/tidb-proto/src/lib.rs`, `rust/crates/tidb-pd-client/src/client/requests.rs`",
       "go_owner": "Master's complete native `pdpb` owner; raw-wire regressions failed before removal. The PD mock-RPC test also distinguishes no scope from scope zero. See `complete-protocol-owner-repair.md`.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P02",
@@ -569,7 +569,7 @@
       "finding": "**Schema ownership repaired:** all five handwritten projections are removed; the compared 400 omissions are gone.",
       "rust_evidence": "Native PD/BR re-exports; complete descriptor-derived TiKV service; all pinned etcd API inputs and source gate.",
       "go_owner": "`protocol-contracts-after.json` compares seven protobuf packages with zero omissions/contract differences. All 71 opaque TiKV fields remain separate intentional representations, with presence and zero-copy tests. This does not accept external Go helpers or runtime behavior as complete packages.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P03",
@@ -578,7 +578,7 @@
       "finding": "The local PD client only follows PD member leadership and its PD Tso stream. It has no service-mode discovery/switching or independent TSO-service owner.",
       "rust_evidence": "`rust/crates/tidb-pd-client/src/client/topology.rs:36`, `rust/crates/tidb-pd-client/src/tso.rs:207`, complete PD contract does not supply discovery",
       "go_owner": "Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: PD member/leader discovery and classic Tso remain the only active discovery path; no service-mode/independent TSO service switch is composed. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P06",
@@ -587,7 +587,7 @@
       "finding": "**P2; partially repaired:** native TSO now has batch deadlines, cancellation and joined stream retirement; shared connectionctx, batch, retry, opt, metrics, circuitbreaker and errs prerequisites have published receipts. Healthy same-URL refresh preserves streams. Public PdRpcClient.close still closes region/TiKV owners without retiring the PD/TSO owner. Complete root/discovery/TSO lifecycle, options and package acceptance remain open. grpcutil experiments are isolated and unaccepted; Go default pick_first reconnects on demand after an established Ready connection becomes Idle, so that demand-driven behavior is not itself a mismatch.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`",
       "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; they do not accept parent packages or close P03/P06/P07. Preserve source-dependent Idle/demand reconnection, setup/readiness, TLS, pending-request completion and joined public shutdown. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain real native deadline/joined-retirement repairs and the passing isolated preface experiment. No production transport integration or public PD/TSO close has been added. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Native public close still stops region/TiKV owners without retiring its PD/TSO owner. Published deadline/batch/retry prerequisites and isolated grpcutil experiments do not close it. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P07",
@@ -596,7 +596,7 @@
       "finding": "**P2; source-confirmed:** native PD metadata RPCs hold the one `RetryClient.cluster` write lock over the network await. Region/store/scan calls serialize, and their exclusive lock conflicts with TSO's read lock and reconnect. Go obtains the service connection then sends independent requests without a client-wide RPC-duration write lock.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/retry.rs::retry_mut`, `get_region`, `get_all_stores`, `retry`; `src/pd/cluster.rs` mutable tonic client calls",
       "go_owner": "Pinned PD client `client.go::GetRegion`/`GetAllStores`/`ScanRegions`, `inner_client.go` service discovery: clone a request connection under short metadata synchronization and let each request retain its own timeout/context. Preserve synchronized leader replacement; throughput impact has not been measured.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: retry_mut still holds cluster.write() across call.await; metadata RPCs serialize and conflict with TSO read-side ownership. Throughput was not measured. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P05",
@@ -605,7 +605,7 @@
       "finding": "**Boundary repaired:** range trees and metadata delivery now require shared complete generated backup files. The generic RangeFile adapter and four-field TestFile are removed; both missing-range APIs return generated RPC KeyRange instead of the local algebra type. A compile-fail regression reproduced both RPC type mismatches; no live data-loss claim is made.",
       "rust_evidence": "`rust/crates/tidb-br/src/rtree/rtree.rs`; sibling restore callers; original-case fixtures",
       "go_owner": "Current master `93a01d31f6`, complete seven-artifact `br/pkg/rtree` review: [receipt](rtree-protocol-repair.md). All original Go race tests, generated-file identity/failure checks and update/merge workloads pass. The [progress-ownership follow-up](rtree-progress-ownership-repair.md) removes deep clones and detached snapshots and preserves the same record through insertion, lookup and completion. Go's distinct local KeyRange remains; metautil, diagnostics and live BRIE acceptance are separate.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "Q01",
@@ -614,7 +614,7 @@
       "finding": "**P2; source-confirmed:** the Cascades variable is accepted, but the production optimizer always enters the existing logical optimization/property pipeline. Cascades leaf types do not compose a memo exploration/implementation owner.",
       "rust_evidence": "`rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs:208`; `rust/crates/tidb-executor/src/driver/planner_bridge.rs:3169`, `:3361`; flag acceptance in `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/planner/core/optimizer.go::doOptimize` branches to `CascadesOptimize`, which owns memo optimization and implementation/costing. Migrate optimizer selection, context, rules and physical implementation as one boundary. The probe establishes accepted configuration, not plan quality or a measured slowdown.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Cascades is accepted as a setting, but planner_bridge still uses logical_optimize/find_best_task. Recent COLLATE construction edits do not add memo exploration. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "X01",
@@ -623,7 +623,7 @@
       "finding": "**P2; source-confirmed:** SQL-created scalar functions and PB-created typed builtins have separate construction/evaluation paths; batch evaluation has decimal/numeric fast paths but otherwise falls back to per-row evaluation. Go's selected builtin owns the typed scalar and vector methods, including string/time/JSON kernels.",
       "rust_evidence": "`rust/crates/tidb-expr/src/new_function.rs:253`, `:328`; `scalar_function.rs:289`, `:661`, `:672`, `:2834`; `evaluator.rs:400`",
       "go_owner": "`pkg/expression/scalar_function.go`, `builtin.go::newBaseBuiltinFuncWithTp`, `distsql_builtin.go` and typed vector builtin files. Unify signature selection, casts/context and typed batch evaluation. Function-name lookup alone is not a defect: Go also uses names. This finding concerns the incomplete shared contract and vector execution; no SQL result mismatch or benchmark regression is inferred solely from Rust's representation.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: SQL new_function and PB-selected builtins still construct/evaluate separately; numeric fast paths do not provide the shared typed scalar/vector owner for all types. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "X02",
@@ -632,7 +632,7 @@
       "finding": "**P2; source-confirmed:** Rust retains embedding variable names and ignored expression mappings, but has no shared inference provider registry, domain-owned embedding cache/batcher, caller-isolated cancellation or `EMBED_TEXT` runtime. The earlier inference receipt already records this missing boundary; it was absent from the consolidated register.",
       "rust_evidence": "`rust/crates/tidb-vardef/src/tidb_vars.rs`; `rust/crates/tidb-expr/src`; `rust/crates/tidb-server/src/cluster_session_node/boot.rs`; `rust/testport/receipts/inference.md`",
       "go_owner": "`pkg/inference` and its pinned provider/batcher packages, `pkg/domain/inference.go`, `pkg/expression/builtin_inference.go`: implement the complete source runtime/dependency closure and owned close before enabling SQL behavior. Reuse the fourth Ristretto consumer contract; no live provider or credential request was made.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The only expression change exposes build_cast_function. Provider registration, embedding cache/batcher, caller-isolated cancellation and EMBED_TEXT runtime remain absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "C03",
@@ -641,7 +641,7 @@
       "finding": "**P2; source-confirmed:** coprocessor cache reads do not influence admission/eviction; the store is insertion-order FIFO. Its production reader hardcodes capacity/admission thresholds and requires an enabled cache.",
       "rust_evidence": "`rust/crates/tidb-distsql/src/copr_cache.rs:396`, `:408`; `rust/crates/tidb-exec/src/real_tikv_read.rs:702`",
       "go_owner": "`pkg/store/copr/coprocessor_cache.go::newCoprCache` constructs Ristretto from effective TiKV cache configuration, including disabled capacity. Preserve configuration, frequency admission, access, cost and publication as one owner. B01 records the separate binding-cache consumer. No exact probabilistic victim or measured workload delta is claimed.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: CoprCache.get does not update admission/recency; set evicts insertion_order and the read authority retains fixed configuration. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "K01",
@@ -650,7 +650,7 @@
       "finding": "**P2; source-confirmed:** the cluster allocator always chooses the ordinary cached allocator. AUTO_ID_CACHE=1 falls back to the default allocation step instead of selecting the existing but uncomposed service allocator.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_auto_id_seam.rs:169`, `:231`; `rust/crates/tidb-exec/src/cluster_auto_id.rs::AutoIdServiceAllocator` has only test construction",
       "go_owner": "`pkg/meta/autoid/autoid.go::NewAllocator` selects `newSinglePointAlloc` for eligible version-5 auto-increment tables with custom step 1; discovery/rebase/retry belong to that owner. Preserve the ordinary allocator for row IDs and other cases. Multi-node allocation behavior was not exercised.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: ClusterTableAutoIds still selects the cached allocator; step_for maps AUTO_ID_CACHE <= 1 to DEFAULT_AUTO_ID_STEP. The single-point service allocator is uncomposed. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "K02",
@@ -659,7 +659,7 @@
       "finding": "**P1; source-confirmed:** ALTER TABLE CACHE publishes the cache flag, but reads/writes have no leased cached-table implementation or commit-time lease renewal. This leaves the accepted metadata without its coordination contract. A mixed-node stale-cache risk is inferred, not reproduced.",
       "rust_evidence": "`rust/crates/tidb-executor/src/kv_table/cache.rs:23`, `:47`; `rust/crates/tidb-server/src/cluster_session.rs:764`; metadata acceptance in `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/table/tables/cache.go` owns `TryReadFromCache`, `UpdateLockForRead`, `WriteLockAndKeepAlive`; `pkg/session/session.go::cachedTableRenewLease` participates in commit. Migrate leased reads, write exclusion, renewal, invalidation and size policy together. Existing temporary-table overlays are a different, live owner.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: CACHE changes metadata after admission checks; reads/writes still lack leased cache wrappers and commit-time renewal. Fresh acceptance is not a stale-read reproduction. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "K03",
@@ -668,7 +668,7 @@
       "finding": "**P1; reproduced:** generated columns use default conversion flags and discard conversion warnings instead of the current write policy. Under strict mode ordinary TINYINT rejects 1000, while generated TINYINT accepts it as 127.",
       "rust_evidence": "`rust/crates/tidb-executor/src/kv_table.rs:2109`; `generated_column.rs:406`, `:422`, `:474`; `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/executor/insert_common.go::fillRow`, `update.go` and `write.go` use `table.CastValue` with the active mutation context. Carry conversion/error/warning/null policy through generated INSERT, UPDATE, index and DDL evaluation; do not patch one overflow literal.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Fresh strict-mode generated-column probe still stores 127 for 1000 while ordinary insertion errors. Shared mutation conversion/warning policy remains missing. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh strict ordinary TINYINT rejects 1000; generated TINYINT stores 127 without warnings. Shared materialization still uses default conversion policy. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "I04",
@@ -677,7 +677,7 @@
       "finding": "**P2; source-confirmed:** the published catalog is a latest materialized table image, without Go's versioned InfoCache and configurable lazy InfoSchema V2 owner. The schema-cache-size setter updates state but does not govern a production catalog loader/evictor.",
       "rust_evidence": "`rust/crates/tidb-exec/src/catalog_watch.rs:100`; `cluster_catalog.rs:197`; `rust/crates/tidb-session/src/vars.rs:1226`",
       "go_owner": "`pkg/domain/domain.go::GetSnapshotInfoSchema`, `pkg/infoschema/issyncer/loader.go` and `syncer.go::ChangeSchemaCacheSize` coordinate schema versions, cache capacity and lazy loading. Rust already applies schema diffs; this is not a claim that every reload is full. Memory/large-schema performance is unmeasured. S04 records the separate historical-query consumer.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Catalog publication remains a latest materialized image; vars.rs changed only the DDL error-limit publication, not versioned InfoCache/V2 loading. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "S03",
@@ -686,7 +686,7 @@
       "finding": "**P2; reproduced:** SHOW SESSION_STATES and SET SESSION_STATES reach unsupported dispatch. Variable extraction helpers do not compose the session migration handlers for variables, prepared statements and bindings.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:3063`; `warnings.rs:116`; `vars.rs:2758`; `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/session/session.go::EncodeStates`/`DecodeStates`, executor show/simple handlers and `pkg/server/driver_tidb.go` prepared-state handlers. Preserve the complete encode/decode/validation lifecycle; a JSON echo or variables-only transfer is insufficient.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Both SHOW SESSION_STATES and SET SESSION_STATES still refuse; variable helpers do not compose complete session migration. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "S04",
@@ -695,7 +695,7 @@
       "finding": "**P2; reproduced:** setting tidb_read_staleness succeeds but the ordinary query owner rejects the next read. Another transaction path uses local commit-history catalog snapshots instead of the shared historical timestamp/schema provider.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:2158`, `:3141`; `txn.rs:451`; `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/sessiontxn/staleread/provider.go` and Domain snapshot InfoSchema own statement/transaction timestamps, schema and safe-point checks. Migrate all snapshot/staleness entrypoints to that provider. The reproduction is an explicit refusal, not evidence of silently reading newer rows.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: tidb_read_staleness remains accepted but the next ordinary read refuses. The separate historical catalog path is still local rather than Domain timestamp/schema ownership. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E06",
@@ -704,7 +704,7 @@
       "finding": "**P2; source-confirmed:** parallel projection Close drops its receiver and closes its child without cancelling/joining queued or running evaluation tasks. Arc ownership keeps memory alive, but work can outlive executor Close.",
       "rust_evidence": "`rust/crates/tidb-executor/src/projection.rs:296`, `:386`",
       "go_owner": "`pkg/executor/projection.go::Close` closes the finish channel, waits for fetcher/workers and drains resources. Give projection the corresponding cancellation/completion owner for early LIMIT, error, close and reopen. Parallel projection itself exists; memory unsafety or a live race has not been demonstrated.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Projection close drops the parallel receiver and closes its child; queued evaluation tasks have no joined cancellation. This proves the ownership difference, not memory unsafety. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "E07",
@@ -713,7 +713,7 @@
       "finding": "**P2; partially reproduced:** BRIE syntax exists but its statements have no executor/job queue; BACKUPS/RESTORES return constant empty tables. SHOW BR JOB is refused. The BR helper crate does not supply backup/restore dispatch.",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:3063`; `show_admin.rs:188`; `rust/crates/tidb-br/src/lib.rs`; `subsystem-structure-probe.txt`",
       "go_owner": "`pkg/executor/brie.go::buildBRIE`, `BRIEExec` and its queue own backup/restore tasks, status, cancellation and progress. Migrate the complete owner and dependencies before exposing seed helpers. No backup/restore operation was attempted.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: SHOW BR JOB still refuses; no live BRIE queue/executor replaced the constant information-schema providers. Helper protocol repairs do not compose backup/restore. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "N04",
@@ -722,7 +722,7 @@
       "finding": "**P2; source-confirmed:** KILL validates the global ID but only looks up the local process registry. It assumes the enabled-global-kill mode and never dispatches to the decoded remote server.",
       "rust_evidence": "`rust/crates/tidb-session/src/process_arm.rs:32`, `:145`",
       "go_owner": "`pkg/executor/simple.go::executeKillStmt` honors EnableGlobalKill, compares ServerID and invokes `killRemoteConn` with TiPB Kill. Compose configuration, server discovery, authorization and remote dispatch. O01's server-ID lease is a prerequisite, not a substitute. No two-node KILL test was run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: KILL still validates IDs then operates on the local registry; no decoded-server remote dispatch/configuration lifecycle was added. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "N05",
@@ -731,7 +731,7 @@
       "finding": "**P2; source-confirmed:** status HTTP is a small fixed route dispatcher with read-only settings; the broader administrative handler/configuration owner is absent.",
       "rust_evidence": "`rust/crates/tidb-server/src/http_status.rs:125`, `:313`",
       "go_owner": "`pkg/server/http_status.go` registers settings mutation, statistics/history, DDL, regions/MVCC, labels/info and other service handlers. Port the handler owner and its shared dependencies as packages, not one invented route at a time. Basic status/metrics/schema responses do exist. No live admin endpoint comparison was run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: HTTP status still uses the fixed route dispatcher/read-only settings; full Go admin/configuration handlers remain absent. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O10",
@@ -740,7 +740,7 @@
       "finding": "**P2; source-confirmed:** DXF crates expose helpers/status/metrics, but startup does not compose the scheduler/executor managers, task storage and resource lifecycle.",
       "rust_evidence": "`rust/crates/tidb-dxf/src/lib.rs`; `rust/crates/tidb-dxf-operator/src/lib.rs`; `rust/crates/tidb-server/src/lib.rs:271`; `cluster_session_node/boot.rs`",
       "go_owner": "`pkg/domain/domain.go::InitDistTaskLoop`/`distTaskFrameworkLoop`, `pkg/dxf/framework/doc.go` and manager packages own scheduling, task executors, slots, recovery and shutdown. DDL/import consumers cannot replace this with private loops. No distributed task was submitted.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: DXF metrics/helpers remain without production manager, executor/storage/resource startup and close. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O11",
@@ -749,7 +749,7 @@
       "finding": "**P2; source-confirmed:** TopSQL has data models and metrics but no composed SQL/plan registration, profiling collector, aggregation, sink and reporter lifecycle.",
       "rust_evidence": "`rust/crates/tidb-util/src/topsql_reporter/mod.rs`; `datamodel.rs`; `rust/crates/tidb-server/src/lib.rs:273`",
       "go_owner": "`pkg/util/topsql/topsql.go::SetupTopProfiling`, `RegisterSQL`/`RegisterPlan`, reporter/collector packages and execution hooks. Wire the complete lifetime and generated TiPB boundary. A registered metric or resource-group tag is not a running reporting pipeline.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: TopSQL startup still initializes metrics only; SQL/plan registration, profiling collection, aggregation and reporting remain uncomposed. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O12",
@@ -758,7 +758,7 @@
       "finding": "**Repaired:** the complete globalconfigsync leaf and explicit session-to-PD notification path are implemented. One eight-item blocking queue, metadata-driven normalized notifications, a shared-PD keeper and joined shutdown replace the missing owner. Cache reloads remain quiet; failed stores are logged without retry, as Go does.",
       "rust_evidence": "`rust/crates/tidb-domain/src/globalconfigsync.rs`; `rust/crates/tidb-session/src/variables.rs`; `rust/crates/tidb-server/src/global_config_sync.rs`; shared factory/boot and PD worker",
       "go_owner": "`pkg/domain/globalconfigsync` (all three artifacts), `pkg/session/session.go::SetGlobalSysVar` and `Domain.globalConfigSyncerKeeper`. See [complete package/integration receipt](global-config-sync-repair.md). Original Go tests and Rust regressions pass; the three broader unchanged session failures remain explicit. Parent Domain/session/PD package acceptance and O11 are not implied.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "O13",
@@ -767,7 +767,7 @@
       "finding": "**P2; source-confirmed:** closest-adaptive is mapped to mixed replica reads, but production does not provide the domain AZ-distribution decision, local-zone label or request adjuster that completes that policy. Injected-label transport tests cover only the lower-level selector.",
       "rust_evidence": "`rust/crates/tidb-session/src/vars.rs:2438`; `rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs:133`, `:785`, `:1554`; `rust/crates/tidb-txnkv/src/kv_contract.rs:714`",
       "go_owner": "`pkg/domain/domain.go::closestReplicaReadCheckLoop`/`checkReplicaRead` compare TiDB/TiKV AZ distribution and enable the adaptive request policy. Compose distribution refresh, session policy, labels and request adjustment. No live AZ or locality benchmark was run.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: closest-adaptive still maps to mixed reads without the domain AZ distribution and request adjustment producer. DDL-limit publication did not change that path. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P04",
@@ -776,8 +776,8 @@
       "finding": "**Contract repaired:** both handwritten restore protocol types are removed. Range merging retains shared complete generated files; lookup borrows generated rules and explicit cloning deep-copies them. SHA-256, versions, table metadata, size and cipher IV survive by identity.",
       "rust_evidence": "`rust/crates/tidb-br/src/restore_utils.rs`; `restore_utils/merge.rs`; `restore_utils/rewrite_rule.rs`; generated exports in `tidb-proto`",
       "go_owner": "Current master `93a01d31f6`, complete eight-artifact `br/pkg/restore/utils` review and original Go race tests: [receipt](restore-utils-protocol-repair.md). All original Rust cases and five merge workloads pass. P04's protocol consumer boundary is repaired; live BRIE (E07), diagnostics and external package acceptance are not implied.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain repaired status and original receipt limits. Intervening changes do not undo this owner; no whole-parent acceptance or full original-suite rerun is implied. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     }
   ],
-  "review_receipt": "structural-review-followup.md"
+  "review_receipt": "worker-followup-structural-review.md"
 }

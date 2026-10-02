@@ -1,0 +1,23 @@
+running 1 test
+test cluster_session_node::tests::unistore_cop::system_table_ddl_does_not_publish_statistics_events_like_go ... FAILED
+
+failures:
+
+---- cluster_session_node::tests::unistore_cop::system_table_ddl_does_not_publish_statistics_events_like_go stdout ----
+{"event":"bootstrap_publishing","tables":65,"schema_version":1,"start_ts":469477748545421312}
+{"event":"bootstrap_committed","schema_version":1}
+{"event":"accounts_seeded","identities":1}
+{"event":"stats_loaded","loaded":0,"pseudo":707}
+{"event":"stats_reloaded","loaded":0,"pseudo":707}
+
+thread 'cluster_session_node::tests::unistore_cop::system_table_ddl_does_not_publish_statistics_events_like_go' (28038827) panicked at crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs:4049:14:
+p1 exists
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cluster_session_node::tests::unistore_cop::system_table_ddl_does_not_publish_statistics_events_like_go
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 483 filtered out; finished in 1.27s
+
+error: test failed, to rerun pass `-p tidb-server --lib`

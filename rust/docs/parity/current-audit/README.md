@@ -3,7 +3,7 @@
 Current reviewed baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
 `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665` (published PD errors prerequisite).
-The current review starts at integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60`.
+The current review starts at integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
@@ -30,6 +30,17 @@ See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
 
+The [2026-10-02 review after shared worker repairs](worker-followup-structural-review.md)
+rechecks every current unresolved ID. **All 75 remain valid parity gaps: 69 open
+and six partial.** Of these, 73 concern live behavior or missing production
+integration and two (D09/D10) concern disabled seeds. Fourteen IDs have fresh
+symptom/refusal observations; 59 others have source/caller evidence. This is not
+75 reproduced bugs. The ten recorded repairs remain repaired, including D04/D06;
+old D05 error-conversion and E02 orphan-acceptance allegations are corrected.
+The [per-ID review](worker-followup-recheck/source-continuity.json) retains exact
+source hashes, all intervening crate changes and the remaining contract for
+every ID. No production code or package acceptance changes in this review.
+
 The [2026-10-01 full register reconciliation](remaining-structure-review.md) adds
 11 previously unregistered source-confirmed boundaries, records the statement-summary
 SQL probe, and corrects stale T03 status. [Machine-readable findings](structural-findings.json)
@@ -43,7 +54,7 @@ missing DDL owner twice.
 [That review's per-ID continuity](structural-recheck/source-continuity.json) preserves
 the previous source evidence separately from those new observations.
 
-The latest [review after removals](post-removal-structural-review.md) reconciles
+The earlier [review after removals](post-removal-structural-review.md) reconciles
 all 77 unresolved findings again at 68d6de685a, with six fresh diagnostics and
 [per-ID source continuity](post-removal-recheck/source-continuity.json).
 Password history, partial multi-action ALTER, generated-column conversion and

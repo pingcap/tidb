@@ -1,0 +1,18 @@
+running 1 test
+test source_tests::nonresident_primary_waits_for_admission ... FAILED
+
+failures:
+
+---- source_tests::nonresident_primary_waits_for_admission stdout ----
+
+thread 'source_tests::nonresident_primary_waits_for_admission' (28023210) panicked at crates/tidb-stats-handle-cache-internal-lfu/src/source_tests.rs:48:5:
+nonresident primary value became visible before its admission
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    source_tests::nonresident_primary_waits_for_admission
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.51s
+
+error: test failed, to rerun pass `-p tidb-stats-handle-cache-internal-lfu --lib`
