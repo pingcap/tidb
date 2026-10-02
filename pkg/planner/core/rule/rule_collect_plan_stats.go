@@ -45,7 +45,8 @@ const skipPlanCacheReasonSyncLoadFallback = "sync-load timed out and fell back t
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
-		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
+		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL),
+		"CollectPredicateColumnsPoint should not be called in restricted SQL mode unless it scans user tables")
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
