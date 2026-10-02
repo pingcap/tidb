@@ -819,6 +819,66 @@ fn persisted_cancellation_precedes_forward_action() {
             "{action}"
         );
         assert_eq!(job.raw_args, raw);
+        assert_eq!(
+            job.error.as_ref().unwrap().read().rfc_code(),
+            "ddl:8214",
+            "cancellation retains dbterror.ErrCancelledDDLJob identity"
+        );
+    }
+}
+
+#[test]
+fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    for (original, expected_rfc, expected_message) in [
+        (
+            TerrorError::synthesize(
+                TerrorClass::Schema,
+                TerrorCode::new(8214),
+                "original failure from another class",
+            ),
+            "schema:8214",
+            "DDL job rollback, error msg: original failure from another class",
+        ),
+        // Old Rust rows have no RFC identity. Cancellation must not invent a
+        // class-zero RFC prefix when retaining their original diagnostic.
+        (
+            TerrorError::compatible(TerrorCode::new(1061), "legacy duplicate"),
+            "",
+            "DDL job rollback, error msg: legacy duplicate",
+        ),
+        (
+            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.generate("normal cancellation"),
+            "ddl:8214",
+            "normal cancellation",
+        ),
+    ] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 990;
+        job.schema_id = 112;
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.version = JobVersion::V2;
+        job.state = JobState::CANCELLING;
+        job.error = Some(GoShared::new(original));
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "0", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+        assert!(step.terminal);
+        apply(&mut store, &step.write);
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let saved = history.iter().find(|j| j.id == job.id).unwrap();
+        let error = saved.error.as_ref().unwrap().read();
+        assert_eq!(error.rfc_code(), expected_rfc);
+        assert_eq!(error.message(), expected_message);
     }
 }
 
@@ -1018,6 +1078,18 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
 #[test]
 fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
     let cases = [
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(1061)
+                    .generate("schema duplicate"),
+            ),
+            1061,
+        ),
+        (
+            DdlPlanError::from(tidb_util::dbterror::ERR_DUP_KEY_NAME.generate("DDL duplicate")),
+            1061,
+        ),
         (DdlPlanError::UnknownDatabase("db".into()), 1049),
         (DdlPlanError::DatabaseExists("db".into()), 1007),
         (
@@ -1105,7 +1177,15 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             .append_insert(&mut job, false, "991", "0", true, &mut mutations)
             .unwrap();
         apply_mutations(&mut store, &mutations);
-        let message = error.to_string();
+        let message = error.to_job_error().message().to_owned();
+        let expected_rfc = match &error {
+            DdlPlanError::Source(source) => {
+                assert_eq!(error.to_string(), format!("[{}]{message}", source.rfc_code()));
+                source.rfc_code().to_owned()
+            }
+            _ if code == -1 => "ddl:-1".to_owned(),
+            _ => String::new(),
+        };
         let direct = error.to_sql_error();
         assert_eq!(direct.code, if code == -1 { 1105 } else { code as u16 });
         assert_eq!(direct.message, message);
@@ -1123,6 +1203,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         let saved = active.job.error.as_ref().unwrap().read();
         assert_eq!(saved.code().value(), code, "{message}");
         assert_eq!(saved.message(), message);
+        assert_eq!(saved.rfc_code(), expected_rfc);
         if code == -1 {
             assert_eq!(saved.class(), tidb_error::terror::TerrorClass::Ddl);
         }
@@ -1150,10 +1231,74 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         let history = history.iter().find(|stored| stored.id == job.id).unwrap();
         assert_eq!(history.error_count, 1);
         let restored = history.error.as_ref().unwrap().read();
+        assert_eq!(restored.rfc_code(), expected_rfc);
+        assert_eq!(restored.message(), message);
         assert_eq!(
             tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(&restored),
             direct
         );
+    }
+}
+
+#[test]
+fn persisted_check_failure_uses_source_identity_for_rollback() {
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    for (error, state, rfc) in [
+        (
+            DdlPlanError::from(
+                tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("violation"),
+            ),
+            JobState::ROLLINGBACK,
+            "ddl:3819",
+        ),
+        (
+            DdlPlanError::from(TerrorError::synthesize(
+                TerrorClass::Schema,
+                TerrorCode::new(3819),
+                "another class",
+            )),
+            JobState::RUNNING,
+            "schema:3819",
+        ),
+        (
+            DdlPlanError::Encode("plain validation failure".into()),
+            JobState::RUNNING,
+            "ddl:-1",
+        ),
+        (
+            DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+                3819,
+                "number without source identity",
+            )),
+            JobState::RUNNING,
+            "",
+        ),
+    ] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 990;
+        job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
+        job.state = JobState::RUNNING;
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "116", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let step = plan_persisted_ddl_job_failure(
+            &mut store,
+            job.id,
+            10_000,
+            PersistedDdlJobFailure::Error(error),
+            &|| 512,
+        )
+        .unwrap();
+        apply(&mut store, &step.write);
+        let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        assert_eq!(active.job.state, state, "{rfc}");
+        assert_eq!(active.job.error_count, 1);
+        assert_eq!(active.job.error.as_ref().unwrap().read().rfc_code(), rfc);
     }
 }
 
@@ -1540,6 +1685,15 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
             assert_eq!(history.error_count, 1);
             assert_eq!(history.state, JobState::CANCELLED);
             assert_eq!(
+                history.error.as_ref().unwrap().read().rfc_code(),
+                match invalid {
+                    "nonpublic" => "ddl:8210",
+                    "missingdb" => "schema:1049",
+                    "constraint" => "ddl:3940",
+                    _ => "schema:1146",
+                }
+            );
+            assert_eq!(
                 history.error.as_ref().unwrap().read().code().value(),
                 match invalid {
                     "nonpublic" => tidb_error::tidb::errcode::ErrInvalidDDLState as isize,
@@ -1870,7 +2024,13 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
             .unwrap();
         assert_eq!(finished.state, JobState::CANCELLED);
         assert_eq!(finished.error_count, 1);
-        assert_eq!(finished.error.as_ref().unwrap().read().code().value(), 1105);
+        let error = finished.error.as_ref().unwrap().read();
+        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+        assert_eq!(error.rfc_code(), "ddl:-1");
+        assert_eq!(
+            tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(&error).code,
+            1105
+        );
         assert_eq!(finished.raw_args, raw_args);
         assert_eq!(
             load_cluster_catalog(&mut store).unwrap().schema_version,
@@ -2298,11 +2458,8 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         &mut store,
         job_id,
         10_000,
-        PersistedDdlJobFailure::Error(DdlPlanError::Admission(
-            tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-                validation_message,
-            ),
+        PersistedDdlJobFailure::Error(DdlPlanError::from(
+            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )
@@ -2613,11 +2770,8 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
         &mut store,
         job_id,
         10_000,
-        PersistedDdlJobFailure::Error(DdlPlanError::Admission(
-            tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-                validation_message,
-            ),
+        PersistedDdlJobFailure::Error(DdlPlanError::from(
+            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )

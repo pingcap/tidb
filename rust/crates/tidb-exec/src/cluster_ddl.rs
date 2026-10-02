@@ -49,6 +49,7 @@ use tidb_ast::{
 use tidb_datatype::new_collation_enabled;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_ddl_notifier::SchemaChangeEvent;
+use tidb_error::terror::TerrorError;
 use tidb_meta::{key, value};
 use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
 use tidb_metadef::MAX_USER_GLOBAL_ID;
@@ -2703,6 +2704,9 @@ fn lower_drop_index(
 /// Why a planned catalog change cannot be built from the observed snapshot.
 #[derive(Clone, Debug)]
 pub enum DdlPlanError {
+    /// A source-defined error whose class, code and message must survive the
+    /// worker checkpoint. SQL projection belongs at the submitting connection.
+    Source(TerrorError),
     /// The catalog could not be read or decoded.
     Catalog(ClusterCatalogError),
     /// The named database is not in the catalog.
@@ -2804,6 +2808,7 @@ pub enum DdlPlanError {
 impl fmt::Display for DdlPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Source(error) => fmt::Display::fmt(error, formatter),
             Self::Catalog(error) => write!(formatter, "{error}"),
             Self::UnknownDatabase(name) => write!(formatter, "Unknown database '{name}'"),
             Self::DatabaseExists(name) => {
@@ -2871,6 +2876,7 @@ impl DdlPlanError {
     pub(crate) fn mysql_error_code(&self) -> Option<u16> {
         use tidb_error::tidb::errcode;
         Some(match self {
+            Self::Source(error) => error.to_sql_error().code,
             Self::UnknownDatabase(_) => errcode::ErrBadDB,
             Self::DatabaseExists(_) => errcode::ErrDBCreateExists,
             Self::UnknownTable { .. } | Self::UnknownTables(_) => errcode::ErrBadTable,
@@ -2898,6 +2904,9 @@ impl DdlPlanError {
     /// Source RFC identities must be carried from their producers, not guessed
     /// from a MySQL number shared by several Go error classes.
     pub fn to_job_error(&self) -> tidb_error::terror::TerrorError {
+        if let Self::Source(error) = self {
+            return error.clone();
+        }
         match self.mysql_error_code() {
             Some(code) => tidb_error::terror::TerrorError::compatible(
                 tidb_error::terror::TerrorCode::new(
@@ -2912,6 +2921,10 @@ impl DdlPlanError {
     /// Converts a direct refusal through the same contract as durable history.
     pub fn to_sql_error(&self) -> tidb_error::mysql::SqlError {
         ddl_job_error_to_sql_error(&self.to_job_error())
+    }
+
+    fn is_source_error(&self, prototype: &TerrorError) -> bool {
+        matches!(self, Self::Source(error) if prototype.equal(Some(error)))
     }
 }
 
@@ -2940,10 +2953,24 @@ pub fn ddl_job_error_to_sql_error(
 impl std::error::Error for DdlPlanError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Source(error) => Some(error),
+            Self::Admission(error) => Some(error),
             Self::Catalog(error) => Some(error),
             Self::Mutations(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<TerrorError> for DdlPlanError {
+    fn from(error: TerrorError) -> Self {
+        Self::Source(error)
+    }
+}
+
+impl From<DdlAdmissionError> for DdlPlanError {
+    fn from(error: DdlAdmissionError) -> Self {
+        Self::Admission(error)
     }
 }
 
@@ -3496,12 +3523,7 @@ fn plan_persisted_check_constraint_job_step(
     match active.job.type_ {
         ActionType::ACTION_ADD_CHECK_CONSTRAINT => {
             let args = tidb_model::get_add_check_constraint_args(&mut active.job)
-                .map_err(|error| {
-                    cancel_ddl_job(
-                        active,
-                        DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-                    )
-                })?
+                .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
                 .ok_or_else(|| DdlPlanError::Encode("ADD CHECK job has nil args".to_owned()))?;
             let constraint_handle = args.read().constraint.get().ok_or_else(|| {
                 DdlPlanError::Encode("ADD CHECK job has nil constraint".to_owned())
@@ -3516,9 +3538,13 @@ fn plan_persisted_check_constraint_job_step(
                 if info.constraints.get(position).unwrap().read().state == SchemaState::PUBLIC {
                     return Err(cancel_ddl_job(
                         active,
-                        DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrDupFieldName,
-                            format!("Duplicate column name '{}'", constraint_handle.read().name),
+                        DdlPlanError::from(
+                            tidb_util::dbterror::CLASS_SCHEMA
+                                .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
+                                .generate(format!(
+                                    "Duplicate column name '{}'",
+                                    constraint_handle.read().name
+                                )),
                         ),
                     ));
                 }
@@ -3536,9 +3562,10 @@ fn plan_persisted_check_constraint_job_step(
             {
                 return Err(cancel_ddl_job(
                     active,
-                    DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrCheckConstraintDupName,
-                        format!("Duplicate check constraint name '{wanted}'."),
+                    DdlPlanError::from(
+                        tidb_util::dbterror::CLASS_SCHEMA
+                            .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
+                            .generate(format!("Duplicate check constraint name '{wanted}'.")),
                     ),
                 ));
             }
@@ -3588,10 +3615,14 @@ fn plan_persisted_check_constraint_job_step(
                             .iter_deref()
                             .any(|existing| existing.read().name.lowercase() == wanted)
                     }) {
-                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrCheckConstraintDupName,
-                            format!("Duplicate check constraint name '{}'.", constraint.name),
-                        )));
+                        return Err(DdlPlanError::from(
+                            tidb_util::dbterror::CLASS_SCHEMA
+                                .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
+                                .generate(format!(
+                                    "Duplicate check constraint name '{}'.",
+                                    constraint.name
+                                )),
+                        ));
                     }
                     for dependency in &constraint.constraint_cols {
                         if !info.columns.iter_deref().any(|column| {
@@ -3599,13 +3630,13 @@ fn plan_persisted_check_constraint_job_step(
                             column.state == SchemaState::PUBLIC
                                 && column.name.lowercase() == dependency.lowercase()
                         }) {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrTableCheckConstraintReferUnknown,
-                                format!(
-                                    "Check constraint '{}' refers to non-existing column '{}'.",
-                                    constraint.name, dependency
-                                ),
-                            )));
+                            return Err(DdlPlanError::from(
+                                tidb_util::dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN
+                                    .generate(format!(
+                                        "Check constraint '{}' refers to non-existing column '{}'.",
+                                        constraint.name, dependency
+                                    )),
+                            ));
                         }
                     }
                     *constraint_handle.write() = constraint.clone();
@@ -3647,10 +3678,10 @@ fn plan_persisted_check_constraint_job_step(
                             terminal = true;
                         }
                         state => {
-                            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                                tidb_error::tidb::errcode::ErrInvalidDDLState,
-                                format!("invalid CHECK constraint state {state:?}"),
-                            )));
+                            return Err(DdlPlanError::from(
+                                tidb_util::dbterror::ERR_INVALID_DDL_STATE
+                                    .generate(format!("invalid CHECK constraint state {state:?}")),
+                            ));
                         }
                     }
                 }
@@ -3658,12 +3689,7 @@ fn plan_persisted_check_constraint_job_step(
         }
         ActionType::ACTION_DROP_CHECK_CONSTRAINT => {
             let args = tidb_model::get_check_constraint_args(&mut active.job)
-                .map_err(|error| {
-                    cancel_ddl_job(
-                        active,
-                        DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-                    )
-                })?
+                .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
                 .ok_or_else(|| DdlPlanError::Encode("DROP CHECK job has nil args".to_owned()))?;
             let wanted = args.read().constraint_name.get().lowercase().to_owned();
             let position = info
@@ -3673,9 +3699,9 @@ fn plan_persisted_check_constraint_job_step(
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
-                        DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrConstraintNotFound,
-                            format!("Constraint '{wanted}' does not exist."),
+                        DdlPlanError::from(
+                            tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                                .generate(format!("Constraint '{wanted}' does not exist.")),
                         ),
                     )
                 })?;
@@ -3720,22 +3746,17 @@ fn plan_persisted_check_constraint_job_step(
                         terminal = true;
                     }
                     state => {
-                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrInvalidDDLState,
-                            format!("invalid CHECK constraint state {state:?}"),
-                        )));
+                        return Err(DdlPlanError::from(
+                            tidb_util::dbterror::ERR_INVALID_DDL_STATE
+                                .generate(format!("invalid CHECK constraint state {state:?}")),
+                        ));
                     }
                 }
             }
         }
         ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
             let args = tidb_model::get_check_constraint_args(&mut active.job)
-                .map_err(|error| {
-                    cancel_ddl_job(
-                        active,
-                        DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-                    )
-                })?
+                .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
                 .ok_or_else(|| DdlPlanError::Encode("ALTER CHECK job has nil args".to_owned()))?;
             let args = args.read();
             let wanted = args.constraint_name.get().lowercase().to_owned();
@@ -3747,9 +3768,9 @@ fn plan_persisted_check_constraint_job_step(
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
-                        DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrConstraintNotFound,
-                            format!("Constraint '{wanted}' does not exist."),
+                        DdlPlanError::from(
+                            tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                                .generate(format!("Constraint '{wanted}' does not exist.")),
                         ),
                     )
                 })?;
@@ -3798,10 +3819,10 @@ fn plan_persisted_check_constraint_job_step(
                         terminal = true;
                     }
                     state => {
-                        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrInvalidDDLState,
-                            format!("invalid CHECK constraint state {state:?}"),
-                        )));
+                        return Err(DdlPlanError::from(
+                            tidb_util::dbterror::ERR_INVALID_DDL_STATE
+                                .generate(format!("invalid CHECK constraint state {state:?}")),
+                        ));
                     }
                 }
             }
@@ -3902,12 +3923,7 @@ fn plan_persisted_create_schema_job_step(
     let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_create_schema_args(&mut active.job)
-        .map_err(|error| {
-            cancel_ddl_job(
-                active,
-                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-            )
-        })?
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| DdlPlanError::Encode("CREATE SCHEMA job has nil args".to_owned()))?;
     let submitted = args
         .read()
@@ -3928,12 +3944,13 @@ fn plan_persisted_create_schema_job_step(
     if name_taken || id_taken {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrDBCreateExists,
-                format!(
-                    "Can't create database '{}'; database exists",
-                    db_info.name.original()
-                ),
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrDBCreateExists)
+                    .generate(format!(
+                        "Can't create database '{}'; database exists",
+                        db_info.name.original()
+                    )),
             ),
         ));
     }
@@ -4012,12 +4029,7 @@ fn plan_persisted_create_table_job_step(
     let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_create_table_args(&mut active.job)
-        .map_err(|error| {
-            cancel_ddl_job(
-                active,
-                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-            )
-        })?
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| DdlPlanError::Encode("CREATE TABLE job has nil args".to_owned()))?;
     let submitted = args
         .read()
@@ -4037,9 +4049,13 @@ fn plan_persisted_create_table_job_step(
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
-                DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrBadDB,
-                    format!("Unknown database '(Schema ID {})'", active.job.schema_id),
+                DdlPlanError::from(
+                    tidb_util::dbterror::CLASS_SCHEMA
+                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .generate(format!(
+                            "Unknown database '(Schema ID {})'",
+                            active.job.schema_id
+                        )),
                 ),
             )
         })?;
@@ -4054,13 +4070,14 @@ fn plan_persisted_create_table_job_step(
     if name_taken || id_taken {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrTableExists,
-                format!(
-                    "Table '{}.{}' already exists",
-                    database.info.name.original(),
-                    table_info.name.original()
-                ),
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrTableExists)
+                    .generate(format!(
+                        "Table '{}.{}' already exists",
+                        database.info.name.original(),
+                        table_info.name.original()
+                    )),
             ),
         ));
     }
@@ -4146,12 +4163,7 @@ fn plan_persisted_create_tables_job_step(
     // `{"tables": [{"table_info": <Go TableInfo JSON>, "fk_check": bool}]}`
     // decoded through the same serde surface as the single-table args.
     let args = tidb_model::get_batch_create_table_args(&mut active.job)
-        .map_err(|error| {
-            cancel_ddl_job(
-                active,
-                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-            )
-        })?
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| DdlPlanError::Encode("CREATE TABLES job has nil args".to_owned()))?;
 
     let database = catalog
@@ -4161,9 +4173,13 @@ fn plan_persisted_create_tables_job_step(
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
-                DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrBadDB,
-                    format!("Unknown database '(Schema ID {})'", active.job.schema_id),
+                DdlPlanError::from(
+                    tidb_util::dbterror::CLASS_SCHEMA
+                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .generate(format!(
+                            "Unknown database '(Schema ID {})'",
+                            active.job.schema_id
+                        )),
                 ),
             )
         })?;
@@ -4209,7 +4225,11 @@ fn plan_persisted_create_tables_job_step(
     if let Some(reason) = cancel_reason {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(tidb_error::tidb::errcode::ErrTableExists, reason),
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrTableExists)
+                    .generate(reason),
+            ),
         ));
     }
 
@@ -4320,12 +4340,7 @@ fn plan_persisted_rename_tables_job_step(
     let ddl_job_id = active.job.id;
 
     let args = tidb_model::get_rename_tables_args(&mut active.job)
-        .map_err(|error| {
-            cancel_ddl_job(
-                active,
-                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()),
-            )
-        })?
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job has nil args".to_owned()))?;
     let args = args.read();
     let rename_infos = args.rename_table_infos.get();
@@ -4345,7 +4360,7 @@ fn plan_persisted_rename_tables_job_step(
         old_table_id: i64,
     }
     let mut resolved: Vec<Move> = Vec::with_capacity(rename_infos.len());
-    let mut failure: Option<DdlAdmissionError> = None;
+    let mut failure: Option<DdlPlanError> = None;
     // Once phase one has moved the tables (`SchemaState == StatePublic`), the
     // same entries resolve against their NEW schema and NEW names instead (Go
     // `finishJobRenameTables` reloads the tables under `info.NewSchemaID`).
@@ -4392,13 +4407,14 @@ fn plan_persisted_rename_tables_job_step(
                     .cloned()
             });
         let Some(table) = table else {
-            failure = Some(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrNoSuchTable,
-                if phase_two {
-                    format!("Table '{}' doesn't exist", info.new_table_name.original())
-                } else {
-                    format!("Table '{}' doesn't exist", info.old_table_name.original())
-                },
+            failure = Some(DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                    .generate(if phase_two {
+                        format!("Table '{}' doesn't exist", info.new_table_name.original())
+                    } else {
+                        format!("Table '{}' doesn't exist", info.old_table_name.original())
+                    }),
             ));
             break;
         };
@@ -4407,9 +4423,10 @@ fn plan_persisted_rename_tables_job_step(
             .iter()
             .any(|database| database.info.id == new_schema_id)
         {
-            failure = Some(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrBadDB,
-                format!("Unknown database '(Schema ID {new_schema_id})'"),
+            failure = Some(DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                    .generate(format!("Unknown database '(Schema ID {new_schema_id})'")),
             ));
             break;
         }
@@ -4610,9 +4627,10 @@ fn plan_persisted_drop_schema_job_step(
     else {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrDBDropExists,
-                "Can't drop database ''; database doesn't exist",
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
+                    .generate("Can't drop database ''; database doesn't exist"),
             ),
         ));
     };
@@ -5116,10 +5134,10 @@ fn rolling_back_step(
 // error, discards action writes, and finalizes the job in the same transaction.
 fn cancel_ddl_job(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
-    error: DdlAdmissionError,
+    error: impl Into<DdlPlanError>,
 ) -> DdlPlanError {
     active.job.state = JobState::CANCELLED;
-    DdlPlanError::Admission(error)
+    error.into()
 }
 
 fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
@@ -5152,9 +5170,9 @@ fn job_control_step(job: &Job) -> PersistedDdlActionStep {
 fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
     cancel_ddl_job(
         active,
-        DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrCancelledDDLJob,
-            tidb_error::tidb::errname::ErrCancelledDDLJob.raw,
+        DdlPlanError::from(
+            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+                .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
         ),
     )
 }
@@ -5179,9 +5197,10 @@ fn plan_cancel_persisted_ddl_job(
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
-                        DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrDBDropExists,
-                            "Can't drop database ''; database doesn't exist",
+                        DdlPlanError::from(
+                            tidb_util::dbterror::CLASS_SCHEMA
+                                .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
+                                .generate("Can't drop database ''; database doesn't exist"),
                         ),
                     )
                 })?;
@@ -5224,9 +5243,13 @@ fn checked_job_table<'a>(
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
-                DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrBadDB,
-                    format!("Unknown database '(Schema ID {})'", active.job.schema_id),
+                DdlPlanError::from(
+                    tidb_util::dbterror::CLASS_SCHEMA
+                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .generate(format!(
+                            "Unknown database '(Schema ID {})'",
+                            active.job.schema_id
+                        )),
                 ),
             )
         })?;
@@ -5237,12 +5260,13 @@ fn checked_job_table<'a>(
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
-                DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrNoSuchTable,
-                    format!(
-                        "Table '(Schema ID {}).(Table ID {})' doesn't exist",
-                        active.job.schema_id, active.job.table_id
-                    ),
+                DdlPlanError::from(
+                    tidb_util::dbterror::CLASS_SCHEMA
+                        .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                        .generate(format!(
+                            "Table '(Schema ID {}).(Table ID {})' doesn't exist",
+                            active.job.schema_id, active.job.table_id
+                        )),
                 ),
             )
         })?;
@@ -5251,22 +5275,23 @@ fn checked_job_table<'a>(
     {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrNoSuchTable,
-                format!(
-                    "Table '{}.{}' doesn't exist",
-                    active.job.schema_name, active.job.table_name
-                ),
+            DdlPlanError::from(
+                tidb_util::dbterror::CLASS_SCHEMA
+                    .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                    .generate(format!(
+                        "Table '{}.{}' doesn't exist",
+                        active.job.schema_name, active.job.table_name
+                    )),
             ),
         ));
     }
     if require_public && table.state != SchemaState::PUBLIC {
         return Err(cancel_ddl_job(
             active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrInvalidDDLState,
-                format!("table {} is not in public, but {}", table.name, table.state),
-            ),
+            DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate(format!(
+                "table {} is not in public, but {}",
+                table.name, table.state
+            ))),
         ));
     }
     Ok(table)
@@ -5282,15 +5307,15 @@ fn record_ddl_cancellation_error(
     } else {
         job.error_count += 1;
     }
-    if matches!(error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCancelledDDLJob)
-    {
+    if error.is_source_error(&tidb_util::dbterror::ERR_CANCELLED_DDL_JOB) {
         let original = job.error.as_ref().unwrap().read().clone();
-        if original.code().value() != tidb_error::tidb::errcode::ErrCancelledDDLJob as isize {
-            job.error = Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
-                original.class(),
-                original.code(),
-                format!("DDL job rollback, error msg: {}", original.message()),
-            )));
+        if !tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&original)) {
+            // generate retains a source identity and also preserves old Rust
+            // history without an RFC code; synthesizing class zero invents one.
+            job.error = Some(GoShared::new(original.generate(format!(
+                "DDL job rollback, error msg: {}",
+                original.message()
+            ))));
         }
     } else {
         let limit = load_limit();
@@ -6210,7 +6235,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
             if matches!(
                 active.job.type_,
                 ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-            ) && matches!(&error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated)
+            ) && error.is_source_error(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
             {
                 active.job.state = JobState::ROLLINGBACK;
             }

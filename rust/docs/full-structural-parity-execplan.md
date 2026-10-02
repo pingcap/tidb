@@ -2285,3 +2285,20 @@ D05 remains partial. Source error identity, full taxonomy, rollback-transaction
 classification, configurable retry timing/metrics and missing action effects remain
 open. This is live-path maintenance, not pkg/ddl acceptance; the register remains
 85 tracked, 75 unresolved and ten repaired.
+
+
+### Shared DDL error identity, 2026-10-02
+
+
+Starting at f8367f2db5 with unchanged Go/native pins, retain typed source errors
+through 30 conversion sites in the existing persisted action handlers and CHECK
+validation. Remove the CHECK-specific wire-error outcome and reconstructing its
+identity from an errno. Source equality governs cancellation and CHECK rollback;
+legacy job history keeps its compatible envelope, and plain decode failures use
+DDL/CodeUnknown before SQL conversion. The targeted receipt and publication gates
+are in ddl-error-identity-execplan.md.
+
+This repairs an existing owner without accepting an upstream package. D05 remains
+partial for remaining numeric/string producers, complete taxonomy, transaction
+reset, configurable retry timing/metrics and whole-action effects. Counts remain
+85 tracked, 75 unresolved and ten repaired. No disabled action is activated.

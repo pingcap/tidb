@@ -41,6 +41,15 @@ The [per-ID review](worker-followup-recheck/source-continuity.json) retains exac
 source hashes, all intervening crate changes and the remaining contract for
 every ID. No production code or package acceptance changes in this review.
 
+The subsequent [DDL error identity repair](../../ddl-error-identity-execplan.md)
+removes CHECK's premature wire-error conversion and retains typed errors from the
+existing persisted action producers through the shared worker and history.
+Cancellation/rollback distinguish equal numbers with different source identities;
+plain decode failures persist as ddl:-1 while SQL still returns 1105. Old numeric
+Rust history remains readable. D05 stays partial and all 75 structural IDs remain
+unresolved; other producers, transaction reset, retry configuration/metrics and
+complete action ownership still require work. No new action is enabled.
+
 The [2026-10-01 full register reconciliation](remaining-structure-review.md) adds
 11 previously unregistered source-confirmed boundaries, records the statement-summary
 SQL probe, and corrects stale T03 status. [Machine-readable findings](structural-findings.json)

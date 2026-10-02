@@ -31,7 +31,8 @@ use tidb_txnkv::PdRegionLoader;
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
 use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use tidb_exec::cluster_ddl::{
-    CheckConstraintValidation, DdlStatement, ExchangePartitionValidation, IndexBackfill,
+    CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
+    IndexBackfill,
 };
 use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -1276,13 +1277,11 @@ mod schema_sync_tests {
                 _: &CheckConstraintValidation,
                 _: Arc<Mutex<dyn ClusterSnapshot>>,
                 buffer: &MutationBuffer,
-            ) -> Result<(), LockSqlError> {
+            ) -> Result<(), DdlPlanError> {
                 (self.0)(buffer);
-                Err(LockSqlError {
-                    code: tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-                    state: *b"HY000",
-                    message: "Check constraint 'c' is violated.".into(),
-                })
+                Err(tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
+                    .generate("Check constraint 'c' is violated.")
+                    .into())
             }
         }
         let constraint = tidb_model::table::ConstraintInfo {
@@ -1408,6 +1407,10 @@ mod schema_sync_tests {
         assert_eq!(history.state, JobState::ROLLBACK_DONE);
         assert_eq!(history.error_count, 1);
         assert_eq!(
+            history.error.as_ref().unwrap().read().rfc_code(),
+            "ddl:3819"
+        );
+        assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
             tidb_error::tidb::errcode::ErrCheckConstraintViolated as isize
         );
@@ -1461,6 +1464,10 @@ mod schema_sync_tests {
         assert_eq!(history.state, JobState::ROLLBACK_DONE);
         assert_eq!(history.error_count, 1);
         let recovered = persisted_job_error(&history.error.as_ref().unwrap().read());
+        assert_eq!(
+            history.error.as_ref().unwrap().read().rfc_code(),
+            "ddl:3819"
+        );
         assert_eq!(
             (recovered.code, recovered.state, recovered.message),
             (sql_error.code, sql_error.state, sql_error.message)
@@ -2052,10 +2059,10 @@ impl CheckConstraintValidator for KvTableIndexBackfiller {
         plan: &CheckConstraintValidation,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError> {
+    ) -> Result<(), DdlPlanError> {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
-            .map_err(check_constraint_validation_internal)?;
+            .map_err(DdlPlanError::Encode)?;
         let rows = table
             .scan_rows_with_context(&RowDecodeContext::for_query(&plan.context.0))
             .map_err(|error| {
@@ -2072,31 +2079,19 @@ impl CheckConstraintValidator for KvTableIndexBackfiller {
     }
 }
 
-fn check_constraint_validation_internal(message: String) -> LockSqlError {
-    LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message,
-    }
-}
-
 fn check_constraint_validation_table_error(
     error: tidb_executor::kv_table::KvTableError,
     constraint_name: &str,
-) -> LockSqlError {
+) -> DdlPlanError {
     match error {
-        tidb_executor::kv_table::KvTableError::CheckConstraintViolated(name) => LockSqlError {
-            code: tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-            state: *b"HY000",
-            message: format!("Check constraint '{name}' is violated."),
-        },
-        other => LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: format!(
-                "validation of check constraint '{constraint_name}' failed: {other:?}"
-            ),
-        },
+        tidb_executor::kv_table::KvTableError::CheckConstraintViolated(name) => {
+            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
+                .generate(format!("Check constraint '{name}' is violated."))
+                .into()
+        }
+        other => DdlPlanError::Encode(format!(
+            "validation of check constraint '{constraint_name}' failed: {other:?}"
+        )),
     }
 }
 

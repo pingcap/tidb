@@ -340,7 +340,6 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
         ClusterDdlError::ExchangeValidation(error) => lock_sql_error(&error),
-        ClusterDdlError::CheckConstraintValidation(error) => lock_sql_error(&error),
         ClusterDdlError::Plan(error) => {
             let error = error.to_sql_error();
             SqlQueryError::new(

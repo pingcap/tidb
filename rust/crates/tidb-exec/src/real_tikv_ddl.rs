@@ -268,9 +268,6 @@ pub enum ClusterDdlError {
     ExchangeValidation(LockSqlError),
     /// The change needs exchange validation and this path cannot read rows.
     ExchangeValidationUnavailable,
-    /// Enabling an enforced CHECK rejected an existing row or failed while
-    /// reading/evaluating the validation scan.
-    CheckConstraintValidation(LockSqlError),
     /// The change needs CHECK validation and this path cannot read rows.
     CheckConstraintValidationUnavailable,
     /// A persisted DDL statement was sent to the non-scheduler execution path.
@@ -318,7 +315,6 @@ impl fmt::Display for ClusterDdlError {
                 formatter,
                 "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
             ),
-            Self::CheckConstraintValidation(error) => formatter.write_str(&error.message),
             Self::CheckConstraintValidationUnavailable => write!(
                 formatter,
                 "this path cannot validate existing rows before enabling a CHECK constraint"
@@ -347,7 +343,6 @@ impl std::error::Error for ClusterDdlError {
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
             | Self::ExchangeValidationUnavailable
-            | Self::CheckConstraintValidation(_)
             | Self::CheckConstraintValidationUnavailable
             | Self::PersistedJobRequired
             | Self::SchemaSync(_) => None,
@@ -640,12 +635,14 @@ pub trait ExchangePartitionValidator {
 /// own row snapshot before the candidate metadata is published.
 pub trait CheckConstraintValidator {
     /// Proves every stored row satisfies the candidate enforced constraint.
+    /// Retains source error identity for the worker's checkpoint and rollback
+    /// decision; conversion to the SQL wire format happens after completion.
     fn validate(
         &self,
         plan: &CheckConstraintValidation,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError>;
+    ) -> Result<(), DdlPlanError>;
 }
 
 /// Owner-side synchronization between committed DDL schema phases.
@@ -1386,7 +1383,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     if let Some(validation) = &write.check_constraint_validation {
                         check_constraint_validator
                             .validate(validation, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::CheckConstraintValidation)?;
+                            .map_err(ClusterDdlError::Plan)?;
                     }
                     Ok(())
                 })
@@ -1404,9 +1401,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     return Err(error);
                 }
                 Some(PersistedDdlJobFailure::Error(match error {
-                    ClusterDdlError::CheckConstraintValidation(error) => DdlPlanError::Admission(
-                        DdlAdmissionError::with_code(error.code, error.message),
-                    ),
+                    ClusterDdlError::Plan(error) => error,
                     error => DdlPlanError::Encode(error.to_string()),
                 }))
             }
@@ -1682,6 +1677,23 @@ mod tests {
         }
         let plain = DdlPlanError::Encode("unknown action failure".into());
         assert!(is_retryable_job_error(&plain, 1, 3));
+        let typed =
+            DdlPlanError::from(tidb_util::dbterror::ERR_NOT_OWNER.generate("owner changed"));
+        assert!(is_retryable_job_error(&typed, 1, 3));
+        assert_eq!(typed.to_job_error().rfc_code(), "ddl:8201");
+        let permanent = DdlPlanError::from(
+            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("invalid row"),
+        );
+        assert!(!is_retryable_job_error(&permanent, 1, 3));
+        let unknown = DdlPlanError::from(tidb_error::terror::TerrorError::synthesize(
+            tidb_error::terror::TerrorClass::Ddl,
+            tidb_error::terror::CODE_UNKNOWN,
+            "typed unknown",
+        ));
+        assert!(
+            !is_retryable_job_error(&unknown, 1, 3),
+            "Go does not retry typed unknown errors"
+        );
         for limit in [0, 1, 2] {
             assert!(!is_retryable_job_error(&plain, 1, limit));
         }
