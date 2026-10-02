@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"crypto/tls"
 	"math/rand"
 	"runtime"
 	"sync/atomic"
@@ -30,16 +31,23 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util/async"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type kvStore struct {
-	store       *tikv.KVStore
-	mppStoreCnt *mppStoreCnt
+	store          *tikv.KVStore
+	mppStoreCnt    *mppStoreCnt
+	TiCIShardCache *TiCIShardCache
 }
 
 // GetRegionCache returns the region cache instance.
 func (s *kvStore) GetRegionCache() *RegionCache {
 	return &RegionCache{s.store.GetRegionCache()}
+}
+
+// GetTiCIShardCache returns the TiCIShardCache instance.
+func (s *kvStore) GetTiCIShardCache() *TiCIShardCache {
+	return s.TiCIShardCache
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
@@ -95,15 +103,34 @@ type Store struct {
 }
 
 // NewStore creates a new store instance.
-func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
+func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	var ticiClient *TiCIShardCacheClient
+	// Only create TiCIShardCacheClient if the storage is not a mock storage.
+	if s.SupportDeleteRange() {
+		pdAddr := s.GetPDClient().GetLeaderURL()
+		etcdClient, err := clientv3.New(clientv3.Config{
+			Endpoints:        []string{pdAddr},
+			DialTimeout:      5 * time.Second,
+			TLS:              tls,
+			AutoSyncInterval: 30 * time.Second,
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ticiClient, err = NewTiCIShardCacheClient(etcdClient, s.GetPDClient().(*tikv.CodecPDClient))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient)},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
@@ -114,6 +141,9 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 func (s *Store) Close() {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
+	}
+	if s.TiCIShardCache != nil {
+		s.TiCIShardCache.client.Close()
 	}
 }
 

@@ -17,7 +17,9 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -40,7 +42,12 @@ type mockStorage struct {
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
+	security := config.DefaultConfig().Security
+	tlsConfig, err := security.ToTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	coprStore, err := copr.NewStore(tikvStore, tlsConfig, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +81,15 @@ func (s *mockStorage) Name() string {
 
 func (s *mockStorage) Describe() string {
 	return ""
+}
+
+func (s *mockStorage) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
+	failpoint.Inject("MockTiCIEstimateCount", func(val failpoint.Value) {
+		if count, ok := val.(int); ok {
+			failpoint.Return(uint64(count), nil)
+		}
+	})
+	return 1000, nil
 }
 
 // Begin a global transaction.

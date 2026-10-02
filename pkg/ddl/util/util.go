@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,16 @@ const (
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )
+
+// BuildBackfillTaskKey generates the canonical dist-task key for a DDL backfill job.
+func BuildBackfillTaskKey(jobID int64, mergeTempIdx bool) string {
+	labels := make([]string, 0, 5)
+	labels = append(labels, "ddl", "backfill", strconv.FormatInt(jobID, 10))
+	if mergeTempIdx {
+		labels = append(labels, "merge")
+	}
+	return strings.Join(labels, "/")
+}
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {

@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	// DataEngineID is the engine ID for data engine.
+	DataEngineID = 0
 	// IndexEngineID is the engine ID for index engine.
 	IndexEngineID = -1
 )

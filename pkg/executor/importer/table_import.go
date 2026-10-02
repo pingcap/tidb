@@ -47,12 +47,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -148,6 +150,13 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	return local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 }
 
+func ticiTaskIDForImporter(e *LoadDataController, importerID string) string {
+	if e != nil && len(e.TiDBTaskIDForTiCI) > 0 {
+		return e.TiDBTaskIDForTiCI
+	}
+	return importerID
+}
+
 // NewTableImporter creates a new table importer.
 func NewTableImporter(
 	ctx context.Context,
@@ -184,6 +193,13 @@ func NewTableImporter(
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
+		return nil, err
+	}
+
+	// Collect all the indexIDs for TiCI writer group initialization.
+	newIndexIDs := tici.GetTiCIIndexIDs(e.Table.Meta())
+	tidbTaskID := ticiTaskIDForImporter(e, id)
+	if err := localBackend.InitTiCIWriterGroup(ctx, getEtcdClient, e.Table.Meta(), e.DBName, tidbTaskID, newIndexIDs); err != nil {
 		return nil, err
 	}
 
@@ -479,10 +495,23 @@ func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	return totalSize * indexCnt
 }
 
+func hasTiCIIndex(tblInfo *checkpoints.TidbTableInfo) bool {
+	if tblInfo == nil || tblInfo.Core == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Core.Indices {
+		if idx.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 // OpenIndexEngine opens an index engine.
 func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
-		TableInfo: ti.tableInfo,
+		TableInfo:        ti.tableInfo,
+		TiCIWriteEnabled: hasTiCIIndex(ti.tableInfo),
 	}
 	idxCnt := len(ti.tableInfo.Core.Indices)
 	if !common.TableHasAutoRowID(ti.tableInfo.Core) {
@@ -787,7 +816,51 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
+	mainChecksum := MainChecksumForValidation(plan, localChecksum)
+	return VerifyChecksum(ctx, plan, mainChecksum, se, logger)
+}
+
+// MainChecksumForValidation returns the checksum that should participate in the
+// main Import Into validation against TiKV / ADMIN CHECKSUM TABLE.
+// TiCI indexes are written outside TiKV, so their KV groups must be excluded.
+func MainChecksumForValidation(plan *Plan, localChecksum *verify.KVGroupChecksum) verify.KVChecksum {
+	if localChecksum == nil {
+		return verify.KVChecksum{}
+	}
+
+	tblInfo := getTableInfoForValidation(plan)
+	if tblInfo == nil {
+		return localChecksum.MergedChecksum()
+	}
+
+	ticiIndexIDs := make(map[int64]struct{}, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx != nil && idx.IsTiCIIndex() {
+			ticiIndexIDs[idx.ID] = struct{}{}
+		}
+	}
+	if len(ticiIndexIDs) == 0 {
+		return localChecksum.MergedChecksum()
+	}
+
+	merged := verify.NewKVChecksum()
+	for id, cksum := range localChecksum.GetInnerChecksums() {
+		if _, skip := ticiIndexIDs[id]; skip {
+			continue
+		}
+		merged.Add(cksum)
+	}
+	return *merged
+}
+
+func getTableInfoForValidation(plan *Plan) *model.TableInfo {
+	if plan == nil {
+		return nil
+	}
+	if plan.TableInfo != nil {
+		return plan.TableInfo
+	}
+	return plan.DesiredTableInfo
 }
 
 type autoIDRequirement struct {

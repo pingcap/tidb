@@ -319,15 +319,24 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	c.splitAndScatter(manyRegions(0, 1500)...)
 	installSubscribeSupport(c)
 
+	// Preparing 1500 region checkpoints can exceed the idle timeout under race
+	// instrumentation. Finish it before starting the subscription timer.
+	c.advanceCheckpoints()
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
 	defer sub.Drop()
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
-	c.advanceCheckpoints()
 	c.flushAll()
 
-	req.Eventually(func() bool {
-		err := sub.PendingErrors()
-		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+	// Poll synchronously so a failed assertion cannot race Drop against a
+	// still-running Eventually callback reading the subscriptions map.
+	var err error
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		err = sub.PendingErrors()
+		if err != nil && strings.Contains(err.Error(), "has no activity") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	req.ErrorContains(err, "has no activity")
 }

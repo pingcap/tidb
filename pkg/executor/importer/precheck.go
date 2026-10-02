@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -72,6 +74,12 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
+	if hasHybridTiCIIndexForImport(e.Plan.TableInfo, e.Table) {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(ticiHybridUnsupportedErrMsg)
+	}
+	if e.IsLocalSort() && hasTiCIIndexForImport(e.Plan.TableInfo, e.Table) {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(ticiLocalSortUnsupportedErrMsg)
+	}
 	if !e.DisablePrecheck {
 		if err := e.checkCDCPiTRTasks(ctx); err != nil {
 			return err
@@ -81,6 +89,41 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		return e.checkGlobalSortStorePrivilege(ctx)
 	}
 	return nil
+}
+
+const (
+	ticiLocalSortUnsupportedErrMsg = "local sort import does not support TiCI indexes"
+	ticiHybridUnsupportedErrMsg    = "IMPORT INTO does not support hybrid TiCI indexes"
+)
+
+func hasTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
+	if tblInfo == nil && tbl != nil {
+		tblInfo = tbl.Meta()
+	}
+	if tblInfo == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHybridTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
+	if tblInfo == nil && tbl != nil {
+		tblInfo = tbl.Meta()
+	}
+	if tblInfo == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.HybridInfo != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *LoadDataController) checkTotalFileSize() error {

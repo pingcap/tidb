@@ -1348,7 +1348,7 @@ func constructInnerIndexScanTask(
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
-	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
+	is.initSchemaForTiKVIndex(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
@@ -2325,6 +2325,12 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, isPhysicalLimit bool) bool {
 		return false
 	}
 
+	if *preferPushDown && hasTiCISingleReadPath(p) {
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint LIMIT_TO_COP is inapplicable")
+		*preferPushDown = false
+		return false
+	}
+
 	if *preferPushDown || meetThreshold {
 		if p.CanPushToCop(kv.TiKV) {
 			return true
@@ -2335,6 +2341,22 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan, isPhysicalLimit bool) bool {
 		}
 	}
 
+	return false
+}
+
+func hasTiCISingleReadPath(p base.LogicalPlan) bool {
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		for _, path := range ds.PossibleAccessPaths {
+			if path.FtsQueryInfo != nil && path.IsSingleScan {
+				return true
+			}
+		}
+	}
+	for _, child := range p.Children() {
+		if hasTiCISingleReadPath(child) {
+			return true
+		}
+	}
 	return false
 }
 

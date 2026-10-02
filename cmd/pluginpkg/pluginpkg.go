@@ -141,10 +141,16 @@ func main() {
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
+	modfile, cleanup, err := preparePluginModule(ctx, pkgDir)
+	if err != nil {
+		log.Fatalf("prepare plugin dependencies: %v", err)
+	}
+	defer cleanup()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
+		"-modfile="+modfile, "-mod=mod",
 		"-tags=codes",
 		"-buildmode=plugin",
-		"-o", outputFile, pkgDir)
+		"-o", outputFile, ".")
 	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout
@@ -152,6 +158,7 @@ func main() {
 	err = buildCmd.Run()
 	if err != nil {
 		log.Printf("compile plugin source code failure, %+v\n", err)
+		cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf(`Package "%s" as plugin "%s" success.`+"\nManifest:\n", pkgDir, outputFile)

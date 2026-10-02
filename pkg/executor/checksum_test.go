@@ -15,9 +15,14 @@
 package executor_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChecksum(t *testing.T) {
@@ -39,4 +44,42 @@ func TestChecksum(t *testing.T) {
 	// see cophandler.handleCopChecksumRequest
 	// here we only check 2 (index) * 3 (partition) requests are sent
 	tk.MustQuery("ADMIN CHECKSUM TABLE t").Check(testkit.Rows("test t 0 6 6"))
+}
+
+func TestChecksumSkipsTiCIIndexes(t *testing.T) {
+	for _, partitioned := range []bool{false, true} {
+		name := "unpartitioned"
+		if partitioned {
+			name = "partitioned"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			ddl := "create table t (id int primary key, body varchar(255), index idx_body(body))"
+			if partitioned {
+				ddl += " partition by range(id) (partition p0 values less than (10), partition p1 values less than maxvalue)"
+			}
+			tk.MustExec(ddl)
+			expected := "test t 0 2 2"
+			if partitioned {
+				expected = "test t 0 6 6"
+			}
+			tk.MustQuery("admin checksum table t").Check(testkit.Rows(expected))
+
+			tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+				context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			require.NoError(t, err)
+			// Attach public TiCI metadata without requiring an external TiCI service.
+			// Unistore returns one KV per checksum request, including empty ranges,
+			// so the totals below prove no TiKV requests are built for either index.
+			tbl.Meta().Indices = append(tbl.Meta().Indices,
+				&model.IndexInfo{ID: 101, Name: pmodel.NewCIStr("fts"), State: model.StatePublic,
+					FullTextInfo: &model.FullTextIndexInfo{}},
+				&model.IndexInfo{ID: 102, Name: pmodel.NewCIStr("hybrid"), State: model.StatePublic,
+					HybridInfo: &model.HybridIndexInfo{}},
+			)
+			tk.MustQuery("admin checksum table t").Check(testkit.Rows(expected))
+		})
+	}
 }

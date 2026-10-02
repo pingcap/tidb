@@ -19,7 +19,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"sort"
+	"strconv"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -37,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -491,7 +496,262 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}
 		specs = append(specs, specsForOneSubtask...)
 	}
+	if err = triggerTiCIPreSplitForImportInto(ctx, planCtx, p, controller.GlobalSortStore, kvMetas); err != nil {
+		logutil.Logger(ctx).Warn("tici pre-split shard failed for import into, fallback to default global-sort ingest planning",
+			zap.Int64("task-id", planCtx.TaskID),
+			zap.Int64("table-id", p.Plan.TableInfo.ID),
+			zap.Error(err))
+	}
 	return specs, nil
+}
+
+const (
+	// ticiPreSplitRequestTimeout is the timeout for the best-effort TiCI pre-split request.
+	// Large import jobs may need more time for TiCI to analyze the sorted KV metadata.
+	ticiPreSplitRequestTimeout = 5 * time.Minute
+)
+
+var ticiPreSplitReportGroupSize = int64(units.GiB)
+
+type ticiPreSplitImportKVMetaGroup struct {
+	indexID int64
+	kvMeta  *external.SortedKVMeta
+}
+
+// triggerTiCIPreSplitForImportInto builds and sends a best-effort TiCI pre-split request for IMPORT INTO.
+func triggerTiCIPreSplitForImportInto(
+	ctx context.Context,
+	planCtx planner.PlanCtx,
+	p *LogicalPlan,
+	store storage.ExternalStorage,
+	kvMetas map[string]*external.SortedKVMeta,
+) error {
+	kvMetaGroups := collectTiCIPreSplitImportKVMetaGroups(ctx, p, kvMetas)
+	if len(kvMetaGroups) == 0 {
+		return nil
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, ticiPreSplitRequestTimeout)
+	defer cancel()
+
+	req, err := buildTiCIPreSplitImportShardsRequestForImportInto(timeoutCtx, p, store, kvMetaGroups)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return nil
+	}
+	if planCtx.Store == nil {
+		return tici.PreSplitImportShards(timeoutCtx, nil, req)
+	}
+	requestStore, ok := planCtx.Store.(tidbkv.Storage)
+	if !ok {
+		return errors.New("TiCI pre-split requires storage with keyspace codec")
+	}
+	return tici.PreSplitImportShards(timeoutCtx, requestStore, req)
+}
+
+func collectTiCIPreSplitImportKVMetaGroups(
+	ctx context.Context,
+	p *LogicalPlan,
+	kvMetas map[string]*external.SortedKVMeta,
+) []ticiPreSplitImportKVMetaGroup {
+	if p == nil || p.Plan.TableInfo == nil {
+		return nil
+	}
+
+	groups := make([]ticiPreSplitImportKVMetaGroup, 0, len(kvMetas))
+	for kvGroup, kvMeta := range kvMetas {
+		if kvGroup == dataKVGroup || kvMeta == nil || len(kvMeta.MultipleFilesStats) == 0 {
+			continue
+		}
+		indexID, err := strconv.ParseInt(kvGroup, 10, 64)
+		if err != nil {
+			logutil.Logger(ctx).Info("skip tici pre-split for invalid import kv group",
+				zap.String("kv-group", kvGroup),
+				zap.Error(err))
+			continue
+		}
+		indexInfo := p.Plan.TableInfo.FindIndexByID(indexID)
+		if indexInfo == nil {
+			logutil.Logger(ctx).Info("skip tici pre-split because import index is not found",
+				zap.Int64("index-id", indexID),
+				zap.String("schema-name", p.Plan.DBName),
+				zap.String("table-name", p.Plan.TableInfo.Name.O))
+			continue
+		}
+		if !indexInfo.IsTiCIIndex() {
+			continue
+		}
+		groups = append(groups, ticiPreSplitImportKVMetaGroup{
+			indexID: indexID,
+			kvMeta:  kvMeta,
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].indexID < groups[j].indexID
+	})
+	return groups
+}
+
+func buildTiCIPreSplitImportShardsRequestForImportInto(
+	ctx context.Context,
+	p *LogicalPlan,
+	store storage.ExternalStorage,
+	kvMetaGroups []ticiPreSplitImportKVMetaGroup,
+) (*tici.PreSplitImportShardsRequest, error) {
+	reportGroups, err := buildTiCIPreSplitReportGroupsForImportInto(ctx, store, kvMetaGroups)
+	if err != nil {
+		return nil, err
+	}
+	if len(reportGroups) == 0 {
+		return nil, nil
+	}
+
+	kvMetas := make([]*external.SortedKVMeta, 0, len(kvMetaGroups))
+	indexIDs := make([]int64, 0, len(kvMetaGroups))
+	for _, group := range kvMetaGroups {
+		kvMetas = append(kvMetas, group.kvMeta)
+		indexIDs = append(indexIDs, group.indexID)
+	}
+	dataFileCount, statFileCount := countUniqueFilesForTiCIPreSplitImportRequest(kvMetas)
+	req := &tici.PreSplitImportShardsRequest{
+		TidbTaskId:    ticiTaskIDForImportInto(p.JobID),
+		TableId:       p.Plan.TableInfo.ID,
+		IndexIds:      indexIDs,
+		DataFileCount: dataFileCount,
+		StatFileCount: statFileCount,
+		MetaGroups:    make([]*tici.PreSplitImportShardMeta, 0, len(reportGroups)),
+		// IMPORT INTO does not have an add-index scan snapshot. The imported data
+		// commit TS is carried separately by WriteIngestStepMeta.TS / EngineConfig.TS.
+		ScanSnapshotTs: 0,
+	}
+	for i, groupReq := range reportGroups {
+		if groupReq == nil {
+			return nil, errors.Errorf("import into tici pre-split report group %d is empty", i)
+		}
+		if len(req.StartKey) == 0 && len(req.EndKey) == 0 {
+			req.StartKey = groupReq.StartKey
+			req.EndKey = groupReq.EndKey
+		} else {
+			req.StartKey = external.BytesMin(req.StartKey, groupReq.StartKey)
+			req.EndKey = external.BytesMax(req.EndKey, groupReq.EndKey)
+		}
+		req.TotalKvSize += groupReq.TotalKvSize
+		req.TotalKvCnt += groupReq.TotalKvCnt
+		req.MetaGroups = append(req.MetaGroups, groupReq)
+	}
+	return req, nil
+}
+
+func countUniqueFilesForTiCIPreSplitImportRequest(
+	kvMetaGroups []*external.SortedKVMeta,
+) (dataFileCount int32, statFileCount int32) {
+	dataFiles := make(map[string]struct{})
+	statFiles := make(map[string]struct{})
+	for _, kvMeta := range kvMetaGroups {
+		if kvMeta == nil {
+			continue
+		}
+		for _, dataFile := range kvMeta.GetDataFiles() {
+			dataFiles[dataFile] = struct{}{}
+		}
+		for _, statFile := range kvMeta.GetStatFiles() {
+			statFiles[statFile] = struct{}{}
+		}
+	}
+	return int32(len(dataFiles)), int32(len(statFiles))
+}
+
+func buildTiCIPreSplitReportGroupsForImportInto(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	kvMetaGroups []ticiPreSplitImportKVMetaGroup,
+) ([]*tici.PreSplitImportShardMeta, error) {
+	failpoint.Inject("mockBuildTiCIPreSplitReportGroupsForImportInto", func() {
+		reportGroups := make([]*tici.PreSplitImportShardMeta, 0, len(kvMetaGroups))
+		for _, group := range kvMetaGroups {
+			if group.kvMeta == nil {
+				continue
+			}
+			reportGroups = append(reportGroups, &tici.PreSplitImportShardMeta{
+				EleId:         group.indexID,
+				StartKey:      group.kvMeta.StartKey,
+				EndKey:        group.kvMeta.EndKey,
+				TotalKvSize:   group.kvMeta.TotalKVSize,
+				TotalKvCnt:    group.kvMeta.TotalKVCnt,
+				DataFileCount: int32(len(group.kvMeta.GetDataFiles())),
+				StatFileCount: int32(len(group.kvMeta.GetStatFiles())),
+			})
+		}
+		failpoint.Return(reportGroups, nil)
+	})
+
+	reportGroups := make([]*tici.PreSplitImportShardMeta, 0, len(kvMetaGroups))
+	for _, group := range kvMetaGroups {
+		if group.kvMeta == nil {
+			return nil, errors.Errorf("import into tici pre-split kv group %d is empty", group.indexID)
+		}
+		groups, err := splitTiCIPreSplitReportGroupsForOneImportKVMetaGroup(ctx, store, group.kvMeta, group.indexID)
+		if err != nil {
+			return nil, err
+		}
+		reportGroups = append(reportGroups, groups...)
+	}
+	return reportGroups, nil
+}
+
+func splitTiCIPreSplitReportGroupsForOneImportKVMetaGroup(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	kvMeta *external.SortedKVMeta,
+	indexID int64,
+) ([]*tici.PreSplitImportShardMeta, error) {
+	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
+		return nil, nil
+	}
+	splitter, err := getRangeSplitterWithGroupSize(ctx, store, kvMeta, ticiPreSplitReportGroupSize)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err3 := splitter.Close(); err3 != nil {
+			logutil.Logger(ctx).Warn("close tici pre-split range splitter failed", zap.Error(err3))
+		}
+	}()
+
+	reportGroups := make([]*tici.PreSplitImportShardMeta, 0, max(1, int(kvMeta.TotalKVSize/uint64(ticiPreSplitReportGroupSize))+1))
+	startKey := tidbkv.Key(kvMeta.StartKey)
+	var endKey tidbkv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, groupSize, groupKeyCnt, _, _, err := splitter.SplitOneRangesGroup()
+		if err != nil {
+			return nil, err
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = kvMeta.EndKey
+		} else {
+			endKey = tidbkv.Key(endKeyOfGroup).Clone()
+		}
+		if startKey.Cmp(endKey) >= 0 {
+			return nil, errors.Errorf("invalid tici pre-split import range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		reportGroups = append(reportGroups, &tici.PreSplitImportShardMeta{
+			EleId:         indexID,
+			StartKey:      startKey,
+			EndKey:        endKey,
+			TotalKvSize:   groupSize,
+			TotalKvCnt:    groupKeyCnt,
+			DataFileCount: int32(len(dataFiles)),
+			StatFileCount: int32(len(statFiles)),
+		})
+		startKey = endKey
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+	}
+	return reportGroups, nil
 }
 
 func splitForOneSubtask(
@@ -517,7 +777,7 @@ func splitForOneSubtask(
 	startKey := tidbkv.Key(kvMeta.StartKey)
 	var endKey tidbkv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, _, _, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
 		if err2 != nil {
 			return nil, err2
 		}
@@ -653,6 +913,15 @@ func getRangeSplitter(
 	store storage.ExternalStorage,
 	kvMeta *external.SortedKVMeta,
 ) (*external.RangeSplitter, error) {
+	return getRangeSplitterWithGroupSize(ctx, store, kvMeta, int64(config.DefaultBatchSize))
+}
+
+func getRangeSplitterWithGroupSize(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	kvMeta *external.SortedKVMeta,
+	rangeGroupSize int64,
+) (*external.RangeSplitter, error) {
 	regionSplitSize, regionSplitKeys, err := importer.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))
@@ -668,12 +937,11 @@ func getRangeSplitter(
 		zap.Int64("range-keys", rangeKeys),
 	)
 
-	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
 		ctx,
 		kvMeta.MultipleFilesStats,
 		store,
-		int64(config.DefaultBatchSize),
+		rangeGroupSize,
 		int64(math.MaxInt64),
 		rangeSize,
 		rangeKeys,

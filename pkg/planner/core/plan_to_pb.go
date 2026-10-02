@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
@@ -498,14 +499,26 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
+			if (store == kv.TiFlash || store == kv.TiCI) && p.Table.PKIsHandle {
+				// For tici, we need to find int pk from table columns.
+				for _, tblCol := range tableColumns {
+					if mysql.HasPriKeyFlag(tblCol.GetFlag()) {
+						columns = append(columns, tblCol)
+						break
+					}
+				}
+				continue
+			}
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
+		} else if col.ID == model.ExtraVersionID {
+			columns = append(columns, model.NewExtraVersionColInfo())
 		} else {
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
@@ -513,6 +526,20 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	var pkColIDs []int64
 	if p.NeedCommonHandle {
 		pkColIDs = tables.TryGetCommonPkColumnIds(p.Table)
+	}
+	if store == kv.TiFlash || store == kv.TiCI {
+		executorID := p.ExplainID().String()
+		unique := false
+		idxExec := &tipb.IndexScan{
+			TableId:          p.Table.ID,
+			IndexId:          p.Index.ID,
+			Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+			Desc:             false,
+			Unique:           &unique,
+			PrimaryColumnIds: pkColIDs,
+			FtsQueryInfo:     p.FtsQueryInfo,
+		}
+		return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec, ExecutorId: &executorID}, nil
 	}
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
