@@ -1420,33 +1420,23 @@ impl Session {
         ]]
     }
 
-    /// Go `dataForTiDBClusterInfo` (`infoschema_reader.go:1842`) over
-    /// `GetClusterServerInfo`: one row per node in the cluster.
-    ///
-    /// NOT reported (documented, not invented): Go's `GetClusterServerInfo`
-    /// chains five retrievers, and only the first -- `GetTiDBServerInfo`,
-    /// which reads the same `GetAllServerInfo` that `TIDB_SERVERS_INFO`
-    /// does -- has a source here. `GetPDServerInfo` needs PD's members API,
-    /// `GetStoreServerInfo` the store list, and the TiProxy/TiCDC pair their
-    /// own topology keys; a node with none of those reports the TiDB rows
-    /// alone rather than inventing peers it cannot see.
-    pub(crate) fn cluster_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    /// The TiDB-source rows from Go's `GetClusterServerInfo`, rendered in
+    /// `dataForTiDBClusterInfo` column order. The other six service/store
+    /// retrievers remain unimplemented; never manufacture their records.
+    pub(crate) fn cluster_info_table_rows(
+        &self,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
         let Some(syncer) = self.server_info_syncer.as_ref() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let Ok(all) = syncer.all_server_info() else {
-            return Vec::new();
-        };
+        let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_secs() as i64);
         let mut ids: Vec<&String> = all.keys().collect();
         ids.sort();
-        // The mock store's boot time reads the same registered start
-        // timestamp the tidb row carries (oracle: both rows share it).
-        let mut store_start = now;
-        let mut rows: Vec<Vec<tidb_datatype::Datum>> = ids
+        Ok(ids
             .into_iter()
             .map(|id| {
                 let info = &all[id].static_info;
@@ -1469,7 +1459,6 @@ impl Session {
                     || info.version_info.version.clone(),
                     |(_, rest)| rest.strip_prefix('v').unwrap_or(rest).to_owned(),
                 );
-                store_start = start_time;
                 vec![
                     text("tidb"),
                     text(&tidb_domain::serverinfo_syncer::join_host_port(
@@ -1488,34 +1477,9 @@ impl Session {
                     Datum::Int(info.json_server_id as i64),
                 ]
             })
-            .collect();
-        // go `SetTiKVStoreInSyncer`: the unistore mock store registers as
-        // `store1` with the server's boot time and empty diagnostics (oracle:
-        // the tikv row's STATUS_ADDRESS/VERSION/GIT_HASH/UPTIME are empty and
-        // SERVER_ID is 0).
-        rows.push(vec![
-            Datum::Bytes(b"tikv".to_vec()),
-            Datum::Bytes(b"store1".to_vec()),
-            Datum::Bytes(Vec::new()),
-            Datum::Bytes(Vec::new()),
-            Datum::Bytes(Vec::new()),
-            datetime_datum(store_start),
-            Datum::Bytes(Vec::new()),
-            Datum::Int(0),
-        ]);
-        rows
+            .collect())
     }
 
-    /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
-    /// server `GetAllServerInfo` reports, in Go's column order.
-    ///
-    /// Without a syncer the table is EMPTY rather than invented: a tier with
-    /// no node identity has no server to report. With one and no etcd
-    /// client, the syncer answers this node alone -- Go's `etcdCli == nil`
-    /// path -- and the same call picks up peers once a client is present.
-    ///
-    /// The rows are ordered by id so the table reads deterministically;
-    /// Go's map iteration leaves the order unspecified.
     /// Go's cluster tables fill `INSTANCE` with `ip:port` of each server
     /// (`pkg/executor/pkg/cluster` instance formatting). Empty when the
     /// server-info syncer has not published this node's identity yet.
@@ -1532,17 +1496,28 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub(crate) fn tidb_servers_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
+    /// server `GetAllServerInfo` reports, in Go's column order.
+    ///
+    /// Without a syncer the table is EMPTY rather than invented: a tier with
+    /// no node identity has no server to report. With one and no etcd
+    /// client, the syncer answers this node alone -- Go's `etcdCli == nil`
+    /// path -- and the same call picks up peers once a client is present.
+    ///
+    /// The rows are ordered by id so the table reads deterministically;
+    /// Go's map iteration leaves the order unspecified.
+    pub(crate) fn tidb_servers_info_table_rows(
+        &self,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
         let Some(syncer) = self.server_info_syncer.as_ref() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let Ok(all) = syncer.all_server_info() else {
-            return Vec::new();
-        };
+        let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
         let mut ids: Vec<&String> = all.keys().collect();
         ids.sort();
-        ids.into_iter()
+        Ok(ids
+            .into_iter()
             .map(|id| {
                 let info = &all[id];
                 let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
@@ -1559,7 +1534,7 @@ impl Session {
                     )),
                 ]
             })
-            .collect()
+            .collect())
     }
 
     /// A fresh session with its own empty catalog.

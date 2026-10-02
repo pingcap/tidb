@@ -5179,9 +5179,9 @@ fn admin_show_ddl_reports_this_node_and_the_followed_version() {
 /// `GetClusterServerInfo`: one row per node, describing where it is and how
 /// long it has been up.
 ///
-/// Go chains five retrievers there and only the first has a source here, so
-/// this reports the TiDB rows alone -- see `Session::cluster_info_table_rows`
-/// for the four it cannot see and why inventing them would be worse.
+/// Only the TiDB source of Go's seven retrievers is implemented here. This
+/// regression checks that no other nodes are fabricated; full cluster discovery
+/// remains an open parity gap.
 #[test]
 fn cluster_info_reports_this_node() {
     let (stack, _users) = cop_backed_stack();

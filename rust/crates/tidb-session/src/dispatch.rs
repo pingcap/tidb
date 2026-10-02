@@ -602,20 +602,6 @@ impl Session {
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-        // Go's `clusterConfigRetriever` fetches each store's config over its
-        // status address; this topology's tikv node has none, so the fetch
-        // fails once per statement and surfaces as a warning beside the
-        // cached rows (oracle-captured).
-        if table_names
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case("CLUSTER_CONFIG"))
-        {
-            self.append_warning(
-                WarningLevel::Warning,
-                1105,
-                "tikv node store1 does not contain status address".to_owned(),
-            );
-        }
         let mut storage_statistics = None;
         let mut storage_statistics_failed = false;
         if needs_storage_stats
@@ -729,10 +715,16 @@ impl Session {
                 self.user_privileges_table_rows()
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
                 self.user_attributes_table_rows(&scratch, ctx)
+            } else if table_name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
+                // Go's fetchClusterConfig discovers nodes and reads their live
+                // HTTP configuration. A captured server image is not a source.
+                return Err(DriverError::unsupported(
+                    "CLUSTER_CONFIG live retrieval is not supported yet",
+                ));
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
-                self.tidb_servers_info_table_rows()
+                self.tidb_servers_info_table_rows()?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {
-                self.cluster_info_table_rows()
+                self.cluster_info_table_rows()?
             } else {
                 let visibility = self.schema_visibility();
                 infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()

@@ -45,6 +45,7 @@ const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
 struct FakeEtcd {
     keys: Mutex<BTreeMap<String, (Vec<u8>, i64)>>,
     next_lease: AtomicI64,
+    get_error: Mutex<Option<String>>,
 }
 
 impl FakeEtcd {
@@ -79,6 +80,9 @@ impl EtcdOps for FakeEtcd {
         Ok(())
     }
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+        if let Some(error) = self.get_error.lock().unwrap().as_ref() {
+            return Err(error.clone());
+        }
         Ok(self
             .keys
             .lock()
@@ -106,6 +110,105 @@ impl EtcdOps for FakeEtcd {
 
 fn put_str(fake: &FakeEtcd, key: &str, value: &str) {
     fake.put(key, value.as_bytes()).unwrap();
+}
+
+// Rust regression coverage for the SQL consumers of the syncer. This is not
+// acceptance of Go's complete seven-source cluster discovery owner.
+#[test]
+fn cluster_metadata_contains_only_discovered_nodes() {
+    use crate::{tests_support::row_text, Session};
+
+    let mut session = Session::new();
+    let sql = "SELECT TYPE, INSTANCE FROM information_schema.cluster_info ORDER BY INSTANCE";
+    assert!(row_text(session.run(sql)).is_empty());
+
+    let local = mock_server_info("local", "192.0.2.10", 4000);
+    session.set_server_info_syncer(Arc::new(Syncer::new(local.clone(), None)));
+    assert_eq!(row_text(session.run(sql)), [["tidb", "192.0.2.10:4000"]]);
+
+    let fake = Arc::new(FakeEtcd::default());
+    session.set_server_info_syncer(Arc::new(Syncer::new(local, Some(fake.clone()))));
+    // An empty registry must not manufacture either a local record or store1.
+    assert!(row_text(session.run(sql)).is_empty());
+    for (id, ip) in [("first", "192.0.2.20"), ("second", "192.0.2.30")] {
+        let mut info = mock_server_info(id, ip, 4000);
+        fake.put(&server_info_key_path(id), &info.marshal().unwrap())
+            .unwrap();
+    }
+    assert_eq!(
+        row_text(session.run(sql)),
+        [["tidb", "192.0.2.20:4000"], ["tidb", "192.0.2.30:4000"]]
+    );
+    fake.delete(&server_info_key_path("first")).unwrap();
+    assert_eq!(row_text(session.run(sql)), [["tidb", "192.0.2.30:4000"]]);
+    assert_eq!(
+        row_text(session.run("SELECT DDL_ID, IP FROM information_schema.tidb_servers_info")),
+        [["second", "192.0.2.30"]]
+    );
+}
+
+fn check_cluster_metadata_discovery_error(table: &str) {
+    use crate::{tests_support::row_text, Session};
+
+    let fake = Arc::new(FakeEtcd::default());
+    let mut session = Session::new();
+    session.set_server_info_syncer(Arc::new(Syncer::new(
+        mock_server_info("local", "192.0.2.10", 4000),
+        Some(fake.clone()),
+    )));
+    *fake.get_error.lock().unwrap() = Some("server discovery unavailable".to_owned());
+    for sql in [
+        format!("SELECT * FROM information_schema.{table}"),
+        format!("SELECT COUNT(*) FROM information_schema.{table}"),
+    ] {
+        let error = session
+            .run(&sql)
+            .expect_err("discovery errors must reach SQL");
+        assert_eq!(error.to_string(), "server discovery unavailable");
+    }
+    *fake.get_error.lock().unwrap() = None;
+    assert!(row_text(session.run(&format!("SELECT * FROM information_schema.{table}"))).is_empty());
+}
+
+#[test]
+fn cluster_metadata_cluster_info_propagates_discovery_errors() {
+    check_cluster_metadata_discovery_error("cluster_info");
+}
+
+#[test]
+fn cluster_metadata_servers_info_propagates_discovery_errors() {
+    check_cluster_metadata_discovery_error("tidb_servers_info");
+}
+
+#[test]
+fn cluster_metadata_config_refuses_captured_runtime_rows() {
+    use crate::Session;
+
+    let mut session = Session::new();
+    session.set_server_info_syncer(Arc::new(Syncer::new(
+        mock_server_info("local", "192.0.2.10", 4000),
+        None,
+    )));
+    // Go supports these reads through live HTTP retrieval. Until that owner
+    // exists, Rust must not answer with a different server's captured settings.
+    for sql in [
+        "SELECT * FROM information_schema.cluster_config",
+        "SELECT COUNT(*) FROM information_schema.cluster_config WHERE TYPE = 'tidb'",
+        "SELECT c.VALUE FROM information_schema.cluster_config c JOIN information_schema.cluster_info i ON c.INSTANCE = i.INSTANCE",
+    ] {
+        session.parse(sql).unwrap();
+        let error = session.run(sql).expect_err("live config retrieval is unavailable");
+        assert_eq!(error.to_string(), "CLUSTER_CONFIG live retrieval is not supported yet");
+        assert!(session.warnings().iter().all(|warning| !warning.message.contains("store1")));
+    }
+    session
+        .run("PREPARE cfg FROM 'SELECT * FROM information_schema.cluster_config'")
+        .unwrap();
+    assert_eq!(
+        session.run("EXECUTE cfg").unwrap_err().to_string(),
+        "CLUSTER_CONFIG live retrieval is not supported yet"
+    );
+    session.run("DEALLOCATE PREPARE cfg").unwrap();
 }
 
 /// Go `getServerInfo` (`pkg/domain/serverinfo/syncer.go:481`) under the

@@ -287,19 +287,19 @@
       "id": "I01",
       "status": "open",
       "group": "Runtime information-schema providers",
-      "finding": "Dynamic virtual tables use captured fixtures, constant empty/default rows or unconditional captured errors. **Reproduced:** an existing sequence is absent from SEQUENCES; CLUSTER_CONFIG reports `127.0.0.1:15100` and a synthetic store1 warning without discovery; CLUSTER_LOG reports missing start time even with start/end/pattern predicates. Other affected providers are enumerated in the review receipt.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:604`, `:706`; `infoschema.rs:335`, `:2893`, `:2925`; `cluster_config_rows.rs:1`",
-      "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. Replace the fixture providers. Static column definitions/charset/metrics descriptions are not inherently wrong.",
-      "review_basis": "2026-10-01 follow-up at integration 313b3cfea3: Retain the earlier receipt and status. No intervening owner integration closes this finding. See structural-review-followup.md and structural-recheck/source-continuity.json. Fresh diagnostics: session-ownership."
+      "finding": "Dynamic virtual tables still use constant empty/default rows or unconditional captured errors. The compiled CLUSTER_CONFIG capture and synthetic store1 warning have been removed; reads now explicitly refuse unavailable live retrieval. **Earlier reproductions still open:** an existing sequence is absent from SEQUENCES; CLUSTER_LOG reports missing start time even with start/end/pattern predicates. Other affected providers are enumerated in the review receipt.",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `infoschema.rs::sequences_rows`; removal receipt `rust/docs/cluster-fixture-removal-execplan.md`",
+      "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. CLUSTER_CONFIG still needs the complete fetchClusterConfig owner; safe refusal is not Go parity. Static column definitions/charset/metrics descriptions are not inherently wrong.",
+      "review_basis": "2026-10-01 follow-up at integration 313b3cfea3: Retain the earlier receipt and status. No intervening owner integration closes this finding. See structural-review-followup.md and structural-recheck/source-continuity.json. Fresh diagnostics: session-ownership. 2026-10-01 removal on ba62b48ee1: four regressions failed on unchanged production; captured topology/configuration providers withdrawn. See cluster-fixture-removal-execplan.md for final validation and remaining complete owners."
     },
     {
       "id": "I02",
       "status": "open",
       "group": "Runtime information-schema providers",
-      "finding": "CLUSTER_INFO reads only TiDB records, turns discovery errors into empty results and unconditionally appends mock `tikv/store1` after a successful syncer read. It lacks the other real service/store retrievers.",
-      "rust_evidence": "`rust/crates/tidb-session/src/lib.rs:1425`, `:1483`",
-      "go_owner": "`pkg/infoschema/tables.go::GetClusterServerInfo` composes seven retrievers and propagates errors; `dataForTiDBClusterInfo` renders output. Keep mock facts in the mock provider. Discovery/fabricated rows differ from O01's numeric server-ID leasing.",
-      "review_basis": "2026-10-01 follow-up at integration 313b3cfea3: Retain the earlier receipt and status. No intervening owner integration closes this finding. See structural-review-followup.md and structural-recheck/source-continuity.json."
+      "finding": "CLUSTER_INFO still reads only TiDB records and lacks six real service/store retrievers. The unconditional mock tikv/store1 row and discovery-error-to-empty fallbacks in CLUSTER_INFO and TIDB_SERVERS_INFO have been removed. SQL regressions cover live registry changes and error propagation/recovery; complete cluster discovery remains unimplemented.",
+      "rust_evidence": "`rust/crates/tidb-session/src/lib.rs::cluster_info_table_rows`, `tidb_servers_info_table_rows`; `tests_domain_serverinfo_syncer_source.rs::cluster_metadata_contains_only_discovered_nodes`; removal receipt `rust/docs/cluster-fixture-removal-execplan.md`",
+      "go_owner": "`pkg/infoschema/tables.go::GetClusterServerInfo` composes seven retrievers and propagates errors; `dataForTiDBClusterInfo` renders output. Keep mock facts in the mock provider. Complete discovery, version/identity rendering, privileges/redaction and runtime lifetime still require package acceptance; this removal does not close I02.",
+      "review_basis": "2026-10-01 follow-up at integration 313b3cfea3: Retain the earlier receipt and status. No intervening owner integration closes this finding. See structural-review-followup.md and structural-recheck/source-continuity.json. 2026-10-01 removal on ba62b48ee1: four regressions failed on unchanged production; captured topology/configuration providers withdrawn. See cluster-fixture-removal-execplan.md for final validation and remaining complete owners."
     },
     {
       "id": "I03",
