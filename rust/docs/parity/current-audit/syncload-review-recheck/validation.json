@@ -1,0 +1,92 @@
+{
+  "integration_start": "2e66b7c28f60ab2083559222735496c0596f1b4a",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::catalog::statistics_request_tests -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.40s",
+        "test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 1523 filtered out; finished in 0.15s",
+        "error: test failed, to rerun pass `-p tidb-executor --lib`"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::catalog::sync_load::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1532 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 496 filtered out; finished in 1.27s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --test cardinality_stats_loading -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "thread 'subset_index_cardinality_after_async_statistics_load' (31660202) panicked at crates/tidb-session/tests/cardinality_stats_loading.rs:183:9:",
+        "thread 'builtin_in_estimate_survives_statistics_initialization' (31660200) panicked at crates/tidb-session/tests/cardinality_stats_loading.rs:410:13:",
+        "test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s",
+        "error: test failed, to rerun pass `-p tidb-session --test cardinality_stats_loading`"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-stats-handle-metrics --lib",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-server --all-targets",
+      "exit_code": 0,
+      "results": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.07s"
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "exit_code": 0
+    }
+  ],
+  "counts": {
+    "passed": 29,
+    "failed": 3,
+    "baseline_failures": 3
+  },
+  "baseline": "baseline.json",
+  "regressions_before": "regressions-before.json",
+  "dependency_lock_update": {
+    "command": "cargo check --offline -p tidb-executor --lib",
+    "exit_code": 0,
+    "change": "One edge to existing workspace tidb-stats-handle-metrics; no external or native-client revision changed."
+  },
+  "unverified": [
+    "Original Go race gate and complete package acceptance",
+    "Live TiKV and mixed-node tests",
+    "Benchmark throughput and exhaustive statistics parity"
+  ],
+  "commit_gate": {
+    "command": "TERM=xterm git -c core.hooksPath=hooks commit -m \"statistics: follow Go sync-load outcomes and observations\"",
+    "exit_code": 0,
+    "hook": "hooks/pre-commit",
+    "build": "cd rust && cargo build --locked -p tidb-server",
+    "evidence": [
+      "Checking Rust tidb-server build (locked)... warning: missing documentation for a function",
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.43s"
+    ]
+  },
+  "publication": "Receipt amendment repeats the actual hook. A fresh locked server build immediately before push and remote verification are recorded in the task thread."
+}

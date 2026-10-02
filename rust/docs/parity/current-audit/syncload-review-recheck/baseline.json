@@ -1,0 +1,29 @@
+{
+  "baseline": "2e66b7c28f60ab2083559222735496c0596f1b4a",
+  "restored_files": [
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/driver/catalog/sync_load.rs",
+    "rust/crates/tidb-executor/src/stmt_context.rs"
+  ],
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-session --test cardinality_stats_loading -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "thread 'subset_index_cardinality_after_async_statistics_load' (31668469) panicked at crates/tidb-session/tests/cardinality_stats_loading.rs:183:9:",
+        "thread 'builtin_in_estimate_survives_statistics_initialization' (31668467) panicked at crates/tidb-session/tests/cardinality_stats_loading.rs:410:13:",
+        "test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s",
+        "error: test failed, to rerun pass `-p tidb-session --test cardinality_stats_loading`"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib original_collect_histogram_needed_columns_cases_match -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "thread 'driver::catalog::statistics_request_tests::original_collect_histogram_needed_columns_cases_match' (31669133) panicked at crates/tidb-executor/src/driver/catalog.rs:4141:13:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1538 filtered out; finished in 0.03s",
+        "error: test failed, to rerun pass `-p tidb-executor --lib`"
+      ]
+    }
+  ]
+}

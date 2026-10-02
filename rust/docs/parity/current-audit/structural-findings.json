@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 70,
-    "repaired": 16
+    "unresolved": 69,
+    "repaired": 17
   },
   "findings": [
     {
@@ -483,12 +483,12 @@
     },
     {
       "id": "O19",
-      "status": "open",
+      "status": "repaired",
       "group": "Domain and process services",
-      "finding": "**P2; source-confirmed:** statistics sync-load collectors are registered/materialized but their production request/wait/dedup/read events never record observations. A metrics endpoint can expose these zero-valued families despite real work. This is specifically the load-event integration, not absence of the already running workers or all statistics metrics.",
-      "rust_evidence": "`rust/crates/tidb-stats-handle-metrics/src/lib.rs::SYNC_LOAD_TOTAL`, `SYNC_LOAD_TIMEOUT_TOTAL`, `SYNC_LOAD_DEDUP_TOTAL`, `READ_STATS_HISTOGRAM`; `rust/crates/tidb-executor/src/driver/catalog/sync_load.rs`; all-reference scan",
-      "go_owner": "`pkg/statistics/handle/syncload/stats_syncload.go::SendLoadRequests`/`SyncWaitStatsLoad` and the shared `pkg/metrics` collectors: attach event recording at the source-owned lifecycle points, retaining one registry identity.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Statistics load metrics still have no production request/wait/dedup/read observation calls; running load workers and initialized collectors do not close this gap. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Repaired:** all five existing shared statistics sync-load collectors observe Go's admitted-task, result-consumption, timeout, completed-wait and successful-read events. The wait now follows master's failed-result-before-timer rule and treats worker errors as delivered items. Duplicate timeout-only policy and silent incomplete success are removed.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/catalog/sync_load.rs::run_flight`; `Catalog::wait_statistics_load`; `stmt_context.rs::PendingStatisticsLoad`; `rust/crates/tidb-server/src/cluster_session_node/mod.rs::ClusterStatisticsItemLoader::load_items`",
+      "go_owner": "Master `pkg/statistics/handle/syncload/stats_syncload.go` and shared `pkg/metrics/stats.go`; [repair receipt](syncload-lifecycle-repair.md) records all three upstream artifacts and seven test contracts. This repairs O19, not complete syncload/metrics package acceptance.",
+      "review_basis": "Maintenance review from integration 2e66b7c28f against Go master 93a01d31f6 and native 19a56cc. Five regressions failed before and passed after. Scoped validation has 29 pass and three independently reproduced baseline fixture failures. See syncload-lifecycle-repair.md and syncload-review-recheck/."
     },
     {
       "id": "F01",
@@ -790,11 +790,11 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "id": "D07",
+    "id": "O19",
     "status": "repaired",
-    "scope": "Persisted-worker and follower schema synchronization mode ownership",
-    "integration_start": "d0f1c371150530fb7b5c37730456c5d56ad11e64",
+    "scope": "Statistics sync-load outcome and observation lifecycle",
+    "integration_start": "2e66b7c28f60ab2083559222735496c0596f1b4a",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "mdl-mode-review.md"
+    "receipt": "syncload-lifecycle-repair.md"
   }
 }

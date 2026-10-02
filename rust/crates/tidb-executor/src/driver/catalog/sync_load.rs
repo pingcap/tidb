@@ -238,7 +238,7 @@ impl SyncLoadService {
             .needed_items
             .send_timeout(task, deadline.saturating_duration_since(Instant::now()))
         {
-            Ok(()) => {}
+            Ok(()) => tidb_stats_handle_metrics::SYNC_LOAD_DEDUP_TOTAL.inc(),
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
                 return SyncLoadOutcome::TransportError(
                     "sync load stats channel is full and timeout sending task to channel"
@@ -552,13 +552,26 @@ mod tests {
 
     #[test]
     fn concurrent_identical_requests_share_one_load() {
-        let loader = Arc::new(TestLoader {
-            delay: Duration::from_millis(30),
-            ..TestLoader::default()
+        let admitted = tidb_stats_handle_metrics::SYNC_LOAD_DEDUP_TOTAL.get();
+        let (started_tx, started_rx) = mpsc::sync_channel(2);
+        let (release_tx, release_rx) = mpsc::sync_channel(2);
+        let loader = Arc::new(BlockingLoader {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            finished: Arc::new(AtomicBool::new(false)),
         });
-        let (_cache, service) = service(Arc::clone(&loader));
+        let cache = Arc::new(StatisticsCache::default());
+        let service =
+            SyncLoadService::with_settings(loader, Arc::downgrade(&cache), 1, 8, Duration::ZERO);
         let first = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first load is active");
         let second = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
+        // The first task stays active until the second request has joined.
+        // A second token also releases a wrongly duplicated task on failure.
+        release_tx.send(()).unwrap();
+        release_tx.send(()).unwrap();
 
         assert!(matches!(
             first[0].recv_timeout(Duration::from_secs(1)).unwrap(),
@@ -568,7 +581,11 @@ mod tests {
             second[0].recv_timeout(Duration::from_secs(1)).unwrap(),
             SyncLoadOutcome::Item { error: None, .. }
         ));
-        assert_eq!(loader.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(
+            started_rx.try_recv().is_err(),
+            "one shared task reaches storage"
+        );
+        assert!(tidb_stats_handle_metrics::SYNC_LOAD_DEDUP_TOTAL.get() >= admitted + 1.0);
     }
 
     #[test]

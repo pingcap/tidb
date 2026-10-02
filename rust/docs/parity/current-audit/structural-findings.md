@@ -1,12 +1,14 @@
 # Remaining structural mismatches, reviewed 2026-10-02
 
-The [current review](mdl-mode-review.md) rechecks all 71 previously unresolved
-IDs from integration `d0f1c371150530fb7b5c37730456c5d56ad11e64`, Go master
-`93a01d31f6da205ae4bf376825293903a6899fdb` and native client-rust `19a56cc`.
-All 71 had an unmet contract before the repair. D07's recorded worker/follower
-mode gap is now repaired: **70 remain unresolved (62 open, eight partial)**,
-including 68 live/missing-runtime findings and two disabled seeds. Sixteen IDs
-are repaired. This is a finding count, not complete Go package acceptance.
+The [last full-register review](mdl-mode-review.md) rechecked all 71 previously
+unresolved IDs and repaired D07, leaving 70. The subsequent
+[statistics sync-load repair](syncload-lifecycle-repair.md) closes O19 against
+Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, starting integration
+`2e66b7c28f60ab2083559222735496c0596f1b4a`; native client remains `19a56cc`.
+**69 remain unresolved (61 open, eight partial)**, including 67 live/missing-runtime
+findings and two disabled seeds. Seventeen IDs are repaired. The other 69
+retain the previous review evidence; this is not a fresh exhaustive review or
+complete Go package acceptance.
 
 D11 remains partial. The [allocator follow-up](alter-allocator-repair.md),
 [index follow-up](alter-index-preparation-repair.md) and
@@ -96,8 +98,8 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **86 tracked findings: 70 unresolved (including partial
-repairs) and sixteen repaired ownership/contract findings (C01, D04, D06, D07, E01, E06, N02, N06, O12,
+The register contains **86 tracked findings: 69 unresolved (including partial
+repairs) and seventeen repaired ownership/contract findings (C01, D04, D06, D07, E01, E06, N02, N06, O12, O19,
 P01, P02, P04, P05, P07, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
@@ -296,7 +298,7 @@ T04's follow-up synchronizes `c97dafb89883312deb526dc8d8f36cc7f7001f47`.
 | O16 | **P2; source-confirmed:** workload-learning settings have no table-read-cost analysis, versioned workload-value persistence or cache-refresh worker. The already running workload-repository sampling worker implements a different responsibility. | `rust/crates/tidb-server/src/cluster_session_node/boot.rs`; Rust production search for workload learning/read-cost owners; `workloadlearning.md` receipt | `pkg/workloadlearning` and `pkg/domain/domain.go::SetupWorkloadBasedLearningWorker`/`readTableCostWorker`: compose source plan-stat extraction, owner gating, persistence and cache refresh with joined shutdown. |
 | O17 | **P2; source-confirmed:** telemetry configuration and startup-admission helpers have no production feature-counter/window collection and periodic telemetry-log reporting lifecycle. | `rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::telemetry_enabled`; server boot and Rust production inventory; `telemetry.md` receipt | `pkg/telemetry` and `pkg/domain/domain.go::TelemetryLoop`: preserve source opt-in gates, restricted-session collection, initial report, window rotation, log output and shutdown. Go currently logs the report; this finding does not call for an external telemetry uploader. |
 | O18 | **P2; reproduced in the in-process SQL owner:** statement-summary data structures, settings and readers exist, but completed production SQL never constructs/submits `StmtExecInfo`. The persistent v2 owner also lacks server setup/close and reader selection. Tests directly inject records and therefore do not establish the live pipeline. | `rust/crates/tidb-exec/src/adapter.rs::decide_summary_stmt` and its explicit population boundary; `rust/crates/tidb-session/src/dispatch.rs::tidb_statements_stats_table_rows`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; no production add/setup/close callers | `pkg/executor/adapter.go::SummaryStmt`, `pkg/util/stmtsummary/v2::Add`, `cmd/tidb-server/main.go::setupStmtSummary`/`closeStmtSummary`, `pkg/executor/stmtsummary.go::buildStmtSummaryRetriever`: connect statement completion, summary-mode dispatch, reader and sink lifetime together. Keep the existing v1/v2 stores. |
-| O19 | **P2; source-confirmed:** statistics sync-load collectors are registered/materialized but their production request/wait/dedup/read events never record observations. A metrics endpoint can expose these zero-valued families despite real work. This is specifically the load-event integration, not absence of the already running workers or all statistics metrics. | `rust/crates/tidb-stats-handle-metrics/src/lib.rs::SYNC_LOAD_TOTAL`, `SYNC_LOAD_TIMEOUT_TOTAL`, `SYNC_LOAD_DEDUP_TOTAL`, `READ_STATS_HISTOGRAM`; `rust/crates/tidb-executor/src/driver/catalog/sync_load.rs`; all-reference scan | `pkg/statistics/handle/syncload/stats_syncload.go::SendLoadRequests`/`SyncWaitStatsLoad` and the shared `pkg/metrics` collectors: attach event recording at the source-owned lifecycle points, retaining one registry identity. |
+| O19 | **Repaired:** all five existing shared statistics sync-load collectors observe Go's admitted-task, result-consumption, timeout, completed-wait and successful-read events. The wait now follows master's failed-result-before-timer rule and treats worker errors as delivered items. Duplicate timeout-only policy and silent incomplete success are removed. | `rust/crates/tidb-executor/src/driver/catalog/sync_load.rs::run_flight`; `Catalog::wait_statistics_load`; `stmt_context.rs::PendingStatisticsLoad`; `rust/crates/tidb-server/src/cluster_session_node/mod.rs::ClusterStatisticsItemLoader::load_items` | Master `pkg/statistics/handle/syncload/stats_syncload.go` and shared `pkg/metrics/stats.go`; [repair receipt](syncload-lifecycle-repair.md) records all three upstream artifacts and seven test contracts. This repairs O19, not complete syncload/metrics package acceptance. |
 
 Absence claims above are bounded to this checked-in Rust server and vendor
 inventory, not claims that the concepts are missing from every crate or from

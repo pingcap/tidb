@@ -1,0 +1,36 @@
+{
+  "upstream": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "package": "pkg/statistics/handle/syncload",
+  "artifacts": [
+    {
+      "path": "pkg/statistics/handle/syncload/BUILD.bazel",
+      "blob": "b33b1cde3aba02836eebd257f3040a1b6fd6c2b8",
+      "sha256": "403869bd9e4cbcde7a036e422843ce1d4601b74487fe5e85da0cfedc1f10015e",
+      "bytes": 1608,
+      "tests": []
+    },
+    {
+      "path": "pkg/statistics/handle/syncload/stats_syncload.go",
+      "blob": "ffa8da4456790e5fed9bfdc979af33462d77582c",
+      "sha256": "ae174ca89a325a3b61654ab5c0e78fcbdc0db59773e945a2c1372cd84d2a3603",
+      "bytes": 22053,
+      "tests": []
+    },
+    {
+      "path": "pkg/statistics/handle/syncload/stats_syncload_test.go",
+      "blob": "43728d4c9e92aedbc3a40443dbbd77e156f674f0",
+      "sha256": "2c38e6538fab437854ebabe3d410c6eec1bddca8ab6b059b9233cdfe5068afb4",
+      "bytes": 19317,
+      "tests": [
+        "TestConcurrentLoadHist",
+        "TestConcurrentLoadHistTimeout",
+        "TestConcurrentLoadHistWithPanicAndFail",
+        "TestRetry",
+        "TestSendLoadRequestsWaitTooLong",
+        "TestSyncWaitStatsLoadWithFailedResultBeforeTimer",
+        "TestSyncLoadOnObjectWhichCanNotFoundInStorage"
+      ]
+    }
+  ],
+  "scope": "Complete upstream source/test/build inventory for maintenance review, not package acceptance. No nested artifacts, generated inputs, platform variants or doc.go exist in this pinned package."
+}

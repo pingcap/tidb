@@ -1,0 +1,32 @@
+[
+  {
+    "command": "cargo test --locked -p tidb-executor --lib driver::catalog::statistics_request_tests -- --nocapture",
+    "exit_code": 101,
+    "results": [
+      "thread 'driver::catalog::statistics_request_tests::a_singleflight_transport_timeout_activates_statement_failure_before_wait_timer' (31638777) panicked at crates/tidb-executor/src/driver/catalog.rs:3370:13:",
+      "thread 'driver::catalog::statistics_request_tests::statistics_wait_timeout_and_closed_channel_record_consumption' (31638800) panicked at crates/tidb-executor/src/driver/catalog.rs:3431:13:",
+      "thread 'driver::catalog::statistics_request_tests::delivered_worker_errors_complete_the_wait_and_record_latency' (31638780) panicked at crates/tidb-executor/src/driver/catalog.rs:3407:9:",
+      "thread 'driver::catalog::statistics_request_tests::original_collect_histogram_needed_columns_cases_match' (31638790) panicked at crates/tidb-executor/src/driver/catalog.rs:4189:13:",
+      "test result: FAILED. 14 passed; 4 failed; 0 ignored; 0 measured; 1523 filtered out; finished in 0.12s",
+      "error: test failed, to rerun pass `-p tidb-executor --lib`"
+    ]
+  },
+  {
+    "command": "cargo test --locked -p tidb-executor --lib concurrent_identical_requests_share_one_load -- --nocapture",
+    "exit_code": 101,
+    "results": [
+      "thread 'driver::catalog::sync_load::tests::concurrent_identical_requests_share_one_load' (31638910) panicked at crates/tidb-executor/src/driver/catalog/sync_load.rs:573:9:",
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1540 filtered out; finished in 0.04s",
+      "error: test failed, to rerun pass `-p tidb-executor --lib`"
+    ]
+  },
+  {
+    "command": "cargo test --locked -p tidb-server --lib ddl_after_loaded_statistics_matches_go -- --nocapture",
+    "exit_code": 101,
+    "results": [
+      "thread 'cluster_session_node::tests::unistore_cop::ddl_after_loaded_statistics_matches_go' (31645590) panicked at crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs:2133:9:",
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 496 filtered out; finished in 1.27s",
+      "error: test failed, to rerun pass `-p tidb-server --lib`"
+    ]
+  }
+]

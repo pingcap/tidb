@@ -946,6 +946,7 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
             }
             let snapshot = self.transactions.open_snapshot(resource_group)?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let started = std::time::Instant::now();
             let loaded = loader
                 .load_item(
                     &mut snapshot,
@@ -957,6 +958,11 @@ impl tidb_executor::driver::StatisticsItemLoader for ClusterStatisticsItemLoader
                 )
                 .map_err(|error| error.to_string())?;
             if let Some(loaded) = loaded {
+                // Go observes only a successful read with histogram metadata,
+                // before cache publication. Skips and failed attempts do not
+                // contribute to read latency.
+                tidb_stats_handle_metrics::READ_STATS_HISTOGRAM
+                    .observe(started.elapsed().as_millis() as f64);
                 self.stats.update_item(item.table_id, loaded, table);
             }
         }

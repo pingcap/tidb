@@ -2125,9 +2125,14 @@ fn ddl_after_loaded_statistics_matches_go() {
             .table_statistics(table_id)
             .unwrap()
             .column_is_load_needed(1, true));
+        let read_count = tidb_stats_handle_metrics::READ_STATS_HISTOGRAM.get_sample_count();
         rows(
             session,
             "EXPLAIN SELECT * FROM stats_ddl_after_load WHERE c1 = 42 AND c2 = 43",
+        );
+        assert!(
+            tidb_stats_handle_metrics::READ_STATS_HISTOGRAM.get_sample_count() > read_count,
+            "successful storage loads must record read latency"
         );
         let snapshot = stack.factory.stats().load();
         let table = snapshot.get(&table_id).unwrap().loaded().unwrap();

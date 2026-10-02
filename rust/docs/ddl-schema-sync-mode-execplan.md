@@ -24,7 +24,7 @@ before changing its count; distinguish removed symptoms from remaining contracts
 - [x] Validate both modes, failures, cancellation, affected callers and lint.
 - [x] Update every finding's evidence and count; record remaining boundaries.
 - [x] Commit using the actual locked-build hook (12.94 seconds); the receipt amendment repeats the hook.
-- [ ] Rebuild from the amended commit immediately before push and verify remote/checkout; record final publication in the task thread.
+- [x] Rebuilt from the amended commit immediately before push (12.31 seconds); remote hparser-integration matched 2e66b7c28f60ab2083559222735496c0596f1b4a and the checkout was clean.
 
 ## Context and Orientation
 

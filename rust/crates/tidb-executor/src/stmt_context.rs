@@ -2621,6 +2621,7 @@ impl StmtContext {
             receivers,
             items,
             timeout,
+            started: std::time::Instant::now(),
         });
     }
 
@@ -4022,6 +4023,7 @@ pub(crate) struct PendingStatisticsLoad {
     pub(crate) receivers: Vec<std::sync::mpsc::Receiver<crate::driver::sync_load::SyncLoadOutcome>>,
     pub(crate) items: Vec<tidb_model::StatsLoadItem>,
     pub(crate) timeout: std::time::Duration,
+    pub(crate) started: std::time::Instant,
 }
 
 /// The open [`StmtContext::enter_cop_eval`] scope. Closing it returns warning
