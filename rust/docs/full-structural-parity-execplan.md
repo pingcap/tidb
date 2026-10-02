@@ -2192,3 +2192,17 @@ containment regressions fail before removal and preserve target/source data,
 schema and surrounding transaction rollback afterward. Go supports these forms;
 refusal does not close E05 or accept part of the executor/importer/DXF packages.
 Original source fixtures and the historical audit evidence remain intact.
+
+
+## Revision note — 2026-10-01 shared DDL pause lifecycle
+
+
+The [pause lifecycle repair](ddl-pause-lifecycle-execplan.md) removes implicit
+forward execution of PAUSING/PAUSED jobs in the existing shared worker.
+Pause now checkpoints only the active envelope, preserves previous errors and
+raw arguments, and releases the worker without reporting SQL completion.
+Both planner and embedded-worker regressions fail before and pass after;
+all nine integrated actions, owner loss, MDL recovery and resume are covered.
+D04 remains partial because cancellation conversion is still absent; D05's
+global error-budget owner also remains open. No partial Go package is accepted,
+no disabled action is activated and the unresolved count stays 77.

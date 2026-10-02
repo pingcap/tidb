@@ -569,3 +569,9 @@ The [complete PD error owner](pd-errors-owner-repair.md) supplies all source
 definitions, codes, cause chains and classification/logging helpers before the
 grpcutil migration. It removes the uncoded breaker enum and duplicate native TSO
 EOF/count diagnostics. Parent transport/lifecycle and all 77 findings remain open.
+
+The subsequent [DDL pause lifecycle repair](../../ddl-pause-lifecycle-execplan.md)
+repairs pause checkpoints and scheduler release in the existing shared worker.
+D04 is partial: cancellation conversion and D05 error budgets remain open.
+There are still 77 unresolved findings (71 open, six partial); no additional
+package is accepted. Earlier continuity files are historical snapshots.

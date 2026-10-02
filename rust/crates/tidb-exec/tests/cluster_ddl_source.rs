@@ -57,6 +57,7 @@ fn plan_worker_step(
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     match plan_persisted_ddl_job_step(store, job_id, ts, None)? {
         PersistedDdlJobPlan::Step(step) => Ok(step),
+        PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
         PersistedDdlJobPlan::SchemaSync { .. } => panic!("a previous MDL barrier is still pending"),
     }
 }
@@ -758,6 +759,137 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     job.type_ = ActionType::ACTION_DROP_SCHEMA;
     job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
     execute(&mut store, &mut job, "0", 3);
+}
+
+#[test]
+fn persisted_pausing_jobs_checkpoint_only_control_state() {
+    for action in [
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+        ActionType::ACTION_CREATE_SCHEMA,
+        ActionType::ACTION_CREATE_TABLE,
+        ActionType::ACTION_CREATE_TABLES,
+        ActionType::ACTION_RENAME_TABLES,
+        ActionType::ACTION_DROP_SCHEMA,
+        ActionType::ACTION_DROP_TABLE,
+    ] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 900;
+        job.schema_id = 112;
+        job.table_id = 901;
+        job.schema_name = "u6".into();
+        job.type_ = action;
+        job.state = JobState::PAUSING;
+        job.schema_state = SchemaState::WRITE_ONLY;
+        job.version = JobVersion::V2;
+        // These args cannot run an action: Go pauses before decoding them.
+        job.fill_v2_arg(serde_json::from_str(r#"{"preserve":"unknown action fields"}"#).unwrap());
+        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(1105),
+            "earlier retry failed",
+        )));
+        job.error_count = 2;
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, true, "112", "901,902", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let original = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let mdl = MdlInfoUpdate {
+            table: Box::new(
+                catalog
+                    .find_table("mysql", "tidb_mdl_info")
+                    .unwrap()
+                    .1
+                    .clone_like_go(),
+            ),
+            table_ids: original.table_ids.clone(),
+            omit_owner_id: false,
+        };
+        let version = catalog.schema_version;
+        let mut registration = Vec::new();
+        mdl.append_mutations(job.id, version, "owner", &mut registration)
+            .unwrap();
+        apply_mutations(&mut store, &registration);
+        let before = store.pairs.clone();
+        assert!(
+            matches!(
+                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, None).unwrap(),
+                PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
+            ),
+            "{action}: acknowledge the previous publication before pausing"
+        );
+        assert_eq!(store.pairs, before);
+        let PersistedDdlJobPlan::Step(step) =
+            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, Some(version)).unwrap()
+        else {
+            panic!("{action}: an acknowledged pause must checkpoint")
+        };
+        assert!(!step.terminal, "{action}: pause must retain the active job");
+        assert_eq!(step.write.schema_version, 0, "{action}");
+        assert!(step.write.mdl_info_update.is_none());
+        assert!(step.write.backfill.is_empty());
+        assert!(step.write.check_constraint_validation.is_none());
+        assert!(step.write.placement_bundles.is_empty());
+        assert_eq!(store.pairs, before, "planning must not mutate storage");
+        apply(&mut store, &step.write);
+        let paused = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        assert_eq!(paused.job.state, JobState::PAUSED, "{action}");
+        assert_eq!(paused.job.real_start_ts, 10_000);
+        assert_eq!(paused.job.schema_state, job.schema_state);
+        assert_eq!(paused.job.raw_args, original.job.raw_args);
+        assert_eq!(paused.job.error_count, 2);
+        assert_eq!(
+            paused.job.error.as_ref().unwrap().read().message(),
+            "earlier retry failed"
+        );
+        assert_eq!(paused.table_ids, "901,902");
+        // Compare the complete write set with Go's job-only checkpoint. No
+        // catalog, history, ID allocation or scheduling field may be changed.
+        let mut expected = original;
+        expected.job.state = JobState::PAUSED;
+        expected.job.real_start_ts = 10_000;
+        let mut checkpoint = Vec::new();
+        queue
+            .append_update(&mut expected, false, &mut checkpoint)
+            .unwrap();
+        let mut expected_store = MetaStore {
+            pairs: before,
+            ..Default::default()
+        };
+        apply_mutations(&mut expected_store, &checkpoint);
+        assert_eq!(store.pairs, expected_store.pairs, "{action}");
+        let before = store.pairs.clone();
+        assert!(matches!(
+            plan_persisted_ddl_job_step(&mut store, job.id, 20_000, Some(version)).unwrap(),
+            PersistedDdlJobPlan::Paused
+        ));
+        assert_eq!(
+            store.pairs, before,
+            "{action}: repeated pause has no writes"
+        );
+        assert!(
+            matches!(
+                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None).unwrap(),
+                PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
+            ),
+            "{action}: replacement owner must recover an uncleaned MDL row"
+        );
+        let mut cleanup = Vec::new();
+        mdl.append_delete_mutations(&mut store, job.id, "owner", &mut cleanup)
+            .unwrap();
+        apply_mutations(&mut store, &cleanup);
+        let before = store.pairs.clone();
+        assert!(matches!(
+            plan_persisted_ddl_job_step(&mut store, job.id, 40_000, None).unwrap(),
+            PersistedDdlJobPlan::Paused
+        ));
+        assert_eq!(store.pairs, before);
+    }
 }
 
 #[test]
@@ -6455,6 +6587,7 @@ fn seed_step(
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     match plan? {
         PersistedDdlJobPlan::Step(step) => Ok(step),
+        PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
         PersistedDdlJobPlan::SchemaSync { .. } => panic!("seed step must acknowledge previous MDL"),
     }
 }

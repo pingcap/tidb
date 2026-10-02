@@ -3123,6 +3123,8 @@ fn new_check_constraint_job(
 /// unacknowledged. Go's scheduler recovers this barrier before calling a worker.
 #[derive(Clone, Debug)]
 pub enum PersistedDdlJobPlan {
+    /// Release the worker without finishing the job or rewriting its row.
+    Paused,
     /// Resume the durable MDL barrier, including after owner replacement.
     SchemaSync {
         /// Version retained in mysql.tidb_mdl_info.
@@ -3248,8 +3250,41 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             .map(PersistedDdlJobPlan::Step);
     }
 
+    // Go processJobPausingRequest runs before action dispatch. The pause
+    // signal is control flow, not an action error: keep the prior error and
+    // undecoded raw args, and never publish a schema or move to history.
+    if active.job.is_paused() {
+        return Ok(PersistedDdlJobPlan::Paused);
+    }
+
     if active.job.real_start_ts == 0 {
         active.job.real_start_ts = start_ts;
+    }
+    if active.job.is_pausing() {
+        active.job.state = JobState::PAUSED;
+        let mut mutations = Vec::new();
+        job_table
+            .append_update(&mut active, false, &mut mutations)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
+            write: DdlWrite {
+                ddl_job_id,
+                mutations,
+                schema_version: 0,
+                diff: SchemaDiff::default(),
+                created_id: None,
+                backfill: Vec::new(),
+                auto_pre_split: false,
+                exchange_partition_validation: None,
+                check_constraint_validation: None,
+                mdl_info_update: None,
+                exchange_partition_label_swap: None,
+                warnings: Vec::new(),
+                placement_bundles: Vec::new(),
+                placement_rollback_bundles: Vec::new(),
+            },
+            terminal: false,
+        }));
     }
     if active.job.state != JobState::ROLLINGBACK {
         active.job.state = JobState::RUNNING;

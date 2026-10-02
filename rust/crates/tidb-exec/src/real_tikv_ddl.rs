@@ -682,6 +682,7 @@ struct CommittedDdlPhase {
 }
 
 enum DdlPhaseOutcome {
+    Paused,
     SchemaSync {
         version: i64,
         mdl_info: MdlInfoUpdate,
@@ -743,20 +744,28 @@ pub fn commit_cluster_ddl_with_backfill<
         check_constraint_validator,
         schema_sync.owner_id(),
     )? {
-        DdlPhaseOutcome::SchemaSync { .. } => unreachable!("direct DDL has no persisted job"),
+        DdlPhaseOutcome::SchemaSync { .. } | DdlPhaseOutcome::Paused => {
+            unreachable!("direct DDL has no persisted job")
+        }
         DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
         DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
     }
 }
 
-/// Runs any integrated persisted action through one owner lifecycle. A durable
+/// The reason the shared persisted worker released its job to the scheduler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistedDdlJobOutcome {
+    /// The terminal job was committed to history.
+    Finished,
+    /// The active job remains paused; SQL waiters must keep waiting for history.
+    Paused,
+}
+
+/// Runs an integrated persisted action until it finishes or pauses. A durable
 /// MDL row always takes precedence over the next action or history transaction.
+/// Returning Paused releases the worker without completing the submitting SQL.
 #[allow(clippy::too_many_arguments)]
-pub fn run_persisted_ddl_job_to_completion<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
+pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     ddl_job_id: i64,
     timeout: Duration,
@@ -766,7 +775,7 @@ pub fn run_persisted_ddl_job_to_completion<
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
     check_owner: &dyn Fn() -> Result<(), String>,
-) -> Result<(), ClusterDdlError> {
+) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
     let mut validation_failure = None;
     let mut previously_synced_version = None;
     loop {
@@ -801,6 +810,7 @@ pub fn run_persisted_ddl_job_to_completion<
             outcome => outcome?,
         };
         match outcome {
+            DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
             DdlPhaseOutcome::SchemaSync { version, mdl_info } => {
                 check_owner().map_err(ClusterDdlError::SchemaSync)?;
                 schema_sync
@@ -828,7 +838,7 @@ pub fn run_persisted_ddl_job_to_completion<
                     eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
                         serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
                 }
-                return validation_failure.map_or(Ok(()), |error| {
+                return validation_failure.map_or(Ok(PersistedDdlJobOutcome::Finished), |error| {
                     Err(ClusterDdlError::CheckConstraintValidation(error))
                 });
             }
@@ -1307,6 +1317,12 @@ fn commit_cluster_ddl_with_backfill_once<
                     start_ts,
                     previously_synced_version,
                 ) {
+                    Ok(PersistedDdlJobPlan::Paused) => {
+                        transaction
+                            .rollback()
+                            .map_err(ClusterDdlError::NotCommitted)?;
+                        return Ok(DdlPhaseOutcome::Paused);
+                    }
                     Ok(PersistedDdlJobPlan::SchemaSync { version, mdl_info }) => {
                         transaction
                             .rollback()

@@ -123,12 +123,12 @@
     },
     {
       "id": "D04",
-      "status": "open",
+      "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "The common action path changes every non-ROLLINGBACK state to RUNNING. PAUSING/PAUSED/CANCELLING therefore do not follow Go's control-state gates.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs:3251`",
-      "go_owner": "`pkg/ddl/job_worker.go::processJobPausingRequest`, `runOneJobStep` and rollback conversion. Preserve these states before action dispatch.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "finding": "**Partially repaired:** the common worker checkpoints PAUSING as PAUSED before action dispatch, preserves raw arguments/prior errors, recovers preceding MDL barriers and releases paused jobs without SQL completion. CANCELLING is still overwritten with RUNNING; Go's action-specific cancellation conversion and associated error-budget handling remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::plan_persisted_ddl_job_with`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::run_persisted_ddl_job`; `rust/crates/tidb-server/src/cluster_session_node/ddl.rs::PersistedDdlScheduler::run_loop`; receipt `../../ddl-pause-lifecycle-execplan.md`",
+      "go_owner": "`pkg/ddl/job_worker.go::processJobPausingRequest`, `runOneJobStep` and `transitOneJobStep`; `pkg/ddl/rollingback.go::convertJob2RollbackJob`. Pause handling is repaired for the existing shared worker. Complete cancellation conversion and D05's error owner before claiming the control lifecycle complete.",
+      "review_basis": "Subsequent maintenance at integration c3c31d98ec2b8081074f3f58f109df64650c2a47, unchanged Go/native pins. Both planner and embedded-worker pause regressions failed before and passed after the repair. All nine integrated action kinds preserve pause state; owner loss, MDL recovery, repeated pause, independent worker progress and resume are covered. No whole-package acceptance; D04 remains unresolved."
     },
     {
       "id": "D05",

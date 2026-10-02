@@ -41,9 +41,9 @@ use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
     load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached,
-    run_persisted_ddl_job_to_completion, submit_check_constraint_job_with_retry,
+    run_persisted_ddl_job, submit_check_constraint_job_with_retry,
     CheckConstraintValidator, ClusterDdlReport, DdlSchemaSync, ExchangePartitionValidator,
-    IndexBackfiller, SchemaVersionNotifier,
+    IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -238,7 +238,7 @@ where
                                 Ok(())
                             }
                         };
-                        if let Err(error) = run_persisted_ddl_job_to_completion(
+                        match run_persisted_ddl_job(
                             Arc::clone(&opener),
                             job.id,
                             timeout,
@@ -249,8 +249,9 @@ where
                             schema_sync.as_ref(),
                             &check_owner,
                         ) {
-                            eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                job.id, serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                            Ok(PersistedDdlJobOutcome::Finished | PersistedDdlJobOutcome::Paused) => {}
+                            Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
+                                job.id, serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned())),
                         }
                     }
                 }
@@ -714,7 +715,7 @@ mod schema_sync_tests {
         let run = |id,
                    notifier: Option<&dyn SchemaVersionNotifier>,
                    check: &dyn Fn() -> Result<(), String>| {
-            run_persisted_ddl_job_to_completion(
+            run_persisted_ddl_job(
                 opener.clone(),
                 id,
                 timeout,
@@ -864,6 +865,125 @@ mod schema_sync_tests {
                 .schema_version,
             before + 4
         );
+
+        // Pausing releases the worker without finishing the SQL job. Owner
+        // replacement must still observe PAUSED until an explicit resume.
+        let mut paused_job = Job::default();
+        paused_job.id = 504;
+        paused_job.schema_id = 505;
+        paused_job.schema_name = "pause_database".into();
+        paused_job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        paused_job.state = JobState::PAUSING;
+        paused_job.version = JobVersion::V2;
+        paused_job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        paused_job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: 505,
+                name: tidb_ast::CiString::new("pause_database"),
+                ..Default::default()
+            }))),
+        })));
+        seed(&mut paused_job);
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let lost_before_pause_commit = || {
+            if checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                Ok(())
+            } else {
+                Err("owner lost".into())
+            }
+        };
+        assert!(run(504, None, &lost_before_pause_commit).is_err());
+        assert_eq!(
+            load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap()[0].state,
+            JobState::PAUSING
+        );
+        let clean_count = barrier.cleaned.lock().unwrap().len();
+        assert_eq!(
+            run(504, Some(&FailedNotifier), &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Paused
+        );
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].state, JobState::PAUSED);
+        let pause_ts = active[0].real_start_ts;
+        assert_ne!(pause_ts, 0);
+        // A fresh worker has no in-memory continuation, so this also proves
+        // the durable checkpoint drives recovery after owner replacement.
+        assert_eq!(
+            run(504, Some(&FailedNotifier), &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Paused
+        );
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].state, JobState::PAUSED);
+        assert_eq!(active[0].real_start_ts, pause_ts);
+        assert_eq!(barrier.waits.lock().unwrap().len(), wait_count);
+        assert_eq!(barrier.cleaned.lock().unwrap().len(), clean_count);
+        assert!(load_history_persisted_ddl_job(opener.clone(), 504, timeout)
+            .unwrap()
+            .is_none());
+        let catalog =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+        assert_eq!(catalog.schema_version, before + 4);
+        assert!(!catalog
+            .databases
+            .iter()
+            .any(|database| database.info.id == 505));
+
+        // Another job can finish while the paused job remains in the queue.
+        let mut other = paused_job.clone();
+        other.id = 506;
+        other.schema_id = 507;
+        other.state = JobState::QUEUEING;
+        other.schema_name = "other_database".into();
+        other.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: 507,
+                name: tidb_ast::CiString::new("other_database"),
+                ..Default::default()
+            }))),
+        })));
+        seed(&mut other);
+        assert_eq!(
+            run(506, None, &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Finished
+        );
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!((active[0].id, active[0].state), (504, JobState::PAUSED));
+
+        // Resume to QUEUEING as Go does (this job has no pause reason or
+        // prior error to clear). The next worker reads the original arguments
+        // and follows the normal schema barrier.
+        let mut tx = opener.begin().unwrap();
+        let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let table = DdlJobTable::locate(&catalog).unwrap();
+        let mut active = table.load_by_id(&mut snapshot, 504).unwrap().unwrap();
+        active.job.state = JobState::QUEUEING;
+        let mut mutations = Vec::new();
+        table
+            .append_update(&mut active, false, &mut mutations)
+            .unwrap();
+        assert!(matches!(
+            tx.commit(
+                mutations,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        assert_eq!(
+            run(504, None, &|| Ok(())).unwrap(),
+            PersistedDdlJobOutcome::Finished
+        );
+        let history = load_history_persisted_ddl_job(opener.clone(), 504, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::SYNCED);
+        assert_eq!(history.real_start_ts, pause_ts);
+        assert_eq!(history.error_count, 0);
+        assert_eq!(barrier.waits.lock().unwrap().len(), wait_count + 2);
+        assert_eq!(barrier.cleaned.lock().unwrap().len(), clean_count + 2);
     }
 
     #[test]
