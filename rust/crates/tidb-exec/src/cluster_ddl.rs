@@ -3227,18 +3227,43 @@ fn new_check_constraint_job(
     job
 }
 
+/// Schema acknowledgements belong to one owner run, like Go jobContext. A new
+/// owner starts without acknowledgements and recovers durable schema state.
+#[derive(Clone, Copy, Debug)]
+pub struct DdlJobSchemaState {
+    /// Go IsMDLEnabled, including the next-generation kernel override.
+    pub mdl_enabled: bool,
+    /// Last version acknowledged by this owner run.
+    pub synced_version: Option<i64>,
+    /// Version committed by this run that still needs acknowledgement.
+    pub pending_version: Option<i64>,
+}
+
+impl DdlJobSchemaState {
+    /// Starts a fresh owner run in the selected source mode.
+    pub fn new(mdl_enabled: bool) -> Self {
+        Self {
+            mdl_enabled,
+            synced_version: None,
+            pending_version: None,
+        }
+    }
+}
+
 /// A persisted job cannot advance while its previous schema publication is
 /// unacknowledged. Go's scheduler recovers this barrier before calling a worker.
 #[derive(Clone, Debug)]
 pub enum PersistedDdlJobPlan {
     /// Release the worker without finishing the job or rewriting its row.
     Paused,
-    /// Resume the durable MDL barrier, including after owner replacement.
+    /// Resume schema synchronization before another action or history write.
     SchemaSync {
-        /// Version retained in mysql.tidb_mdl_info.
+        /// Committed version, or the latest nonempty diff on non-MDL recovery.
         version: i64,
-        /// Persisted table scope to clean after acknowledgement.
-        mdl_info: MdlInfoUpdate,
+        /// MDL-only durable table scope to clean after acknowledgement.
+        mdl_info: Option<MdlInfoUpdate>,
+        /// Non-MDL recovery republishes the latest version before waiting.
+        publish_version: bool,
     },
     /// One action or history transaction, planned from the current active row.
     Step(PersistedDdlJobStep),
@@ -3261,22 +3286,21 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
     )
 }
 
-/// Plans Go's shared worker lifecycle: recover MDL, execute one action, then
-/// move a completed job to history only in a subsequent synchronized step.
-/// `previously_synced_version` is local to one worker run, like Go jobContext;
-/// a restarted owner must pass None and recover the durable barrier.
+/// Plans Go's shared worker lifecycle: recover the selected schema barrier,
+/// execute one action, then move a completed job to history after synchronization.
+/// A restarted owner supplies a fresh schema state and recovers the barrier.
 pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-    previously_synced_version: Option<i64>,
+    schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
         start_ts,
-        previously_synced_version,
+        schema_state,
         load_error_count_limit,
         supports_persisted_ddl_job,
         |_snapshot, catalog, active| {
@@ -3317,7 +3341,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-    previously_synced_version: Option<i64>,
+    schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
     supports_action: impl FnOnce(ActionType) -> bool,
     plan_action: impl FnOnce(
@@ -3339,20 +3363,68 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             active.job.type_
         )));
     }
-    let mut mdl_info = mdl_info_update(&catalog, active.job.table_id)?;
-    mdl_info.table_ids = active.table_ids.clone();
-    mdl_info.omit_owner_id =
-        tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().to_lowercase());
-    match crate::ddl_systable::SystemTableManager::new(&catalog)
-        .get_mdl_version(snapshot, ddl_job_id)
-    {
-        Ok(version) if Some(version) != previously_synced_version => {
-            return Ok(PersistedDdlJobPlan::SchemaSync { version, mdl_info });
+    let mdl_info = if schema_state.mdl_enabled {
+        let mut info = mdl_info_update(&catalog, active.job.table_id)?;
+        info.table_ids = active.table_ids.clone();
+        info.omit_owner_id =
+            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().to_lowercase());
+        match crate::ddl_systable::SystemTableManager::new(&catalog)
+            .get_mdl_version(snapshot, ddl_job_id)
+        {
+            Ok(version) if Some(version) != schema_state.synced_version => {
+                return Ok(PersistedDdlJobPlan::SchemaSync {
+                    version,
+                    mdl_info: Some(info),
+                    publish_version: false,
+                });
+            }
+            Ok(_) => {}
+            Err(crate::ddl_systable::SystemTableManagerError::NotFound) => {}
+            Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
         }
-        Ok(_) => {}
-        Err(crate::ddl_systable::SystemTableManagerError::NotFound) => {}
-        Err(error) => return Err(DdlPlanError::Encode(error.to_string())),
-    }
+        Some(info)
+    } else {
+        // Go waitVersionSyncedWithoutMDL recovers from a fresh snapshot, not
+        // from an MDL row or merely the job's possibly older LastSchemaVersion.
+        let can_sync = matches!(
+            active.job.state,
+            JobState::RUNNING | JobState::ROLLINGBACK | JobState::DONE | JobState::ROLLBACK_DONE
+        );
+        if can_sync {
+            if let Some(version) = schema_state.pending_version {
+                return Ok(PersistedDdlJobPlan::SchemaSync {
+                    version,
+                    mdl_info: None,
+                    publish_version: false,
+                });
+            }
+            if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
+                let mut version = catalog.schema_version;
+                // Same projection as meta.GetSchemaVersionWithNonEmptyDiff:
+                // a separately reserved newest version may not have a diff yet.
+                if version > 0 {
+                    let bytes = snapshot.get(&key::schema_diff_kv_key(version))?;
+                    let diff = bytes
+                        .as_deref()
+                        .map(value::parse_schema_diff)
+                        .transpose()
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                        .flatten();
+                    if diff.is_none() {
+                        version -= 1;
+                    }
+                }
+                if version > 0 {
+                    return Ok(PersistedDdlJobPlan::SchemaSync {
+                        version,
+                        mdl_info: None,
+                        publish_version: true,
+                    });
+                }
+            }
+        }
+        None
+    };
     if matches!(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
@@ -3444,7 +3516,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // publication of whatever catalog version happened to be read.
     step.write.schema_version = step.write.diff.version;
     if step.write.schema_version != 0 {
-        step.write.mdl_info_update = Some(mdl_info);
+        step.write.mdl_info_update = mdl_info;
     }
     Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
         write: step.write,
@@ -4812,19 +4884,19 @@ fn plan_persisted_drop_table_job_step(
 /// persisted lifecycle for MDL recovery and history. The action publishes the
 /// log, base back-reference and purge schedule, then leaves DONE in the queue.
 /// This entrypoint does not enable the action in the live owner dispatcher.
-/// `previously_synced_version` has the same worker-local lifetime as in
+/// `schema_state` has the same worker-local lifetime as in
 /// [`plan_persisted_ddl_job_step`].
 pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-    previously_synced_version: Option<i64>,
+    schema_state: DdlJobSchemaState,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
         start_ts,
-        previously_synced_version,
+        schema_state,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
         |snapshot, catalog, active| {
@@ -5559,20 +5631,20 @@ impl crate::mview_schedule_derive::ScheduleDecision {
 /// row available until schema acknowledgement and a separate history step.
 /// The existing seed build engine and caller-supplied build result remain
 /// outside live dispatch; this is not a complete reorg implementation.
-/// `previously_synced_version` has the same worker-local lifetime as in
+/// `schema_state` has the same worker-local lifetime as in
 /// [`plan_persisted_ddl_job_step`].
 pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
     build: Option<MviewBuildOutcome>,
-    previously_synced_version: Option<i64>,
+    schema_state: DdlJobSchemaState,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
         start_ts,
-        previously_synced_version,
+        schema_state,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
         |snapshot, catalog, active| {

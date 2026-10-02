@@ -1,0 +1,7 @@
+node default auto_tls: Ok(true)
+token-limit flag: Ok(())
+config "token-limit = 1\n": Ok(())
+config "[performance]\nstats-lease = '5s'\n": Err(UnsupportedConfigOptions(["performance.stats-lease"]))
+config "[performance]\nrun-auto-analyze = false\n": Err(ConfigFile { path: "<temporary TOML>", reason: "The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: performance.run-auto-analyze" })
+config "[security]\nssl-ca = 'ca.pem'\n": Err(UnsupportedConfigOptions(["security.ssl-ca"]))
+latin1 COM_QUERY SELECT HEX(raw E9): C3A9

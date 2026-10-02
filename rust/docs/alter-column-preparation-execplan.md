@@ -20,7 +20,7 @@ owner migration, deletion of displaced code, targeted validation, commit and pus
 - [x] Verify metadata positions, generated dependencies, allocator ownership and ordered diagnostics.
 - [x] Run affected tests, all-target checks and lint; update D11 evidence.
 - [x] Commit with the actual locked-server-build hook (18.75 seconds); the receipt amendment repeats that hook.
-- [ ] Rerun the locked build after the amendment immediately before push and verify the remote; record final publication in the task thread.
+- [x] Final locked build passed in 12.47 seconds; pushed d0f1c371150530fb7b5c37730456c5d56ad11e64 to hparser-integration and verified the remote SHA and clean checkout in the preceding task turn.
 
 ## Context and Orientation
 

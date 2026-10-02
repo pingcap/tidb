@@ -1,0 +1,164 @@
+{
+  "baseline": {
+    "tidb_integration": "d0f1c371150530fb7b5c37730456c5d56ad11e64",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-exec --test all cluster_ddl_source:: -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.21s",
+        "test result: FAILED. 105 passed; 5 failed; 0 ignored; 0 measured; 723 filtered out; finished in 0.63s",
+        "error: test failed, to rerun pass `-p tidb-exec --test all`"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib cluster_session_node::schema_sync::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 489 filtered out; finished in 0.51s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-schemaver --lib -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.01s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+      "exit_code": 0,
+      "results": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.95s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib cluster_session_node::ddl::schema_sync_tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.41s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 487 filtered out; finished in 4.92s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib real_tikv_ddl::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.71s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 360 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "exit_code": 0
+    }
+  ],
+  "regression_controls": [
+    {
+      "command": "cargo test --locked -p tidb-server --lib persisted_worker_without_mdl -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_needs_no_mdl_table' (31440734) panicked at crates/tidb-server/src/cluster_session_node/ddl.rs:783:9:",
+        "assertion `left == right` failed: the worker must reach the schema-version barrier: Err(Plan(Encode(\"mysql.tidb_mdl_info does not exist\")))",
+        "  left: []",
+        " right: [(600, 2)]",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "thread 'cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_recovers_before_history' (31440735) panicked at crates/tidb-server/src/cluster_session_node/ddl.rs:739:17:",
+        "disabled MDL must not clean per-job acknowledgement keys",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "test cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_recovers_before_history ... FAILED",
+        "test cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_needs_no_mdl_table ... FAILED",
+        "thread 'cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_skips_registration' (31440739) panicked at crates/tidb-server/src/cluster_session_node/ddl.rs:789:13:",
+        "disabled mode must never register an MDL row",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "test cluster_session_node::ddl::schema_sync_tests::persisted_worker_without_mdl_skips_registration ... FAILED",
+        ""
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib disabled_mdl_reports_loaded_schema -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'cluster_session_node::schema_sync::tests::disabled_mdl_reports_loaded_schema_without_replaying_job_versions' (31464997) panicked at crates/tidb-server/src/cluster_session_node/schema_sync.rs:670:9:",
+        "assertion `left == right` failed: an old MDL row must not overwrite the loaded self version",
+        "  left: [(0, 5), (700, 1)]",
+        " right: [(0, 5)]",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        ""
+      ]
+    }
+  ],
+  "baseline_comparison": {
+    "command": "cargo test --locked -p tidb-exec --test all cluster_ddl_source:: -- --nocapture",
+    "exit_code": 101,
+    "restored_to": "d0f1c371150530fb7b5c37730456c5d56ad11e64",
+    "restored_files": [
+      "rust/crates/tidb-exec/src/cluster_ddl.rs",
+      "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+      "rust/crates/tidb-exec/tests/cluster_ddl_source.rs"
+    ],
+    "results": [
+      "    cluster_ddl_source::a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+      "    cluster_ddl_source::a_created_database_persists_its_resolved_charset_and_collation",
+      "    cluster_ddl_source::a_modify_column_reorganizes_exactly_where_go_says_it_must",
+      "    cluster_ddl_source::check_job_submission_precedes_every_schema_transition",
+      "    cluster_ddl_source::completed_check_schema_stays_active_until_schema_sync",
+      "test result: FAILED. 105 passed; 5 failed; 0 ignored; 0 measured; 723 filtered out; finished in 0.65s"
+    ]
+  },
+  "fresh_diagnostics": [
+    {
+      "command": "cargo run --locked -p tidb-session --example mdl_review_expanded_ownership",
+      "exit_code": 0,
+      "output": "expanded-ownership.txt",
+      "meaning": "Diagnostic observations, not parity assertions; temporary example source removed."
+    },
+    {
+      "command": "cargo run --locked -p tidb-server --example mdl_review_expanded_server",
+      "exit_code": 0,
+      "output": "expanded-server.txt",
+      "meaning": "Diagnostic observations, not parity assertions; temporary example source removed."
+    },
+    {
+      "command": "cargo run --locked -p tidb-session --example mdl_review_subsystem_structure",
+      "exit_code": 0,
+      "output": "subsystem-structure.txt",
+      "meaning": "Diagnostic observations, not parity assertions; temporary example source removed."
+    },
+    {
+      "command": "cargo run --locked -p tidb-session --example mdl_review_alter_residual",
+      "exit_code": 0,
+      "output": "alter-residual.txt",
+      "meaning": "Diagnostic observations, not parity assertions; temporary example source removed."
+    }
+  ],
+  "publication": {
+    "pre_commit_hook": {
+      "command": "TERM=xterm git -c core.hooksPath=hooks commit -m \"ddl: honor schema synchronization mode in persisted workers\"",
+      "exit_code": 0,
+      "locked_server_build_seconds": 12.94,
+      "receipt_amendment": "Repeats the same hook."
+    },
+    "final_gate": "Fresh cargo build --locked -p tidb-server after the receipt amendment immediately before push. Final push, remote SHA and clean checkout are recorded in the task thread."
+  },
+  "diagnostic_cleanup": {
+    "removed_files": 8,
+    "unique_allocated_bytes": 628428800,
+    "scope": "Only this task's generated mdl_review_* example binaries and dependency files; source/output retained in the audit."
+  }
+}

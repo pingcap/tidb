@@ -1,0 +1,36 @@
+SET sql_mode='STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'
+  Ok(Affected(0))
+CREATE TABLE audit_ordinary (a TINYINT)
+  Ok(Done(true))
+INSERT INTO audit_ordinary VALUES (1000)
+  Err(DataOutOfRange { column: "a", row: 1 })
+CREATE TABLE audit_generated (a INT, b TINYINT AS (a) STORED)
+  Ok(Done(true))
+INSERT INTO audit_generated(a) VALUES (1000)
+  Err(DataOutOfRange { column: "b", row: 1 })
+SHOW WARNINGS
+  Ok(Rows([[Bytes([69, 114, 114, 111, 114]), Int(1264), Bytes([79, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101, 32, 118, 97, 108, 117, 101, 32, 102, 111, 114, 32, 99, 111, 108, 117, 109, 110, 32, 39, 98, 39, 32, 97, 116, 32, 114, 111, 119, 32, 49])]]))
+SELECT * FROM audit_generated
+  Ok(Rows([]))
+SHOW SESSION_STATES
+  Err(Unsupported("this statement kind (ADMIN ShowInspection) is not supported yet"))
+SET SESSION_STATES '{}'
+  Err(Unsupported("this statement kind (SetSessionStates) is not supported yet"))
+SHOW BR JOB 1
+  Err(Unsupported("this statement kind (ADMIN Brie) is not supported yet"))
+SET tidb_enable_cascades_planner=ON
+  Ok(Affected(0))
+SELECT @@tidb_enable_cascades_planner
+  Ok(Rows([[Int(1)]]))
+SET tidb_read_staleness=-1
+  Ok(Affected(0))
+SELECT * FROM audit_ordinary
+  Err(Unsupported("reading at @@tidb_read_staleness is not supported yet"))
+SET tidb_read_staleness=0
+  Ok(Affected(0))
+CREATE TABLE audit_cache (a INT)
+  Ok(Done(true))
+ALTER TABLE audit_cache CACHE
+  Ok(Affected(0))
+SHOW CREATE TABLE audit_cache
+  Ok(Rows([[Bytes([97, 117, 100, 105, 116, 95, 99, 97, 99, 104, 101]), Bytes([67, 82, 69, 65, 84, 69, 32, 84, 65, 66, 76, 69, 32, 96, 97, 117, 100, 105, 116, 95, 99, 97, 99, 104, 101, 96, 32, 40, 10, 32, 32, 96, 97, 96, 32, 105, 110, 116, 32, 68, 69, 70, 65, 85, 76, 84, 32, 78, 85, 76, 76, 10, 41, 32, 69, 78, 71, 73, 78, 69, 61, 73, 110, 110, 111, 68, 66, 32, 68, 69, 70, 65, 85, 76, 84, 32, 67, 72, 65, 82, 83, 69, 84, 61, 117, 116, 102, 56, 109, 98, 52, 32, 67, 79, 76, 76, 65, 84, 69, 61, 117, 116, 102, 56, 109, 98, 52, 95, 98, 105, 110, 32, 47, 42, 32, 67, 65, 67, 72, 69, 68, 32, 79, 78, 32, 42, 47])]]))

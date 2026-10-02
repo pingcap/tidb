@@ -387,7 +387,7 @@ fn run_ack_loop<C, L, P>(
     // The version whose mdl rows were last read, and whether any read job
     // is still owed its ack (a pin held it back, or a PUT failed).
     let mut scanned_version: Option<i64> = None;
-    let mut reported_loaded_version: Option<i64> = None;
+    let mut reported_loaded_version: Option<(bool, i64)> = None;
     let mut owed = false;
     while !stop.load(Ordering::SeqCst) {
         // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
@@ -413,20 +413,23 @@ fn run_ack_loop<C, L, P>(
             continue;
         }
         let loaded = catalog.load().schema_version;
+        let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
 
         // Go's domain reload path reports every newly loaded version with
         // job id zero. The etcd syncer turns this into the leased self-key
         // update only when MDL is disabled; with MDL enabled it is a no-op.
-        if reported_loaded_version != Some(loaded) {
+        if reported_loaded_version != Some((mdl_enabled, loaded)) {
             match syncer.update_self_version(syncer_context, 0, loaded) {
-                Ok(()) => reported_loaded_version = Some(loaded),
+                Ok(()) => reported_loaded_version = Some((mdl_enabled, loaded)),
                 Err(error) => emit_warning("schema_sync_self_version_put_failed", &error),
             }
         }
 
-        // The MDL acks. The table is only re-read when the loaded version
-        // moved or something read before is still owed.
-        if scanned_version != Some(loaded) || owed {
+        // Go MDLCheckLoop does not report per-job versions when MDL is off.
+        // The non-MDL syncer would write an old job's version over the newer
+        // loaded self-version above. The table is otherwise re-read only
+        // when the loaded version moved or an acknowledgement is still owed.
+        if mdl_enabled && (scanned_version != Some(loaded) || owed) {
             match load_mdl_jobs(opener, timeout, &catalog.load()) {
                 Ok(jobs) => {
                     scanned_version = Some(loaded);
@@ -619,6 +622,122 @@ mod tests {
             &reloader.stats_source(),
             &stop
         ));
+    }
+
+    #[test]
+    fn disabled_mdl_reports_loaded_schema_without_replaying_job_versions() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_exec::cluster_ddl::MdlInfoUpdate;
+        use tidb_schemaver::{AllServerInfo, Context, DoneCh, GlobalVerRx, SyncSummary};
+        struct Reporter {
+            inner: tidb_schemaver::mem_syncer::MemSyncer,
+            reports: Mutex<Vec<(i64, i64)>>,
+            stop: AtomicBool,
+        }
+        impl SchemaVersionSyncer for Reporter {
+            fn init(&self, ctx: &Context) -> Result<(), String> {
+                self.inner.init(ctx)
+            }
+            fn update_self_version(
+                &self,
+                _: &Context,
+                job: i64,
+                version: i64,
+            ) -> Result<(), String> {
+                self.reports.lock().unwrap().push((job, version));
+                self.stop.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn done(&self) -> DoneCh {
+                self.inner.done()
+            }
+            fn owner_update_global_version(&self, _: &Context, _: i64) -> Result<(), String> {
+                unreachable!()
+            }
+            fn global_version_ch(&self) -> GlobalVerRx {
+                unreachable!()
+            }
+            fn watch_global_schema_ver(&self, _: &Context) {
+                unreachable!()
+            }
+            fn restart(&self, _: &Context) -> Result<(), String> {
+                unreachable!()
+            }
+            fn wait_version_synced(
+                &self,
+                _: &Context,
+                _: i64,
+                _: i64,
+                _: bool,
+            ) -> Result<SyncSummary, String> {
+                unreachable!()
+            }
+            fn sync_job_schema_ver_loop(&self, _: &Context) {
+                unreachable!()
+            }
+            fn set_server_info_syncer(&self, _: AllServerInfo) {
+                unreachable!()
+            }
+            fn close(&self) {}
+        }
+        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let timeout = Duration::from_secs(5);
+        crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_vardef::set_enable_mdl(false);
+        let mut loaded =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+        let (_, table) = loaded.find_table("mysql", "tidb_mdl_info").unwrap();
+        let info = MdlInfoUpdate {
+            table: Box::new(table.clone_like_go()),
+            table_ids: "0".into(),
+            omit_owner_id: false,
+        };
+        let mut mutations = Vec::new();
+        info.append_mutations(700, 1, "old-owner", &mut mutations)
+            .unwrap();
+        opener
+            .begin()
+            .unwrap()
+            .commit(
+                mutations,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+            )
+            .unwrap();
+        loaded.schema_version = 5;
+        let catalog = Arc::new(SharedCatalog::new(loaded));
+        let reloader = CatalogReloader::spawn(
+            catalog.clone(),
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .unwrap();
+        let reporter = Reporter {
+            inner: Default::default(),
+            reports: Mutex::new(Vec::new()),
+            stop: AtomicBool::new(false),
+        };
+        let context = Context::background();
+        reporter.init(&context).unwrap();
+        run_ack_loop(
+            &catalog,
+            &opener,
+            &SchemaPinRegistry::default(),
+            &reporter,
+            &context,
+            &SchemaValidator::new(Duration::from_secs(45)),
+            &reloader.waker(),
+            &reloader.stats_source(),
+            Duration::ZERO,
+            timeout,
+            &reporter.stop,
+        );
+        assert_eq!(
+            *reporter.reports.lock().unwrap(),
+            vec![(0, 5)],
+            "an old MDL row must not overwrite the loaded self version"
+        );
     }
 
     fn job(job_id: i64, version: i64, table_ids: &[i64]) -> MdlJob {

@@ -36,6 +36,7 @@ use tidb_exec::cluster_ddl::{
     PersistedDdlJobPlan, PersistedDdlJobStep,
 };
 
+use tidb_exec::cluster_ddl::DdlJobSchemaState;
 use tidb_exec::ddl_history_table::DdlHistoryTable;
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -56,7 +57,7 @@ fn plan_worker_step(
     job_id: i64,
     ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    match plan_persisted_ddl_job_step(store, job_id, ts, None, &|| {
+    match plan_persisted_ddl_job_step(store, job_id, ts, DdlJobSchemaState::new(true), &|| {
         tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
     })? {
         PersistedDdlJobPlan::Step(step) => Ok(step),
@@ -611,9 +612,13 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             )
             .unwrap();
             apply_mutations(store, &registration);
-            match plan_persisted_ddl_job_step(store, job.id, 11_000, None, &|| {
-                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
-            })
+            match plan_persisted_ddl_job_step(
+                store,
+                job.id,
+                11_000,
+                DdlJobSchemaState::new(true),
+                &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
+            )
             .unwrap()
             {
                 PersistedDdlJobPlan::SchemaSync { version, .. } => {
@@ -915,9 +920,14 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
             .unwrap()
             .job
             .raw_args;
-        let PersistedDdlJobPlan::Step(step) =
-            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, None, &|| limit).unwrap()
-        else {
+        let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+            &mut store,
+            job.id,
+            10_000,
+            DdlJobSchemaState::new(true),
+            &|| limit,
+        )
+        .unwrap() else {
             panic!("panic recovery must checkpoint")
         };
         assert_eq!(step.terminal, limit == 0);
@@ -1027,9 +1037,14 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             .unwrap()
             .job
             .raw_args;
-        let PersistedDdlJobPlan::Step(step) =
-            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, None, &|| 3).unwrap()
-        else {
+        let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+            &mut store,
+            job.id,
+            10_000,
+            DdlJobSchemaState::new(true),
+            &|| 3,
+        )
+        .unwrap() else {
             panic!("panic must checkpoint")
         };
         assert_eq!(step.terminal, initial_state == JobState::ROLLINGBACK);
@@ -1045,9 +1060,14 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
                 "original validation failure"
             );
             assert_eq!(active.job.raw_args, raw);
-            let PersistedDdlJobPlan::Step(step) =
-                plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 3).unwrap()
-            else {
+            let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+                &mut store,
+                job.id,
+                20_000,
+                DdlJobSchemaState::new(true),
+                &|| 3,
+            )
+            .unwrap() else {
                 panic!("exhausted panic budget must terminate")
             };
             assert!(step.terminal);
@@ -1339,9 +1359,14 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
         assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
     }
-    let PersistedDdlJobPlan::Step(step) =
-        plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 2).unwrap()
-    else {
+    let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+        &mut store,
+        job.id,
+        20_000,
+        DdlJobSchemaState::new(true),
+        &|| 2,
+    )
+    .unwrap() else {
         panic!("error must checkpoint")
     };
     assert!(step.run_error.is_some());
@@ -1357,12 +1382,14 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         .read()
         .message()
         .to_owned();
-    let PersistedDdlJobPlan::Step(step) =
-        plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None, &|| {
-            panic!("normal cancellation must not reload the limit")
-        })
-        .unwrap()
-    else {
+    let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+        &mut store,
+        job.id,
+        30_000,
+        DdlJobSchemaState::new(true),
+        &|| panic!("normal cancellation must not reload the limit"),
+    )
+    .unwrap() else {
         panic!("cancellation must reach history")
     };
     assert!(step.terminal);
@@ -1547,10 +1574,14 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     JobState::RUNNING
                 );
                 if state == SchemaState::WRITE_REORGANIZATION {
-                    let PersistedDdlJobPlan::Step(retry) =
-                        plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 0)
-                            .unwrap()
-                    else {
+                    let PersistedDdlJobPlan::Step(retry) = plan_persisted_ddl_job_step(
+                        &mut store,
+                        job.id,
+                        20_000,
+                        DdlJobSchemaState::new(true),
+                        &|| 0,
+                    )
+                    .unwrap() else {
                         panic!("invalid forward state must checkpoint")
                     };
                     assert!(retry.run_error.is_some());
@@ -1586,14 +1617,24 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     .unwrap();
                 apply_mutations(&mut store, &mutations);
                 assert!(matches!(
-                    plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 512).unwrap(),
+                    plan_persisted_ddl_job_step(
+                        &mut store,
+                        job.id,
+                        20_000,
+                        DdlJobSchemaState::new(true),
+                        &|| 512
+                    )
+                    .unwrap(),
                     PersistedDdlJobPlan::SchemaSync { .. }
                 ));
                 let PersistedDdlJobPlan::Step(done) = plan_persisted_ddl_job_step(
                     &mut store,
                     job.id,
                     30_000,
-                    Some(step.write.schema_version),
+                    DdlJobSchemaState {
+                        synced_version: Some(step.write.schema_version),
+                        ..DdlJobSchemaState::new(true)
+                    },
                     &|| 512,
                 )
                 .unwrap() else {
@@ -1946,18 +1987,23 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         let before = store.pairs.clone();
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, None, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, DdlJobSchemaState::new(true), &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: acknowledge the previous publication before pausing"
         );
         assert_eq!(store.pairs, before);
-        let PersistedDdlJobPlan::Step(step) =
-            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, Some(version), &|| {
-                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
-            })
-            .unwrap()
-        else {
+        let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
+            &mut store,
+            job.id,
+            10_000,
+            DdlJobSchemaState {
+                synced_version: Some(version),
+                ..DdlJobSchemaState::new(true)
+            },
+            &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
+        )
+        .unwrap() else {
             panic!("{action}: an acknowledged pause must checkpoint")
         };
         assert!(!step.terminal, "{action}: pause must retain the active job");
@@ -1996,9 +2042,16 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         assert_eq!(store.pairs, expected_store.pairs, "{action}");
         let before = store.pairs.clone();
         assert!(matches!(
-            plan_persisted_ddl_job_step(&mut store, job.id, 20_000, Some(version), &|| {
-                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
-            })
+            plan_persisted_ddl_job_step(
+                &mut store,
+                job.id,
+                20_000,
+                DdlJobSchemaState {
+                    synced_version: Some(version),
+                    ..DdlJobSchemaState::new(true)
+                },
+                &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT }
+            )
             .unwrap(),
             PersistedDdlJobPlan::Paused
         ));
@@ -2008,7 +2061,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         );
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, DdlJobSchemaState::new(true), &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: replacement owner must recover an uncleaned MDL row"
@@ -2019,9 +2072,13 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         apply_mutations(&mut store, &cleanup);
         let before = store.pairs.clone();
         assert!(matches!(
-            plan_persisted_ddl_job_step(&mut store, job.id, 40_000, None, &|| {
-                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
-            })
+            plan_persisted_ddl_job_step(
+                &mut store,
+                job.id,
+                40_000,
+                DdlJobSchemaState::new(true),
+                &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT }
+            )
             .unwrap(),
             PersistedDdlJobPlan::Paused
         ));
@@ -7748,7 +7805,10 @@ fn plan_mview_log_step(
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     seed_step(
         tidb_exec::cluster_ddl::plan_persisted_materialized_view_log_job_step(
-            store, job_id, ts, None,
+            store,
+            job_id,
+            ts,
+            DdlJobSchemaState::new(true),
         ),
     )
 }
@@ -7761,7 +7821,11 @@ fn plan_mview_step(
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     seed_step(
         tidb_exec::cluster_ddl::plan_persisted_materialized_view_create_job_step(
-            store, job_id, ts, build, None,
+            store,
+            job_id,
+            ts,
+            build,
+            DdlJobSchemaState::new(true),
         ),
     )
 }
@@ -7787,31 +7851,44 @@ fn acknowledge_mview_schema(store: &mut MetaStore, step: &PersistedDdlJobStep) {
     let plan = match active.job.type_ {
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
             tidb_exec::cluster_ddl::plan_persisted_materialized_view_log_job_step(
-                store, job_id, 20_000, None,
+                store,
+                job_id,
+                20_000,
+                DdlJobSchemaState::new(true),
             )
         }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
             tidb_exec::cluster_ddl::plan_persisted_materialized_view_create_job_step(
-                store, job_id, 20_000, None, None,
+                store,
+                job_id,
+                20_000,
+                None,
+                DdlJobSchemaState::new(true),
             )
         }
         _ => panic!("not a materialized-view seed action"),
     }
     .unwrap();
-    let PersistedDdlJobPlan::SchemaSync { version, mdl_info } = plan else {
+    let PersistedDdlJobPlan::SchemaSync {
+        version, mdl_info, ..
+    } = plan
+    else {
         panic!("replacement owner must recover the previous publication before advancing");
     };
     assert_eq!(version, step.write.schema_version);
+    let mdl_info = mdl_info.unwrap();
     assert_eq!(mdl_info.table_ids, active.table_ids);
     assert!(!tidb_exec::cluster_ddl::supports_persisted_ddl_job(
         active.job.type_
     ));
-    assert!(
-        plan_persisted_ddl_job_step(store, job_id, 20_000, None, &|| {
-            tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
-        })
-        .is_err()
-    );
+    assert!(plan_persisted_ddl_job_step(
+        store,
+        job_id,
+        20_000,
+        DdlJobSchemaState::new(true),
+        &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT }
+    )
+    .is_err());
     let mut cleanup = Vec::new();
     mdl_info
         .append_delete_mutations(store, job_id, "owner", &mut cleanup)

@@ -720,11 +720,242 @@ mod schema_sync_tests {
         assert!(wait_ddl_retry(&stopped, Duration::from_secs(3600)).is_err());
     }
 
+    fn worker_without_mdl(recover: bool, remove_mdl_table: bool) {
+        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_exec::real_tikv_ddl::load_active_persisted_ddl_jobs;
+        use tidb_meta::{key, value};
+        use tidb_model::{
+            ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
+            JobVersion, SchemaDiff, SchemaState,
+        };
+        use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
+
+        struct Barrier(Mutex<Vec<(i64, i64)>>, AtomicBool);
+        impl DdlSchemaSync for Barrier {
+            fn owner_id(&self) -> &str {
+                "non-mdl-owner"
+            }
+            fn wait_version_synced(&self, id: i64, version: i64) -> Result<(), String> {
+                self.0.lock().unwrap().push((id, version));
+                if self.1.load(Ordering::Relaxed) {
+                    Err("pending schema version".into())
+                } else {
+                    Ok(())
+                }
+            }
+            fn clean_job_versions(&self, _: i64) -> Result<(), String> {
+                panic!("disabled MDL must not clean per-job acknowledgement keys")
+            }
+        }
+        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let opener = Arc::new(opener);
+        let timeout = Duration::from_secs(5);
+        crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_vardef::set_enable_mdl(false);
+        let mut tx = opener.begin().unwrap();
+        let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let before = catalog.schema_version;
+        let mut job = Job::default();
+        job.id = 600;
+        job.schema_id = 601;
+        job.schema_name = "without_mdl".into();
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.state = if recover {
+            JobState::DONE
+        } else {
+            JobState::QUEUEING
+        };
+        job.last_schema_version = if recover { before + 1 } else { 0 };
+        job.version = JobVersion::V2;
+        job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        let database = DBInfo {
+            id: 601,
+            name: tidb_ast::CiString::new("without_mdl"),
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(database.clone_like_go()))),
+        })));
+        let mut mutations = Vec::new();
+        DdlJobTable::locate(&catalog)
+            .unwrap()
+            .append_insert(&mut job, false, "601", "0", false, &mut mutations)
+            .unwrap();
+        if remove_mdl_table {
+            let (schema, table) = catalog.find_table("mysql", "tidb_mdl_info").unwrap();
+            mutations.push(BufferMutation::delete(key::table_kv_key(schema.id, table.id)).unwrap());
+        }
+        if recover {
+            // Another job published a newer diff; the newest reserved version
+            // is still empty. Go recovers GetSchemaVersionWithNonEmptyDiff.
+            mutations.push(
+                BufferMutation::set(
+                    key::database_kv_key(601),
+                    value::serialize_db_info(&database).unwrap(),
+                )
+                .unwrap(),
+            );
+            mutations.push(
+                BufferMutation::set(key::schema_version_kv_key(), (before + 3).to_string())
+                    .unwrap(),
+            );
+            let diff = SchemaDiff {
+                version: before + 2,
+                action_type: ActionType::ACTION_CREATE_SCHEMA,
+                schema_id: 601,
+                ..Default::default()
+            };
+            mutations.push(
+                BufferMutation::set(
+                    key::schema_diff_kv_key(before + 2),
+                    value::serialize_schema_diff(&diff).unwrap(),
+                )
+                .unwrap(),
+            );
+        }
+        assert!(matches!(
+            tx.commit(
+                mutations,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        let barrier = Barrier(Mutex::new(Vec::new()), AtomicBool::new(true));
+        struct FailedNotifier(Mutex<Vec<i64>>);
+        impl SchemaVersionNotifier for FailedNotifier {
+            fn notify(&self, version: i64) -> Result<(), String> {
+                self.0.lock().unwrap().push(version);
+                Err("notification unavailable".into())
+            }
+        }
+        let notifier = FailedNotifier(Mutex::new(Vec::new()));
+        let run = |job_id| {
+            run_persisted_ddl_job(
+                opener.clone(),
+                job_id,
+                timeout,
+                Some(&notifier),
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &barrier,
+                &|| Ok(()),
+                &|_| panic!("no action error retry expected"),
+            )
+        };
+        let outcome = run(job.id);
+        assert_eq!(
+            *barrier.0.lock().unwrap(),
+            vec![(job.id, before + if recover { 2 } else { 1 })],
+            "the worker must reach the schema-version barrier: {outcome:?}"
+        );
+        assert_eq!(
+            *notifier.0.lock().unwrap(),
+            vec![before + if recover { 2 } else { 1 }]
+        );
+        assert!(outcome.is_err());
+        assert!(
+            load_history_persisted_ddl_job(opener.clone(), job.id, timeout)
+                .unwrap()
+                .is_none()
+        );
+        if !remove_mdl_table {
+            let mut tx = opener.begin_read_only().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            assert!(
+                matches!(
+                    tidb_exec::ddl_systable::SystemTableManager::new(&catalog)
+                        .get_mdl_version(&mut snapshot, job.id),
+                    Err(tidb_exec::ddl_systable::SystemTableManagerError::NotFound)
+                ),
+                "disabled mode must never register an MDL row"
+            );
+            tx.finish_without_writes().unwrap();
+        }
+        barrier.1.store(false, Ordering::Relaxed);
+        run(job.id).unwrap();
+        assert!(load_active_persisted_ddl_jobs(opener.clone(), timeout, 0)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            load_history_persisted_ddl_job(opener.clone(), job.id, timeout)
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::SYNCED
+        );
+        // Every committed DROP phase waits in non-MDL mode too, while
+        // notification errors do not prevent the self-version acknowledgement.
+        let start = tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+            .unwrap()
+            .schema_version;
+        job.id = 602;
+        job.type_ = ActionType::ACTION_DROP_SCHEMA;
+        job.state = JobState::QUEUEING;
+        job.schema_state = SchemaState::PUBLIC;
+        job.last_schema_version = 0;
+        job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
+        let mut tx = opener.begin().unwrap();
+        let current = tidb_exec::cluster_catalog::load_cluster_catalog(
+            &mut TransactionMetaSnapshot::new(&mut tx, timeout),
+        )
+        .unwrap();
+        let mut mutations = Vec::new();
+        DdlJobTable::locate(&current)
+            .unwrap()
+            .append_insert(&mut job, false, "601", "0", false, &mut mutations)
+            .unwrap();
+        tx.commit(
+            mutations,
+            &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+        )
+        .unwrap();
+        let before_waits = barrier.0.lock().unwrap().len();
+        run(job.id).unwrap();
+        assert_eq!(
+            &barrier.0.lock().unwrap()[before_waits..],
+            &[(602, start + 1), (602, start + 2), (602, start + 3)]
+        );
+        assert!(
+            load_history_persisted_ddl_job(opener.clone(), job.id, timeout)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn persisted_worker_without_mdl_skips_registration() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        worker_without_mdl(false, false);
+    }
+
+    #[test]
+    fn persisted_worker_without_mdl_recovers_before_history() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        worker_without_mdl(true, false);
+    }
+
+    #[test]
+    fn persisted_worker_without_mdl_needs_no_mdl_table() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        worker_without_mdl(false, true);
+    }
+
     #[test]
     fn persisted_worker_recovers_schema_barriers_before_history() {
         if crate::isolate_process_globals() {
             return;
         }
+        tidb_vardef::set_enable_mdl(true);
         use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
         use tidb_exec::real_tikv_ddl::{load_active_persisted_ddl_jobs, ClusterDdlError};
         use tidb_model::{

@@ -399,14 +399,12 @@ pub enum ClusterDdlReport {
 /// Announces a committed schema version so peers reload without waiting for
 /// their lease tick.
 ///
-/// A trait rather than a concrete etcd client because failing to announce is
-/// not a DDL failure, and the caller decides how loud that is. Go's
-/// `pkg/ddl/job_worker.go` logs `"update latest schema version failed"` at
-/// Info and carries on when the PUT fails (it only propagates the error when
-/// MDL is enabled, which this tier has no equivalent of): the version is
-/// already durable in TiKV, and every node's `lease/2` reload still finds it.
+/// The committed version is already durable in TiKV. Persisted workers
+/// propagate publication failure in MDL mode; without MDL they still wait for
+/// loaded self-version keys, which periodic schema reload can advance.
+/// Direct publication retains its existing best-effort notification policy.
 pub trait SchemaVersionNotifier {
-    /// Publishes `version`. The error is for logging, never for the client.
+    /// Publishes `version`; the owner decides the source-mode failure policy.
     fn notify(&self, version: i64) -> Result<(), String>;
 }
 
@@ -648,9 +646,8 @@ pub trait CheckConstraintValidator {
 /// Owner-side synchronization between committed DDL schema phases.
 ///
 /// The implementation reloads the owner's own catalog and then waits for the
-/// existing per-job acknowledgements from every registered TiDB node. There
-/// is intentionally no lease-delay fallback here: a phase may advance only
-/// after the nodes that can serve writes have loaded its writable metadata.
+/// existing synchronizer, which selects per-job MDL acknowledgements or
+/// loaded self-version keys according to the process's source mode.
 pub trait DdlSchemaSync {
     /// Stable owner id stored in `mysql.tidb_mdl_info.owner_id`.
     fn owner_id(&self) -> &str;
@@ -669,7 +666,7 @@ enum DdlPhase<'statement> {
     Persisted {
         ddl_job_id: i64,
         check_owner: &'statement dyn Fn() -> Result<(), String>,
-        previously_synced_version: Option<i64>,
+        schema_state: crate::cluster_ddl::DdlJobSchemaState,
     },
 }
 
@@ -742,7 +739,8 @@ enum DdlPhaseOutcome {
     Paused,
     SchemaSync {
         version: i64,
-        mdl_info: MdlInfoUpdate,
+        mdl_info: Option<MdlInfoUpdate>,
+        publish_version: bool,
     },
     AlreadySatisfied(ClusterDdlReport),
     Committed(CommittedDdlPhase),
@@ -836,14 +834,18 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     check_owner: &dyn Fn() -> Result<(), String>,
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
-    let mut previously_synced_version = None;
+    let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(
+        tidb_config::kerneltype::is_next_gen(),
+    ));
     loop {
+        schema_state.mdl_enabled =
+            tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
         let outcome = commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
             DdlPhase::Persisted {
                 ddl_job_id,
                 check_owner,
-                previously_synced_version,
+                schema_state,
             },
             timeout,
             notifier,
@@ -854,36 +856,55 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
         )?;
         match outcome {
             DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
-            DdlPhaseOutcome::SchemaSync { version, mdl_info } => {
+            DdlPhaseOutcome::SchemaSync {
+                version,
+                mdl_info,
+                publish_version,
+            } => {
                 check_owner().map_err(ClusterDdlError::SchemaSync)?;
+                if publish_version {
+                    // Non-MDL recovery republishes the latest nonempty diff;
+                    // MDL recovery only waits for its retained row.
+                    notify_schema_version(notifier, version);
+                }
                 schema_sync
                     .wait_version_synced(ddl_job_id, version)
                     .map_err(ClusterDdlError::SchemaSync)?;
                 check_owner().map_err(ClusterDdlError::SchemaSync)?;
-                previously_synced_version = Some(version);
+                schema_state.synced_version = Some(version);
+                schema_state.pending_version = None;
                 // Like Go cleanMDLInfo, cleanup is best effort after the
                 // acknowledgement succeeded. Only this owner run may reuse
                 // that success; a replacement recovers any retained MDL row.
-                if let Err(error) = clean_mdl_info_with_retry(
-                    Arc::clone(&opener),
-                    timeout,
-                    &mdl_info,
-                    ddl_job_id,
-                    version,
-                    schema_sync.owner_id(),
-                ) {
-                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                if let Some(mdl_info) = mdl_info {
+                    if let Err(error) = clean_mdl_info_with_retry(
+                        Arc::clone(&opener),
+                        timeout,
+                        &mdl_info,
+                        ddl_job_id,
+                        version,
+                        schema_sync.owner_id(),
+                    ) {
+                        eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                    }
                 }
             }
             DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
-                if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                if schema_state.mdl_enabled {
+                    if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
+                        eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
                         serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                    }
                 }
                 return Ok(PersistedDdlJobOutcome::Finished);
             }
             DdlPhaseOutcome::Committed(committed) => {
+                if let ClusterDdlReport::Applied { schema_version, .. } = &committed.report {
+                    if *schema_version > 0 {
+                        schema_state.pending_version = Some(*schema_version);
+                    }
+                }
                 if let Some((error, error_count)) = committed.run_error {
                     if is_retryable_job_error(
                         &error,
@@ -1303,14 +1324,14 @@ fn commit_cluster_ddl_with_backfill_once<
             }
             DdlPhase::Persisted {
                 ddl_job_id,
-                previously_synced_version,
+                schema_state,
                 ..
             } => {
                 match plan_persisted_ddl_job_step(
                     &mut snapshot,
                     ddl_job_id,
                     start_ts,
-                    previously_synced_version,
+                    schema_state,
                     &|| refresh_ddl_error_count_limit(&opener, timeout),
                 ) {
                     Ok(PersistedDdlJobPlan::Paused) => {
@@ -1319,11 +1340,19 @@ fn commit_cluster_ddl_with_backfill_once<
                             .map_err(ClusterDdlError::NotCommitted)?;
                         return Ok(DdlPhaseOutcome::Paused);
                     }
-                    Ok(PersistedDdlJobPlan::SchemaSync { version, mdl_info }) => {
+                    Ok(PersistedDdlJobPlan::SchemaSync {
+                        version,
+                        mdl_info,
+                        publish_version,
+                    }) => {
                         transaction
                             .rollback()
                             .map_err(ClusterDdlError::NotCommitted)?;
-                        return Ok(DdlPhaseOutcome::SchemaSync { version, mdl_info });
+                        return Ok(DdlPhaseOutcome::SchemaSync {
+                            version,
+                            mdl_info,
+                            publish_version,
+                        });
                     }
                     Ok(PersistedDdlJobPlan::Step(step)) => Ok((
                         DdlPlan::Write(Box::new(step.write)),
@@ -1497,14 +1526,22 @@ fn commit_cluster_ddl_with_backfill_once<
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
-            if matches!(phase, DdlPhase::Initial(_)) {
-                notify_schema_version(notifier, planned_version);
-            } else if planned_version != 0 {
-                if let Some(notifier) = notifier {
-                    notifier
-                        .notify(planned_version)
-                        .map_err(ClusterDdlError::SchemaSync)?;
+            match phase {
+                DdlPhase::Initial(_) => notify_schema_version(notifier, planned_version),
+                DdlPhase::Persisted { schema_state, .. } if planned_version != 0 => {
+                    if schema_state.mdl_enabled {
+                        if let Some(notifier) = notifier {
+                            notifier
+                                .notify(planned_version)
+                                .map_err(ClusterDdlError::SchemaSync)?;
+                        }
+                    } else {
+                        // Periodic reload can advance non-MDL self-version
+                        // keys even when the notification is unavailable.
+                        notify_schema_version(notifier, planned_version);
+                    }
                 }
+                _ => {}
             }
             Ok(DdlPhaseOutcome::Committed(CommittedDdlPhase {
                 report: ClusterDdlReport::Applied {
