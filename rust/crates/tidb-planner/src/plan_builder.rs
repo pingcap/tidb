@@ -3758,23 +3758,65 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if let Some(collation) =
                     tidb_datatype::Collation::from_name(&collation.to_ascii_lowercase())
                 {
-                    match &mut built {
-                        Expression::Column(column) => {
-                            let ft = column
-                                .ret_type
-                                .get_or_insert_with(|| {
-                                    tidb_datatype::FieldType::new(
-                                        tidb_datatype::FieldTypeCode::VarString,
-                                    )
-                                });
-                            ft.set_charset_name(
-                                tidb_expr::collation_derive::charset_of_collation(collation),
+                    // go's `SetCollationExpr` (`expression_rewriter.go:1311`):
+                    // a COLUMN (or JSON) arg wraps a CAST so the original
+                    // FieldType stays untouched; constants and scalar
+                    // functions mutate in place. The cast matters for
+                    // PLANNING, not just evaluation: the by-item becomes a
+                    // non-column expression, which is what stops go's
+                    // `getPhysLimits` (`GetPropByOrderByItems`) from offering
+                    // a plain Sort+Limit — the ORDER BY rides a TopN and its
+                    // cop heap instead (oracle g-collation: ORDER BY a
+                    // COLLATE utf8mb4_general_ci over a utf8mb4_bin column
+                    // draws Ä,A,a from the push-built heap; a full stable
+                    // sort draws scan-order a,A,Ä).
+                    let is_json = built
+                        .static_type()
+                        .is_some_and(|ft| ft.code() == tidb_datatype::FieldTypeCode::Json);
+                    let is_enum_set = built.static_type().is_some_and(|ft| {
+                        matches!(
+                            ft.code(),
+                            tidb_datatype::FieldTypeCode::Enum
+                                | tidb_datatype::FieldTypeCode::Set
+                        )
+                    });
+                    if is_enum_set {
+                        return Err(PlanError::from(EvalError::Unsupported(
+                            "use collate clause for enum or set",
+                        )));
+                    }
+                    if matches!(built, Expression::Column(_)) || is_json {
+                        let mut expr_type = built.static_type().cloned().unwrap_or_else(|| {
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                        });
+                        if is_json {
+                            // go: a JSON arg casts to LongBlob under utf8mb4.
+                            expr_type = tidb_datatype::FieldType::new(
+                                tidb_datatype::FieldTypeCode::LongBlob,
                             );
-                            ft.set_collation_name(collation.name());
                         }
-                        other => tidb_expr::collation_derive::set_explicit_collation(
-                            other, collation,
-                        ),
+                        expr_type.set_charset_name(
+                            tidb_expr::collation_derive::charset_of_collation(collation),
+                        );
+                        expr_type.set_collation_name(collation.name());
+                        built = tidb_expr::simple_expr::build_cast_function(
+                            built,
+                            expr_type,
+                            false,
+                        )?;
+                        // go sets CoercibilityExplicit plus the cast's own
+                        // charset/collation on the casted node.
+                        tidb_expr::collation_derive::set_explicit_collation(
+                            &mut built,
+                            collation,
+                        );
+                    } else {
+                        // For constants and scalar functions the collation
+                        // sets in place (go mutates the arg's FieldType).
+                        tidb_expr::collation_derive::set_explicit_collation(
+                            &mut built,
+                            collation,
+                        );
                     }
                 }
             }

@@ -411,7 +411,24 @@ fn sort_value_cmp(a: &Datum, b: &Datum, explicit_collation: Option<tidb_datatype
             Some(collation) => collation.compare(x.bytes(), y.bytes()),
             None => x.collation().compare(x.bytes(), y.bytes()),
         },
-        (Datum::Bytes(x), Datum::Bytes(y)) => x.cmp(y),
+        // Binary-tagged string payloads (a utf8mb4_bin column stores Bytes)
+        // carry the payload in `Bytes`, not `String`. An explicit ORDER BY
+        // COLLATE must still ride: go compares the sort key under the
+        // by-item's RetType collation whatever the datum kind (oracle
+        // g-collation: ORDER BY a COLLATE general_ci over a utf8mb4_bin
+        // column must fold the a-group, not compare raw bytes).
+        (Datum::Bytes(x), Datum::Bytes(y)) => match explicit_collation {
+            Some(collation) => collation.compare(x, y),
+            None => x.cmp(y),
+        },
+        (Datum::String(x), Datum::Bytes(y)) => match explicit_collation {
+            Some(collation) => collation.compare(x.bytes(), y),
+            None => x.bytes().cmp(y),
+        },
+        (Datum::Bytes(x), Datum::String(y)) => match explicit_collation {
+            Some(collation) => collation.compare(x, y.bytes()),
+            None => x.as_slice().cmp(y.bytes()),
+        },
         (Datum::Decimal(x), Datum::Decimal(y)) => x.cmp(y),
         (Datum::Time(x), Datum::Time(y)) => x.compare(*y),
         (Datum::Duration(x), Datum::Duration(y)) => x.compare(*y),

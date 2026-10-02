@@ -774,14 +774,30 @@ where
     fn run_one_segment(&mut self) -> Result<bool, ExecError> {
         self.ensure_heap_init();
 
-        // Go `loadChunksUntilTotalLimit` keeps complete child chunks and does
-        // not limit RequiredRows: smaller child batches can cause more TiKV
-        // requests. The heap then trims all collected candidates to totalLimit.
+        // Go `loadChunksUntilTotalLimit` sizes every fill chunk with
+        // `srcChk.SetRequiredRows(totalLimit - rowChunks.Len(), maxChunkSize)`
+        // (sort.go:397): the fill holds EXACTLY totalLimit rows, heap.Init
+        // runs over those, and the remaining child rows stream through
+        // `processChk`'s no-evict-on-tie update. Collecting whole chunks and
+        // trimming with heap pops instead moves different rows into the
+        // surviving array -- go's pop swaps the array tail into the root and
+        // re-sifts, which permutes equal-key rows the streaming fill never
+        // touches (oracle g-collation: LIMIT 3 over equal general_ci keys
+        // must draw the fill+stream layout, not the pop layout).
         while (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
+            let remaining = self.total_limit - self.stored_len() as u64;
+            chunk.set_required_rows(remaining as isize, self.child.max_chunk_size());
             self.child.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
                 break;
+            }
+            if chunk.num_rows() > remaining as usize {
+                // The SetRequiredRows contract makes the overflow impossible
+                // with the built-in children; truncate defensively so the
+                // fill stays at totalLimit rows even for a child that ignores
+                // the request.
+                chunk.truncate_to(remaining as usize);
             }
             self.add_chunk(chunk)?;
             self.account()?;

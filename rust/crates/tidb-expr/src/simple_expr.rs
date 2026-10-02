@@ -582,7 +582,7 @@ fn wrap_cast_for_hybrid_push(
     build_cast_function(expr, tp, false)
 }
 
-pub(crate) fn build_cast_function(
+pub fn build_cast_function(
     mut expr: Expression,
     mut target: FieldType,
     in_union: bool,
