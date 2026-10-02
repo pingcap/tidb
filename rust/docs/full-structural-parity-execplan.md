@@ -2248,3 +2248,22 @@ remain open. Review of all nine live persisted handlers qualifies the former
 external-delivery allegation: they currently emit no placement/label requests;
 the missing effects and their failure lifecycle belong to whole-action integration.
 No upstream package is accepted or disabled action activated by this maintenance.
+
+
+### Shared DDL error conversion, 2026-10-02
+
+
+Starting at 5d0ee83ced20a1cee3d8f0c9bb99dda274c785e9 with unchanged Go/native
+pins, move the complete existing DdlPlanError code map out of the server and into
+the error owner. Checkpoints no longer flatten non-admission coded failures to
+1105; history reads derive SQLSTATE from the common MySQL catalog. Plain action,
+rollback-budget and panic diagnostics share Go's DDL/CodeUnknown fallback.
+All 21 enum variants are covered through queue/history persistence, and existing
+direct SQL tests remain valid. See ddl-error-conversion-execplan.md for the three
+red reproductions, final checks and publication gates.
+
+This maintains existing contracts without accepting an upstream package. D05
+remains partial: admission/storage producers still erase source RFC/class
+identities, and numeric compatibility does not prove mixed-node interoperability.
+Rollback-transaction classification, retry timing and complete action owners remain
+open. Counts remain 85 tracked, 75 unresolved and ten repaired.

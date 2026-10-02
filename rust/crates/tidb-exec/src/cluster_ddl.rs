@@ -2865,6 +2865,78 @@ impl fmt::Display for DdlPlanError {
     }
 }
 
+impl DdlPlanError {
+    /// The existing SQL contract is owned with the error, so direct execution
+    /// and persisted action checkpoints cannot select different error numbers.
+    fn mysql_error_code(&self) -> Option<u16> {
+        use tidb_error::tidb::errcode;
+        Some(match self {
+            Self::UnknownDatabase(_) => errcode::ErrBadDB,
+            Self::DatabaseExists(_) => errcode::ErrDBCreateExists,
+            Self::UnknownTable { .. } | Self::UnknownTables(_) => errcode::ErrBadTable,
+            Self::TableNotExists { .. } => errcode::ErrNoSuchTable,
+            Self::TableExists { .. } => errcode::ErrTableExists,
+            Self::DuplicateKeyName(_) => errcode::ErrDupKeyName,
+            Self::DuplicateColumnName(_) => errcode::ErrDupFieldName,
+            Self::UnknownIndexColumn { .. } => errcode::ErrKeyColumnDoesNotExits,
+            Self::KeyNotExists { .. } => errcode::ErrKeyDoesNotExist,
+            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) => errcode::ErrCantDropFieldOrKey,
+            Self::UnknownColumn { .. } => errcode::ErrBadField,
+            Self::InvalidAutoRandom(_) => errcode::ErrInvalidAutoRandom,
+            Self::AutoIdReadFailed => errcode::ErrAutoincReadFailed,
+            Self::Admission(error) => error.code,
+            Self::Unsupported(_) => errcode::ErrUnknown,
+            Self::Catalog(_)
+            | Self::Encode(_)
+            | Self::Mutations(_)
+            | Self::GlobalIdExhausted { .. } => return None,
+        })
+    }
+
+    /// Durable job error. Coded legacy errors retain their numeric envelope;
+    /// uncoded errors follow Go `toTError`'s DDL/CodeUnknown fallback.
+    /// Source RFC identities must be carried from their producers, not guessed
+    /// from a MySQL number shared by several Go error classes.
+    pub fn to_job_error(&self) -> tidb_error::terror::TerrorError {
+        match self.mysql_error_code() {
+            Some(code) => tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(
+                    isize::try_from(code).expect("u16 error code fits isize"),
+                ),
+                self.to_string(),
+            ),
+            None => unknown_ddl_job_error(self.to_string()),
+        }
+    }
+
+    /// Converts a direct refusal through the same contract as durable history.
+    pub fn to_sql_error(&self) -> tidb_error::mysql::SqlError {
+        ddl_job_error_to_sql_error(&self.to_job_error())
+    }
+}
+
+fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_error::terror::TerrorError {
+    tidb_error::terror::TerrorError::synthesize(
+        tidb_error::terror::TerrorClass::Ddl,
+        tidb_error::terror::CODE_UNKNOWN,
+        message,
+    )
+}
+
+/// Projects the durable DDL error envelope onto SQL. Legacy Rust job rows have
+/// numeric codes without RFC identities; they must remain readable after restart.
+/// SQLSTATE comes from the shared Go MySQL catalog, never a transport-local map.
+pub fn ddl_job_error_to_sql_error(
+    error: &tidb_error::terror::TerrorError,
+) -> tidb_error::mysql::SqlError {
+    let code = u16::try_from(error.code().value()).unwrap_or(tidb_error::tidb::errcode::ErrUnknown);
+    tidb_error::mysql::SqlError {
+        code,
+        state: tidb_error::mysql::mysql_state(code),
+        message: error.message().to_owned(),
+    }
+}
+
 impl std::error::Error for DdlPlanError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -5004,18 +5076,6 @@ fn plan_materialized_view_log_action<S: MetaSnapshot>(
     })
 }
 
-// Go countForError stores the error on the job so rollback and its eventual
-// history row retain the failure across owner restarts.
-fn record_ddl_job_error(job: &mut Job, code: u16, message: &str) {
-    job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-        tidb_error::terror::TerrorCode::new(
-            isize::try_from(code).expect("u16 error code fits isize"),
-        ),
-        message,
-    )));
-    job.error_count += 1;
-}
-
 // A build failure persists Rollingback and its error; a later tick performs
 // the action rollback before the shared lifecycle moves it to history.
 fn rolling_back_step(
@@ -5232,10 +5292,7 @@ fn record_ddl_cancellation_error(
             let message =
                 format!("rollback DDL job error count exceed the limit {limit}, cancelled it now");
             // Replacing the diagnostic must not count the same failure twice.
-            job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(GENERIC_ERROR_CODE as isize),
-                message,
-            )));
+            job.error = Some(GoShared::new(unknown_ddl_job_error(message)));
             job.state = JobState::CANCELLED;
         }
     }
@@ -5262,11 +5319,9 @@ fn count_ddl_action_panic(job: &mut Job, load_limit: &dyn Fn() -> i64) {
     job.error_count += 1;
     let limit = load_limit();
     if job.error_count > limit {
-        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
-            tidb_error::terror::TerrorClass::Ddl,
-            tidb_error::terror::CODE_UNKNOWN,
-            format!("panic in handling DDL logic and error count beyond the limitation {limit}, cancelled"),
-        )));
+        job.error = Some(GoShared::new(unknown_ddl_job_error(format!(
+            "panic in handling DDL logic and error count beyond the limitation {limit}, cancelled"
+        ))));
         job.state = JobState::CANCELLED;
     }
 }
@@ -5292,10 +5347,8 @@ pub(crate) fn recover_ddl_action<T>(job_id: i64, action: impl FnOnce() -> T) -> 
 }
 
 fn record_ddl_plan_error(job: &mut Job, error: &DdlPlanError) {
-    match error {
-        DdlPlanError::Admission(error) => record_ddl_job_error(job, error.code, &error.reason),
-        _ => record_ddl_job_error(job, GENERIC_ERROR_CODE, &error.to_string()),
-    }
+    job.error = Some(GoShared::new(error.to_job_error()));
+    job.error_count += 1;
 }
 
 /// Plans pinned Go `rollbackCreateMaterializedViewLog`: the created log

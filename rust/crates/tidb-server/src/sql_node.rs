@@ -336,78 +336,22 @@ pub(crate) fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
 /// Preserves the one DDL outcome that is not a failure verdict while mapping
 /// every determinate catalog error to its ordinary client diagnostic.
 pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
-    use tidb_exec::cluster_ddl::DdlPlanError;
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
         ClusterDdlError::ExchangeValidation(error) => lock_sql_error(&error),
         ClusterDdlError::CheckConstraintValidation(error) => lock_sql_error(&error),
-        ClusterDdlError::Plan(tidb_exec::cluster_ddl::DdlPlanError::InvalidAutoRandom(reason)) => {
-            SqlQueryError::new(8216, *b"HY000", format!("Invalid auto random: {reason}"))
-        }
-        ClusterDdlError::Plan(tidb_exec::cluster_ddl::DdlPlanError::AutoIdReadFailed) => {
+        ClusterDdlError::Plan(error) => {
+            let error = error.to_sql_error();
             SqlQueryError::new(
-                1467,
-                *b"HY000",
-                "Failed to read auto-increment value from storage engine",
+                error.code,
+                error
+                    .state
+                    .as_bytes()
+                    .try_into()
+                    .expect("catalog SQLSTATE has five bytes"),
+                error.message,
             )
-        }
-        // Each of these already renders Go's own message; only the CODE was
-        // missing, so every one of them reached a client as 1105 instead of
-        // the code MySQL clients switch on. `pkg/errno` names them.
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownDatabase(_)) => {
-            SqlQueryError::new(1049, *b"42000", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::DatabaseExists(_)) => {
-            SqlQueryError::new(1007, *b"HY000", error.to_string())
-        }
-        // Go `ErrBadTable` (1051): DROP TABLE's own missing-table answer,
-        // which Go's TestDropTableWithoutIfExists pins.
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownTable { .. }) => {
-            SqlQueryError::new(1051, *b"42S02", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownTables(_)) => {
-            SqlQueryError::new(1051, *b"42S02", error.to_string())
-        }
-        // Go `infoschema.ErrTableNotExists` (1146): every other statement
-        // resolves its table through `getSchemaAndTableByIdent`.
-        ClusterDdlError::Plan(error @ DdlPlanError::TableNotExists { .. }) => {
-            SqlQueryError::new(1146, *b"42S02", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::TableExists { .. }) => {
-            SqlQueryError::new(1050, *b"42S01", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::DuplicateKeyName(_)) => {
-            SqlQueryError::new(1061, *b"42000", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::DuplicateColumnName(_)) => {
-            SqlQueryError::new(1060, *b"42S21", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndexColumn { .. }) => {
-            SqlQueryError::new(1072, *b"42000", error.to_string())
-        }
-        // Go `ErrKeyNotExists` (1176): the ALTER INDEX visibility path's
-        // own code, distinct from DROP INDEX's 1091.
-        ClusterDdlError::Plan(error @ DdlPlanError::KeyNotExists { .. }) => {
-            SqlQueryError::new(1176, *b"42000", error.to_string())
-        }
-        // Go `ErrCantDropFieldOrKey` (1091, 42000): DROP INDEX and
-        // DROP PRIMARY KEY naming something the table does not have.
-        ClusterDdlError::Plan(error @ DdlPlanError::CantDropFieldOrKey(_)) => {
-            SqlQueryError::new(1091, *b"42000", error.to_string())
-        }
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndex(_)) => {
-            SqlQueryError::new(1091, *b"42000", error.to_string())
-        }
-        // Go `ErrBadField` (1054, 42S22): the statement named a column the
-        // table does not have.
-        ClusterDdlError::Plan(error @ DdlPlanError::UnknownColumn { .. }) => {
-            SqlQueryError::new(1054, *b"42S22", error.to_string())
-        }
-        // The shared admission code already knows Go's error number for what
-        // it refused; keep it rather than flattening to the generic 1105.
-        ClusterDdlError::Plan(DdlPlanError::Admission(error)) => {
-            SqlQueryError::new(error.code, error.sql_state(), error.reason)
         }
         other => SqlQueryError::unknown(other.to_string()),
     }

@@ -1016,6 +1016,148 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
 }
 
 #[test]
+fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
+    let cases = [
+        (DdlPlanError::UnknownDatabase("db".into()), 1049),
+        (DdlPlanError::DatabaseExists("db".into()), 1007),
+        (
+            DdlPlanError::UnknownTable {
+                schema: "db".into(),
+                table: "t".into(),
+            },
+            1051,
+        ),
+        (DdlPlanError::UnknownTables(vec!["db.t".into()]), 1051),
+        (
+            DdlPlanError::TableNotExists {
+                schema: "db".into(),
+                table: "t".into(),
+            },
+            1146,
+        ),
+        (
+            DdlPlanError::TableExists {
+                schema: "db".into(),
+                table: "t".into(),
+            },
+            1050,
+        ),
+        (DdlPlanError::DuplicateKeyName("idx".into()), 1061),
+        (DdlPlanError::DuplicateColumnName("col".into()), 1060),
+        (
+            DdlPlanError::UnknownIndexColumn {
+                column: "col".into(),
+                index: "idx".into(),
+            },
+            1072,
+        ),
+        (
+            DdlPlanError::KeyNotExists {
+                index: "idx".into(),
+                table: "t".into(),
+            },
+            1176,
+        ),
+        (DdlPlanError::CantDropFieldOrKey("col".into()), 1091),
+        (DdlPlanError::UnknownIndex("idx".into()), 1091),
+        (
+            DdlPlanError::UnknownColumn {
+                column: "col".into(),
+                table: "t".into(),
+            },
+            1054,
+        ),
+        (
+            DdlPlanError::InvalidAutoRandom("invalid range".into()),
+            8216,
+        ),
+        (DdlPlanError::AutoIdReadFailed, 1467),
+        (
+            DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+                3819,
+                "invalid row",
+            )),
+            3819,
+        ),
+        (DdlPlanError::Unsupported("unsupported action".into()), 1105),
+        (DdlPlanError::Encode("invalid metadata".into()), -1),
+        (
+            DdlPlanError::Catalog(ClusterCatalogError::Snapshot("read failed".into())),
+            -1,
+        ),
+        (
+            DdlPlanError::Mutations(tidb_txnkv::transaction::MutationSetError::EmptyKey),
+            -1,
+        ),
+        (DdlPlanError::GlobalIdExhausted { wanted: i64::MAX }, -1),
+    ];
+    for (error, code) in cases {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 990;
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.version = JobVersion::V2;
+        job.state = JobState::RUNNING;
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "991", "0", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let message = error.to_string();
+        let direct = error.to_sql_error();
+        assert_eq!(direct.code, if code == -1 { 1105 } else { code as u16 });
+        assert_eq!(direct.message, message);
+        let step = plan_persisted_ddl_job_failure(
+            &mut store,
+            job.id,
+            10_000,
+            PersistedDdlJobFailure::Error(error),
+            &|| 5,
+        )
+        .unwrap();
+        apply(&mut store, &step.write);
+        let mut active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        assert_eq!(active.job.error_count, 1);
+        let saved = active.job.error.as_ref().unwrap().read();
+        assert_eq!(saved.code().value(), code, "{message}");
+        assert_eq!(saved.message(), message);
+        if code == -1 {
+            assert_eq!(saved.class(), tidb_error::terror::TerrorClass::Ddl);
+        }
+        assert_eq!(
+            tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(&saved),
+            direct
+        );
+        drop(saved);
+
+        // Finalization and a fresh history decode must retain the same error;
+        // no statement-local value supplies the submitting connection's result.
+        active.job.state = JobState::CANCELLED;
+        mutations.clear();
+        queue
+            .append_update(&mut active, false, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let finished = plan_worker_step(&mut store, job.id, 20_000).unwrap();
+        assert!(finished.terminal);
+        apply(&mut store, &finished.write);
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let history = history.iter().find(|stored| stored.id == job.id).unwrap();
+        assert_eq!(history.error_count, 1);
+        let restored = history.error.as_ref().unwrap().read();
+        assert_eq!(
+            tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(&restored),
+            direct
+        );
+    }
+}
+
+#[test]
 fn persisted_action_error_is_checkpointed_before_retry() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).unwrap();
@@ -1048,7 +1190,9 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         assert_eq!(active.job.error_count, count as i64);
         assert_eq!(active.job.state, JobState::RUNNING);
         assert_eq!(active.job.raw_args, raw);
-        assert!(active.job.error.is_some());
+        let error = active.job.error.as_ref().unwrap().read();
+        assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
+        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
     }
     let PersistedDdlJobPlan::Step(step) =
         plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 2).unwrap()

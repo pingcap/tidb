@@ -567,12 +567,7 @@ where
             {
                 if let Some(error) = job.error.as_ref() {
                     let error = error.read();
-                    let code = u16::try_from(error.code().value()).unwrap_or(1105);
-                    return Err(crate::sql_node::lock_sql_error(&LockSqlError {
-                        code,
-                        state: *b"HY000",
-                        message: error.message().to_owned(),
-                    }));
+                    return Err(persisted_job_error(&error));
                 }
                 if job.state.is_done() || job.state.is_synced() {
                     return Ok(ClusterDdlReport::Applied {
@@ -612,6 +607,19 @@ where
     }
 }
 
+fn persisted_job_error(error: &tidb_error::terror::TerrorError) -> SqlQueryError {
+    let error = tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(error);
+    SqlQueryError::new(
+        error.code,
+        error
+            .state
+            .as_bytes()
+            .try_into()
+            .expect("catalog SQLSTATE has five bytes"),
+        error.message,
+    )
+}
+
 fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManager {
     // Go NewMockManager uses store.UUID(), not the nil-store fallback.
     // Embedded stores each own one read authority; clones retain its ID.
@@ -627,6 +635,47 @@ fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManag
 #[cfg(test)]
 mod schema_sync_tests {
     use super::*;
+
+    #[test]
+    fn persisted_history_preserves_source_sqlstate() {
+        use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+        for (code, state) in [
+            (1049, *b"42000"),
+            (1146, *b"42S02"),
+            (1060, *b"42S21"),
+            (3819, *b"HY000"),
+        ] {
+            // Read the same durable envelope as an owner replacement, including
+            // legacy rows written before source RFC identities are preserved.
+            for error in [
+                TerrorError::compatible(TerrorCode::new(code), "original diagnostic"),
+                TerrorError::registered(
+                    if code == 3819 {
+                        TerrorClass::Ddl
+                    } else {
+                        TerrorClass::Schema
+                    },
+                    TerrorCode::new(code),
+                    "original diagnostic",
+                ),
+            ] {
+                let encoded = serde_json::to_vec(&error).unwrap();
+                let decoded = serde_json::from_slice(&encoded).unwrap();
+                let actual = persisted_job_error(&decoded);
+                assert_eq!(actual.code, code as u16);
+                assert_eq!(actual.state, state);
+                assert_eq!(actual.message, "original diagnostic");
+            }
+        }
+        let unknown = TerrorError::synthesize(
+            TerrorClass::Ddl,
+            tidb_error::terror::CODE_UNKNOWN,
+            "plain failure",
+        );
+        let actual = persisted_job_error(&unknown);
+        assert_eq!((actual.code, actual.state), (1105, *b"HY000"));
+        assert_eq!(actual.message, "plain failure");
+    }
 
     #[test]
     fn persisted_worker_recovers_schema_barriers_before_history() {

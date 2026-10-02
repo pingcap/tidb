@@ -595,3 +595,12 @@ checkpoint. D05 remains partial and all counts remain unchanged: full returned-e
 classification, transaction/retry policy and whole-action external-effect integration
 are still open. The previous external-delivery allegation is qualified: none of the
 nine live persisted handlers emits placement/label requests today.
+
+The [shared DDL error conversion repair](../../ddl-error-conversion-execplan.md)
+removes the server-owned DdlPlanError code map and the history waiter's forced
+HY000. All 21 existing plan-error variants now share code selection through direct
+execution, durable checkpoint and history readback; plain action errors persist
+DDL/CodeUnknown as Go does. Legacy coded envelopes remain readable. This does not
+restore RFC/class identity already erased by admission/storage producers, so D05
+and the 75-unresolved count remain unchanged. Mixed-node error interoperability,
+retry policy and whole-package acceptance are still open.
