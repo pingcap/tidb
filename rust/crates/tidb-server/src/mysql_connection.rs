@@ -834,11 +834,9 @@ pub enum MysqlConnectionError {
     ///
     /// Go `pkg/server/conn.go` `Run`'s deferred `recover()`: a panicking
     /// statement logs "connection running loop panic" and closes ITS
-    /// connection while the server keeps serving. Divergence, named: Go
-    /// best-effort writes an ERR 1105 packet through the connection's own
-    /// packet writer before closing; the recovery here sits outside the
-    /// loop that owns the writer and its sequence number, so the client
-    /// observes the close without a final ERR packet.
+    /// connection while the server keeps serving. Command recovery attempts
+    /// ERR 1105 through the retained packet writer before cleanup, preserving
+    /// its sequence, compression and buffered response bytes.
     Panicked(String),
 }
 
@@ -1023,10 +1021,8 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     );
     let shutdown = cancellation.clone();
     let mut commands = ConnectionCommandCounts::default();
-    // Go `conn.go` `Run`'s deferred `recover()`: a panic anywhere in the
-    // command loop ends THIS connection, not the process. The lease and
-    // every session resource release by drop during the unwind, and the
-    // worker thread above stays alive to serve the next socket.
+    // Keep worker containment for setup or cleanup panics. Command Run owns
+    // its own recovery while the live session and framed writer still exist.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         serve_connection_inner(
             stream,
@@ -1043,16 +1039,10 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
         )
     }))
     .unwrap_or_else(|payload| {
-        let message = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_owned())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "non-string panic payload".to_owned());
-        eprintln!(
-            "{{\"event\":\"connection_panic\",\"connection_id\":{},\"error\":{message:?}}}",
-            lease.id()
-        );
-        Err(MysqlConnectionError::Panicked(message))
+        Err(MysqlConnectionError::Panicked(connection_panic_message(
+            payload,
+            lease.id(),
+        )))
     });
     let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
@@ -1240,7 +1230,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
-    let mut capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
+    let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
             write_error(
@@ -1547,9 +1537,118 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         deprecate_eof: capabilities & CLIENT_DEPRECATE_EOF != 0,
         protocol_41,
     };
+    CommandConnection {
+        prepared: PreparedStatementRegistry::default(),
+        engine,
+        reader,
+        output,
+        close,
+    }
+    .run(CommandContext {
+        connection_id,
+        commands,
+        command_limiter,
+        capabilities,
+        framing,
+        cancellation,
+        stream_for_watch,
+    })
+}
+
+/// Go clientConn retains its session, statements and PacketIO until Run's
+/// recovery has attempted the error response. A raw socket cannot replace this
+/// writer: its codec, pending bytes and sequence belong to the same connection.
+struct CommandConnection<S: QuerySession> {
+    prepared: PreparedStatementRegistry,
+    engine: S,
+    reader: PacketIoReader<BufReader<ClientStream>>,
+    output: PacketIoWriter<ClientErrorRecordingOutput<ClientStream>>,
+    close: ConnectionClose,
+}
+
+struct CommandContext<'a> {
+    connection_id: u64,
+    commands: &'a mut ConnectionCommandCounts,
+    command_limiter: &'a CommandLimiter,
+    capabilities: u32,
+    framing: WireFraming,
+    cancellation: ConnectionCancellation,
+    stream_for_watch: TcpStream,
+}
+
+impl<S: QuerySession> CommandConnection<S> {
+    fn run(
+        mut self,
+        context: CommandContext<'_>,
+    ) -> Result<ConnectionReport, MysqlConnectionError> {
+        let connection_id = context.connection_id;
+        let protocol_41 = context.framing.protocol_41;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_connection_commands(&mut self, context)
+        })) {
+            Ok(result) => result,
+            Err(payload) => {
+                let message = connection_panic_message(payload, connection_id);
+                let sequence = self.output.sequence();
+                // Go attempts writeError even after a partial response and
+                // logs a failed write without replacing the original panic.
+                if let Err(error) = write_error(
+                    &mut self.output,
+                    sequence,
+                    ER_UNKNOWN_ERROR,
+                    *b"HY000",
+                    &message,
+                    protocol_41,
+                ) {
+                    eprintln!("{{\"event\":\"connection_panic_write_error\",\"connection_id\":{connection_id},\"error\":{error:?}}}");
+                }
+                Err(MysqlConnectionError::Panicked(message))
+            }
+        }
+    }
+}
+
+impl<S: QuerySession> Drop for CommandConnection<S> {
+    fn drop(&mut self) {
+        // Go closeConn closes transport before statements/session. Shutdown
+        // also retires retained raw clones (KILL handles and test/session refs).
+        self.close.request();
+    }
+}
+
+fn connection_panic_message(payload: Box<dyn std::any::Any + Send>, connection_id: u64) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_owned());
+    eprintln!("{{\"event\":\"connection_panic\",\"connection_id\":{connection_id},\"error\":{message:?}}}");
+    message
+}
+
+fn run_connection_commands<S: QuerySession>(
+    connection: &mut CommandConnection<S>,
+    context: CommandContext<'_>,
+) -> Result<ConnectionReport, MysqlConnectionError> {
+    let CommandConnection {
+        prepared,
+        engine,
+        reader,
+        output,
+        close,
+    } = connection;
+    let CommandContext {
+        connection_id,
+        commands,
+        command_limiter,
+        mut capabilities,
+        framing,
+        cancellation,
+        stream_for_watch,
+    } = context;
+    let protocol_41 = framing.protocol_41;
     let mut queries = 0_u64;
     let mut last_metrics_sql_type = "general";
-    let mut prepared = PreparedStatementRegistry::default();
     // Go `clientConn.lastActive`: the moment the previous command finished;
     // `dispatch` observes the idle gap before every command (`conn.go:1446`).
     let mut last_active = std::time::Instant::now();
@@ -1617,6 +1716,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
             Err(error) => return Err(error.into()),
         };
+        output.set_sequence(reader.sequence());
         if let Some(sequence) = reader.compressed_sequence() {
             output.set_compressed_sequence(sequence);
         }
@@ -1650,7 +1750,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 Ok(command) => command,
                 Err(error) => {
                     write_error(
-                        &mut output,
+                        output,
                         1,
                         ER_UNKNOWN_COM_ERROR,
                         ER_UNKNOWN_COM_ERROR_STATE,
@@ -1688,7 +1788,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                      Opens: 0  Flush tables: 0  Open tables: 0  \
                      Queries per second avg: 0.000"
                     );
-                    crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
+                    crate::connection_writers::write_payload(output, 1, line.as_bytes())?;
                 }
                 Command::Refresh(data) => {
                     // Go `handleRefresh` (`pkg/server/conn.go:2875-2882`) treats
@@ -1699,7 +1799,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // response and consume it before sending their next command.
                     let Some(subcommand) = data.first().copied() else {
                         write_error(
-                            &mut output,
+                            output,
                             1,
                             ER_UNKNOWN_ERROR,
                             *b"HY000",
@@ -1713,7 +1813,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         match engine.execute_write("FLUSH PRIVILEGES") {
                             Ok(Some(outcome)) => {
                                 write_affected_rows_ok_with_info(
-                                    &mut output,
+                                    output,
                                     1,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
@@ -1722,7 +1822,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     protocol_41,
                                     &engine.statement_info(),
                                 )?;
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 queries += 1;
                                 next_sequence = 2;
                             }
@@ -1731,23 +1831,23 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             // no-op and still gets its trailing command OK.
                             Ok(None) => {}
                             Err(error) => {
-                                write_query_error(&mut output, &error, protocol_41)?;
-                                record_client_warnings(&output, &engine);
+                                write_query_error(output, &error, protocol_41)?;
+                                record_client_warnings(&*output, &*engine);
                                 return Ok(None);
                             }
                         }
                     }
                     write_ok(
-                        &mut output,
+                        output,
                         next_sequence,
                         engine.wire_status(),
                         engine.warning_count(),
                         protocol_41,
                     )?;
-                    record_client_warnings(&output, &engine);
+                    record_client_warnings(&*output, &*engine);
                 }
                 Command::Ping => write_ok(
-                    &mut output,
+                    output,
                     1,
                     engine.wire_status(),
                     engine.warning_count(),
@@ -1772,7 +1872,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(sql) => sql,
                         Err(()) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_PARSE_ERROR,
                                 *b"42000",
@@ -1793,7 +1893,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     {
                         Ok(statements) => statements,
                         Err(error) => {
-                            write_query_error(&mut output, &error, protocol_41)?;
+                            write_query_error(output, &error, protocol_41)?;
                             return Ok(None);
                         }
                     };
@@ -1802,7 +1902,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // OK packet.
                     if statements.is_empty() {
                         write_ok(
-                            &mut output,
+                            output,
                             1,
                             engine.wire_status(),
                             engine.warning_count(),
@@ -1839,7 +1939,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 // half: fresh warning context + the error row
                                 // (see the session's own record_parse_failure).
                                 engine.record_parse_failure(error.code, error.message.clone());
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
@@ -1871,7 +1971,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         let local_infile_path = match local_infile_path {
                             Ok(path) => path,
                             Err(error) => {
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
@@ -1883,14 +1983,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     *b"42000",
                                     "The used command is not allowed with this MySQL version",
                                 );
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
                             let mut request = Vec::with_capacity(path.len() + 1);
                             request.push(0xfb);
                             request.extend_from_slice(path.as_bytes());
-                            write_payload(&mut output, sequence, &request)?;
+                            write_payload(output, sequence, &request)?;
                             if let Some(compressed_sequence) = output.compressed_sequence() {
                                 reader.set_compressed_sequence(compressed_sequence);
                             }
@@ -1907,6 +2007,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 output.set_compressed_sequence(compressed_sequence);
                             }
                             sequence = reader.sequence();
+                            output.set_sequence(sequence);
                             let outcome = match &parsed {
                                 Some(stmt) => engine.execute_local_infile_parsed(sql, stmt, &data),
                                 None => engine.execute_local_infile(sql, &data),
@@ -1914,7 +2015,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             match outcome {
                                 Ok(outcome) => {
                                     write_affected_rows_ok_with_info(
-                                        &mut output,
+                                        output,
                                         sequence,
                                         outcome.affected_rows,
                                         outcome.last_insert_id,
@@ -1923,19 +2024,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         protocol_41,
                                         &engine.statement_info(),
                                     )?;
-                                    record_client_warnings(&output, &engine);
+                                    record_client_warnings(&*output, &*engine);
                                     sequence = sequence.wrapping_add(1);
                                     queries += 1;
                                     continue;
                                 }
                                 Err(error) => {
-                                    write_query_error_at(
-                                        &mut output,
-                                        sequence,
-                                        &error,
-                                        protocol_41,
-                                    )?;
-                                    record_client_warnings(&output, &engine);
+                                    write_query_error_at(output, sequence, &error, protocol_41)?;
+                                    record_client_warnings(&*output, &*engine);
                                     aborted = true;
                                     break;
                                 }
@@ -1954,20 +2050,20 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 // own status is the answer -- there is no separate
                                 // transaction flag for this packet to get wrong.
                                 write_ok(
-                                    &mut output,
+                                    output,
                                     sequence,
                                     stamp(engine.wire_status()),
                                     engine.warning_count(),
                                     protocol_41,
                                 )?;
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 sequence = sequence.wrapping_add(1);
                                 queries += 1;
                                 continue;
                             }
                             Ok(None) => {}
                             Err(error) => {
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
@@ -1997,7 +2093,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             Ok(Some(outcome)) => {
                                 let info = engine.statement_info();
                                 write_affected_rows_ok_with_info(
-                                    &mut output,
+                                    output,
                                     sequence,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
@@ -2006,15 +2102,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     protocol_41,
                                     &info,
                                 )?;
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 sequence = sequence.wrapping_add(1);
                                 queries += 1;
                                 continue;
                             }
                             Ok(None) => {}
                             Err(error) => {
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
-                                record_client_warnings(&output, &engine);
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
+                                record_client_warnings(&*output, &*engine);
                                 aborted = true;
                                 break;
                             }
@@ -2095,12 +2191,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             watcher: Some(watcher),
                             socket: &stream_for_watch,
                         };
-                        let mut result = match execute_statement(&mut engine, sql, parsed.as_ref())
-                        {
+                        let mut result = match execute_statement(engine, sql, parsed.as_ref()) {
                             Ok(result) => result,
                             Err(error) => {
                                 drop(stop_watcher);
-                                write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
                             }
@@ -2114,7 +2209,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 result.info().to_vec(),
                                 result_encoder,
                             );
-                            let mut sink = TcpResultSetSink::new(&mut output, sequence);
+                            let mut sink = TcpResultSetSink::new(output, sequence);
                             let written = write_connection_result_set_to_sink(
                                 result.source(),
                                 &mut sink,
@@ -2134,7 +2229,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                             Err(error) if !error.bytes_escaped => {
                                 write_error(
-                                    &mut output,
+                                    output,
                                     1,
                                     error.cause.code,
                                     error.cause.state,
@@ -2142,7 +2237,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     protocol_41,
                                 )?;
                                 drop(result);
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 aborted = true;
                                 break;
                             }
@@ -2170,7 +2265,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 elapsed,
                             ));
                         }
-                        record_client_warnings(&output, &engine);
+                        record_client_warnings(&*output, &*engine);
                     }
                     if !aborted {
                         engine.flush_multi_statement_warning();
@@ -2211,7 +2306,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(sql) => sql,
                         Err(()) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_PARSE_ERROR,
                                 *b"42000",
@@ -2261,7 +2356,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         } else {
                                             general_error
                                         };
-                                        write_query_error(&mut output, &reported, protocol_41)?;
+                                        write_query_error(output, &reported, protocol_41)?;
                                         return Ok(None);
                                     }
                                 },
@@ -2274,7 +2369,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(statement_id) => statement_id,
                         Err(message) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
@@ -2296,9 +2391,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     ) {
                         Ok(packets) => packets,
                         Err(error) => {
-                            drop(prepared.remove(statement_id, &mut engine));
+                            drop(prepared.remove(statement_id, engine));
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
@@ -2308,7 +2403,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             return Ok(None);
                         }
                     };
-                    let mut sink = TcpResultSetSink::new(&mut output, 1);
+                    let mut sink = TcpResultSetSink::new(output, 1);
                     for packet in packets {
                         sink.write_payload(&packet)
                             .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
@@ -2324,7 +2419,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(statement_id) => statement_id,
                         Err(message) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
@@ -2335,12 +2430,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     };
                     let Some(statement) = prepared.get(statement_id) else {
-                        write_unknown_statement(
-                            &mut output,
-                            statement_id,
-                            "stmt_execute",
-                            protocol_41,
-                        )?;
+                        write_unknown_statement(output, statement_id, "stmt_execute", protocol_41)?;
                         return Ok(None);
                     };
                     // The statement is immutable after PREPARE.  Cloning the
@@ -2360,14 +2450,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     let long_data_error =
                         prepared.long_data_error(statement_id, engine.connection_id());
                     let bound_params = prepared.bound_params(statement_id).to_vec();
-                    prepared.clear_bound_params(statement_id, &mut engine);
+                    prepared.clear_bound_params(statement_id, engine);
                     // Go calls `stmt.Reset()` after parsing every execute packet,
                     // successful or not. The retained cursor therefore closes
                     // before a replacement execution starts, and a malformed
                     // replacement cannot leave the old cursor fetchable.
                     drop(prepared.take_cursor(statement_id));
                     if let Some(error) = long_data_error {
-                        write_query_error(&mut output, &error, protocol_41)?;
+                        write_query_error(output, &error, protocol_41)?;
                         return Ok(None);
                     }
                     let execute_packet = match split_prepared_statement_execute(
@@ -2378,7 +2468,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(packet) => packet,
                         Err(error) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
                                 *b"HY000",
@@ -2390,7 +2480,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     };
                     if execute_packet.statement_id() != statement_id {
                         write_error(
-                            &mut output,
+                            output,
                             1,
                             ER_UNKNOWN_ERROR,
                             *b"HY000",
@@ -2408,7 +2498,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(execute) => execute,
                         Err(error) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
                                 *b"HY000",
@@ -2436,7 +2526,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             match engine.control_transaction(&sql) {
                                 Ok(Some(_)) => {
                                     write_ok(
-                                        &mut output,
+                                        output,
                                         1,
                                         engine.wire_status(),
                                         engine.warning_count(),
@@ -2450,16 +2540,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 // disagreement between the two, not a client
                                 // error: report it rather than answering OK.
                                 Ok(None) => write_error(
-                                    &mut output,
+                                    output,
                                     1,
                                     ER_UNKNOWN_ERROR,
                                     *b"HY000",
                                     "prepared transaction control was not applied",
                                     protocol_41,
                                 )?,
-                                Err(error) => write_query_error(&mut output, &error, protocol_41)?,
+                                Err(error) => write_query_error(output, &error, protocol_41)?,
                             }
-                            record_client_warnings(&output, &engine);
+                            record_client_warnings(&*output, &*engine);
                         }
                         PreparedStatement::PointRead(point_read) => {
                             // A point read binds a signed-integer clustered handle; a
@@ -2468,7 +2558,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 Ok(parameters) => parameters,
                                 Err(message) => {
                                     write_error(
-                                        &mut output,
+                                        output,
                                         1,
                                         ER_UNKNOWN_ERROR,
                                         *b"HY000",
@@ -2484,8 +2574,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 let error = execution
                                     .err()
                                     .expect("the prepared point read error was just observed");
-                                write_query_error(&mut output, &error, protocol_41)?;
-                                record_client_warnings(&output, &engine);
+                                write_query_error(output, &error, protocol_41)?;
+                                record_client_warnings(&*output, &*engine);
                                 return Ok(None);
                             }
                             let mut result = execution
@@ -2493,7 +2583,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
                                 match open_prepared_cursor(
                                     &mut result,
-                                    &mut output,
+                                    output,
                                     framing,
                                     result_encoder,
                                 ) {
@@ -2505,13 +2595,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     }
                                     Err(PreparedCursorOpenError::Query(error)) => {
                                         drop(result);
-                                        write_query_error(&mut output, &error, protocol_41)?;
+                                        write_query_error(output, &error, protocol_41)?;
                                     }
                                     Err(PreparedCursorOpenError::Transport(error)) => {
                                         return Err(error);
                                     }
                                 }
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 return Ok(None);
                             }
                             let write_result = {
@@ -2523,7 +2613,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     result.info().to_vec(),
                                     result_encoder,
                                 );
-                                let mut sink = TcpResultSetSink::new(&mut output, 1);
+                                let mut sink = TcpResultSetSink::new(output, 1);
                                 write_connection_binary_result_set_to_sink(
                                     result.source(),
                                     &mut sink,
@@ -2538,7 +2628,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                                 Err(error) if !error.bytes_escaped => {
                                     write_error(
-                                        &mut output,
+                                        output,
                                         1,
                                         error.cause.code,
                                         error.cause.state,
@@ -2553,7 +2643,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             }
                             drop(result);
-                            record_client_warnings(&output, &engine);
+                            record_client_warnings(&*output, &*engine);
                         }
                         PreparedStatement::General(general) => {
                             // Go's read-only cursor: the execute materializes the
@@ -2567,7 +2657,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                         match open_prepared_cursor(
                                             &mut result,
-                                            &mut output,
+                                            output,
                                             framing,
                                             result_encoder,
                                         ) {
@@ -2579,11 +2669,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                             }
                                             Err(PreparedCursorOpenError::Query(error)) => {
                                                 drop(result);
-                                                write_query_error(
-                                                    &mut output,
-                                                    &error,
-                                                    protocol_41,
-                                                )?;
+                                                write_query_error(output, &error, protocol_41)?;
                                             }
                                             Err(PreparedCursorOpenError::Transport(error)) => {
                                                 return Err(error);
@@ -2600,13 +2686,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         write_outcome = Some(outcome);
                                     }
                                     Err(error) => {
-                                        write_query_error(&mut output, &error, protocol_41)?;
+                                        write_query_error(output, &error, protocol_41)?;
                                     }
                                 }
                                 if let Some(outcome) = write_outcome {
                                     let info = engine.statement_info();
                                     write_affected_rows_ok_with_info(
-                                        &mut output,
+                                        output,
                                         1,
                                         outcome.affected_rows,
                                         outcome.last_insert_id,
@@ -2618,7 +2704,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     queries += 1;
                                     commands.stmt_execute_successes += 1;
                                 }
-                                record_client_warnings(&output, &engine);
+                                record_client_warnings(&*output, &*engine);
                                 return Ok(None);
                             }
                             let mut write_outcome = None;
@@ -2633,7 +2719,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                             result.info().to_vec(),
                                             result_encoder,
                                         );
-                                        let mut sink = TcpResultSetSink::new(&mut output, 1);
+                                        let mut sink = TcpResultSetSink::new(output, 1);
                                         write_connection_binary_result_set_to_sink(
                                             result.source(),
                                             &mut sink,
@@ -2648,7 +2734,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         }
                                         Err(error) if !error.bytes_escaped => {
                                             write_error(
-                                                &mut output,
+                                                output,
                                                 1,
                                                 error.cause.code,
                                                 error.cause.state,
@@ -2670,13 +2756,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     write_outcome = Some(outcome);
                                 }
                                 Err(error) => {
-                                    write_query_error(&mut output, &error, protocol_41)?;
+                                    write_query_error(output, &error, protocol_41)?;
                                 }
                             }
                             if let Some(outcome) = write_outcome {
                                 let info = engine.statement_info();
                                 write_affected_rows_ok_with_info(
-                                    &mut output,
+                                    output,
                                     1,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
@@ -2688,7 +2774,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
                             }
-                            record_client_warnings(&output, &engine);
+                            record_client_warnings(&*output, &*engine);
                         }
                         PreparedStatement::Write(write) => {
                             // A write answers with one OK packet and never a result
@@ -2701,7 +2787,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 Ok(outcome) => {
                                     let info = engine.statement_info();
                                     write_affected_rows_ok_with_info(
-                                        &mut output,
+                                        output,
                                         1,
                                         outcome.affected_rows,
                                         outcome.last_insert_id,
@@ -2714,10 +2800,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     commands.stmt_execute_successes += 1;
                                 }
                                 Err(error) => {
-                                    write_query_error(&mut output, &error, protocol_41)?;
+                                    write_query_error(output, &error, protocol_41)?;
                                 }
                             }
-                            record_client_warnings(&output, &engine);
+                            record_client_warnings(&*output, &*engine);
                         }
                     }
                     engine.finish_execute_stmt(execute_started.elapsed());
@@ -2740,12 +2826,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 statement_id,
                                 usize::from(long_data.parameter_id),
                                 &long_data.chunk,
-                                &mut engine,
+                                engine,
                             ) {
                                 Ok(()) => {}
                                 Err(AppendParamError::UnknownStatement) => {
                                     write_unknown_statement(
-                                        &mut output,
+                                        output,
                                         statement_id,
                                         "stmt_send_longdata",
                                         protocol_41,
@@ -2754,7 +2840,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 // Go `AppendParam`'s own
                                 // `ErrWrongArguments("stmt_send_longdata")`.
                                 Err(AppendParamError::ParameterOutOfRange) => write_error(
-                                    &mut output,
+                                    output,
                                     1,
                                     ER_WRONG_ARGUMENTS,
                                     *b"HY000",
@@ -2764,7 +2850,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         }
                         Err(error) => write_error(
-                            &mut output,
+                            output,
                             1,
                             ER_WRONG_ARGUMENTS,
                             *b"HY000",
@@ -2776,7 +2862,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 Command::StmtClose(bytes) => {
                     commands.stmt_close_commands += 1;
                     if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                        drop(prepared.remove(statement_id, &mut engine));
+                        drop(prepared.remove(statement_id, engine));
                     }
                 }
                 Command::StmtReset(bytes) => {
@@ -2784,13 +2870,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     match decode_prepared_statement_close(&bytes) {
                         // The payload is the same four-byte statement id the
                         // close command carries.
-                        Ok(statement_id) => match prepared.reset(statement_id, &mut engine) {
+                        Ok(statement_id) => match prepared.reset(statement_id, engine) {
                             Ok(cursor) => {
                                 drop(cursor);
                                 // COM_STMT_RESET runs no statement, so like Go's
                                 // `writeOK` here it reports the buffer as it stands.
                                 write_affected_rows_ok(
-                                    &mut output,
+                                    output,
                                     1,
                                     0,
                                     0,
@@ -2801,7 +2887,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 )?;
                             }
                             Err(()) => write_unknown_statement(
-                                &mut output,
+                                output,
                                 statement_id,
                                 "stmt_reset",
                                 protocol_41,
@@ -2809,7 +2895,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         },
                         Err(error) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_WRONG_ARGUMENTS,
                                 *b"HY000",
@@ -2825,7 +2911,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         Ok(decoded) => decoded,
                         Err(_error) => {
                             write_error(
-                                &mut output,
+                                output,
                                 1,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
@@ -2836,18 +2922,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     };
                     if prepared.get(statement_id).is_none() {
-                        write_unknown_statement(
-                            &mut output,
-                            statement_id,
-                            "stmt_fetch",
-                            protocol_41,
-                        )?;
+                        write_unknown_statement(output, statement_id, "stmt_fetch", protocol_41)?;
                         return Ok(None);
                     }
                     let Some(mut cursor) = prepared.take_cursor(statement_id) else {
                         // Go `ErrSpCursorNotOpen` (1326).
                         write_error(
-                            &mut output,
+                            output,
                             1,
                             1326,
                             *b"24000",
@@ -2869,7 +2950,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
                     };
                     match cursor.write_fetch(
-                        &mut output,
+                        output,
                         row_count,
                         // Go clears the statement warning buffer before FETCH,
                         // then writes the live transaction status.
@@ -2883,7 +2964,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                         Err(CursorFetchError::Protocol { message, sequence }) => {
                             write_error(
-                                &mut output,
+                                output,
                                 sequence,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
@@ -2900,13 +2981,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     let name = String::from_utf8_lossy(&name).into_owned();
                     match engine.select_database(&name) {
                         Ok(()) => write_ok(
-                            &mut output,
+                            output,
                             1,
                             engine.wire_status(),
                             engine.warning_count(),
                             protocol_41,
                         )?,
-                        Err(error) => write_query_error(&mut output, &error, protocol_41)?,
+                        Err(error) => write_query_error(output, &error, protocol_41)?,
                     }
                 }
                 Command::SetOption(data) => {
@@ -2933,7 +3014,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     }
                     write_eof_or_ok(
-                        &mut output,
+                        output,
                         1,
                         framing.result_set(
                             engine.wire_status(),
@@ -2949,7 +3030,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 | Command::ResetConnection
                 | Command::Shutdown
                 | Command::ChangeUser(_) => write_error(
-                    &mut output,
+                    output,
                     1,
                     ER_UNKNOWN_COM_ERROR,
                     ER_UNKNOWN_COM_ERROR_STATE,
@@ -2962,7 +3043,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // message.  1047/08S01 belongs only to a known command that
                     // this node refuses, not to an unowned command byte.
                     let error = unknown_command_error(code);
-                    write_query_error(&mut output, &error, protocol_41)?;
+                    write_query_error(output, &error, protocol_41)?;
                 }
             }
             Ok(None)

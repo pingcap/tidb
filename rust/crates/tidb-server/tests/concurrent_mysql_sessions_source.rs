@@ -434,8 +434,8 @@ fn command_token_releases_on_error_no_response_quit_protocol_failure_and_panic()
         write_packet(&mut client, 0, &command);
         reader.set_sequence(1);
         // Go attempts an ERR before closing a panicked connection. This test
-        // checks retirement and permit release; panic error delivery has its
-        // own unresolved writer-ownership finding.
+        // checks retirement and permit release; panic_recovery_source checks
+        // the error response across commands and negotiated transports.
         match reader.read_packet() {
             Ok(packet) => {
                 assert_eq!(packet[0], 0xff);

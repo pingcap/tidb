@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-02",
+  "integration_start": "725d442d2901a2c31450a3b0e0ceea684b68c314",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "N06 existing server recovery boundary; not complete Go package acceptance",
+  "red": {
+    "command": "cargo test --locked -p tidb-server --test all panic_recovery_ -- --test-threads=1",
+    "production": "unchanged 725d442d2901a2c31450a3b0e0ceea684b68c314",
+    "exit_code": 101,
+    "failed": 2,
+    "observation": "Authenticated immediate/partial-result command panics close without ERR (EndOfStream)."
+  },
+  "green": {
+    "command": "cargo test --locked -p tidb-server --test all panic_recovery_ -- --test-threads=1",
+    "exit_code": 0,
+    "passed": 5,
+    "cases": 25,
+    "matrix": "Four command/result/upload scenarios x plain/TLS x none/zlib/zstd, plus failed error write preserving original panic."
+  },
+  "affected": [
+    {
+      "command": "cargo test --locked -p tidb-server --test all forced_shutdown_cancels_an_inflight_com_query -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 209 filtered out; finished in 0.28s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all server_internal_packetio_source -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 204 filtered out; finished in 2.91s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all mysql_tls_source -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 204 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all resultset_writer_source -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 196 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all sql_node_lifecycle_source -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 209 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all fallible_process_shutdown_source -- --test-threads=1",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 207 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server command_token -- --test-threads=1",
+      "exit_code": 0,
+      "passed": 6
+    }
+  ],
+  "gates": [
+    {
+      "command": "cargo check --locked -p tidb-server --all-targets",
+      "exit_code": 0
+    },
+    {
+      "command": "make lint",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "rustfmt --edition 2021 --check rust/crates/tidb-server/src/mysql_connection.rs rust/crates/tidb-server/tests/panic_recovery_source.rs rust/crates/tidb-server/tests/concurrent_mysql_sessions_source.rs",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "TERM=xterm git -c core.hooksPath=hooks commit",
+      "cwd": "repository root",
+      "exit_code": 0,
+      "required_hook_build": "cd rust && cargo build --locked -p tidb-server"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "rust",
+      "exit_code": 0
+    }
+  ],
+  "not_run": [
+    "Full server/Go pkg/server acceptance suites (prior baseline failures documented in command-admission receipt)",
+    "Live TiKV/TiFlash cluster",
+    "sysbench/TPC-C/TPC-H/YCSB benchmarks"
+  ],
+  "final_publication_gate": "After the final amend, rerun (cd rust && cargo build --locked -p tidb-server) && git push origin HEAD:hparser-integration"
+}

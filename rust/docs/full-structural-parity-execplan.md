@@ -2413,3 +2413,21 @@ The focused receipt records broader-suite results, baseline controls, lint and
 mandatory publication gates. No complete pkg/server/pkg/util acceptance or
 workload speedup is claimed. Native client-rust and its dependency are current
 and unchanged at 19a56cc.
+
+## Connection recovery ownership (2026-10-02)
+
+
+The [connection recovery receipt](connection-recovery-ownership-execplan.md)
+repairs N06 in the existing server. The session, prepared registry and framed
+writer now survive command unwind until Go's ERR attempt; transport retirement
+precedes session drop. Shared reader/writer sequences include LOCAL INFILE,
+TLS and negotiated compression. The outer-only recovery substitute is removed
+from command handling; setup/cleanup retain worker containment.
+
+Two authenticated command/partial-result regressions fail before repair.
+Five final tests cover 25 cases, and 37 affected admission/protocol/shutdown
+cases pass. All-target compilation, formatting and root lint pass. The focused
+receipt records the mandatory commit-hook and fresh pre-push locked builds.
+The register is 86 tracked, 71 unresolved (65 open/six partial), 15 repaired.
+Client-rust and its dependency remain current at 19a56cc. No complete Go
+pkg/server acceptance, cluster correctness sweep or benchmark gain is claimed.

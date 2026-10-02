@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 72,
-    "repaired": 14
+    "unresolved": 71,
+    "repaired": 15
   },
   "findings": [
     {
@@ -96,12 +96,12 @@
     },
     {
       "id": "N06",
-      "status": "open",
+      "status": "repaired",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; source-confirmed and observed:** connection panic recovery sits outside the protocol writer lifetime. It logs and returns Panicked after unwinding the writer, so a panicking query closes without Go's attempted ERR packet. The leaked watcher socket is repaired, but error delivery still lacks the source recovery owner.",
-      "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs::serve_mysql_connection_with_runtime` catches after `serve_connection_inner` unwinds; `tests/panic_recovery_source.rs` currently expects no reply; command admission regression observes EOF after the watcher cleanup repair.",
-      "go_owner": "Master `pkg/server/conn.go::Run` retains clientConn and invokes writeError(ctx, fmt.Errorf(\"%v\", r)) before Close in its deferred recovery. Preserve writer/protocol/session cleanup ownership through recovery, including TLS/compression and partial writes; do not bypass the framed writer with a raw socket error.",
-      "review_basis": "Discovered during N02 maintenance from 38b6db0197, Go master 93a01d31f6. Source Run lines 1158-1180 attempts an ERR; the Rust controlled panic closes without one. Permit release and watcher retirement are covered by the repair receipt, not acceptance of the remaining error-delivery lifecycle."
+      "finding": "**Recorded recovery-owner mismatch repaired:** command recovery retains the session, prepared registry and live framed writer, attempts 1105/HY000 through that writer, then closes transport before session retirement. Buffered rows, TLS, compression and the current request/upload sequence survive recovery. Failed writes preserve the original panic outcome; command permits and watchers retire during unwind.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs::CommandConnection`, `run_connection_commands`; `tests/panic_recovery_source.rs`; [repair receipt](../../connection-recovery-ownership-execplan.md)",
+      "go_owner": "Master `pkg/server/conn.go::Run`, `writeError` and `closeConn` retain clientConn through the error attempt, then retire transport and session. This repairs the recorded existing-owner boundary; setup panics and complete pkg/server acceptance are not claimed.",
+      "review_basis": "Maintenance from integration 725d442d29 with master 93a01d31f6/native 19a56cc unchanged. Two authenticated command/partial-result regressions fail before repair. Five final tests cover 25 cases across plain/TLS, none/zlib/zstd, prepared dispatch, uploads, buffered partial results, failed error writes and transport/session cleanup order. Thirty-seven affected admission/protocol/shutdown tests pass. See ../../connection-recovery-ownership-execplan.md."
     },
     {
       "id": "D01",
@@ -790,10 +790,10 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "N02",
-    "scope": "Existing server command admission and unwind retirement; no complete pkg/server/pkg/util acceptance",
-    "integration_start": "38b6db0197b1f564310d9e483e62783d182ff41e",
+    "id": "N06",
+    "scope": "Existing command recovery, framed error delivery and ordered connection retirement; no complete pkg/server acceptance",
+    "integration_start": "725d442d2901a2c31450a3b0e0ceea684b68c314",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../command-admission-ownership-execplan.md"
+    "receipt": "../../connection-recovery-ownership-execplan.md"
   }
 }
