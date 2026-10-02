@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -52,6 +53,72 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
+
+func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
+	return tables.MockTableFromMeta(&model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("mv"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *tp,
+				State:     model.StatePublic,
+			},
+		},
+	}).(*tables.TableCommon)
+}
+
+func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+
+	inputTp := targetTp.Clone()
+	inputTp.DelFlag(mysql.NotNullFlag)
+	require.NoError(t, validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
+
+	unsignedInputTp := inputTp.Clone()
+	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
+	err := validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
+	require.ErrorContains(t, err, "type mismatch")
+}
+
+type mviewCompleteDeltaApplyOpenProbeChild struct {
+	exec.BaseExecutor
+	opened bool
+}
+
+func (e *mviewCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
+	e.opened = true
+	return nil
+}
+
+func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
+	sctx := mock.NewContext()
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+	childSchema := expression.NewSchema(&expression.Column{
+		Index:   0,
+		RetType: targetTp,
+	})
+	child := &mviewCompleteDeltaApplyOpenProbeChild{
+		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
+	}
+	applyExec := &MViewCompleteDeltaApplyExec{
+		BaseExecutor:                  exec.NewBaseExecutor(sctx, nil, 0, child),
+		TargetTable:                   targetTbl,
+		TargetHandleCols:              plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
+		CurrentWritableInputColIDs:    []int{1},
+		RecomputedWritableInputColIDs: []int{0},
+	}
+
+	err := applyExec.Open(context.Background())
+	require.ErrorContains(t, err, "writable input col id 1")
+	require.False(t, child.opened)
+}
 
 func TestStorageClassTransitionTimeZoneSetup(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
