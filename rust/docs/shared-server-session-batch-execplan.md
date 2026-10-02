@@ -24,9 +24,9 @@ a separate obligation after its configured-server consumer disappears.
 - [x] Remove the bounded factories/dispatch and table-count routing for both stores.
 - [x] Migrate configuration, runtime tests and active smoke scripts; retire obsolete private-telemetry campaigns with a coverage inventory.
 - [x] Verify startup, SQL/protocol, schema refresh and shutdown; root lint and all-target checking pass.
-- [ ] Run the actual hook build and fresh pre-push locked server build.
+- [x] Run the actual hook build and fresh pre-push locked server build (7.95s and 13.04s respectively).
 - [x] Update both findings and record validation/retired-artifact coverage.
-- [ ] Publish the batch to hparser-integration after the locked build gates.
+- [x] Publish code commit b4876275dc892a8897b95fbf6e6acbc7e3e499fe to hparser-integration and verify the exact remote SHA.
 
 ## Context and Orientation
 
@@ -148,6 +148,9 @@ and root lint pass. The register has 67 unresolved findings (59 open, eight
 partial), 19 repaired, 86 tracked. No complete Go package or benchmark acceptance
 is claimed. See parity/current-audit/shared-server-session-repair.md and its
 validation JSON for exact commands, removed artifacts and remaining live gates.
+The code commit b4876275dc892a8897b95fbf6e6acbc7e3e499fe is published and
+remote-verified. This final receipt update repeats the hook and pre-push build
+gates; its final branch-head verification is recorded in the task thread.
 
 ## Interfaces and Dependencies
 

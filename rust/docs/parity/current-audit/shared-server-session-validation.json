@@ -278,5 +278,14 @@
     "No Go race package acceptance",
     "No sysbench/TPC-C/TPC-H/YCSB performance measurements"
   ],
-  "publication": "Actual hook build and fresh pre-push locked build required; publication result in task thread"
+  "publication": {
+    "code_commit": "b4876275dc892a8897b95fbf6e6acbc7e3e499fe",
+    "branch": "origin/hparser-integration",
+    "actual_hook_locked_build": "passed (7.95s)",
+    "fresh_pre_push_locked_build": "passed (13.04s)",
+    "push": "passed",
+    "remote_exact_sha": "verified",
+    "worktree_after_push": "clean",
+    "receipt_update": "Repeats actual hook build and fresh pre-push locked build; final head recorded in task thread."
+  }
 }

@@ -136,9 +136,12 @@ No full-workspace or full unfiltered integration-suite pass is claimed.
 
 ## Publication and limits
 
-The actual hooks/pre-commit locked server build and a fresh locked server build
-immediately before push are mandatory; their publication outcome is recorded in
-the task thread. No hook is bypassed.
+Code commit `b4876275dc892a8897b95fbf6e6acbc7e3e499fe` is published to
+hparser-integration and was verified against the exact remote SHA with a clean
+worktree. The actual hooks/pre-commit locked server build passed in 7.95s; a fresh
+locked server build immediately before push passed in 13.04s. This final receipt
+update repeats both gates; its branch-head verification is recorded in the task
+thread. No hook is bypassed.
 
 Live TiKV peer-DDL, leader movement, combined blocked shutdown, Go race suites and
 sysbench/TPC-C/TPC-H/YCSB performance comparisons were not run in this batch.
