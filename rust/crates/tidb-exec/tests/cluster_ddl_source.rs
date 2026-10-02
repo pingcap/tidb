@@ -1617,6 +1617,189 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
 }
 
 #[test]
+fn persisted_check_source_state_errors() {
+    for (action, code, message) in [
+        (
+            ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+            8210,
+            "Invalid constraint state: delete only",
+        ),
+        (
+            ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+            8204,
+            "Invalid DDL job%!(EXTRA string=constraint, model.SchemaState=public)",
+        ),
+        (ActionType::ACTION_ALTER_CHECK_CONSTRAINT, 0, ""),
+    ] {
+        // Each action starts from the same independently persisted metadata.
+        let mut store = bootstrapped();
+        let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
+        let table_id = create.created_id.unwrap();
+        apply(&mut store, &create);
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let mut table = catalog
+            .find_table("u6", "checked_table")
+            .unwrap()
+            .1
+            .clone_like_go();
+        table.constraints = vec![tidb_model::table::ConstraintInfo {
+            name: tidb_ast::CiString::new("MixedCheck"),
+            expr_string: "`a` > 0".into(),
+            state: SchemaState::DELETE_ONLY,
+            enforced: true,
+            ..Default::default()
+        }]
+        .into();
+        store.put(
+            key::table_kv_key(112, table_id),
+            value::serialize_table_info(&table).unwrap(),
+        );
+        let mut job = Job::default();
+        job.id = 991;
+        job.schema_id = 112;
+        job.table_id = table_id;
+        job.table_name = "checked_table".into();
+        job.type_ = action;
+        job.state = JobState::RUNNING;
+        job.version = JobVersion::V2;
+        if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+            let mut submitted = table.constraints.get(0).unwrap().read().clone();
+            // Go skips the cross-table name check after first publication.
+            submitted.state = SchemaState::WRITE_ONLY;
+            job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
+                constraint: tidb_model::GoField::new(Some(GoShared::new(submitted))),
+            })));
+        } else {
+            job.fill_args(Some(GoShared::new(tidb_model::CheckConstraintArgs {
+                constraint_name: tidb_model::GoField::new(tidb_ast::CiString::new("MixedCheck")),
+                enforced: tidb_model::GoField::new(true),
+            })));
+        }
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(
+                &mut job,
+                false,
+                "112",
+                &table_id.to_string(),
+                true,
+                &mut mutations,
+            )
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let before_table = store.pairs[&key::table_kv_key(112, table_id)].clone();
+        // A successful Go action re-encodes decoded args even without a
+        // schema mutation. Failed actions must keep the original raw args.
+        let mut active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let mut raw: serde_json::Value =
+            serde_json::from_str(&active.job.raw_args.as_ref().unwrap().get()).unwrap();
+        raw["unknown"] = serde_json::json!("retained only on error");
+        active.job.raw_args =
+            Some(tidb_model::PersistedRawJson::from_string(raw.to_string()).unwrap());
+        mutations.clear();
+        queue
+            .append_update(&mut active, false, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let step = plan_worker_step(&mut store, job.id, 2_000).unwrap();
+        assert!(!step.terminal, "{action}");
+        assert_eq!(step.write.schema_version, 0, "{action}");
+        if code != 0 {
+            let DdlPlanError::Source(error) = step.run_error.as_ref().unwrap() else {
+                panic!("{action}: expected the Go source error");
+            };
+            assert_eq!(error.code().value(), code, "{action}");
+            assert_eq!(error.message(), message, "{action}");
+            assert!(
+                error.stack().is_some(),
+                "{action}: GenWithStackByArgs captures a stack"
+            );
+        } else {
+            assert!(
+                step.run_error.is_none(),
+                "ALTER has no default switch error"
+            );
+        }
+        apply(&mut store, &step.write);
+        assert_eq!(
+            store.pairs[&key::table_kv_key(112, table_id)],
+            before_table,
+            "{action}"
+        );
+        let reloaded = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        assert_eq!(reloaded.job.error_count, i64::from(code != 0), "{action}");
+        assert_eq!(reloaded.job.state, JobState::RUNNING, "{action}");
+        let raw: serde_json::Value =
+            serde_json::from_str(&reloaded.job.raw_args.as_ref().unwrap().get()).unwrap();
+        assert_eq!(
+            raw.get("unknown").is_some(),
+            code != 0,
+            "{action}: raw-arg ownership"
+        );
+        if code != 0 {
+            let persisted = reloaded.job.error.as_ref().unwrap().read();
+            assert_eq!(persisted.message(), message);
+            assert_eq!(persisted.rfc_code(), format!("ddl:{code}"));
+        } else {
+            assert!(reloaded.job.error.is_none());
+        }
+    }
+}
+
+#[test]
+fn persisted_check_source_missing_constraint_keeps_original_name() {
+    for action in [
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+    ] {
+        let mut store = bootstrapped();
+        let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
+        let table_id = create.created_id.unwrap();
+        apply(&mut store, &create);
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let mut job = Job::default();
+        job.id = 992;
+        job.schema_id = 112;
+        job.table_id = table_id;
+        job.table_name = "checked_table".into();
+        job.type_ = action;
+        job.state = JobState::RUNNING;
+        job.version = JobVersion::V2;
+        job.fill_args(Some(GoShared::new(tidb_model::CheckConstraintArgs {
+            constraint_name: tidb_model::GoField::new(tidb_ast::CiString::new("MissingCheck")),
+            enforced: tidb_model::GoField::new(true),
+        })));
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(
+                &mut job,
+                false,
+                "112",
+                &table_id.to_string(),
+                true,
+                &mut mutations,
+            )
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let step = plan_worker_step(&mut store, job.id, 2_000).unwrap();
+        assert!(step.terminal);
+        apply(&mut store, &step.write);
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let history = history.iter().find(|j| j.id == job.id).unwrap();
+        let error = history.error.as_ref().unwrap().read();
+        assert_eq!(error.rfc_code(), "ddl:3940");
+        assert_eq!(error.message(), "Constraint 'MissingCheck' does not exist.");
+        let sql = tidb_exec::cluster_ddl::ddl_job_error_to_sql_error(&error);
+        assert_eq!(sql.message, error.message());
+    }
+}
+
+#[test]
 fn persisted_check_lookup_failures_cancel_before_retry() {
     for action in [
         ActionType::ACTION_ADD_CHECK_CONSTRAINT,

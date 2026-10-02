@@ -365,6 +365,24 @@ fn test_log_call_and_rust_native_stack_capture() {
             || rendered.contains("terror_source"),
         "stack =\n{rendered}"
     );
+
+    let prototype = TerrorError::registered_standard(
+        TerrorClass::Schema,
+        TerrorCode::new(errcode::ErrDupFieldName as isize),
+        errname::ErrDupFieldName,
+    );
+    let error = prototype.generate_with_stack_by_args(&[FormatArg::from("界".repeat(193))]);
+    assert_eq!(
+        error.message(),
+        format!("Duplicate column name '{}'", "界".repeat(192))
+    );
+    assert!(prototype.equal(Some(&error)));
+    assert_eq!(error.rfc_code(), "schema:1060");
+    assert!(error.stack().is_some());
+    assert_eq!(prototype.message(), errname::ErrDupFieldName.raw);
+    let unformatted = prototype.generate_with_stack_by_args(&[]);
+    assert_eq!(unformatted.message(), prototype.message());
+    assert!(unformatted.stack().is_some());
 }
 
 #[test]

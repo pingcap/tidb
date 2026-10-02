@@ -689,6 +689,26 @@ mod schema_sync_tests {
     }
 
     #[test]
+    fn check_validation_source_message() {
+        let error = check_constraint_validation_table_error(
+            tidb_executor::kv_table::KvTableError::CheckConstraintViolated("MixedCheck".into()),
+            "MixedCheck",
+        );
+        let DdlPlanError::Source(source) = error else {
+            panic!("CHECK validation must return its typed source error");
+        };
+        assert_eq!(source.rfc_code(), "ddl:3819");
+        assert_eq!(
+            source.message(),
+            "Check constraint 'mixedcheck' is violated."
+        );
+        assert!(source.stack().is_some());
+        let sql = persisted_job_error(&source);
+        assert_eq!(sql.code, 3819);
+        assert_eq!(sql.message, source.message());
+    }
+
+    #[test]
     fn worker_retry_wait_uses_owner_retirement() {
         let (stop, stopped) = channel();
         assert!(wait_ddl_retry(&stopped, Duration::ZERO).is_ok());
@@ -2085,8 +2105,11 @@ fn check_constraint_validation_table_error(
 ) -> DdlPlanError {
     match error {
         tidb_executor::kv_table::KvTableError::CheckConstraintViolated(name) => {
+            use tidb_hack::GoToLower;
             tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-                .generate(format!("Check constraint '{name}' is violated."))
+                .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from(
+                    name.go_to_lower(),
+                )])
                 .into()
         }
         other => DdlPlanError::Encode(format!(

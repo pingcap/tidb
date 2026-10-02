@@ -457,6 +457,22 @@ impl TerrorError {
         generated
     }
 
+    /// Source `GenWithStackByArgs`: formats the prototype's catalog message,
+    /// applying its precision and redaction rules before capturing a stack.
+    pub fn generate_with_stack_by_args(&self, arguments: &[FormatArg]) -> Self {
+        if arguments.is_empty() {
+            // Go GetMsg returns the template verbatim when there are no args.
+            return self.generate_with_stack(self.message());
+        }
+        let formatted = SqlError::new_f(
+            self.protocol_code(),
+            self.message(),
+            self.redact_arg_pos,
+            arguments,
+        );
+        self.generate_with_stack(formatted.message)
+    }
+
     /// Source `FastGen` formatting over the shared Go-format authority.
     pub fn fast_generate(&self, format: &str, arguments: &[FormatArg]) -> Self {
         let formatted =

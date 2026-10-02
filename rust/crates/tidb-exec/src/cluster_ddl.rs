@@ -49,6 +49,7 @@ use tidb_ast::{
 use tidb_datatype::new_collation_enabled;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_ddl_notifier::SchemaChangeEvent;
+use tidb_error::mysql::FormatArg;
 use tidb_error::terror::TerrorError;
 use tidb_meta::{key, value};
 use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
@@ -3518,7 +3519,6 @@ fn plan_persisted_check_constraint_job_step(
     let mut validation = None;
     let mut terminal = false;
     let mut schema_changed = true;
-    let mut update_raw_args = true;
 
     match active.job.type_ {
         ActionType::ACTION_ADD_CHECK_CONSTRAINT => {
@@ -3541,10 +3541,9 @@ fn plan_persisted_check_constraint_job_step(
                         DdlPlanError::from(
                             tidb_util::dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
-                                .generate(format!(
-                                    "Duplicate column name '{}'",
-                                    constraint_handle.read().name
-                                )),
+                                .generate_with_stack_by_args(&[FormatArg::from(
+                                    constraint_handle.read().name.original(),
+                                )]),
                         ),
                     ));
                 }
@@ -3565,7 +3564,7 @@ fn plan_persisted_check_constraint_job_step(
                     DdlPlanError::from(
                         tidb_util::dbterror::CLASS_SCHEMA
                             .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
-                            .generate(format!("Duplicate check constraint name '{wanted}'.")),
+                            .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                     ),
                 ));
             }
@@ -3618,10 +3617,9 @@ fn plan_persisted_check_constraint_job_step(
                         return Err(DdlPlanError::from(
                             tidb_util::dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
-                                .generate(format!(
-                                    "Duplicate check constraint name '{}'.",
-                                    constraint.name
-                                )),
+                                .generate_with_stack_by_args(&[FormatArg::from(
+                                    constraint.name.lowercase(),
+                                )]),
                         ));
                     }
                     for dependency in &constraint.constraint_cols {
@@ -3632,10 +3630,10 @@ fn plan_persisted_check_constraint_job_step(
                         }) {
                             return Err(DdlPlanError::from(
                                 tidb_util::dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN
-                                    .generate(format!(
-                                        "Check constraint '{}' refers to non-existing column '{}'.",
-                                        constraint.name, dependency
-                                    )),
+                                    .generate_with_stack_by_args(&[
+                                        FormatArg::from(constraint.name.original()),
+                                        FormatArg::from(dependency.original()),
+                                    ]),
                             ));
                         }
                     }
@@ -3680,7 +3678,14 @@ fn plan_persisted_check_constraint_job_step(
                         state => {
                             return Err(DdlPlanError::from(
                                 tidb_util::dbterror::ERR_INVALID_DDL_STATE
-                                    .generate(format!("invalid CHECK constraint state {state:?}")),
+                                    .generate_with_stack_by_args(&[
+                                        FormatArg::from("constraint"),
+                                        FormatArg::new(
+                                            state.to_string(),
+                                            state.0.to_string(),
+                                            "model.SchemaState",
+                                        ),
+                                    ]),
                             ));
                         }
                     }
@@ -3701,7 +3706,9 @@ fn plan_persisted_check_constraint_job_step(
                         active,
                         DdlPlanError::from(
                             tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
-                                .generate(format!("Constraint '{wanted}' does not exist.")),
+                                .generate_with_stack_by_args(&[FormatArg::from(
+                                    args.read().constraint_name.get().original(),
+                                )]),
                         ),
                     )
                 })?;
@@ -3745,10 +3752,18 @@ fn plan_persisted_check_constraint_job_step(
                             .into();
                         terminal = true;
                     }
-                    state => {
+                    _ => {
                         return Err(DdlPlanError::from(
-                            tidb_util::dbterror::ERR_INVALID_DDL_STATE
-                                .generate(format!("invalid CHECK constraint state {state:?}")),
+                            tidb_util::dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(
+                                &[
+                                    FormatArg::from("constraint"),
+                                    FormatArg::new(
+                                        info.state.to_string(),
+                                        info.state.0.to_string(),
+                                        "model.SchemaState",
+                                    ),
+                                ],
+                            ),
                         ));
                     }
                 }
@@ -3770,7 +3785,9 @@ fn plan_persisted_check_constraint_job_step(
                         active,
                         DdlPlanError::from(
                             tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
-                                .generate(format!("Constraint '{wanted}' does not exist.")),
+                                .generate_with_stack_by_args(&[FormatArg::from(
+                                    args.constraint_name.get().original(),
+                                )]),
                         ),
                     )
                 })?;
@@ -3818,11 +3835,10 @@ fn plan_persisted_check_constraint_job_step(
                         });
                         terminal = true;
                     }
-                    state => {
-                        return Err(DdlPlanError::from(
-                            tidb_util::dbterror::ERR_INVALID_DDL_STATE
-                                .generate(format!("invalid CHECK constraint state {state:?}")),
-                        ));
+                    _ => {
+                        // Go's enforcing switch has no default mutation/error.
+                        // Only checkpoint the unchanged job in this state.
+                        schema_changed = false;
                     }
                 }
             }
@@ -3862,7 +3878,6 @@ fn plan_persisted_check_constraint_job_step(
         active.job.last_schema_version = schema_version;
         diff
     } else {
-        update_raw_args = false;
         SchemaDiff::default()
     };
 
@@ -3901,7 +3916,9 @@ fn plan_persisted_check_constraint_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
         },
-        update_raw_args,
+        // Go runOneJobStep re-encodes decoded arguments after any successful
+        // action, independently of whether the schema version changed.
+        update_raw_args: true,
         run_error: None,
     })
 }

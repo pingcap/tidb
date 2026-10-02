@@ -50,6 +50,14 @@ Rust history remains readable. D05 stays partial and all 75 structural IDs remai
 unresolved; other producers, transaction reset, retry configuration/metrics and
 complete action ownership still require work. No new action is enabled.
 
+The [CHECK error generation follow-up](../../ddl-error-generation-execplan.md)
+removes handwritten CHECK diagnostics in favor of the existing shared source
+catalog formatter. It preserves original missing-constraint names, lowercased
+validation names and Go's distinct ADD/DROP/ALTER state-error decisions. A
+successful CHECK step re-encodes its decoded arguments even without a schema
+mutation; failed steps retain their original raw arguments. D05 remains partial;
+other action producers and full package/runtime ownership are not accepted.
+
 The [2026-10-01 full register reconciliation](remaining-structure-review.md) adds
 11 previously unregistered source-confirmed boundaries, records the statement-summary
 SQL probe, and corrects stale T03 status. [Machine-readable findings](structural-findings.json)

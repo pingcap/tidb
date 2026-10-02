@@ -2302,3 +2302,21 @@ This repairs an existing owner without accepting an upstream package. D05 remain
 partial for remaining numeric/string producers, complete taxonomy, transaction
 reset, configurable retry timing/metrics and whole-action effects. Counts remain
 85 tracked, 75 unresolved and ten repaired. No disabled action is activated.
+
+
+### CHECK error generation and argument checkpoints, 2026-10-02
+
+
+Following published 4eb761a825, remove nine handwritten CHECK error-generation
+sites using the existing shared Go catalog formatter and native stack capture.
+Source state selection distinguishes ADD's invalid state, DROP's invalid job
+and ALTER's no-error switch fallthrough. Missing names preserve original case;
+validation names use Go lowercase. Remove CHECK's schema-dependent argument
+encoding flag: all successful steps re-encode decoded args, while the shared
+worker preserves original raw args after failure. Red/green tests, a Go message
+oracle and publication evidence are in ddl-error-generation-execplan.md.
+
+All 187 scoped tests, the affected all-target check, lint and audit consistency
+pass. D05 stays partial and counts remain 85 tracked, 75 unresolved, ten repaired.
+Other producers, action effects, reset/retry/metric policy and whole-package
+acceptance remain open; no benchmark or distributed interoperability is claimed.
