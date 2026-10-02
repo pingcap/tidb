@@ -6766,6 +6766,8 @@ fn apply_partition_change(
         })
         .collect();
     let mut kv_table = KvTable::new(stored.id, kv_columns);
+    kv_table.set_max_column_id(stored.max_column_id);
+    kv_table.set_max_index_id(stored.max_index_id);
     kv_table.name = table.to_owned();
     kv_table.set_tiflash_replica(
         stored
@@ -12682,6 +12684,8 @@ fn derive_materialized_view_query_columns(
         })
         .collect();
     let mut kv_table = tidb_executor::KvTable::new(base.id, kv_columns);
+    kv_table.set_max_column_id(base.max_column_id);
+    kv_table.set_max_index_id(base.max_index_id);
     kv_table.name = base.name.original().to_owned();
     let mut catalog = Catalog::default();
     catalog.create_database(schema);

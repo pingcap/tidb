@@ -321,6 +321,7 @@ pub mod check_constraint;
 pub mod column_field_type;
 mod column_types;
 mod generated_modify;
+mod index_changes;
 pub mod index_prefix;
 mod indexes;
 pub mod mview_helpers;

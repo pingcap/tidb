@@ -1,0 +1,313 @@
+{
+  "integration_start": "5d9c7433a53c7211f0948a48bd876795103d39ae",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_ddl_ -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s",
+        "test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 1474 filtered out; finished in 0.39s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_alter_column -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 2102 filtered out; finished in 0.06s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_expression_indexes -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 2083 filtered out; finished in 0.07s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_index_key_length -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2116 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_foreign_key -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s",
+        "test result: FAILED. 56 passed; 1 failed; 0 ignored; 0 measured; 2062 filtered out; finished in 0.17s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server cluster_session::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s",
+        "test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 465 filtered out; finished in 0.10s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 210 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "exit_code": 0,
+      "results": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.62s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib kv_table::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1513 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all serial_create_table_like_source:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.36s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 525 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all index_change_add_drop_lifecycle_source:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 1 passed; 0 failed; 4 ignored; 0 measured; 527 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "exit_code": 0
+    }
+  ],
+  "regression_controls": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_ddl_multi_schema_change_sql -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_expression_index_rename_preserves_identity' (30977111) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:653:5:",
+        "assertion `left == right` failed",
+        "  left: \"_V$_expr_i_0\"",
+        " right: \"_V$_expr_j_0\"",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_checks_random_layout_before_forced_rebase ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_expression_index_rename_preserves_identity ... FAILED",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_alter_index_combinations_refuse_conflicts' (30977101) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:752:5:",
+        "assertion `left == right` failed",
+        "  left: 8200",
+        " right: 1176",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_drop_columns_parallel_second_run_reports_1091 ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_drop_indexes_parallel_matches_go_notes ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_change_columns_combinations_refuse_conflicts ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_alter_index_combinations_refuse_conflicts ... FAILED",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_rename_noops_do_not_create_conflicts' (30977133) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:633:57:",
+        "alter table t rename index i to i: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same index 'i'\" }",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_random_rebases ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_rename_noops_do_not_create_conflicts ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_rebases_after_invalid_force_base ... ok",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_metadata_uses_original_names' (30977132) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:611:9:",
+        "assertion `left == right` failed: alter table t add index fresh(b), rename index fresh to renamed",
+        "  left: 8200",
+        " right: 1176",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_metadata_uses_original_names ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_drop_indexes_removes_all_and_use_index_answers_1176 ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_action_restores_dropped_index_entries ... ok",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_rename_indexes_applies_and_combinations_measured' (30977137) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:587:6:",
+        "Go retains the index through rename, then completes its column drop: KeyNotExists { key: \"t\", table: \"t\" }",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_rename_columns_combinations_refuse_conflicting_operations ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_change_columns_applies_rename_and_change ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_alter_columns_applies_rename_and_default ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_column_preserves_statement_image ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_rename_indexes_applies_and_combinations_measured ... FAILED",
+        "test result: FAILED. 26 passed; 5 failed; 0 ignored; 0 measured; 1491 filtered out; finished in 0.08s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib alter_drop_column_and_rename_its_index_uses_original_schema -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_alter_column::alter_drop_column_and_rename_its_index_uses_original_schema' (30983273) panicked at crates/tidb-session/src/tests_alter_column.rs:49:10:",
+        "called `Result::unwrap()` on an `Err` value: KeyNotExists { key: \"i\", table: \"t\" }",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_alter_column::alter_drop_column_and_rename_its_index_uses_original_schema ... FAILED",
+        "",
+        "failures:",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2117 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_index_ -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_jobs_exclude_conditional_noops' (31004285) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:689:70:",
+        "alter table t add index if not exists i(missing), drop index i: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same index 'i'\" }",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_rename_noops_do_not_create_conflicts' (31004289) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:633:57:",
+        "alter table t rename index i to i: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same index 'i'\" }",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_jobs_use_resolved_anonymous_names' (31004286) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:720:5:",
+        "assertion `left == right` failed",
+        "  left: \"Unsupported modify column: operate same index 'a'\"",
+        " right: \"Unsupported modify column: operate same index 'a_2'\"",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_jobs_use_resolved_anonymous_names ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_rename_noops_do_not_create_conflicts ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_jobs_exclude_conditional_noops ... FAILED",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_metadata_uses_original_names' (31004287) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:611:9:",
+        "assertion `left == right` failed: alter table t add index fresh(b), rename index fresh to renamed",
+        "  left: 8200",
+        " right: 1176",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_metadata_uses_original_names ... FAILED",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_preparation_precedes_backfill' (31004288) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:706:5:",
+        "assertion `left == right` failed: job admission precedes unique backfill",
+        "  left: 1062",
+        " right: 1176",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_preparation_precedes_backfill ... FAILED",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 1520 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_index_ -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_preparation_preserves_action_error_order' (31068500) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:742:9:",
+        "assertion `left == right` failed: alter table t add column a int, rename index missing to j",
+        "  left: 1176",
+        " right: 1060",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_single_statement_and_noop_admission' (31068502) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:751:62:",
+        "called `Result::unwrap()` on an `Err` value: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same index 'i'\" }",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_jobs_use_resolved_anonymous_names ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_preparation_preserves_action_error_order ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_single_statement_and_noop_admission ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_preparation_precedes_backfill ... ok",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_rename_noops_do_not_create_conflicts ... ok",
+        "test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 1520 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_index_notes_follow_action_admission_order -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_notes_follow_action_admission_order' (31081206) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:771:9:",
+        "assertion `left == right` failed: alter table t add column a int, drop index if exists missing",
+        "  left: 1",
+        " right: 0",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_notes_follow_action_admission_order ... FAILED",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1527 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_index_identity_survives_sibling_replacement -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_index_identity_survives_sibling_replacement' (31139361) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1352:9:",
+        "assertion `left == right` failed: rename index i to j",
+        "  left: [\"j\"]",
+        " right: [\"fresh\"]",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_index_identity_survives_sibling_replacement ... FAILED",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1529 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_retains_metadata_id_high_water_marks -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_retains_metadata_id_high_water_marks' (31139392) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1366:9:",
+        "assertion `left == right` failed: t",
+        "  left: 2",
+        " right: 3",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_retains_metadata_id_high_water_marks ... FAILED",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1529 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib alter_readded_column_does_not_read_retired_column_bytes -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_alter_column::alter_readded_column_does_not_read_retired_column_bytes' (31141714) panicked at crates/tidb-session/src/tests_alter_column.rs:614:9:",
+        "assertion `left == right` failed",
+        "  left: [[\"1\", \"2\"]]",
+        " right: [[\"1\", \"7\"]]",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_alter_column::alter_readded_column_does_not_read_retired_column_bytes ... FAILED",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2118 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-server a_cluster_table_restores_metadata_id_high_water_marks -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'cluster_session::tests::a_cluster_table_restores_metadata_id_high_water_marks' (31149668) panicked at crates/tidb-server/src/cluster_session.rs:1792:9:",
+        "assertion `left == right` failed",
+        "  left: 2",
+        " right: 18",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test cluster_session::tests::a_cluster_table_restores_metadata_id_high_water_marks ... FAILED",
+        "",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 492 filtered out; finished in 0.02s"
+      ]
+    }
+  ],
+  "baseline_foreign_key": {
+    "command": "cargo test --locked -p tidb-session --lib a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name -- --nocapture",
+    "exit_code": 101,
+    "evidence": [
+      "thread 'tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name' (31106939) panicked at crates/tidb-session/src/tests_foreign_key.rs:1379:5:",
+      "CREATE TABLE `c` (",
+      "  `id` int DEFAULT NULL,",
+      "  `pid` int DEFAULT NULL,",
+      "  KEY `fk_1` (`pid`),",
+      "  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`)",
+      ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+      "test tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name ... FAILED",
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2117 filtered out; finished in 0.04s"
+    ]
+  },
+  "current_foreign_key": [
+    "thread 'tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name' (31166296) panicked at crates/tidb-session/src/tests_foreign_key.rs:1379:5:",
+    "CREATE TABLE `c` (",
+    "  `id` int DEFAULT NULL,",
+    "  `pid` int DEFAULT NULL,",
+    "  KEY `fk_1` (`pid`),",
+    "  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`)",
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "test tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name ... FAILED",
+    "test result: FAILED. 56 passed; 1 failed; 0 ignored; 0 measured; 2062 filtered out; finished in 0.17s"
+  ],
+  "publication": "Actual pre-commit hook passed cargo build --locked -p tidb-server (17.47s). Receipt amendment repeats the hook. The required final publication command reruns the locked server build immediately before push, then checks remote SHA and clean checkout; final results are recorded in the thread. No whole-package acceptance."
+}

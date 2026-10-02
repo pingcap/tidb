@@ -508,8 +508,8 @@ fn multi_schema_change_drop_indexes_removes_all_and_use_index_answers_1176() {
 /// `rename index t to x, rename index t1 to x1` applies both; the old names
 /// stop resolving (1176) and the new ones serve reads. The combination arms
 /// Go refuses with 8200 are rejected by the Rust preflight before either
-/// index mutation. The drop-column/rename-index arm remains a separate
-/// no-op-vs-missing-index compatibility boundary.
+/// index mutation. Dropping a covering column ultimately removes its renamed
+/// index too, after the rename has been admitted against the original table.
 #[test]
 fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     // rename index
@@ -580,23 +580,223 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     )
     .unwrap();
     run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
-    let error = alter(
+    alter(
         &mut catalog,
         "alter table t drop column a, rename index t to x",
     )
-    // Go treats the rename as a no-op after dropping the covering column.
-    // That admission difference remains; a Rust refusal must still roll back
-    // the whole statement rather than publish the earlier column removal.
-    .expect_err("the local dispatcher still refuses the now-missing index");
+    .expect("Go retains the index through rename, then completes its column drop");
+    assert!(index_names(&catalog, "t").is_empty());
+    assert_eq!(text_rows(&catalog, "select * from t"), vec![["2", "3"]]);
+}
+
+#[test]
+fn multi_schema_change_index_metadata_uses_original_names() {
+    for (sql, code) in [
+        (
+            "alter table t add index fresh(b), rename index fresh to renamed",
+            1176,
+        ),
+        ("alter table t drop column a, rename index i to j", 1061),
+        ("alter table t drop index j, rename index i to j", 1061),
+        ("alter table t rename index missing to missing", 1176),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "create table t (a int, b int, index i(a), index j(b))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("insert into t values (1,2)", &mut catalog, &ctx()).unwrap();
+        let original = catalog.clone();
+        assert_eq!(
+            code_of(&alter(&mut catalog, sql).unwrap_err()),
+            code,
+            "{sql}"
+        );
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_index_rename_noops_do_not_create_conflicts() {
+    for (sql, remaining) in [
+        ("alter table t rename index i to i", vec!["i"]),
+        (
+            "alter table t rename index i to i, rename index i to j",
+            vec!["j"],
+        ),
+        ("alter table t drop index i, rename index i to i", vec![]),
+        ("alter table t drop column a, rename index i to i", vec![]),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int, index i(a))", &mut catalog).unwrap();
+        alter(&mut catalog, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(index_names(&catalog, "t"), remaining, "{sql}");
+    }
+}
+
+#[test]
+fn multi_schema_change_expression_index_rename_preserves_identity() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, index expr_i((a+1)))", &mut catalog).unwrap();
+    run_insert_on("insert into t values (1)", &mut catalog, &ctx()).unwrap();
+    let Some(crate::TableEntry::Kv(original)) = catalog.table_in("test", "t") else {
+        panic!("table missing");
+    };
+    let index_id = original.indexes()[0].id;
+    let hidden_id = original.columns()[1].id;
+    let keys = stored_keys(&catalog, "t");
+    alter(&mut catalog, "alter table t rename index expr_i to expr_j").unwrap();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+        panic!("table missing");
+    };
+    assert_eq!(table.columns()[1].name, "_V$_expr_j_0");
+    assert_eq!(table.columns()[1].id, hidden_id);
+    assert_eq!(table.indexes()[0].id, index_id);
+    assert_eq!(
+        stored_keys(&catalog, "t"),
+        keys,
+        "metadata rename does not rewrite keys"
+    );
+    assert_eq!(
+        text_rows(&catalog, "select a from t use index (expr_j) where a+1=2"),
+        vec![["1"]]
+    );
+    // Go can reuse the old expression-index name after its hidden columns move.
+    alter(&mut catalog, "alter table t add index expr_i((a+2))").unwrap();
+    assert_eq!(index_names(&catalog, "t"), vec!["expr_j", "expr_i"]);
+}
+
+#[test]
+fn multi_schema_change_index_jobs_exclude_conditional_noops() {
+    for (sql, expected) in [
+        (
+            "alter table t add index if not exists i(missing), drop index i",
+            vec![],
+        ),
+        (
+            "alter table t drop index if exists j, add index j(b)",
+            vec!["i", "j"],
+        ),
+        (
+            "alter table t add column (c int, index if not exists i(a)), drop index i",
+            vec![],
+        ),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int, index i(a))", &mut catalog).unwrap();
+        let context = ctx();
+        alter_on(&mut catalog, &context, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(index_names(&catalog, "t"), expected, "{sql}");
+        assert_eq!(context.warning_count(), 1, "one admission note: {sql}");
+    }
+}
+
+#[test]
+fn multi_schema_change_index_preparation_precedes_backfill() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int)", &mut catalog).unwrap();
+    run_insert_on("insert into t values (1),(1)", &mut catalog, &ctx()).unwrap();
+    let original = catalog.clone();
+    let error = alter(
+        &mut catalog,
+        "alter table t add unique index u(a), rename index missing to j",
+    )
+    .unwrap_err();
     assert_eq!(
         code_of(&error),
         1176,
-        "sequential: 't' went with the column"
+        "job admission precedes unique backfill"
     );
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+#[test]
+fn multi_schema_change_index_jobs_use_resolved_anonymous_names() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, index a(a))", &mut catalog).unwrap();
+    let error = alter(&mut catalog, "alter table t add index(a), add index(a)").unwrap_err();
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
-        text_rows(&catalog, "select * from t"),
-        vec![["1", "2", "3"]]
+        message_of(&error),
+        "Unsupported modify column: operate same index 'a_2'"
     );
+    let error = alter(&mut catalog, "alter table t drop index a, add index a(a)").unwrap_err();
+    assert_eq!(
+        code_of(&error),
+        1061,
+        "original duplicate before job conflicts"
+    );
+}
+
+#[test]
+fn multi_schema_change_index_preparation_preserves_action_error_order() {
+    for (sql, code) in [
+        (
+            "alter table t add column a int, rename index missing to j",
+            1060,
+        ),
+        (
+            "alter table t rename index missing to j, add column a int",
+            1176,
+        ),
+        ("alter table t drop column missing, add index i(a)", 1091),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int, index i(a))", &mut catalog).unwrap();
+        let original = catalog.clone();
+        assert_eq!(
+            code_of(&alter(&mut catalog, sql).unwrap_err()),
+            code,
+            "{sql}"
+        );
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_index_single_statement_and_noop_admission() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, index i(a))", &mut catalog).unwrap();
+    alter(&mut catalog, "alter table t rename index i to I").unwrap();
+    assert_eq!(index_names(&catalog, "t"), vec!["I"]);
+    let original = catalog.clone();
+    alter(&mut catalog, "alter table t alter index I visible").unwrap();
+    assert_unchanged_table(&catalog, &original, "t");
+    let error = alter(
+        &mut catalog,
+        "alter table t rename index I to i, add column b int",
+    )
+    .unwrap_err();
+    assert_eq!(
+        code_of(&error),
+        8200,
+        "case-only rename is still a conflicting multi-schema job"
+    );
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+#[test]
+fn multi_schema_change_index_notes_follow_action_admission_order() {
+    for (sql, notes) in [
+        (
+            "alter table t add column a int, drop index if exists missing",
+            0,
+        ),
+        (
+            "alter table t drop index if exists missing, add column a int",
+            1,
+        ),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int)", &mut catalog).unwrap();
+        let context = ctx();
+        assert_eq!(
+            code_of(&alter_on(&mut catalog, &context, sql).unwrap_err()),
+            1060
+        );
+        assert_eq!(context.warning_count(), notes, "{sql}");
+    }
 }
 
 /// Go `multi_schema_change_test.go:579-638::TestMultiSchemaChangeAlterIndex`
@@ -673,19 +873,15 @@ fn multi_schema_change_alter_index_combinations_refuse_conflicts() {
         "Unsupported modify column: operate same index 'idx'"
     );
 
-    // add and alter the same index
+    // Go validates the visibility source before collecting index conflicts.
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
     let error = alter(
         &mut catalog,
         "alter table t add index idx(a, b), alter index idx invisible",
     )
-    .expect_err("Go: 8200 Unsupported operate same index 'idx'");
-    assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 'idx'"
-    );
+    .expect_err("Go: 1176; a sibling ADD does not supply the original index");
+    assert_eq!(code_of(&error), 1176);
 }
 
 /// Go `multi_schema_change_test.go:849-868::TestMultiSchemaChangeModifyColumnOrderByStates`:
@@ -1144,4 +1340,43 @@ fn multi_schema_change_expression_index_success_applies() {
         text_rows(&catalog, "select * from t use index(idx1, idx2)"),
         vec![["1", "2", "10"], ["2", "1", "10"]]
     );
+}
+
+#[test]
+fn multi_schema_change_index_identity_survives_sibling_replacement() {
+    for action in ["rename index i to j", "drop index i"] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int, index i(b))", &mut catalog).unwrap();
+        run_insert_on("insert into t values (1,2)", &mut catalog, &ctx()).unwrap();
+        alter(
+            &mut catalog,
+            &format!("alter table t drop column b, add index fresh(a), {action}"),
+        )
+        .unwrap();
+        assert_eq!(index_names(&catalog, "t"), vec!["fresh"], "{action}");
+        assert_eq!(
+            text_rows(&catalog, "select * from t force index(fresh) where a=1"),
+            vec![["1"]]
+        );
+    }
+}
+
+#[test]
+fn multi_schema_change_retains_metadata_id_high_water_marks() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, b int, index i(b))", &mut catalog).unwrap();
+    alter(&mut catalog, "alter table t drop column b").unwrap();
+    run_create_table_on("create table copy like t", &mut catalog).unwrap();
+    for name in ["t", "copy"] {
+        alter(
+            &mut catalog,
+            &format!("alter table {name} add column c int default 7, add index j(a)"),
+        )
+        .unwrap();
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
+            panic!("table missing");
+        };
+        assert_eq!(table.columns()[1].id, 3, "{name}");
+        assert_eq!(table.indexes()[0].id, 2, "{name}");
+    }
 }

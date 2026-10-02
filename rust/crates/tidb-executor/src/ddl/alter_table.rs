@@ -36,7 +36,7 @@
 use std::collections::HashSet;
 
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
-use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
+use super::index_changes::{self, PreparedIndexChange};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use crate::kv_table::KvForeignKey;
@@ -156,7 +156,7 @@ pub fn run_alter_table_in(
 /// are stable.
 fn reject_multi_schema_same_column_or_index(
     actions: &[tidb_ast::AlterTableAction],
-    table: Option<&crate::KvTable>,
+    index_changes: &[Result<Option<PreparedIndexChange<'_>>, DriverError>],
 ) -> Result<(), DriverError> {
     let mut add_columns = Vec::new();
     let mut drop_columns = Vec::new();
@@ -189,92 +189,32 @@ fn reject_multi_schema_same_column_or_index(
         }
     }
 
-    fn add_index_spec(
-        index: &tidb_ast::IndexConstraintDefinition,
-        add_indexes: &mut Vec<String>,
-        relative_columns: &mut Vec<String>,
-    ) {
-        // Named indexes are the normal path. For an anonymous index Go picks
-        // the first column (or `expression_index`) before filling the
-        // MultiSchemaInfo; using the same seed is enough for conflict checks.
-        let name = index.name.clone().unwrap_or_else(|| {
-            index
-                .parts
-                .first()
-                .map(|part| match part {
-                    tidb_ast::IndexPart::Column { name, .. } => name.clone(),
-                    tidb_ast::IndexPart::Expr { .. } => "expression_index".to_owned(),
-                })
-                .unwrap_or_default()
-        });
-        add_indexes.push(name);
-        for part in &index.parts {
-            match part {
-                tidb_ast::IndexPart::Column { name, .. } => relative_columns.push(name.clone()),
-                tidb_ast::IndexPart::Expr { expr, .. } => {
-                    collect_expression_columns(expr, relative_columns)
-                }
-            }
-        }
-    }
-
-    // Go builds each index sub-job against the original table before
-    // checkOperateSameColAndIdx. An ADD COLUMN in this statement does not
-    // make its name available to buildIndexColumns (ddl/index.go).
-    let subjob_count: usize = actions
-        .iter()
-        .map(|action| match action {
-            tidb_ast::AlterTableAction::AddColumns {
-                columns,
-                constraints,
-                ..
-            } => columns.len() + constraints.len(),
-            _ => 1,
-        })
-        .sum();
-    if let Some(table) = table.filter(|_| subjob_count > 1) {
-        for action in actions {
-            let indexes: Vec<_> = match action {
-                tidb_ast::AlterTableAction::AddIndexConstraint(index) => vec![index],
-                tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
-                    .iter()
-                    .filter_map(|constraint| match constraint {
-                        tidb_ast::TableConstraint::Index(index) => Some(index),
-                        _ => None,
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            for index in indexes {
-                // Existing-index diagnostics and IF NOT EXISTS are handled
-                // before column validation by the normal index builder.
-                if index.name.as_ref().is_some_and(|name| {
-                    table
-                        .indexes()
-                        .iter()
-                        .any(|existing| existing.name.go_to_lower() == name.go_to_lower())
-                }) {
-                    continue;
-                }
-                for part in &index.parts {
-                    if let tidb_ast::IndexPart::Column { name, .. } = part {
-                        if !table
-                            .columns()
-                            .iter()
-                            .any(|column| column.name.go_to_lower() == name.go_to_lower())
-                        {
-                            return Err(DriverError::DdlCoded {
-                                errno: 1072,
-                                message: format!("column does not exist: {name}"),
-                            });
+    for (action, change) in actions.iter().zip(index_changes) {
+        match change
+            .as_ref()
+            .expect("admission errors checked before conflicts")
+        {
+            Some(PreparedIndexChange::Add { name, definition }) => {
+                add_indexes.push(name.clone());
+                for part in &definition.parts {
+                    match part {
+                        tidb_ast::IndexPart::Column { name, .. } => {
+                            relative_columns.push(name.clone())
+                        }
+                        tidb_ast::IndexPart::Expr { expr, .. } => {
+                            collect_expression_columns(expr, &mut relative_columns)
                         }
                     }
                 }
             }
+            Some(PreparedIndexChange::Drop { name, .. }) => drop_indexes.push(name.clone()),
+            Some(PreparedIndexChange::Rename { from, to, .. }) => {
+                add_indexes.push(from.clone());
+                drop_indexes.push(to.clone());
+            }
+            Some(PreparedIndexChange::Visibility { name, .. }) => alter_indexes.push(name.clone()),
+            None | Some(PreparedIndexChange::Note(_)) => {}
         }
-    }
-
-    for action in actions {
         match action {
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..
@@ -285,33 +225,9 @@ fn reject_multi_schema_same_column_or_index(
                 &mut position_columns,
                 &mut relative_columns,
             ),
-            tidb_ast::AlterTableAction::AddColumns {
-                columns,
-                constraints,
-                ..
-            } => {
-                for column in columns {
-                    add_column_spec(
-                        column,
-                        &tidb_ast::ColumnPosition::Default,
-                        &mut add_columns,
-                        &mut position_columns,
-                        &mut relative_columns,
-                    );
-                }
-                for constraint in constraints {
-                    if let tidb_ast::TableConstraint::Index(index) = constraint {
-                        add_index_spec(index, &mut add_indexes, &mut relative_columns);
-                    }
-                }
-            }
             tidb_ast::AlterTableAction::DropColumn { name, .. } => drop_columns.push(name.clone()),
             tidb_ast::AlterTableAction::DropPrimaryKey(_) => {
                 drop_indexes.push("PRIMARY".to_owned())
-            }
-            tidb_ast::AlterTableAction::DropIndex { name, .. } => drop_indexes.push(name.clone()),
-            tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
-                add_index_spec(index, &mut add_indexes, &mut relative_columns)
             }
             tidb_ast::AlterTableAction::ModifyColumn {
                 column, position, ..
@@ -346,18 +262,6 @@ fn reject_multi_schema_same_column_or_index(
                     add_columns.push(rename.to.clone());
                     drop_columns.push(rename.from.clone());
                 }
-            }
-            tidb_ast::AlterTableAction::RenameIndex(rename) => {
-                // Go's fillMultiSchemaInfo treats RENAME INDEX as an ADD of
-                // the source name plus a DROP of the target name. This makes
-                // both `DROP INDEX i, RENAME INDEX i TO j` and
-                // `ADD INDEX j(...), RENAME INDEX i TO j` collide in the
-                // same category order as the Go checker.
-                add_indexes.push(rename.from.clone());
-                drop_indexes.push(rename.to.clone());
-            }
-            tidb_ast::AlterTableAction::AlterIndexVisibility(alter) => {
-                alter_indexes.push(alter.name.clone())
             }
             tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
                 if let Some(name) = alter.name.last() {
@@ -435,6 +339,55 @@ fn collect_expression_columns(expression: &tidb_ast::Expr, output: &mut Vec<Stri
     expression.accept(&mut collector);
 }
 
+/// Go resolveAlterTableAddColumns expands all columns before constraints.
+/// The resulting specifications share the same original-schema admission.
+fn resolve_grouped_actions(
+    actions: &[tidb_ast::AlterTableAction],
+) -> std::borrow::Cow<'_, [tidb_ast::AlterTableAction]> {
+    if !actions
+        .iter()
+        .any(|action| matches!(action, tidb_ast::AlterTableAction::AddColumns { .. }))
+    {
+        return std::borrow::Cow::Borrowed(actions);
+    }
+    let mut resolved = Vec::new();
+    for action in actions {
+        if let tidb_ast::AlterTableAction::AddColumns {
+            if_not_exists,
+            columns,
+            constraints,
+        } = action
+        {
+            resolved.extend(columns.iter().cloned().map(|column| {
+                tidb_ast::AlterTableAction::AddColumn {
+                    if_not_exists: *if_not_exists,
+                    column,
+                    position: tidb_ast::ColumnPosition::Default,
+                }
+            }));
+            resolved.extend(
+                constraints
+                    .iter()
+                    .cloned()
+                    .map(|constraint| match constraint {
+                        tidb_ast::TableConstraint::Index(index) => {
+                            tidb_ast::AlterTableAction::AddIndexConstraint(index)
+                        }
+                        tidb_ast::TableConstraint::ForeignKey(key) => {
+                            tidb_ast::AlterTableAction::AddForeignKey(key)
+                        }
+                        tidb_ast::TableConstraint::Check(check) => {
+                            tidb_ast::AlterTableAction::AddCheck(check)
+                        }
+                    }),
+            );
+        } else {
+            resolved.push(action.clone());
+        }
+    }
+    std::borrow::Cow::Owned(resolved)
+}
+
 fn run_alter_table_in_inner(
     alter: &tidb_ast::AlterTableStmt,
     catalog: &mut Catalog,
@@ -449,11 +402,6 @@ fn run_alter_table_in_inner(
             format!("{database}.{name}"),
         )));
     }
-    let original_table = match catalog.table_in(&database, &name) {
-        Some(crate::TableEntry::Kv(table)) => Some(&**table),
-        _ => None,
-    };
-    reject_multi_schema_same_column_or_index(&alter.actions, original_table)?;
     super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     // Go's ALTER path checks the two guards in THIS order, and the corpus
     // asserts the difference: `ddl/db_integration`'s
@@ -464,6 +412,18 @@ fn run_alter_table_in_inner(
     // which reaches the DDL package and `ddl/executor.go:646`.
     super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
+
+    let actions = resolve_grouped_actions(&alter.actions);
+    let index_changes = actions
+        .iter()
+        .map(|action| {
+            index_changes::prepare(action, catalog, &database, &name, ctx, actions.len() > 1)
+        })
+        .collect::<Vec<_>>();
+    let admission_failed = index_changes.iter().any(Result::is_err);
+    if !admission_failed && actions.len() > 1 {
+        reject_multi_schema_same_column_or_index(&actions, &index_changes)?;
+    }
 
     // A constraint names its columns and its referenced table. DROP COLUMN
     // remains refused rather than corrupted; table and column renames are
@@ -477,8 +437,21 @@ fn run_alter_table_in_inner(
     // blanket refusal was: it lets a nullability change through and refuses
     // an incompatible type with Go's 3780/1832/1833 instead of 1105.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
-    reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &alter.actions)?;
-    for action in &alter.actions {
+    if !admission_failed {
+        reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &actions)?;
+    }
+    for (action, index_change) in actions.iter().zip(index_changes) {
+        if index_changes::is_index_change(action) {
+            // Retain source-order errors/notes while the other action kinds
+            // still perform their own admission in this loop. An inadmissible
+            // statement must never run an earlier index backfill or mutation.
+            if let Some(change) = index_change? {
+                if !admission_failed || matches!(&change, PreparedIndexChange::Note(_)) {
+                    change.execute(catalog, &database, &name, ctx)?;
+                }
+            }
+            continue;
+        }
         if participates && matches!(action, tidb_ast::AlterTableAction::DropColumn { .. }) {
             return Err(DriverError::unsupported(
                 "changing the columns of a table involved in a FOREIGN KEY is not supported yet",
@@ -502,51 +475,6 @@ fn run_alter_table_in_inner(
                     *if_not_exists,
                     ctx,
                 )?;
-            }
-            tidb_ast::AlterTableAction::AddColumns {
-                if_not_exists,
-                columns,
-                constraints,
-            } => {
-                // Go `resolveAlterTableAddColumns` expands the parenthesized
-                // form into all columns first, then all constraints. Index
-                // column names were validated against the original table
-                // before any action was applied.
-                for column in columns {
-                    add_column_action(
-                        catalog,
-                        &database,
-                        &name,
-                        column,
-                        &tidb_ast::ColumnPosition::Default,
-                        *if_not_exists,
-                        ctx,
-                    )?;
-                }
-                for constraint in constraints {
-                    match constraint {
-                        tidb_ast::TableConstraint::Index(index) => {
-                            add_index_constraint_action(catalog, &database, &name, index, ctx)?;
-                        }
-                        tidb_ast::TableConstraint::ForeignKey(definition) => {
-                            add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
-                        }
-                        tidb_ast::TableConstraint::Check(definition) => {
-                            if ctx.enable_check_constraint() {
-                                add_check_constraint_action(
-                                    catalog,
-                                    &database,
-                                    &name,
-                                    super::check_constraint::CheckConstraintInput {
-                                        definition: definition.clone(),
-                                        in_column: None,
-                                    },
-                                    ctx,
-                                )?;
-                            }
-                        }
-                    }
-                }
             }
             tidb_ast::AlterTableAction::ModifyColumn {
                 if_exists,
@@ -594,9 +522,6 @@ fn run_alter_table_in_inner(
                 if_exists,
                 name: column_name,
             } => drop_column_action(catalog, &database, &name, column_name, *if_exists, ctx)?,
-            tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
-                add_index_constraint_action(catalog, &database, &name, index, ctx)?;
-            }
             // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
             // table's TTL config; a table without one is a no-op.
             tidb_ast::AlterTableAction::RemoveTtl(_) => {
@@ -630,12 +555,6 @@ fn run_alter_table_in_inner(
                     catalog, &database, &name, &to_db, &to_name,
                 );
                 catalog.rename_table(&database, &name, &to_db, &to_name);
-            }
-            tidb_ast::AlterTableAction::DropIndex {
-                if_exists,
-                name: index_name,
-            } => {
-                drop_index_from_table(catalog, &database, &name, index_name, *if_exists, ctx)?;
             }
             tidb_ast::AlterTableAction::AddForeignKey(definition) => {
                 add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
@@ -689,24 +608,6 @@ fn run_alter_table_in_inner(
                     &name,
                     &rename.from,
                     &rename.to,
-                )?;
-            }
-            tidb_ast::AlterTableAction::RenameIndex(rename) => {
-                super::alter_metadata::rename_index_action(
-                    catalog,
-                    &database,
-                    &name,
-                    &rename.from,
-                    &rename.to,
-                )?;
-            }
-            tidb_ast::AlterTableAction::AlterIndexVisibility(alter) => {
-                super::alter_metadata::alter_index_visibility_action(
-                    catalog,
-                    &database,
-                    &name,
-                    &alter.name,
-                    alter.visibility != tidb_ast::IndexVisibility::Invisible,
                 )?;
             }
             tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
@@ -1668,80 +1569,6 @@ fn add_partition_action(
     };
     std::sync::Arc::make_mut(table).append_partitions(added_definitions, added_kind, ctx);
     Ok(())
-}
-
-/// Adds one ordinary or unique index from either spelling Go accepts:
-/// `ADD INDEX ...` and a constraint inside `ADD COLUMN (...)`.
-fn add_index_constraint_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    index: &tidb_ast::IndexConstraintDefinition,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let unique = matches!(
-        index.kind,
-        tidb_ast::IndexConstraintKind::Unique
-            | tidb_ast::IndexConstraintKind::UniqueKey
-            | tidb_ast::IndexConstraintKind::UniqueIndex
-    );
-    match index.kind {
-        tidb_ast::IndexConstraintKind::Key
-        | tidb_ast::IndexConstraintKind::Index
-        | tidb_ast::IndexConstraintKind::Unique
-        | tidb_ast::IndexConstraintKind::UniqueKey
-        | tidb_ast::IndexConstraintKind::UniqueIndex => {}
-        _ => {
-            return Err(DriverError::unsupported(
-                "this index kind is not supported yet",
-            ))
-        }
-    }
-    if index.options.condition.is_some()
-        && catalog.table_in(database, table_name).is_some_and(
-            |entry| matches!(entry, crate::TableEntry::Kv(table) if table.partition().is_some()),
-        )
-    {
-        return Err(crate::ddl::indexes::unsupported_partial_index(
-            "partial index on partitioned table is not supported",
-        ));
-    }
-    // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
-    // part's column name, or `expression_index` for an expression part, and
-    // keeps suffixing while that name is already present on the table.
-    let index_name = match index.name.clone() {
-        Some(name) => name,
-        None => {
-            let first_column = match index.parts.first() {
-                Some(tidb_ast::IndexPart::Column { name, .. }) => name.as_str(),
-                Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index",
-                None => "",
-            };
-            let existing = match catalog.table_in(database, table_name) {
-                Some(crate::TableEntry::Kv(table)) => table.indexes(),
-                _ => &[],
-            };
-            super::indexes::anonymous_index_name(existing, first_column)
-        }
-    };
-    let max_index_length = catalog.max_index_length();
-    add_index_to_table(
-        catalog,
-        database,
-        table_name,
-        super::indexes::IndexSpec {
-            name: &index_name,
-            comment: index.options.comment.as_deref().unwrap_or(""),
-            unique,
-            parts: &index.parts,
-            visible: is_visible(&index.options),
-            global: index.options.global,
-            if_not_exists: index.if_not_exists,
-            condition: index.options.condition.as_ref(),
-        },
-        ctx,
-        max_index_length,
-    )
 }
 
 /// One `ALTER TABLE ... ADD [CONSTRAINT name] FOREIGN KEY ...`.

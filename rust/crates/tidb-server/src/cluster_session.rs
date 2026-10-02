@@ -733,6 +733,8 @@ pub(crate) fn cluster_table(
         .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
         .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
     kv_table.set_max_constraint_id(table.max_constraint_id);
+    kv_table.set_max_column_id(table.max_column_id);
+    kv_table.set_max_index_id(table.max_index_id);
     // Go `TableInfo.ForeignKeys` ride the loaded `TableInfo` into every
     // `tables.Table`: the planner's FK triggers (`physicalop/foreign_key.go`)
     // build their `FKCheck`/`FKCascade` EXPLAIN leaves from them and the FK
@@ -1773,6 +1775,27 @@ mod tests {
         };
         assert!(message.contains("generated column v"));
         assert!(message.contains("missing"));
+    }
+
+    #[test]
+    fn a_cluster_table_restores_metadata_id_high_water_marks() {
+        let table = TableInfo {
+            id: 302,
+            name: CiString::new("t"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            max_column_id: 17,
+            max_index_id: 23,
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+        assert_eq!(loaded.next_column_id(), 18);
+        assert_eq!(loaded.next_index_id(), 24);
+        let copy = loaded.create_like(303, "copy", &mut || unreachable!());
+        assert_eq!(copy.next_column_id(), 18);
+        assert_eq!(copy.next_index_id(), 24);
     }
 
     #[test]

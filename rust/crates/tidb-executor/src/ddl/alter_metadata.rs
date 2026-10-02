@@ -16,8 +16,7 @@
 //! read, no index entry is rewritten, and no backfill runs.
 //!
 //! Inside: [`rename_column_action`] (Go `executor.RenameColumn`),
-//! [`rename_index_action`] (Go `executor.RenameIndex` and its
-//! `ValidateRenameIndex`), [`alter_index_visibility_action`] (Go
+//! [`alter_index_visibility_action`] (Go
 //! `executor.AlterIndexVisibility` and its `validateAlterIndexVisibility`),
 //! and [`alter_column_default_action`] (Go `executor.AlterColumn`).
 //!
@@ -141,52 +140,6 @@ pub(crate) fn rename_column_action(
     table.columns_mut()[offset].name = to.to_owned();
     let _ = table;
     crate::foreign_key::rewrite_column_name(catalog, database, table_name, from, to);
-    Ok(())
-}
-
-/// `ALTER TABLE ... RENAME {INDEX|KEY} old TO new`.
-///
-/// Go `ValidateRenameIndex` decides all three outcomes, and its ordering is
-/// what makes the recorded results in `ddl/db_rename.result` what they are:
-/// a missing source is 1176; a source and target that are the SAME SPELLING
-/// are ignored outright; and a target that already names a DIFFERENT index
-/// (compared case-INsensitively) is 1061 reporting the EXISTING index's
-/// spelling, not the one the statement wrote. The gap between those last two
-/// is why `rename index k2 to K2` succeeds -- it re-cases one index -- while
-/// `rename key k3 to K2` afterwards is `Duplicate key name 'K2'`.
-pub(crate) fn rename_index_action(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    from: &str,
-    to: &str,
-) -> Result<(), DriverError> {
-    let table = table_of(catalog, database, table_name)?;
-    if !table
-        .indexes()
-        .iter()
-        .any(|index| index.name.eq_ignore_ascii_case(from))
-    {
-        return Err(DriverError::KeyNotExists {
-            key: from.to_owned(),
-            table: table_name.to_owned(),
-        });
-    }
-    if from == to {
-        return Ok(());
-    }
-    if !from.eq_ignore_ascii_case(to) {
-        if let Some(existing) = table
-            .indexes()
-            .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(to))
-        {
-            return Err(DriverError::DuplicateKeyName(existing.name.clone()));
-        }
-    }
-    if let Some(index) = table.index_mut_by_name(from) {
-        index.name = to.to_owned();
-    }
     Ok(())
 }
 

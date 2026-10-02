@@ -38,6 +38,32 @@ use crate::tests_support::*;
 use crate::*;
 
 #[test]
+fn alter_drop_column_and_rename_its_index_uses_original_schema() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, INDEX i(a))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,2)").unwrap();
+    session
+        .run("ALTER TABLE t DROP COLUMN a, RENAME INDEX i TO j")
+        .unwrap();
+    assert_eq!(row_text(session.run("SELECT * FROM t")), vec![["2"]]);
+    assert_eq!(
+        session
+            .run("SELECT * FROM t USE INDEX(j)")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1176
+    );
+    session.run("INSERT INTO t VALUES (3)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t ORDER BY b")),
+        vec![["2"], ["3"]]
+    );
+}
+
+#[test]
 fn failed_alter_does_not_change_the_next_insert_id() {
     let mut session = Session::new();
     session
@@ -571,4 +597,29 @@ fn modify_column_type_pair_gate_rule_5_enum_set_bit_to_duration() {
         session.run("ALTER TABLE r5p MODIFY COLUMN a TIME"),
         Err(DriverError::UnsupportedModifyColumnType { .. })
     ));
+}
+
+#[test]
+fn alter_readded_column_does_not_read_retired_column_bytes() {
+    for combined in [false, true] {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+        session.run("INSERT INTO t VALUES (1, 2)").unwrap();
+        if combined {
+            session
+                .run("ALTER TABLE t DROP COLUMN b, ADD COLUMN c INT DEFAULT 7")
+                .unwrap();
+        } else {
+            session.run("ALTER TABLE t DROP COLUMN b").unwrap();
+            session
+                .run("ALTER TABLE t ADD COLUMN c INT DEFAULT 7")
+                .unwrap();
+        }
+        assert_eq!(row_text(session.run("SELECT * FROM t")), vec![["1", "7"]]);
+        session.run("INSERT INTO t(a) VALUES (3)").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t ORDER BY a")),
+            vec![["1", "7"], ["3", "7"]]
+        );
+    }
 }

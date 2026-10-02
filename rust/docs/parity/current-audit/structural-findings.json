@@ -197,10 +197,10 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "**Partially repaired:** local ALTER publishes its staged catalog only after preparation succeeds, and ordinary/forced auto-ID rebases plus AUTO_RANDOM layout/conversion effects are now deferred until then. Layout capacity checks precede non-revertible rebases, following Go worker phases. The eager shared-counter mutation and failed-ALTER next-ID symptom are repaired. Drop-column plus rename-of-its-index still refuses where Go succeeds; original-schema action admission and complete durable preparation/execution/recovery ownership remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`, `PreparedAllocatorChanges`; `kv_table/auto_id.rs::PreparedAutoIdRebase`; `kv_table/auto_random.rs::PreparedAutoRandomChange`; executor/session regressions; [allocator repair receipt](alter-allocator-repair.md); `alter-allocator-repaired.txt`",
-      "go_owner": "`pkg/ddl/executor.go::alterTable` collects all subjobs before submission; `table.go::onRebaseAutoID` defers rebases past the revertible phase; `column.go::checkNewAutoRandomBits`/`applyNewAutoRandomBits` and `multi_schema_change.go::onMultiSchemaChange` own execution and recovery. In-process maintenance is not durable cluster DDL acceptance.",
-      "review_basis": "Allocator follow-up from integration f0a26898c504, unchanged Go master 93a01d31f6 and native 19a56cc: eight regression tests fail before the change and pass afterward. The retained failed-ALTER diagnostic now inserts ID 2, not 1000000. Original-schema admission and durable execution/recovery remain unimplemented; D11 stays partial. See alter-allocator-repair.md. Other IDs retain the preceding full review evidence."
+      "finding": "**Partially repaired:** local ALTER stages publication and defers shared auto-ID effects. Ordinary/unique index ADD, DROP, RENAME and visibility now prepare against the original schema; admitted changes own resolved names, conditional notes and conflict inputs. Drop-column plus rename succeeds, hidden expression metadata follows renames, and retained MaxColumnID/MaxIndexID prevent retired-identity reuse. Other action admission and complete durable preparation/execution/recovery remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`, `ddl/index_changes.rs::PreparedIndexChange`, shared `ddl/indexes.rs` metadata builder; `kv_table.rs` high-water marks and cluster loaders; [index preparation receipt](alter-index-preparation-repair.md); prior [allocator receipt](alter-allocator-repair.md)",
+      "go_owner": "`pkg/ddl/executor.go::alterTable`, `index.go::ValidateRenameIndex`/`renameHiddenColumns`/`AllocateIndexID`, `column.go::AllocateColumnID`, `multi_schema_change.go::fillMultiSchemaInfo` and durable workers. In-process maintenance is not complete DDL package acceptance.",
+      "review_basis": "Index preparation follow-up from integration 5d9c7433a53c against unchanged master 93a01d31f6 and native 19a56cc: 14 new regressions fail before their respective repair and pass afterward; two former mismatch assertions now expect Go behavior. Removed separate immediate index branches, grouped execution, guessed names and AST-only index validation. 220 selected tests pass, one unrelated FK expectation also fails on baseline, five existing tests stay ignored. Non-index original-schema admission and durable recovery keep D11 partial. Other IDs retain the full review evidence."
     },
     {
       "id": "C01",
@@ -792,9 +792,9 @@
   "latest_repair": {
     "id": "D11",
     "status": "partial",
-    "scope": "Deferred shared allocator effects after complete local preparation; original-schema action admission and durable execution/recovery remain open",
-    "integration_start": "f0a26898c504e7727aac19806c2d994f212be9ee",
+    "scope": "Original-schema index admission, shared conflict inputs and persistent metadata identity counters; non-index admission and durable execution/recovery remain open",
+    "integration_start": "5d9c7433a53c7211f0948a48bd876795103d39ae",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "alter-allocator-repair.md"
+    "receipt": "alter-index-preparation-repair.md"
   }
 }

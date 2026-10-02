@@ -142,6 +142,8 @@ pub fn derive_materialized_view_build<S: MetaSnapshot>(
                 .map_err(|error| DdlPlanError::Encode(format!("base row pre-load: {error}")))?;
         }
         let mut kv_table = KvTable::with_storage(base.id, kv_columns, Box::new(storage));
+        kv_table.set_max_column_id(base.max_column_id);
+        kv_table.set_max_index_id(base.max_index_id);
         kv_table.set_name(base.name.original());
         // The record reader rebuilds the clustered key columns from the
         // record KEY (a PKIsHandle table stores its `id` in the key suffix,

@@ -359,6 +359,7 @@ pub(crate) fn reject_duplicate_index_columns(
 /// The index a statement asks for, read off either spelling of the request:
 /// `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` name the same four facts in
 /// different AST nodes.
+#[derive(Clone, Copy)]
 pub(crate) struct IndexSpec<'a> {
     /// The index's name.
     pub name: &'a str,
@@ -379,22 +380,27 @@ pub(crate) struct IndexSpec<'a> {
     pub if_not_exists: bool,
 }
 
-/// Adds one index to a table, shared by `CREATE INDEX` and
-/// `ALTER TABLE ... ADD INDEX`.
-///
-/// An EXPRESSION key part is rewritten into a hidden generated column
-/// appended to the table, exactly as `CREATE TABLE` does it -- see
-/// [`crate::expression_index`]. Nothing about index maintenance changes:
-/// entries are written from the materialized row, so the hidden column's
-/// value is indexed by the generated-column path that already exists.
-pub(crate) fn add_index_to_table(
-    catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
+/// Conditional no-ops retain their note until this action is reached. They
+/// never become a multi-schema job or a conflict-check input.
+pub(super) enum IndexAdmission<T> {
+    Change(T),
+    Note(DriverError),
+}
+
+struct BuiltIndex {
+    index: KvIndex,
+    hidden: Vec<crate::expression_index::HiddenIndexColumn>,
+}
+
+/// Build metadata without reading rows or writing the catalog. Go performs
+/// index admission before collecting multi-schema conflicts and rebuilds the
+/// definition in the worker before backfill.
+fn build_index_definition(
+    table: &crate::KvTable,
     index: IndexSpec<'_>,
     ctx: &crate::StmtContext,
     max_index_length: i64,
-) -> Result<(), DriverError> {
+) -> Result<IndexAdmission<BuiltIndex>, DriverError> {
     let IndexSpec {
         name: index_name,
         comment,
@@ -406,12 +412,6 @@ pub(crate) fn add_index_to_table(
         if_not_exists,
     } = index;
     reject_duplicate_index_columns(parts)?;
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
-            format!("{database}.{table_name}"),
-        )));
-    };
-    let table = std::sync::Arc::make_mut(table);
     if let Some(condition) = condition {
         validate_partial_index_condition(table.columns(), condition)?;
     }
@@ -426,8 +426,7 @@ pub(crate) fn add_index_to_table(
         // the existing index.
         let duplicate = DriverError::DuplicateKeyName(index_name.to_owned());
         if if_not_exists {
-            ctx.append_suppressed(&duplicate);
-            return Ok(());
+            return Ok(IndexAdmission::Note(duplicate));
         }
         return Err(duplicate);
     }
@@ -480,7 +479,10 @@ pub(crate) fn add_index_to_table(
                     .columns
                     .iter()
                     .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?;
+                    .ok_or_else(|| DriverError::DdlCoded {
+                        errno: 1072,
+                        message: format!("column does not exist: {name}"),
+                    })?;
                 // Go re-runs `buildIndexColumns` in the DDL job worker with a
                 // NIL context (`checkAndBuildIndexInfo` -> `BuildIndexInfo(nil,
                 // ...)`), which reads as strict whatever the session's mode
@@ -549,6 +551,71 @@ pub(crate) fn add_index_to_table(
             }
         }
     }
+    Ok(IndexAdmission::Change(BuiltIndex {
+        index: KvIndex {
+            id: 0,
+            name: index_name.to_owned(),
+            comment: comment.to_owned(),
+            unique,
+            column_offsets: offsets,
+            prefix_lengths,
+            visible,
+            global,
+            global_index_version: 0,
+            clustered_primary: false,
+        },
+        hidden: pending,
+    }))
+}
+
+pub(super) fn prepare_add_index(
+    table: &crate::KvTable,
+    index: IndexSpec<'_>,
+    ctx: &crate::StmtContext,
+    max_index_length: i64,
+) -> Result<IndexAdmission<()>, DriverError> {
+    Ok(
+        match build_index_definition(table, index, ctx, max_index_length)? {
+            IndexAdmission::Change(_) => IndexAdmission::Change(()),
+            IndexAdmission::Note(note) => IndexAdmission::Note(note),
+        },
+    )
+}
+
+/// Adds one index to a table, shared by `CREATE INDEX` and
+/// `ALTER TABLE ... ADD INDEX`.
+///
+/// An EXPRESSION key part is rewritten into a hidden generated column
+/// appended to the table, exactly as `CREATE TABLE` does it -- see
+/// [`crate::expression_index`]. Nothing about index maintenance changes:
+/// entries are written from the materialized row, so the hidden column's
+/// value is indexed by the generated-column path that already exists.
+pub(crate) fn add_index_to_table(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    index: IndexSpec<'_>,
+    ctx: &crate::StmtContext,
+    max_index_length: i64,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{table_name}"),
+        )));
+    };
+    let table = std::sync::Arc::make_mut(table);
+    let BuiltIndex {
+        index: mut built,
+        hidden: pending,
+    } = match build_index_definition(table, index, ctx, max_index_length)? {
+        IndexAdmission::Change(built) => built,
+        IndexAdmission::Note(note) => {
+            ctx.append_suppressed(&note);
+            return Ok(());
+        }
+    };
+    let index_name = index.name;
+    let condition = index.condition;
     let added = pending.len();
     for column in pending {
         table.add_hidden_column(KvColumn {
@@ -564,6 +631,7 @@ pub(crate) fn add_index_to_table(
         });
     }
     let id = table.next_index_id();
+    built.id = id;
     if let Some(condition) = condition {
         if let Err(error) = table.add_partial_index_condition(
             id,
@@ -581,21 +649,7 @@ pub(crate) fn add_index_to_table(
         }
     }
     let result = table
-        .create_index_with_context(
-            KvIndex {
-                id,
-                name: index_name.to_owned(),
-                comment: comment.to_owned(),
-                unique,
-                column_offsets: offsets,
-                prefix_lengths,
-                visible,
-                global,
-                global_index_version: 0,
-                clustered_primary: false,
-            },
-            ctx,
-        )
+        .create_index_with_context(built, ctx)
         .map_err(|e| match e {
             crate::kv_table::KvTableError::Storage(error) => error.into(),
             crate::kv_table::KvTableError::ColumnCast(error) => {
@@ -683,13 +737,62 @@ pub(crate) fn drop_index_from_table(
     if_exists: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    // Go `ddl.checkIndexNeededInForeignKey`, before anything is removed: an
-    // index a live constraint relies on is 1553, on either side.
-    crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+    match prepare_drop_index(catalog, database, table_name, index_name, if_exists)? {
+        IndexAdmission::Change(id) => drop_prepared_index(catalog, database, table_name, id, ctx)?,
+        IndexAdmission::Note(note) => ctx.append_suppressed(&note),
+    }
+    Ok(())
+}
+
+pub(super) fn prepare_drop_index(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+    index_name: &str,
+    if_exists: bool,
+) -> Result<IndexAdmission<i64>, DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),
         )));
+    };
+    let Some(index) = table
+        .indexes()
+        .iter()
+        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+    else {
+        let missing = DriverError::UnknownIndex(index_name.to_owned());
+        if !if_exists {
+            return Err(missing);
+        }
+        return Ok(IndexAdmission::Note(missing));
+    };
+    crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
+    Ok(IndexAdmission::Change(index.id))
+}
+
+pub(super) fn drop_prepared_index(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    index_id: i64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{table_name}"),
+        )));
+    };
+    // A covering index can disappear with a sibling column drop. Admission
+    // already proved its original identity; do not turn its retirement into
+    // a new missing-name error or target a different index that reused a name.
+    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
+        return Ok(());
+    };
+    let index_name = index.name.clone();
+    crate::foreign_key::check_index_needed(catalog, database, table_name, &index_name)?;
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("table resolved above");
     };
     let table = std::sync::Arc::make_mut(table);
     // The hidden columns this index owns go with it. Captured from Go:
@@ -699,7 +802,7 @@ pub(crate) fn drop_index_from_table(
     let hidden: Vec<usize> = table
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .find(|index| index.name.eq_ignore_ascii_case(&index_name))
         .map(|index| {
             let mut offsets: Vec<usize> = index
                 .column_offsets
@@ -713,19 +816,9 @@ pub(crate) fn drop_index_from_table(
         })
         .unwrap_or_default();
     let dropped = table
-        .drop_index_with_context(index_name, ctx)
+        .drop_index_with_context(&index_name, ctx)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
-    if !dropped {
-        // Go's `IF EXISTS` does not silence the index that was not there --
-        // it DEMOTES it. Captured: `alter table t drop index if exists no_idx`
-        // leaves `Note | 1091 | index no_idx doesn't exist`, and so does the
-        // `DROP INDEX ... ON t` spelling.
-        let missing = DriverError::UnknownIndex(index_name.to_owned());
-        if !if_exists {
-            return Err(missing);
-        }
-        ctx.append_suppressed(&missing);
-    }
+    debug_assert!(dropped, "prepared index identity was resolved above");
     for offset in hidden {
         table.drop_column(offset);
     }

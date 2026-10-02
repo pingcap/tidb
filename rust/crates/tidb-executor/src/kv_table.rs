@@ -482,6 +482,9 @@ pub struct KvTable {
     /// How many of the TRAILING entries of `columns` are hidden (Go
     /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
     hidden_columns: usize,
+    /// Go `TableInfo.MaxColumnID`: retired column IDs still identify bytes in
+    /// old rows and must never be allocated to a replacement column.
+    max_column_id: i64,
     /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
     /// multi-valued index's single ARRAY key part was built over
     /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
@@ -499,6 +502,8 @@ pub struct KvTable {
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
     indexes: std::sync::Arc<Vec<KvIndex>>,
+    /// Go `TableInfo.MaxIndexID`, retained independently of surviving indexes.
+    max_index_id: i64,
     /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
     /// `IndexInfo.ID`. Keeping this sidecar separate from [`KvIndex`] avoids
     /// widening every source-shaped index fixture while making the predicate
@@ -1141,12 +1146,14 @@ impl KvTable {
             partition_storage_statistics: std::collections::BTreeMap::new(),
             name: String::new(),
             compression: String::new(),
+            max_column_id: columns.iter().map(|column| column.id).max().unwrap_or(0),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
             mv_key_part_sources: std::collections::BTreeMap::new(),
             store,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
+            max_index_id: 0,
             partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
             common_handle_prefix_lengths: Vec::new(),
@@ -1308,6 +1315,8 @@ impl KvTable {
             self.use_new_collation,
         );
         copy.hidden_columns = self.hidden_columns;
+        copy.max_column_id = self.max_column_id;
+        copy.max_index_id = self.max_index_id;
         copy.name = table_name.to_owned();
         copy.mv_key_part_sources = self.mv_key_part_sources.clone();
         copy.pk_handle_offset = self.pk_handle_offset;
@@ -2551,6 +2560,7 @@ impl KvTable {
                 self.index_entry_value(&index, row, handle, distinct, physical_id, &zone)?;
             self.store.set(key, value).map_err(KvTableError::from)?;
         }
+        self.max_index_id = self.max_index_id.max(index.id);
         self.indexes_mut().push(index);
         Ok(())
     }
@@ -2601,10 +2611,15 @@ impl KvTable {
         Ok(true)
     }
 
-    /// The next free index id.
+    /// Retains the persisted Go `TableInfo.MaxIndexID` when loading a schema.
+    pub fn set_max_index_id(&mut self, max_index_id: i64) {
+        self.max_index_id = self.max_index_id.max(max_index_id);
+    }
+
+    /// The next index ID, including IDs retired by earlier schema changes.
     #[must_use]
     pub fn next_index_id(&self) -> i64 {
-        self.indexes.iter().map(|index| index.id).max().unwrap_or(0) + 1
+        self.max_index_id + 1
     }
 
     /// The columns a user can name or see: everything but the hidden tail.
@@ -2650,6 +2665,7 @@ impl KvTable {
     /// It goes at the very end, so no existing offset moves and the tail
     /// invariant holds by construction.
     pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
+        self.max_column_id = self.max_column_id.max(column.id);
         self.columns_mut().push(column);
         self.hidden_columns += 1;
         self.columns.len() - 1
@@ -2667,6 +2683,7 @@ impl KvTable {
     /// expression index, `SHOW CREATE TABLE` prints `a`, `z` and
     /// `information_schema.columns` gives them ordinals 1 and 2.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
+        self.max_column_id = self.max_column_id.max(column.id);
         let position = position.min(self.visible_column_count());
         self.columns_mut().insert(position, column);
         let shift = |offset: &mut usize| {
@@ -2690,11 +2707,16 @@ impl KvTable {
         }
     }
 
+    /// Retains the persisted Go `TableInfo.MaxColumnID` when loading a schema.
+    pub fn set_max_column_id(&mut self, max_column_id: i64) {
+        self.max_column_id = self.max_column_id.max(max_column_id);
+    }
+
     /// The next free column id, which Go allocates from `TableInfo.MaxColumnID`
     /// so a dropped id is never reused.
     #[must_use]
     pub fn next_column_id(&self) -> i64 {
-        self.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1
+        self.max_column_id + 1
     }
 
     /// Removes the column at `offset`, shifting the offsets above it.
@@ -2801,6 +2823,7 @@ impl KvTable {
             .is_some_and(|g| !g.stored)
             && new_column.generated.as_ref().is_some_and(|g| !g.stored)
         {
+            self.max_column_id = self.max_column_id.max(new_column.id);
             self.columns_mut()[offset] = new_column;
             if let Some(partition) = &mut self.partition {
                 partition.update_dependency_type(
@@ -2856,6 +2879,7 @@ impl KvTable {
             converted_rows.push((physical_id, handle, row));
         }
 
+        self.max_column_id = self.max_column_id.max(new_column.id);
         self.columns_mut()[offset] = new_column;
         if let Some(partition) = &mut self.partition {
             partition.update_dependency_type(
@@ -3059,6 +3083,7 @@ impl KvTable {
         if clustered_primary {
             index.clustered_primary = true;
         }
+        self.max_index_id = self.max_index_id.max(index.id);
         self.indexes_mut().push(index);
     }
 
