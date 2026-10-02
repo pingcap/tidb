@@ -31,6 +31,7 @@ struct PdServer {
     member_failures: Arc<AtomicUsize>,
     member_requests: Arc<AtomicUsize>,
     stall_members: Arc<std::sync::atomic::AtomicBool>,
+    stall_scans: Arc<std::sync::atomic::AtomicBool>,
     region_entered: Arc<tokio::sync::Semaphore>,
     region_release: Arc<tokio::sync::Semaphore>,
     region_id: Arc<AtomicUsize>,
@@ -223,7 +224,12 @@ impl tonic::server::UnaryService<pdpb::ScanRegionsRequest> for PdServer {
         assert!(request.metadata().contains_key("grpc-timeout"));
         assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
         let request = request.into_inner();
+        let service = self.clone();
         Box::pin(async move {
+            if service.stall_scans.load(Ordering::SeqCst) {
+                service.region_entered.add_permits(1);
+                service.region_release.acquire().await.unwrap().forget();
+            }
             Ok(tonic::Response::new(pdpb::ScanRegionsResponse {
                 header: Some(ResponseHeader {
                     cluster_id: 42,
@@ -328,6 +334,7 @@ impl Server {
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
             stall_members: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            stall_scans: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             region_entered: Arc::new(tokio::sync::Semaphore::new(0)),
             region_release: Arc::new(tokio::sync::Semaphore::new(0)),
             region_id: Arc::new(AtomicUsize::new(1)),
@@ -1097,4 +1104,248 @@ async fn source_pd_error_owner_reports_tso_length() {
     assert!(
         matches!(error, Error::Pd(owner) if owner.definition() == crate::pd::errs::ERR_TSO_LENGTH && owner.backtrace().is_some())
     );
+}
+
+async fn owning_pd_client(
+    server: &Server,
+) -> Arc<crate::pd::PdRpcClient<crate::mock::MockKvConnect>> {
+    let timeout = Duration::from_secs(100);
+    let cluster = server.cluster(timeout).await;
+    Arc::new(
+        crate::pd::PdRpcClient::new(
+            crate::Config::default(),
+            |_| crate::mock::MockKvConnect,
+            |security| async move { Ok(RetryClient::new_with_cluster(security, timeout, cluster)) },
+            false,
+        )
+        .await
+        .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_closes_stalled_requests_and_retained_handles() {
+    use crate::pd::PdClient as _;
+    let server = Server::start(Reply::StallBody).await;
+    let client = owning_pd_client(&server).await;
+    let mut pending = tokio::spawn(client.clone().get_timestamp());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.received.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    client.close().await;
+    let result = tokio::time::timeout(Duration::from_millis(500), &mut pending).await;
+    if result.is_err() {
+        pending.abort();
+        let _ = pending.await;
+    }
+    assert!(
+        matches!(result, Ok(Ok(Err(_)))),
+        "close must finish pending TSO before its 100-second deadline: {result:?}"
+    );
+    assert_eq!(client.cluster_id().await, 42);
+    assert!(
+        client.all_stores().await.is_err(),
+        "retained handles must not send metadata after close"
+    );
+    assert!(client.clone().get_timestamp().await.is_err());
+    client.close().await;
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_concurrent_close_joins_background_tasks() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = owning_pd_client(&server).await;
+    let stopped = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let task_stopped = stopped.clone();
+    let task_release = release.clone();
+    assert!(client
+        .region_cache()
+        .spawn_background_task(move |cancellation| async move {
+            cancellation.cancelled().await;
+            task_stopped.add_permits(1);
+            task_release.acquire().await.unwrap().forget();
+        }));
+    let first_client = client.clone();
+    let first = tokio::spawn(async move { first_client.close().await });
+    tokio::time::timeout(Duration::from_secs(1), stopped.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let second = client.close();
+    tokio::pin!(second);
+    let early = tokio::time::timeout(Duration::from_millis(50), &mut second)
+        .await
+        .is_ok();
+    release.add_permits(1);
+    first.await.unwrap();
+    if !early {
+        second.await;
+    }
+    assert!(
+        !early,
+        "every close caller must wait for the same background completion"
+    );
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_interrupted_close_can_finish_joining() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = owning_pd_client(&server).await;
+    let stopped = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (task_stopped, task_release, task_completed) =
+        (stopped.clone(), release.clone(), completed.clone());
+    assert!(client
+        .region_cache()
+        .spawn_background_task(move |cancellation| async move {
+            cancellation.cancelled().await;
+            task_stopped.add_permits(1);
+            task_release.acquire().await.unwrap().forget();
+            task_completed.store(true, Ordering::SeqCst);
+        }));
+    let first_client = client.clone();
+    let first = tokio::spawn(async move { first_client.close().await });
+    tokio::time::timeout(Duration::from_secs(1), stopped.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    let resumed = client.close();
+    tokio::pin!(resumed);
+    let early = tokio::time::timeout(Duration::from_millis(50), &mut resumed)
+        .await
+        .is_ok();
+    release.add_permits(1);
+    if !early {
+        resumed.await;
+    }
+    assert!(
+        !early,
+        "cancelling close must not discard its unfinished joins"
+    );
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_cancels_metadata_and_discovery_without_reconnecting() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&server).await;
+    let retained_oracle = client.tso_for_test().await;
+    client.clone().get_timestamp().await.unwrap();
+    let request = tokio::spawn(client.clone().get_region(b"blocked".to_vec()));
+    wait_region_entered(&server).await;
+    let members_before = server.service.member_requests.load(Ordering::SeqCst);
+    server.service.stall_members.store(true, Ordering::SeqCst);
+    let refresh_client = client.clone();
+    let refresh = tokio::spawn(async move { refresh_client.reconnect_for_test().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.member_requests.load(Ordering::SeqCst) == members_before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), client.close())
+        .await
+        .unwrap();
+    assert!(matches!(
+        request.await.unwrap(),
+        Err(Error::ContextCanceled)
+    ));
+    assert!(matches!(
+        refresh.await.unwrap(),
+        Err(Error::ContextCanceled)
+    ));
+    assert!(retained_oracle.inner.worker.lock().await.is_none());
+    let members_after = server.service.member_requests.load(Ordering::SeqCst);
+    assert!(matches!(
+        client.reconnect_for_test().await,
+        Err(Error::ContextCanceled)
+    ));
+    assert!(matches!(
+        client.clone().get_timestamp().await,
+        Err(Error::ContextCanceled)
+    ));
+    assert!(matches!(
+        client.load_keyspace("DEFAULT").await,
+        Err(Error::ContextCanceled)
+    ));
+    assert!(matches!(
+        client.clone().get_all_stores().await,
+        Err(Error::ContextCanceled)
+    ));
+    assert_eq!(
+        server.service.member_requests.load(Ordering::SeqCst),
+        members_after
+    );
+    assert_eq!(client.cluster_id().await, 42);
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_joins_retirement_after_interrupted_reconnect() {
+    let first = Server::start(Reply::Timestamp).await;
+    let second = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&first).await;
+    client.clone().get_timestamp().await.unwrap();
+    let old = client.tso_for_test().await;
+    // Stop retirement at its join, after replacement has already been published.
+    let held_join = old.inner.worker.lock().await;
+    *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
+    let refreshing = client.clone();
+    let refresh = tokio::spawn(async move { refreshing.reconnect_for_test().await });
+    tokio::time::timeout(Duration::from_secs(1), old.inner.cancellation.cancelled())
+        .await
+        .unwrap();
+    refresh.abort();
+    assert!(refresh.await.unwrap_err().is_cancelled());
+    let current = client.tso_for_test().await;
+    client.clone().get_timestamp().await.unwrap();
+    let close = client.close();
+    tokio::pin!(close);
+    let early = tokio::time::timeout(Duration::from_millis(50), &mut close)
+        .await
+        .is_ok();
+    drop(held_join);
+    if !early {
+        tokio::time::timeout(Duration::from_secs(1), close)
+            .await
+            .unwrap();
+    }
+    assert!(
+        !early,
+        "close must retain and join the retired connection too"
+    );
+    assert!(old.inner.worker.lock().await.is_none());
+    assert!(current.inner.worker.lock().await.is_none());
+}
+
+#[tokio::test]
+async fn source_pd_shutdown_cancels_background_rpc_before_closing_pd() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&server).await;
+    let cache = Arc::new(crate::region_cache::RegionCache::new(client.clone()));
+    server.service.stall_scans.store(true, Ordering::SeqCst);
+    cache.start_background_refresh(Duration::from_millis(5));
+    wait_region_entered(&server).await;
+    let closed =
+        tokio::time::timeout(Duration::from_millis(500), cache.close_background_task()).await;
+    // Cleanup the failure path before asserting, without shortening the RPC deadline.
+    server.service.stall_scans.store(false, Ordering::SeqCst);
+    server.service.region_release.add_permits(1);
+    assert!(
+        closed.is_ok(),
+        "cache close must cancel its RPC before closing the PD owner"
+    );
+    assert!(!cache.spawn_background_task(|_| async { panic!("closed cache accepted work") }));
+    assert_eq!(client.clone().get_all_stores().await.unwrap()[0].id, 9);
+    client.close().await;
 }

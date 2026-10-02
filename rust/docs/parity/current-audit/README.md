@@ -19,6 +19,11 @@ Receipts and reviewed findings live separately so regeneration cannot certify
 unreviewed packages. Other external dependencies still require complete inventories
 before acceptance.
 
+The [explicit PD shutdown repair](../../pd-shutdown-ownership-execplan.md)
+composes the existing native close chain through PD/TSO, preserves concurrent
+and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
+this does not accept the complete root/discovery/TSO packages or close P03.
+
 The expanded [remaining structural finding register](structural-findings.md)
 consolidates 85 tracked ownership/contract findings (73 unresolved, twelve repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)

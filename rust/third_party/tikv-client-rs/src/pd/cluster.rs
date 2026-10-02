@@ -27,12 +27,15 @@ use crate::Timestamp;
 /// A PD cluster.
 pub struct Cluster {
     id: u64,
-    client: pdpb::pd_client::PdClient<Channel>,
-    keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+    client: Option<pdpb::pd_client::PdClient<Channel>>,
+    keyspace_client: Option<keyspacepb::keyspace_client::KeyspaceClient<Channel>>,
     members: pdpb::GetMembersResponse,
     // Native mode has one leader stream. Its URL and cancellation lifetime
     // belong to the same manager used by Go TSO, independently of metadata RPCs.
     tso: Manager<TimestampOracle>,
+    // Keep joins owned until completion, including when a reconnect/close future
+    // is cancelled after publication. Requests never own stream retirement.
+    retired_tso: Vec<Arc<ConnectionCtx<TimestampOracle>>>,
 }
 
 macro_rules! pd_request {
@@ -68,8 +71,9 @@ impl Cluster {
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::GetRegionRequest);
             req.region_key = key;
             req.need_buckets = need_buckets;
@@ -92,8 +96,9 @@ impl Cluster {
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut request = pd_request!(cluster_id, pdpb::GetRegionRequest).into_request();
             request.get_mut().region_key = key;
             request.get_mut().need_buckets = need_buckets;
@@ -122,8 +127,9 @@ impl Cluster {
         need_buckets: bool,
     ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::GetRegionByIdRequest);
             req.region_id = id;
             req.need_buckets = need_buckets;
@@ -142,8 +148,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::ScanRegionsResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::ScanRegionsRequest);
             req.start_key = start_key;
             req.end_key = end_key;
@@ -160,8 +167,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::BatchScanRegionsResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::BatchScanRegionsRequest);
             req.ranges = ranges;
             req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
@@ -183,8 +191,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::SplitRegionsResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::SplitRegionsRequest);
             req.split_keys = split_keys;
             req.retry_limit = retry_limit;
@@ -198,8 +207,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetStoreResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::GetStoreRequest);
             req.store_id = id;
             req.send(&mut client, timeout).await
@@ -211,8 +221,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetAllStoresResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let req = pd_request!(cluster_id, pdpb::GetAllStoresRequest);
             req.send(&mut client, timeout).await
         }
@@ -232,8 +243,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let request = pd_request!(cluster_id, pdpb::GetMinTsRequest);
             request
                 .send(&mut client, timeout)
@@ -251,8 +263,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<()>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut request = pd_request!(cluster_id, pdpb::SetExternalTimestampRequest);
             request.timestamp = timestamp;
             request.send(&mut client, timeout).await.map(|_| ())
@@ -264,8 +277,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<u64>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let request = pd_request!(cluster_id, pdpb::GetExternalTimestampRequest);
             request
                 .send(&mut client, timeout)
@@ -280,8 +294,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::UpdateGcSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::UpdateGcSafePointRequest);
             req.safe_point = safepoint;
             req.send(&mut client, timeout).await
@@ -294,8 +309,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetGcStateResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::GetGcStateRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.exclude_gc_barriers = true;
@@ -310,8 +326,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::AdvanceTxnSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::AdvanceTxnSafePointRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.target = target;
@@ -326,8 +343,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::AdvanceGcSafePointResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::AdvanceGcSafePointRequest);
             req.keyspace_scope = Some(keyspace_scope(keyspace_id));
             req.target = target;
@@ -342,8 +360,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
             req.regions_id = region_ids;
             req.group = group;
@@ -357,8 +376,9 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<pdpb::GetOperatorResponse>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, pdpb::GetOperatorRequest);
             req.region_id = region_id;
             req.send(&mut client, timeout).await
@@ -371,9 +391,10 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<keyspacepb::KeyspaceMeta>> + Send + 'static {
         let cluster_id = self.id;
-        let mut client = self.keyspace_client.clone();
+        let client = self.keyspace_client.clone();
         let keyspace = keyspace.to_owned();
         async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
             let mut req = pd_request!(cluster_id, keyspacepb::LoadKeyspaceRequest);
             req.name = keyspace.to_string();
             let resp = req.send(&mut client, timeout).await?;
@@ -391,6 +412,9 @@ impl Cluster {
         (client, keyspace_client, members, url): LeaderConnection,
         timeout: Duration,
     ) -> Result<impl Future<Output = ()> + Send + 'static> {
+        if self.client.is_none() {
+            return Err(Error::ContextCanceled);
+        }
         let previous = self.tso.randomly_pick();
         let reuse = previous.as_ref().is_some_and(|connection| {
             connection.stream_url == url && !connection.ctx.is_cancelled()
@@ -406,25 +430,49 @@ impl Cluster {
                 rejected = Some(candidate);
             }
         }
-        self.client = client;
-        self.keyspace_client = keyspace_client;
+        self.client = Some(client);
+        self.keyspace_client = Some(keyspace_client);
         self.members = members;
-        let retired = if reuse { None } else { previous };
-        Ok(async move {
-            if let Some(rejected) = rejected {
-                rejected.stream.close().await;
+        self.retired_tso.extend(rejected);
+        if !reuse {
+            self.retired_tso.extend(previous);
+        }
+        Ok(self.retire_streams())
+    }
+
+    fn retire_streams(&self) -> impl Future<Output = ()> + Send + 'static {
+        let retired = self.retired_tso.clone();
+        async move {
+            for connection in retired {
+                connection.stream.close().await;
             }
-            if let Some(previous) = retired {
-                // The context stays alive through the join, without a cluster lock.
-                previous.stream.close().await;
-            }
-        })
+        }
+    }
+
+    pub(crate) fn start_close(&mut self) -> impl Future<Output = ()> + Send + 'static {
+        self.client.take();
+        self.keyspace_client.take();
+        self.retired_tso.extend(self.tso.randomly_pick());
+        self.tso.release_all();
+        self.retire_streams()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tso_for_test(&self) -> TimestampOracle {
+        self.tso.randomly_pick().unwrap().stream.clone()
+    }
+
+    pub(crate) fn finish_retirement(&mut self) {
+        self.retired_tso.clear();
     }
 }
 
 impl Drop for Cluster {
     fn drop(&mut self) {
         self.tso.release_all();
+        for connection in &self.retired_tso {
+            connection.cancel();
+        }
     }
 }
 
@@ -481,10 +529,11 @@ impl Connection {
         tso.store(&tso_connection(id, &client, url, timeout)?, false);
         let cluster = Cluster {
             id,
-            client,
-            keyspace_client,
+            client: Some(client),
+            keyspace_client: Some(keyspace_client),
             members,
             tso,
+            retired_tso: Vec::new(),
         };
         Ok(cluster)
     }
@@ -498,6 +547,7 @@ impl Connection {
         cluster
             .install_leader((client, keyspace_client, members, url), timeout)?
             .await;
+        cluster.finish_retirement();
 
         info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
@@ -510,7 +560,13 @@ impl Connection {
     ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
         let connection = Self::new(self.security_mgr.clone());
         let members = cluster.members.clone();
-        async move { connection.try_connect_leader(&members, timeout).await }
+        let closed = cluster.client.is_none();
+        async move {
+            if closed {
+                return Err(Error::ContextCanceled);
+            }
+            connection.try_connect_leader(&members, timeout).await
+        }
     }
 
     async fn validate_endpoints(

@@ -2360,3 +2360,16 @@ The current register is 85 tracked, 73 unresolved (67 open, six partial), twelve
 repaired. This does not accept the complete PD parent packages; service-mode,
 public shutdown and other P03/P06 obligations remain. Removed serialization is
 proven through controlled transport, not a measured workload speedup.
+
+## Native PD explicit shutdown continuation (2026-10-02)
+
+
+The [shutdown receipt](pd-shutdown-ownership-execplan.md) repairs another P06
+existing-owner boundary. Public close joins cache work before TiKV and PD/TSO;
+retained shared completion handles concurrent and interrupted async callers.
+Cache-owned RPC waits now cancel, and current/retired TSO joins remain owned
+across an interrupted reconnect. Four failure-before-fix observations and six
+focused tests establish the boundary without claiming complete PD packages.
+P06 remains partial and the register remains 85 tracked / 73 unresolved /
+12 repaired. Native publication, maintained sync and the two mandatory locked
+server-build gates are recorded in the focused receipt.

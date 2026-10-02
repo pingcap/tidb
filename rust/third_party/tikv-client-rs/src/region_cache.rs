@@ -11,6 +11,10 @@ use std::sync::atomic::{
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use futures::{
+    future::{BoxFuture, Shared},
+    FutureExt,
+};
 use log::debug;
 use rand::Rng;
 use tokio::sync::Mutex as AsyncMutex;
@@ -793,6 +797,7 @@ pub struct RegionCache<Client = RetryClient<Cluster>> {
     gc_cursor: StdMutex<Option<Key>>,
     background_cancellation: Cancellation,
     background_tasks: StdMutex<Vec<JoinHandle<()>>>,
+    background_close: StdMutex<Option<Shared<BoxFuture<'static, ()>>>>,
     region_background_started: AtomicBool,
     store_background_started: AtomicBool,
     inner_client: Arc<Client>,
@@ -812,6 +817,7 @@ impl<Client> RegionCache<Client> {
             gc_cursor: StdMutex::new(None),
             background_cancellation: Cancellation::default(),
             background_tasks: StdMutex::new(Vec::new()),
+            background_close: StdMutex::new(None),
             region_background_started: AtomicBool::new(false),
             store_background_started: AtomicBool::new(false),
             inner_client,
@@ -836,6 +842,10 @@ impl<C: Send + Sync> RegionCache<C> {
         {
             return;
         }
+        let mut tasks = self.background_tasks.lock().unwrap();
+        if self.background_cancellation.is_cancelled() {
+            return;
+        }
         let cache = Arc::downgrade(self);
         let cancellation = self.background_cancellation.child();
         let task = tokio::spawn(async move {
@@ -847,20 +857,35 @@ impl<C: Send + Sync> RegionCache<C> {
                 let Some(cache) = cache.upgrade() else {
                     return;
                 };
-                cache
-                    .gc_round_at(now_epoch_secs(), CLEAN_REGION_NUM_PER_ROUND)
-                    .await;
+                tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    _ = cache.gc_round_at(now_epoch_secs(), CLEAN_REGION_NUM_PER_ROUND) => {}
+                }
             }
         });
-        self.background_tasks.lock().unwrap().push(task);
+        tasks.push(task);
     }
 
     pub(crate) async fn close_background_task(&self) {
-        self.background_cancellation.cancel();
-        let tasks = std::mem::take(&mut *self.background_tasks.lock().unwrap());
-        for task in tasks {
-            let _ = task.await;
-        }
+        let completion = {
+            let mut close = self.background_close.lock().unwrap();
+            close
+                .get_or_insert_with(|| {
+                    self.background_cancellation.cancel();
+                    let tasks = std::mem::take(&mut *self.background_tasks.lock().unwrap());
+                    async move {
+                        for task in tasks {
+                            let _ = task.await;
+                        }
+                    }
+                    .boxed()
+                    .shared()
+                })
+                .clone()
+        };
+        // Retain the join future in the owner if an async caller is cancelled.
+        // Concurrent closers cannot return before this same completion.
+        completion.await;
     }
 
     pub(crate) fn spawn_background_task<F, Fut>(&self, build: F) -> bool
@@ -1034,6 +1059,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         {
             return;
         }
+        let mut tasks = self.background_tasks.lock().unwrap();
+        if self.background_cancellation.is_cancelled() {
+            return;
+        }
         let cache = Arc::downgrade(self);
         let cancellation = self.background_cancellation.child();
         let task = tokio::spawn(async move {
@@ -1047,12 +1076,16 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 };
                 let max_sleep_ms = u64::try_from(interval.as_millis()).unwrap_or(u64::MAX);
                 let mut backoffer = RetryBackoffer::new(cancellation.child(), max_sleep_ms);
-                if let Err(error) = cache.refresh_region_index(&mut backoffer).await {
+                let result = tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    result = cache.refresh_region_index(&mut backoffer) => result,
+                };
+                if let Err(error) = result {
                     debug!("periodic region-cache refresh failed: {error}");
                 }
             }
         });
-        self.background_tasks.lock().unwrap().push(task);
+        tasks.push(task);
     }
 
     /// Starts client-go's independent store-cache maintenance schedules. A
@@ -1072,7 +1105,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         {
             return;
         }
-        let mut tasks = Vec::with_capacity(4);
+        let mut tasks = self.background_tasks.lock().unwrap();
+        if self.background_cancellation.is_cancelled() {
+            return;
+        }
+
         if !stores_refresh_interval.is_zero() {
             let check_interval = stores_refresh_interval / 4;
             if !check_interval.is_zero() {
@@ -1088,10 +1125,16 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         tokio::select! {
                             _ = cancellation.cancelled() => return,
                             _ = cache.store_check_notify.notified() => {
-                                cache.refresh_store_cache(true).await;
+                                tokio::select! {
+                                    _ = cancellation.cancelled() => return,
+                                    _ = cache.refresh_store_cache(true) => {}
+                                }
                             }
                             _ = tick.tick() => {
-                                cache.refresh_store_cache(false).await;
+                                tokio::select! {
+                                    _ = cancellation.cancelled() => return,
+                                    _ = cache.refresh_store_cache(false) => {}
+                                }
                             }
                         }
                     }
@@ -1110,7 +1153,10 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                         let Some(cache) = cache.upgrade() else {
                             return;
                         };
-                        cache.tick_store_health_with_callback(Instant::now()).await;
+                        tokio::select! {
+                            _ = cancellation.cancelled() => return,
+                            _ = cache.tick_store_health_with_callback(Instant::now()) => {}
+                        }
                     }
                 }));
             }
@@ -1149,12 +1195,15 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 let Some(cache) = cache.upgrade() else {
                     return;
                 };
-                if let Err(error) = cache.insert_missing_stores().await {
+                let result = tokio::select! {
+                    _ = cancellation.cancelled() => return,
+                    result = cache.insert_missing_stores() => result,
+                };
+                if let Err(error) = result {
                     debug!("periodic store-list refresh failed: {error}");
                 }
             }
         }));
-        self.background_tasks.lock().unwrap().extend(tasks);
     }
 
     async fn refresh_store_cache(&self, need_check_only: bool) {

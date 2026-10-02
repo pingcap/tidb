@@ -12,6 +12,7 @@ use futures::FutureExt;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
+use crate::async_util::Cancellation;
 use crate::pd::Cluster;
 use crate::pd::Connection;
 use crate::proto::keyspacepb;
@@ -38,6 +39,9 @@ pub type RegionScanOptions = super::opt::GetRegionOp;
 
 #[async_trait]
 pub trait RetryClientTrait {
+    /// Retires the owned PD services. Adapters without owned workers may do nothing.
+    async fn close(&self) {}
+
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader>;
@@ -206,6 +210,7 @@ pub struct RetryClient<Cl = Cluster> {
     cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
     reconnect: tokio::sync::Mutex<()>,
+    cancellation: Cancellation,
     timeout: Duration,
 }
 
@@ -220,6 +225,7 @@ impl<Cl> RetryClient<Cl> {
             cluster: RwLock::new((cluster, Instant::now())),
             connection,
             reconnect: tokio::sync::Mutex::new(()),
+            cancellation: Cancellation::default(),
             timeout,
         }
     }
@@ -228,7 +234,7 @@ impl<Cl> RetryClient<Cl> {
 macro_rules! retry_core {
     ($self: ident, $tag: literal, $call: expr) => {{
         let stats = pd_stats($tag);
-        let result = async {
+        let request = async {
             let mut last_err = Ok(());
             for _ in 0..LEADER_CHANGE_RETRY {
                 let res = $call;
@@ -254,8 +260,18 @@ macro_rules! retry_core {
 
             last_err?;
             unreachable!();
-        }
-        .await;
+        };
+        let cancelled = async {
+            match $self.cancellation() {
+                Some(cancellation) => cancellation.cancelled().await,
+                None => std::future::pending().await,
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = cancelled => Err(Error::ContextCanceled),
+            result = request => result,
+        };
         stats.done(result)
     }};
 }
@@ -314,6 +330,7 @@ impl RetryClient<Cluster> {
             cluster,
             connection,
             reconnect: tokio::sync::Mutex::new(()),
+            cancellation: Cancellation::default(),
             timeout,
         })
     }
@@ -323,6 +340,21 @@ impl RetryClient<Cluster> {
         self.reconnect(0).await
     }
 
+    /// Cancels requests/discovery, joins streams, and releases connections even
+    /// while request handles are retained. A cancelled close can be resumed.
+    pub async fn close(&self) {
+        self.cancellation.cancel();
+        let _refresh = self.reconnect.lock().await;
+        let retire = self.cluster.write().await.0.start_close();
+        retire.await;
+        self.cluster.write().await.0.finish_retirement();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn tso_for_test(&self) -> super::timestamp::TimestampOracle {
+        self.cluster.read().await.0.tso_for_test()
+    }
+
     pub async fn cluster_id(&self) -> u64 {
         self.cluster.read().await.0.id()
     }
@@ -330,6 +362,10 @@ impl RetryClient<Cluster> {
 
 #[async_trait]
 impl RetryClientTrait for RetryClient<Cluster> {
+    async fn close(&self) {
+        RetryClient::close(self).await;
+    }
+
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
@@ -622,6 +658,9 @@ fn regions_from_batch_scan_response(
 #[async_trait]
 trait Reconnect {
     type Cl;
+    fn cancellation(&self) -> Option<&Cancellation> {
+        None
+    }
     async fn reconnect(&self, interval_sec: u64) -> Result<()>;
 }
 
@@ -629,31 +668,46 @@ trait Reconnect {
 impl Reconnect for RetryClient<Cluster> {
     type Cl = Cluster;
 
+    fn cancellation(&self) -> Option<&Cancellation> {
+        Some(&self.cancellation)
+    }
+
     async fn reconnect(&self, interval_sec: u64) -> Result<()> {
-        let reconnect_begin = Instant::now();
-        // Serialize refreshes, not requests. An in-flight RPC retains its own
-        // handle and cannot delay discovery or publication of a new leader.
-        let _refresh = self.reconnect.lock().await;
-        let prepare = {
-            let guard = self.cluster.read().await;
-            if reconnect_begin <= guard.1 + Duration::from_secs(interval_sec) {
-                return Ok(());
+        let reconnect = async {
+            let reconnect_begin = Instant::now();
+            // Serialize refreshes, not requests. An in-flight RPC retains its own
+            // handle and cannot delay discovery or publication of a new leader.
+            let _refresh = self.reconnect.lock().await;
+            let prepare = {
+                let guard = self.cluster.read().await;
+                if reconnect_begin <= guard.1 + Duration::from_secs(interval_sec) {
+                    return Ok(());
+                }
+                self.connection.prepare_reconnect(&guard.0, self.timeout)
+            };
+            log::warn!("updating pd client");
+            let leader = prepare.await?;
+            let retire = {
+                let mut guard = self.cluster.write().await;
+                guard.0.install_leader(leader, self.timeout)?
+            };
+            retire.await;
+            {
+                let mut guard = self.cluster.write().await;
+                guard.0.finish_retirement();
+                guard.1 = Instant::now();
             }
-            self.connection.prepare_reconnect(&guard.0, self.timeout)
+            log::info!(
+                "updating PD client done, spent {:?}",
+                reconnect_begin.elapsed()
+            );
+            Ok(())
         };
-        log::warn!("updating pd client");
-        let leader = prepare.await?;
-        let retire = {
-            let mut guard = self.cluster.write().await;
-            guard.0.install_leader(leader, self.timeout)?
-        };
-        retire.await;
-        self.cluster.write().await.1 = Instant::now();
-        log::info!(
-            "updating PD client done, spent {:?}",
-            reconnect_begin.elapsed()
-        );
-        Ok(())
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(Error::ContextCanceled),
+            result = reconnect => result,
+        }
     }
 }
 

@@ -584,10 +584,10 @@
       "id": "P06",
       "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "**P2; partially repaired:** native TSO now has batch deadlines, cancellation and joined stream retirement; shared connectionctx, batch, retry, opt, metrics, circuitbreaker and errs prerequisites have published receipts. Healthy same-URL refresh preserves streams. Public PdRpcClient.close still closes region/TiKV owners without retiring the PD/TSO owner. Complete root/discovery/TSO lifecycle, options and package acceptance remain open. grpcutil experiments are isolated and unaccepted; Go default pick_first reconnects on demand after an established Ready connection becomes Idle, so that demand-driven behavior is not itself a mismatch.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`",
-      "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; those prerequisites alone did not accept parent packages or close P03/P06/P07. P07's subsequent owned-request repair is recorded separately; P03/P06 remain open/partial. Preserve source-dependent Idle/demand reconnection, setup/readiness, TLS, pending-request completion and joined public shutdown. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Native public close still stops region/TiKV owners without retiring its PD/TSO owner. Published deadline/batch/retry prerequisites and isolated grpcutil experiments do not close it. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**P2; partially repaired:** native TSO now has batch deadlines, cancellation and joined stream retirement; shared connectionctx, batch, retry, opt, metrics, circuitbreaker and errs prerequisites have published receipts. Healthy same-URL refresh preserves streams. Public PdRpcClient.close now joins region-cache work, TiKV and PD/TSO in source order; concurrent/interrupted close retains completion, cache-owned RPCs cancel, and interrupted reconnect retains retired-stream joins. Retained PD requests cannot reopen a closed owner. Complete root/discovery/TSO lifecycle, options and package acceptance remain open. grpcutil experiments are isolated and unaccepted; Go default pick_first reconnects on demand after an established Ready connection becomes Idle, so that demand-driven behavior is not itself a mismatch.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`; [explicit shutdown receipt](../../pd-shutdown-ownership-execplan.md)",
+      "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; those prerequisites alone did not accept parent packages or close P03/P06/P07. P07's subsequent owned-request repair is recorded separately; P03/P06 remain open/partial. The later explicit-shutdown repair composes cancellation, request admission and joined current/retired streams in the existing native owner. Preserve remaining source-dependent Idle/demand reconnection, setup/readiness and TLS obligations; broader parent-package acceptance remains open. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
+      "review_basis": "Historical review at integration cfc6a174bb, unchanged Go/native pins: Native public close stopped region/TiKV owners without retiring its PD/TSO owner. The later explicit-shutdown repair fixes that boundary; P06 remains partial for its broader owner obligations. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P07",
@@ -781,9 +781,10 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "P07",
-    "integration_start": "130502f91290243a675232165f46dda09798f59d",
-    "client_rust": "952013279bc64e590f17c18b9c9222fdaf5a3604",
-    "receipt": "../../pd-request-ownership-execplan.md"
+    "id": "P06",
+    "scope": "Existing native explicit shutdown; P06 remains partial",
+    "integration_start": "74f36495062a97c04916031e286a012fdb05e0dc",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "receipt": "../../pd-shutdown-ownership-execplan.md"
   }
 }

@@ -479,6 +479,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     kv_client_versions: Arc<RwLock<HashMap<String, u64>>>,
     kv_client_lifecycle: Arc<Mutex<()>>,
     kv_client_closed: Arc<AtomicBool>,
+    close_complete: tokio::sync::OnceCell<()>,
     store_token_counts: Arc<std::sync::Mutex<HashMap<StoreId, Arc<AtomicI64>>>>,
     keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
     enable_forwarding: bool,
@@ -1607,6 +1608,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             kv_client_versions,
             kv_client_lifecycle,
             kv_client_closed,
+            close_complete: tokio::sync::OnceCell::new(),
             store_token_counts,
             kv_connect: kv_connect(security_mgr.clone()),
             keyspace_meta,
@@ -1661,29 +1663,33 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             .await;
     }
 
-    /// Retires all pooled TiKV clients and prevents future connections. This
-    /// is the owning counterpart of client-go `RPCClient.Close`.
+    /// Joins region-cache work, retires TiKV clients, then closes PD/TSO, as in
+    /// client-go KVStore.Close. Every caller waits for the same completed close.
     pub async fn close(&self)
     where
         Cl: Send + Sync + 'static,
+        RetryClient<Cl>: RetryClientTrait,
     {
-        if self.kv_client_closed.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // Match `tikv.KVStore.Close`: stop every region-cache background task
-        // before retiring the TiKV clients those tasks may still access.
-        self.region_cache.close_background_task().await;
-        let _lifecycle = self.kv_client_lifecycle.lock().await;
-        let retired = self
-            .kv_client_cache
-            .write()
-            .await
-            .drain()
-            .map(|(_, cached)| cached.client)
-            .collect::<Vec<_>>();
-        for client in retired {
-            client.close();
-        }
+        self.kv_client_closed.store(true, Ordering::Release);
+        self.close_complete
+            .get_or_init(|| async {
+                self.region_cache.close_background_task().await;
+                {
+                    let _lifecycle = self.kv_client_lifecycle.lock().await;
+                    let retired = self
+                        .kv_client_cache
+                        .write()
+                        .await
+                        .drain()
+                        .map(|(_, cached)| cached.client)
+                        .collect::<Vec<_>>();
+                    for client in retired {
+                        client.close();
+                    }
+                }
+                self.pd.close().await;
+            })
+            .await;
     }
 }
 
@@ -1794,6 +1800,36 @@ pub mod test {
 
     use super::*;
     use crate::mock::*;
+
+    // Pool-only tests have no PD worker. Keep their adapter explicit now that
+    // public close also closes the PD owner.
+    #[async_trait]
+    impl RetryClientTrait for RetryClient<MockCluster> {
+        async fn get_region(self: Arc<Self>, _: Vec<u8>) -> Result<RegionWithLeader> {
+            unreachable!("pool-only fixture")
+        }
+        async fn get_prev_region(self: Arc<Self>, _: Vec<u8>) -> Result<RegionWithLeader> {
+            unreachable!("pool-only fixture")
+        }
+        async fn get_region_by_id(self: Arc<Self>, _: RegionId) -> Result<RegionWithLeader> {
+            unreachable!("pool-only fixture")
+        }
+        async fn get_store(self: Arc<Self>, _: StoreId) -> Result<Option<metapb::Store>> {
+            unreachable!("pool-only fixture")
+        }
+        async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+            unreachable!("pool-only fixture")
+        }
+        async fn get_timestamp(self: Arc<Self>) -> Result<pdpb::Timestamp> {
+            unreachable!("pool-only fixture")
+        }
+        async fn update_safepoint(self: Arc<Self>, _: u64) -> Result<bool> {
+            unreachable!("pool-only fixture")
+        }
+        async fn load_keyspace(&self, _: &str) -> Result<keyspacepb::KeyspaceMeta> {
+            unreachable!("pool-only fixture")
+        }
+    }
     use crate::pd::RetryClient;
     use crate::store::{KvClient, KvConnect, Request};
     use crate::Config;
