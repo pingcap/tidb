@@ -472,12 +472,7 @@ pub static TLS_CIPHER: LazyLock<IntCounterVec> = LazyLock::new(|| {
 });
 
 /// Go `metrics.PanicCounter` (`pkg/metrics/metrics.go:122`).
-pub static PANIC_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register(IntCounterVec::new(
-        Opts::new("tidb_server_panic_total", "Counter of panic."),
-        &[labels::TYPE],
-    ))
-});
+pub use tidb_util::panic_metrics::PANIC_TOTAL;
 
 /// Go `metrics.MemoryUsage` (`pkg/metrics/metrics.go:129`).
 pub static MEMORY_USAGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {

@@ -1111,14 +1111,14 @@ mod schema_sync_tests {
         // An ADMIN pause committed during validation must win over a stale
         // validation error. A detached checkpoint would overwrite PAUSING.
         struct PauseDuringValidation<F>(F);
-        impl<F: Fn()> CheckConstraintValidator for PauseDuringValidation<F> {
+        impl<F: Fn(&MutationBuffer)> CheckConstraintValidator for PauseDuringValidation<F> {
             fn validate(
                 &self,
                 _: &CheckConstraintValidation,
                 _: Arc<Mutex<dyn ClusterSnapshot>>,
-                _: &MutationBuffer,
+                buffer: &MutationBuffer,
             ) -> Result<(), LockSqlError> {
-                (self.0)();
+                (self.0)(buffer);
                 Err(LockSqlError {
                     code: tidb_error::tidb::errcode::ErrCheckConstraintViolated,
                     state: *b"HY000",
@@ -1167,7 +1167,7 @@ mod schema_sync_tests {
             constraint: GoField::new(Some(GoShared::new(submitted))),
         })));
         seed(&mut check_job);
-        let validator = PauseDuringValidation(|| {
+        let validator = PauseDuringValidation(|_: &MutationBuffer| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
             let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
@@ -1235,7 +1235,7 @@ mod schema_sync_tests {
             None,
             &KvTableIndexBackfiller,
             &KvTableIndexBackfiller,
-            &PauseDuringValidation(|| {}),
+            &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
         );
@@ -1251,6 +1251,204 @@ mod schema_sync_tests {
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
             tidb_error::tidb::errcode::ErrCheckConstraintViolated as isize
+        );
+
+        // Restore the CHECK intermediate state and force its validator to
+        // panic. The worker must discard the incomplete action and persist
+        // Go's cancellation outcome under the current limit.
+        let panic_count = crate::server_metrics::PANIC_TOTAL
+            .with_label_values(&["ddl-worker"])
+            .get();
+        set_limit(0);
+        let tx = opener.begin().unwrap();
+        assert!(matches!(
+            tx.commit(
+                vec![tidb_txnkv::transaction::BufferMutation::set(
+                    tidb_meta::key::table_kv_key(505, 701),
+                    tidb_meta::value::serialize_table_info(&table).unwrap(),
+                )
+                .unwrap()],
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        check_job.id = 702;
+        seed(&mut check_job);
+        let before_panic_version =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+                .unwrap()
+                .schema_version;
+        let marker = tidb_meta::key::table_kv_key(505, 999);
+        let panicking = PauseDuringValidation(|buffer: &MutationBuffer| {
+            buffer
+                .set(marker.clone().into(), b"unfinished action".to_vec())
+                .unwrap();
+            panic!("DDL validation panic");
+        });
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let lost_owner = || {
+            if checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                Ok(())
+            } else {
+                Err("owner lost after action panic".into())
+            }
+        };
+        assert!(run_persisted_ddl_job(
+            opener.clone(),
+            702,
+            timeout,
+            None,
+            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
+            &panicking,
+            &barrier,
+            &lost_owner,
+        )
+        .is_err());
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].error_count, 0);
+        assert_eq!(active[0].state, JobState::RUNNING);
+        let result = run_persisted_ddl_job(
+            opener.clone(),
+            702,
+            timeout,
+            None,
+            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
+            &panicking,
+            &barrier,
+            &|| Ok(()),
+        );
+        assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Finished);
+        let history = load_history_persisted_ddl_job(opener.clone(), 702, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, 1);
+        let error = history.error.as_ref().unwrap().read();
+        assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
+        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+        let mut tx = opener.begin_read_only().unwrap();
+        assert!(tx
+            .snapshot_get(
+                &marker,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+            )
+            .unwrap()
+            .value
+            .is_none());
+        tx.finish_without_writes().unwrap();
+        let after =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+        assert_eq!(after.schema_version, before_panic_version);
+        let stored_table = after
+            .databases
+            .iter()
+            .flat_map(|db| &db.tables)
+            .find(|table| table.id == 701)
+            .unwrap();
+        assert_eq!(
+            stored_table.constraints.get(0).unwrap().read().state,
+            SchemaState::WRITE_REORGANIZATION
+        );
+
+        // The same panic must not overwrite an ADMIN pause committed while
+        // validation was running. Retry reads the new control row instead.
+        set_limit(5);
+        check_job.id = 703;
+        seed(&mut check_job);
+        let set_job_state = |state| {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut active = queue.load_by_id(&mut snapshot, 703).unwrap().unwrap();
+            active.job.state = state;
+            let mut mutations = Vec::new();
+            queue
+                .append_update(&mut active, false, &mut mutations)
+                .unwrap();
+            assert!(matches!(
+                tx.commit(
+                    mutations,
+                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+                )
+                .unwrap(),
+                OptimisticCommitOutcome::Committed(_)
+            ));
+        };
+        let pause_then_panic = PauseDuringValidation(|buffer: &MutationBuffer| {
+            set_job_state(JobState::PAUSING);
+            (panicking.0)(buffer);
+        });
+        assert_eq!(
+            run_persisted_ddl_job(
+                opener.clone(),
+                703,
+                timeout,
+                None,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &pause_then_panic,
+                &barrier,
+                &|| Ok(()),
+            )
+            .unwrap(),
+            PersistedDdlJobOutcome::Paused
+        );
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].state, JobState::PAUSED);
+        assert_eq!(active[0].error_count, 0);
+        assert!(load_history_persisted_ddl_job(opener.clone(), 703, timeout)
+            .unwrap()
+            .is_none());
+        set_job_state(JobState::QUEUEING);
+        assert_eq!(
+            run_persisted_ddl_job(
+                opener.clone(),
+                703,
+                timeout,
+                None,
+                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller,
+                &panicking,
+                &barrier,
+                &|| Ok(()),
+            )
+            .unwrap(),
+            PersistedDdlJobOutcome::Finished
+        );
+        let history = load_history_persisted_ddl_job(opener.clone(), 703, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(
+            history.error_count, 2,
+            "one panic, then normal cancellation"
+        );
+        assert_eq!(
+            history.error.as_ref().unwrap().read().code().value(),
+            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+        );
+        let after =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+        let stored_table = after
+            .databases
+            .iter()
+            .flat_map(|db| &db.tables)
+            .find(|table| table.id == 701)
+            .unwrap();
+        assert!(
+            stored_table.constraints.is_empty(),
+            "cancellation must finish metadata rollback"
+        );
+        assert_eq!(
+            crate::server_metrics::PANIC_TOTAL
+                .with_label_values(&["ddl-worker"])
+                .get(),
+            panic_count + 4,
+            "record every recovered action panic, including owner loss and a conflicting pause"
         );
     }
 

@@ -30,10 +30,10 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation,
-    plan_persisted_ddl_job_error, plan_persisted_ddl_job_step,
+    plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
-    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate, PersistedDdlJobPlan,
-    PersistedDdlJobStep,
+    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure,
+    PersistedDdlJobPlan, PersistedDdlJobStep,
 };
 
 use tidb_exec::ddl_history_table::DdlHistoryTable;
@@ -819,6 +819,199 @@ fn persisted_cancellation_precedes_forward_action() {
             "{action}"
         );
         assert_eq!(job.raw_args, raw);
+    }
+}
+
+#[test]
+fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata() {
+    for limit in [5, 0] {
+        let mut store = bootstrapped();
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 990;
+        job.schema_id = 991;
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.version = JobVersion::V2;
+        job.last_schema_version = 55;
+        // Go's FinishDBJob also panics on a missing BinlogInfo. This invokes
+        // the real action after it has constructed, but not published, writes.
+        job.binlog_info = None;
+        job.fill_args(Some(GoShared::new(tidb_model::CreateSchemaArgs {
+            db_info: tidb_model::GoField::new(Some(GoShared::new(DBInfo {
+                id: 991,
+                name: tidb_ast::CiString::new("panic_database"),
+                ..Default::default()
+            }))),
+        })));
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "991", "0", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let raw = queue
+            .load_by_id(&mut store, job.id)
+            .unwrap()
+            .unwrap()
+            .job
+            .raw_args;
+        let PersistedDdlJobPlan::Step(step) =
+            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, None, &|| limit).unwrap()
+        else {
+            panic!("panic recovery must checkpoint")
+        };
+        assert_eq!(step.terminal, limit == 0);
+        assert!(step.run_error.is_none(), "a panic is not countForError");
+        assert_eq!(step.write.schema_version, 0);
+        assert!(step.write.mdl_info_update.is_none());
+        apply(&mut store, &step.write);
+        let after = load_cluster_catalog(&mut store).unwrap();
+        assert_eq!(after.schema_version, catalog.schema_version);
+        assert!(!after.databases.iter().any(|db| db.info.id == 991));
+        if limit > 0 {
+            let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+            assert_eq!(active.job.state, JobState::CANCELLING);
+            assert_eq!(active.job.error_count, 1);
+            assert!(active.job.error.is_none());
+            assert_eq!(active.job.last_schema_version, 55);
+            assert_eq!(active.job.raw_args, raw);
+            let done = plan_worker_step(&mut store, job.id, 20_000).unwrap();
+            assert!(done.terminal);
+            apply(&mut store, &done.write);
+        }
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let history = history.iter().find(|j| j.id == job.id).unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, if limit == 0 { 1 } else { 2 });
+        assert_eq!(history.raw_args, raw);
+        let error = history.error.as_ref().unwrap().read();
+        if limit == 0 {
+            assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
+            assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+            assert_eq!(
+                error.message(),
+                "panic in handling DDL logic and error count beyond the limitation 0, cancelled"
+            );
+        } else {
+            assert_eq!(
+                error.code().value(),
+                tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+            );
+        }
+    }
+}
+
+#[test]
+fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_error() {
+    for initial_state in [JobState::CANCELLING, JobState::ROLLINGBACK] {
+        let mut store = bootstrapped();
+        let create = plan(&mut store, "CREATE TABLE panic_check (a INT)", 1_000);
+        let table_id = create.created_id.unwrap();
+        apply(&mut store, &create);
+        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let mut table = catalog
+            .find_table("u6", "panic_check")
+            .unwrap()
+            .1
+            .clone_like_go();
+        let constraint = tidb_model::table::ConstraintInfo {
+            name: tidb_ast::CiString::new("c"),
+            state: SchemaState::WRITE_ONLY,
+            enforced: true,
+            ..Default::default()
+        };
+        // A nil metadata pointer produces a real action panic; there is no
+        // test-only production switch or synthetic error-return replacement.
+        table.constraints = tidb_model::GoSharedPointerSlice::from_handles(vec![
+            None,
+            Some(GoShared::new(constraint.clone())),
+        ]);
+        store.put(
+            key::table_kv_key(112, table_id),
+            value::serialize_table_info(&table).unwrap(),
+        );
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut job = Job::default();
+        job.id = 990;
+        job.schema_id = 112;
+        job.table_id = table_id;
+        job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
+        job.state = initial_state;
+        job.version = JobVersion::V2;
+        job.error_count = 2;
+        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+            tidb_error::terror::TerrorCode::new(3819),
+            "original validation failure",
+        )));
+        job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
+            constraint: tidb_model::GoField::new(Some(GoShared::new(constraint))),
+        })));
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(
+                &mut job,
+                false,
+                "112",
+                &table_id.to_string(),
+                true,
+                &mut mutations,
+            )
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let raw = queue
+            .load_by_id(&mut store, job.id)
+            .unwrap()
+            .unwrap()
+            .job
+            .raw_args;
+        let PersistedDdlJobPlan::Step(step) =
+            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, None, &|| 3).unwrap()
+        else {
+            panic!("panic must checkpoint")
+        };
+        assert_eq!(step.terminal, initial_state == JobState::ROLLINGBACK);
+        assert!(step.run_error.is_none());
+        assert_eq!(step.write.schema_version, 0);
+        apply(&mut store, &step.write);
+        if initial_state == JobState::CANCELLING {
+            let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+            assert_eq!(active.job.state, JobState::CANCELLING);
+            assert_eq!(active.job.error_count, 3);
+            assert_eq!(
+                active.job.error.unwrap().read().message(),
+                "original validation failure"
+            );
+            assert_eq!(active.job.raw_args, raw);
+            let PersistedDdlJobPlan::Step(step) =
+                plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 3).unwrap()
+            else {
+                panic!("exhausted panic budget must terminate")
+            };
+            assert!(step.terminal);
+            apply(&mut store, &step.write);
+        }
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let history = history.iter().find(|j| j.id == job.id).unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.raw_args, raw);
+        let error = history.error.as_ref().unwrap().read();
+        if initial_state == JobState::ROLLINGBACK {
+            assert_eq!(history.error_count, 3);
+            assert_eq!(error.message(), "original validation failure");
+        } else {
+            assert_eq!(history.error_count, 4);
+            assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+            assert_eq!(
+                error.message(),
+                "panic in handling DDL logic and error count beyond the limitation 3, cancelled"
+            );
+        }
     }
 }
 
@@ -1957,13 +2150,15 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     apply(&mut store, &reorganization.write);
 
     let validation_message = "Check constraint 'c_positive' is violated.";
-    let rollingback = plan_persisted_ddl_job_error(
+    let rollingback = plan_persisted_ddl_job_failure(
         &mut store,
         job_id,
         10_000,
-        DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-            validation_message,
+        PersistedDdlJobFailure::Error(DdlPlanError::Admission(
+            tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+                validation_message,
+            ),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )
@@ -2270,13 +2465,15 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     apply(&mut store, &write_only.write);
 
     let validation_message = "Check constraint 'c_positive' is violated.";
-    let rollingback = plan_persisted_ddl_job_error(
+    let rollingback = plan_persisted_ddl_job_failure(
         &mut store,
         job_id,
         10_000,
-        DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-            validation_message,
+        PersistedDdlJobFailure::Error(DdlPlanError::Admission(
+            tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+                validation_message,
+            ),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )

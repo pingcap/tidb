@@ -2227,3 +2227,24 @@ counts in older review snapshots without rewriting them. D05 still needs externa
 error delivery, panic and retry policy. D01/D03 still own the larger durable SQL
 and scheduler migration; disabled actions remain disabled. No upstream Go package
 is accepted by this maintenance repair, and no benchmark improvement is claimed.
+
+
+### Shared DDL panic recovery, 2026-10-02
+
+
+Starting at 7ab955b0d44f41716f39b4841ec9d4f798790170, with unchanged Go/native
+pins, existing planner and staged-validator unwinds now use the same original
+transaction failure checkpoint. The old error-only checkpoint API is replaced;
+no detached recovery transaction or retry owner is introduced. Go's countForPanic
+rules preserve prior errors/raw arguments, select cancellation state and read the
+current limit. Incomplete metadata and row buffers are discarded. The existing
+panic counter moves to shared utility ownership and remains re-exported to server
+consumers; every recovery counts even if owner loss or a pause prevents commit.
+See ddl-panic-owner-execplan.md for red/green cases and publication evidence.
+
+D05 stays partial and the register stays at 75 unresolved, ten repaired, 85 total.
+Full returned-error taxonomy, rollback-transaction classification and retry timing
+remain open. Review of all nine live persisted handlers qualifies the former
+external-delivery allegation: they currently emit no placement/label requests;
+the missing effects and their failure lifecycle belong to whole-action integration.
+No upstream package is accepted or disabled action activated by this maintenance.

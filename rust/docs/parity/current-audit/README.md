@@ -585,3 +585,13 @@ has 75 unresolved findings (69 open, six partial) and ten repaired findings.
 These are maintained live-path contracts, not complete pkg/ddl acceptance; external
 error/panic/retry policy, durable SQL submission and scheduler ownership remain open.
 Earlier reviews above retain their historical counts and pins.
+
+The [action panic recovery repair](../../ddl-panic-owner-execplan.md) continues
+that same transaction owner for planner and staged-validator unwinds. It preserves
+Go's distinct panic counts, cancellation states, old errors and raw arguments,
+discards unfinished writes and shares the existing process panic counter across
+DDL and sessions. Owner loss and a conflicting pause cannot publish a stale
+checkpoint. D05 remains partial and all counts remain unchanged: full returned-error
+classification, transaction/retry policy and whole-action external-effect integration
+are still open. The previous external-delivery allegation is qualified: none of the
+nine live persisted handlers emits placement/label requests today.

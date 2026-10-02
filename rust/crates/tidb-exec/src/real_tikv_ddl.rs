@@ -43,10 +43,10 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_ddl, plan_persisted_ddl_job_error, plan_persisted_ddl_job_step,
-    prepare_check_constraint_job_submission, CheckConstraintValidation, DdlAdmissionError, DdlPlan,
-    DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, IndexBackfill,
-    MdlInfoUpdate, PersistedDdlJobPlan,
+    lower_ddl_with_context, plan_ddl, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
+    prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation,
+    DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation,
+    IndexBackfill, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan,
 };
 
 use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
@@ -1321,7 +1321,7 @@ fn commit_cluster_ddl_with_backfill_once<
             }
         }
     };
-    let (plan, persisted_job_terminal, mut run_error) = match plan {
+    let (plan, mut persisted_job_terminal, mut run_error) = match plan {
         Ok(plan) => plan,
         Err(error) => {
             let _ = transaction.rollback();
@@ -1344,52 +1344,69 @@ fn commit_cluster_ddl_with_backfill_once<
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
     {
-        let staged = transaction
-            .snapshot()
-            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
-            .and_then(|snapshot| {
-                let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
-                slot.lock()
-                    .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
-                    .bind(snapshot);
-                let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                for backfill in &write.backfill {
-                    backfiller
-                        .stage(backfill, Arc::clone(&handle), &buffer)
-                        .map_err(ClusterDdlError::Backfill)?;
+        let stage_action = || {
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
+                .and_then(|snapshot| {
+                    let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+                    slot.lock()
+                        .map_err(|_| {
+                            ClusterDdlError::Backfill("snapshot slot poisoned".to_owned())
+                        })?
+                        .bind(snapshot);
+                    let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
+                    for backfill in &write.backfill {
+                        backfiller
+                            .stage(backfill, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::Backfill)?;
+                    }
+                    if let Some(validation) = &write.exchange_partition_validation {
+                        exchange_validator
+                            .validate(validation, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::ExchangeValidation)?;
+                    }
+                    if let Some(validation) = &write.check_constraint_validation {
+                        check_constraint_validator
+                            .validate(validation, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::CheckConstraintValidation)?;
+                    }
+                    Ok(())
+                })
+        };
+        let staged = match phase {
+            DdlPhase::Persisted { ddl_job_id, .. } => recover_ddl_action(ddl_job_id, stage_action),
+            DdlPhase::Initial(_) => Ok(stage_action()),
+        };
+        let failure = match staged {
+            Ok(Ok(())) => None,
+            Err(()) => Some(PersistedDdlJobFailure::Panic),
+            Ok(Err(error)) => {
+                if matches!(phase, DdlPhase::Initial(_)) {
+                    let _ = transaction.rollback();
+                    return Err(error);
                 }
-                if let Some(validation) = &write.exchange_partition_validation {
-                    exchange_validator
-                        .validate(validation, Arc::clone(&handle), &buffer)
-                        .map_err(ClusterDdlError::ExchangeValidation)?;
-                }
-                if let Some(validation) = &write.check_constraint_validation {
-                    check_constraint_validator
-                        .validate(validation, Arc::clone(&handle), &buffer)
-                        .map_err(ClusterDdlError::CheckConstraintValidation)?;
-                }
-                Ok(())
-            });
-        if let Err(error) = staged {
+                Some(PersistedDdlJobFailure::Error(match error {
+                    ClusterDdlError::CheckConstraintValidation(error) => DdlPlanError::Admission(
+                        DdlAdmissionError::with_code(error.code, error.message),
+                    ),
+                    error => DdlPlanError::Encode(error.to_string()),
+                }))
+            }
+        };
+        if let Some(failure) = failure {
             let DdlPhase::Persisted { ddl_job_id, .. } = phase else {
-                let _ = transaction.rollback();
-                return Err(error);
-            };
-            let job_error = match error {
-                ClusterDdlError::CheckConstraintValidation(error) => {
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
-                }
-                error => DdlPlanError::Encode(error.to_string()),
+                unreachable!("direct actions do not recover failures")
             };
             let checkpoint = transaction
                 .snapshot()
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))
                 .and_then(|snapshot| {
-                    plan_persisted_ddl_job_error(
+                    plan_persisted_ddl_job_failure(
                         &mut SnapshotMetaSnapshot::new(snapshot),
                         ddl_job_id,
                         start_ts,
-                        job_error,
+                        failure,
                         &|| refresh_ddl_error_count_limit(&opener, timeout),
                     )
                 });
@@ -1405,6 +1422,7 @@ fn commit_cluster_ddl_with_backfill_once<
             // keep this transaction's snapshot and conflict protection.
             buffer = MutationBuffer::new();
             write = checkpoint.write;
+            persisted_job_terminal = checkpoint.terminal;
             run_error = checkpoint.run_error;
         }
     }

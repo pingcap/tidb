@@ -3279,25 +3279,37 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     }
     let cancelling = active.job.is_cancelling();
     let was_rollingback = active.job.is_rollingback();
-    let outcome = if cancelling {
-        plan_cancel_persisted_ddl_job(&catalog, &mut active, start_ts)
-    } else {
-        if !active.job.is_rollingback() {
-            active.job.state = JobState::RUNNING;
+    let previous_schema_version = active.job.last_schema_version;
+    let outcome = recover_ddl_action(ddl_job_id, || {
+        if cancelling {
+            plan_cancel_persisted_ddl_job(&catalog, &mut active, start_ts)
+        } else {
+            if !active.job.is_rollingback() {
+                active.job.state = JobState::RUNNING;
+            }
+            plan_action(snapshot, &catalog, &mut active)
         }
-        plan_action(snapshot, &catalog, &mut active)
-    };
+    });
+    let panicked = outcome.is_err();
     let mut step = match outcome {
-        Ok(step) => step,
-        Err(error) => PersistedDdlActionStep {
+        Ok(Ok(step)) => step,
+        Ok(Err(error)) => PersistedDdlActionStep {
             write: job_only_write(ddl_job_id, Vec::new()),
             update_raw_args: !was_rollingback && active.job.is_rollingback(),
             run_error: Some(error),
         },
+        Err(()) => {
+            // An interrupted planner has no completed metadata write set.
+            // Go's recovered runOneJobStep also skips LastSchemaVersion and
+            // raw-argument publication after the panicking action call.
+            active.job.last_schema_version = previous_schema_version;
+            count_ddl_action_panic(&mut active.job, load_error_count_limit);
+            job_control_step(&active.job)
+        }
     };
     if cancelling {
         step.update_raw_args = active.job.is_rollingback();
-    } else {
+    } else if !panicked {
         active.job.last_schema_version = step.write.diff.version;
     }
     if let Some(error) = &step.run_error {
@@ -5239,6 +5251,46 @@ fn count_ddl_action_error(job: &mut Job, error: &DdlPlanError, load_limit: &dyn 
     }
 }
 
+// Go worker.countForPanic is distinct from countForError: below the limit it
+// keeps the earlier error (including nil), and counts every panic just once.
+fn count_ddl_action_panic(job: &mut Job, load_limit: &dyn Fn() -> i64) {
+    job.state = if job.is_rollingback() {
+        JobState::CANCELLED
+    } else {
+        JobState::CANCELLING
+    };
+    job.error_count += 1;
+    let limit = load_limit();
+    if job.error_count > limit {
+        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
+            tidb_error::terror::TerrorClass::Ddl,
+            tidb_error::terror::CODE_UNKNOWN,
+            format!("panic in handling DDL logic and error count beyond the limitation {limit}, cancelled"),
+        )));
+        job.state = JobState::CANCELLED;
+    }
+}
+
+// Only action execution is recoverable here. Transaction setup, queue/history
+// I/O and commit are owned by the caller. All action writes are staged until a
+// complete plan returns; unwinding drops guards, and the caller discards the
+// incomplete outputs before publishing a checkpoint. This is why asserting
+// unwind safety for the action's borrowed snapshot/buffer is sound.
+pub(crate) fn recover_ddl_action<T>(job_id: i64, action: impl FnOnce() -> T) -> Result<T, ()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).map_err(|panic| {
+        tidb_util::panic_metrics::PANIC_TOTAL
+            .with_label_values(&["ddl-worker"])
+            .inc();
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload");
+        eprintln!("{{\"level\":\"error\",\"event\":\"ddl_job_action_panic\",\"job_id\":{job_id},\"error\":{}}}",
+            serde_json::to_string(message).unwrap_or_default());
+    })
+}
+
 fn record_ddl_plan_error(job: &mut Job, error: &DdlPlanError) {
     match error {
         DdlPlanError::Admission(error) => record_ddl_job_error(job, error.code, &error.reason),
@@ -6062,14 +6114,23 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     })
 }
 
-/// Plans an external action error against the ORIGINAL action snapshot. The
+/// Outcome of an action that could not complete its staged work.
+#[derive(Debug)]
+pub enum PersistedDdlJobFailure {
+    /// A returned action error follows Go's countForError path.
+    Error(DdlPlanError),
+    /// An unwinding action follows Go's distinct countForPanic path.
+    Panic,
+}
+
+/// Plans an action failure against the ORIGINAL action snapshot. The
 /// caller commits this job-only write using that same transaction, so a racing
 /// pause/cancel causes a write conflict instead of being overwritten.
-pub fn plan_persisted_ddl_job_error<S: MetaSnapshot>(
+pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-    error: DdlPlanError,
+    failure: PersistedDdlJobFailure,
     load_error_count_limit: &dyn Fn() -> i64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
@@ -6085,15 +6146,27 @@ pub fn plan_persisted_ddl_job_error<S: MetaSnapshot>(
     if !active.job.is_rollingback() {
         active.job.state = JobState::RUNNING;
     }
-    if matches!(
-        active.job.type_,
-        ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-    ) && matches!(&error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated)
-    {
-        active.job.state = JobState::ROLLINGBACK;
+    let run_error = match failure {
+        PersistedDdlJobFailure::Error(error) => {
+            if matches!(
+                active.job.type_,
+                ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+            ) && matches!(&error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated)
+            {
+                active.job.state = JobState::ROLLINGBACK;
+            }
+            active.job.last_schema_version = 0;
+            count_ddl_action_error(&mut active.job, &error, load_error_count_limit);
+            Some(error)
+        }
+        PersistedDdlJobFailure::Panic => {
+            count_ddl_action_panic(&mut active.job, load_error_count_limit);
+            None
+        }
+    };
+    if active.job.is_cancelled() {
+        return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts);
     }
-    active.job.last_schema_version = 0;
-    count_ddl_action_error(&mut active.job, &error, load_error_count_limit);
     let mut mutations = Vec::new();
     job_table
         .append_update(&mut active, false, &mut mutations)
@@ -6101,7 +6174,7 @@ pub fn plan_persisted_ddl_job_error<S: MetaSnapshot>(
     Ok(PersistedDdlJobStep {
         write: job_only_write(ddl_job_id, mutations),
         terminal: false,
-        run_error: Some(error),
+        run_error,
     })
 }
 
