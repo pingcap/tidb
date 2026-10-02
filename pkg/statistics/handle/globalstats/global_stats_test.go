@@ -1200,14 +1200,14 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("create table ndv (a int, b int, primary key (a) nonclustered, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
 	tk.MustExec("analyze table ndv")
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
 	require.NoError(t, err)
 	tbl := table.Meta()
 	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
-	colB, idx := tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID
+	colA, colB, idx, pk := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID, tbl.FindIndexByName("primary").ID
 	// sampledSketch returns a saved sketch of 10 rows, of which selected were
 	// sampled for NDV and 3 are NULL, with the given singleton hashes.
 	sampledSketch := func(selected int64, hashes ...uint64) []byte {
@@ -1248,6 +1248,13 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 		require.Equal(t, int64(math.Round(2*math.Sqrt(10./3))), mergedNDV(async, false, colB))
 	}
 	tk.MustExec("insert into mysql.stats_fm_sketch values (?, 0, ?, ?)", part1, colB, data)
+	// The primary key keeps column a unique, so the NDV of the column and the
+	// key is every non-NULL row that ANALYZE saw, not the 2 values their
+	// sketches hold.
+	for _, async := range []bool{false, true} {
+		require.Equal(t, int64(4), mergedNDV(async, false, colA))
+		require.Equal(t, int64(4), mergedNDV(async, true, pk))
+	}
 	// Deletes after ANALYZE keep that ANALYZE's NULL counts, here 8 of 10 rows
 	// per partition. The bound uses the 2 non-NULL rows per partition that the
 	// ANALYZE saw, so the estimate stays as it would in a full-input merge.
