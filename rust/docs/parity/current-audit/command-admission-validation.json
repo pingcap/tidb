@@ -1,0 +1,355 @@
+{
+  "baseline_commit": "38b6db0197b1f564310d9e483e62783d182ff41e",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Existing server command admission maintenance; no complete package acceptance or benchmark claim. Commands run in rust/ unless noted. Exit 124 denotes a process-group timeout.",
+  "initial_regressions": {
+    "command": "cargo test --locked -p tidb-server --lib command_token -- --test-threads=1",
+    "failed_before_fix": [
+      "mysql_connection::command_token_tests::command_token_wait_is_observed_on_acquisition",
+      "node_config::tests::command_token_file_and_flag_precedence_matches_go",
+      "node_config::tests::command_token_flag_reaches_effective_config"
+    ],
+    "wire_command": "cargo test --locked -p tidb-server --test all command_token_is_shared -- --test-threads=1",
+    "wire_failure": "PING bypassed the server token limit with unchanged production and corrected explicit-shutdown fixture.",
+    "panic_failure": "Before WatcherStop Drop, error/panic exit test timed out waiting for EOF; after repair it passes."
+  },
+  "final_focused": {
+    "command": "cargo test --locked -p tidb-server --test all -- command_token forced_shutdown_cancels_an_inflight_com_query --test-threads=1",
+    "exit": 0,
+    "summary": "3 passed; 0 failed"
+  },
+  "complete_library": {
+    "scope": "Complete server library, serial",
+    "candidate_result": "479 passed, 10 failed",
+    "baseline_result": "475 passed, 10 failed",
+    "baseline_commit": "38b6db0197b1f564310d9e483e62783d182ff41e",
+    "identical_failed_cases": [
+      "cluster_session_node::tests::unistore_cop::add_partition_statistics_follow_global_prune_mode_like_go",
+      "cluster_session_node::tests::unistore_cop::drop_partitions_statistics_match_go",
+      "cluster_session_node::tests::unistore_cop::exchange_partition_validates_and_swaps_real_rows_atomically",
+      "cluster_session_node::tests::unistore_cop::global_stats_drive_partition_plans_like_go",
+      "cluster_session_node::tests::unistore_cop::partition_scoped_analyze_refreshes_global_count_and_modify_count",
+      "cluster_session_node::tests::unistore_cop::stats_notifier_uses_a_real_internal_transaction_like_go",
+      "cluster_session_node::tests::unistore_cop::system_table_ddl_does_not_publish_statistics_events_like_go",
+      "cluster_session_node::tests::unistore_cop::truncate_hash_partition_statistics_match_go",
+      "cluster_session_node::tests::unistore_cop::truncate_partitions_refreshes_global_stats_meta_like_go",
+      "real_tikv_node::tests::cluster_startup_installs_the_bootstrap_system_timezone"
+    ]
+  },
+  "affected_suites": [
+    {
+      "name": "library",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--lib",
+        "--",
+        "command_token",
+        "node_config::tests",
+        "main_flags::tests",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 468 filtered out; finished in 0.04s"
+      ]
+    },
+    {
+      "name": "concurrent_mysql_sessions_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "concurrent_mysql_sessions_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 124,
+      "summary": []
+    },
+    {
+      "name": "panic_recovery_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "panic_recovery_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "summary": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 205 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "name": "sql_node_lifecycle_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "sql_node_lifecycle_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 205 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "name": "fallible_process_shutdown_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "fallible_process_shutdown_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 203 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "mysql_client_lifecycle_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "mysql_client_lifecycle_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "summary": [
+        "test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured; 186 filtered out; finished in 1.60s"
+      ]
+    },
+    {
+      "name": "mysql_native_auth_lifecycle_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "mysql_native_auth_lifecycle_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 124,
+      "summary": []
+    },
+    {
+      "name": "mysql_tls_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "mysql_tls_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "name": "pipeline_mysql_client_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "pipeline_mysql_client_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "summary": [
+        "test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 196 filtered out; finished in 2.70s"
+      ]
+    },
+    {
+      "name": "resultset_writer_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "resultset_writer_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "server_internal_packetio_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "server_internal_packetio_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 200 filtered out; finished in 2.91s"
+      ]
+    },
+    {
+      "name": "node_config_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "node_config_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "summary": [
+        "test result: FAILED. 31 passed; 1 failed; 0 ignored; 0 measured; 174 filtered out; finished in 0.10s"
+      ]
+    },
+    {
+      "name": "initial_database_tcp_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "initial_database_tcp_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "summary": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.23s"
+      ]
+    },
+    {
+      "name": "grants_wire_protocol_source",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-server",
+        "--test",
+        "all",
+        "grants_wire_protocol_source",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "summary": [
+        "test result: FAILED. 6 passed; 3 failed; 0 ignored; 0 measured; 197 filtered out; finished in 1.16s"
+      ]
+    }
+  ],
+  "unchanged_integration_controls": {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "tidb-server",
+      "--test",
+      "all",
+      "--",
+      "panic_recovery_source::a_panicking_query_closes_its_connection_and_the_server_keeps_serving",
+      "mysql_client_lifecycle_source::real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup",
+      "pipeline_mysql_client_source::mysql_client_runs_the_pipeline_end_to_end",
+      "node_config_source::configured_read_tables_are_atomic_ordered_and_globally_unique",
+      "grants_wire_protocol_source::a_caching_sha2_password_account_creates_and_then_logs_in",
+      "grants_wire_protocol_source::a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped",
+      "grants_wire_protocol_source::grant_process_and_scoped_select_are_visible_and_live_across_real_connections",
+      "--test-threads=1"
+    ],
+    "exit": 101,
+    "identical_failed_cases": [
+      "grants_wire_protocol_source::a_caching_sha2_password_account_creates_and_then_logs_in",
+      "grants_wire_protocol_source::a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped",
+      "grants_wire_protocol_source::grant_process_and_scoped_select_are_visible_and_live_across_real_connections",
+      "mysql_client_lifecycle_source::real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup",
+      "node_config_source::configured_read_tables_are_atomic_ordered_and_globally_unique",
+      "panic_recovery_source::a_panicking_query_closes_its_connection_and_the_server_keeps_serving",
+      "pipeline_mysql_client_source::mysql_client_runs_the_pipeline_end_to_end"
+    ],
+    "aggregate_command": "cargo test --locked -p tidb-server --test all -- --test-threads=1",
+    "aggregate_result": "Candidate stopped while authenticating command_dispatch_exports_success_and_error_counters; unchanged control timed out after 45 seconds at the same point.",
+    "native_auth_command": "cargo test --locked -p tidb-server --test all -- mysql_native_auth_lifecycle_source --test-threads=1",
+    "native_auth_result": "Candidate timed out at 90 seconds; unchanged control timed out at 30 seconds at the same native_nonroot_auth test.",
+    "restoration": "All candidate source/test files restored byte for byte after each unchanged-code control."
+  },
+  "other_passed_commands": [
+    "cargo check --locked -p tidb-server --all-targets",
+    "make lint (repository root)",
+    "GOTOOLCHAIN=go1.25.14 go test -race -count=1 . (isolated unchanged master tokenlimiter.go plus checked-in oracle)"
+  ],
+  "publication_integration": {
+    "base": "f5ec06278ecc4a12891a6f9902b5bcea9e1073ce",
+    "reason": "Non-fast-forward push rejection; concurrent SET-assignment binding fix.",
+    "range_diff": "Repair patch unchanged after clean rebase.",
+    "focused_results": "21 library/configuration and 3 wire/shutdown tests pass after rebase.",
+    "broad_results_scope": "Broad suite/control evidence above is from the original 38b6db baseline, not a final full-suite acceptance claim.",
+    "other_passed_commands": [
+      "cargo check --locked -p tidb-server --all-targets",
+      "make lint (repository root)"
+    ]
+  }
+}

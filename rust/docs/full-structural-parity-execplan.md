@@ -2391,3 +2391,25 @@ lint pass. The focused receipt records the required hook and fresh locked
 server-build publication gates. No full pkg/executor acceptance or workload
 speedup is claimed. Native client-rust remains current at 19a56cc. The current
 register is 85 tracked, 72 unresolved (66 open/six partial), 13 repaired.
+
+## Server command admission ownership (2026-10-02)
+
+
+The [command admission receipt](command-admission-ownership-execplan.md) repairs
+N02 in the existing server owner. All connections share the effective configured
+limit through streaming and every command exit. The metrics-only substitute is
+removed; acquisition wait is recorded at acquisition, as Go does. Config-file
+normalization and explicit CLI precedence reach the same owner. An unwind-safe
+watcher guard also removes the retained panic socket found by the regression.
+
+The review adds N06: outer connection recovery has already unwound the framed
+writer before it could attempt Go's panic ERR. Fixing command retirement does
+not close that error-delivery owner. N03 retains its broader configuration gaps;
+its token-limit refusal is now historical. With N02 repaired and N06 added, the
+register is 86 tracked, 72 unresolved (66 open/six partial), 14 repaired.
+
+Focused regressions and the isolated unchanged Go limiter race oracle pass.
+The focused receipt records broader-suite results, baseline controls, lint and
+mandatory publication gates. No complete pkg/server/pkg/util acceptance or
+workload speedup is claimed. Native client-rust and its dependency are current
+and unchanged at 19a56cc.

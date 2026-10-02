@@ -425,6 +425,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "tidb-release-version",
     "tmp-storage-path",
     "tmp-storage-quota",
+    "token-limit",
 ];
 
 struct LoadedSourceConfig {
@@ -1008,6 +1009,7 @@ impl NodeConfig {
         global_config.tidb_edition = tidb_edition.unwrap_or_default();
         global_config.tidb_release_version = tidb_release_version.unwrap_or_default();
         global_config.server_version = server_version.unwrap_or_default();
+        main_flags.override_token_limit(&mut global_config);
         // main.go:751 `overrideConfig`: the flag wins over the file.
         if let Some(run_ddl) = main_flags.run_ddl {
             global_config.instance.tidb_enable_ddl =
@@ -1660,6 +1662,55 @@ mod tests {
         parse_column_descriptor, parse_stats_lease, ConfiguredReadColumnKind, NodeConfig,
         NodeConfigError, StatsLease, StoreKind,
     };
+
+    #[test]
+    fn command_token_flag_reaches_effective_config() {
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--store",
+            "unistore",
+            "--cluster-session",
+            "--auth-file",
+            "/tmp/users.tsv",
+            "--token-limit",
+            "1",
+        ])
+        .unwrap();
+        assert_eq!(config.global_config.token_limit, 1);
+    }
+
+    #[test]
+    fn command_token_file_and_flag_precedence_matches_go() {
+        let path =
+            std::env::temp_dir().join(format!("tidb-command-token-{}.toml", std::process::id()));
+        for (file_limit, flag, expected) in [
+            (2u64, None, 2usize),
+            (0, None, 1000),
+            (99_999_999_999, None, 1024 * 1024),
+            (2, Some("1"), 1),
+            (2, Some("0"), 0),
+            // main.go casts the signed flag to uint after loading the file.
+            (2, Some("-1"), usize::MAX),
+        ] {
+            fs::write(&path, format!("token-limit = {file_limit}\n")).unwrap();
+            let mut args = vec![
+                "tidb-server",
+                "--store",
+                "unistore",
+                "--cluster-session",
+                "--auth-file",
+                "/tmp/users.tsv",
+                "--config",
+                path.to_str().unwrap(),
+            ];
+            if let Some(flag) = flag {
+                args.extend(["--token-limit", flag]);
+            }
+            let config = NodeConfig::parse(args);
+            fs::remove_file(&path).unwrap();
+            assert_eq!(config.unwrap().global_config.token_limit, expected);
+        }
+    }
 
     /// The cluster TLS options thread into a `ClusterSecurity`, and their
     /// consistency rules (CA required for any material, cert⇔key together)

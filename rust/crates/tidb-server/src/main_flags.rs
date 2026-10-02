@@ -105,6 +105,14 @@ impl std::fmt::Display for FlagParseError {
 impl std::error::Error for FlagParseError {}
 
 impl MainFlags {
+    /// Go overrideConfig applies an explicitly supplied token limit after file
+    /// loading. In particular, a flag value of zero is not the file's default.
+    pub(crate) fn override_token_limit(&self, cfg: &mut Config) {
+        if let Some(limit) = self.token_limit {
+            cfg.token_limit = limit as usize;
+        }
+    }
+
     /// Go `initFlagSet` + `fset.Parse`: one or two leading dashes, `=value`
     /// or a following argument; a boolean flag takes a bare form or `=bool`.
     pub fn parse(arguments: &[String]) -> Result<Self, FlagParseError> {
@@ -278,9 +286,7 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     if let Some(lease) = &flags.ddl_lease {
         cfg.lease = lease.clone();
     }
-    if let Some(limit) = flags.token_limit {
-        cfg.token_limit = usize::try_from(limit).unwrap_or(0);
-    }
+    flags.override_token_limit(cfg);
     if let Some(repair) = flags.repair_mode {
         cfg.repair_mode = repair;
     }

@@ -16,9 +16,16 @@ closes P07 with native `952013279bc64e590f17c18b9c9222fdaf5a3604`. At that check
 register was **73 unresolved (67 open, six partial), twelve repaired, 85 tracked**.
 
 The [projection close-lifetime repair](../../projection-close-ownership-execplan.md)
-closes E06. The current register is **72 unresolved (66 open, six partial),
+closes E06. At that checkpoint the register was **72 unresolved (66 open, six partial),
 thirteen repaired, 85 tracked**. Native client-rust remains current at 19a56cc;
 this executor maintenance grants no complete package acceptance.
+
+The [server command-admission repair](../../command-admission-ownership-execplan.md)
+closes N02, removes the metrics-only guard and restores the configured per-server
+command lifetime. Its panic-path review also adds N06: recovery has already lost
+the framed writer before it could attempt Go's ERR packet. The current register
+is **72 unresolved (66 open, six partial), fourteen repaired, 86 tracked**.
+N03 remains open; token-limit refusal in older reviews is now historical.
 
 Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
@@ -44,8 +51,8 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **85 tracked findings: 72 unresolved (including partial
-repairs) and thirteen repaired ownership/contract findings (C01, D04, D06, E01, E06, O12,
+The register contains **86 tracked findings: 72 unresolved (including partial
+repairs) and fourteen repaired ownership/contract findings (C01, D04, D06, E01, E06, N02, O12,
 P01, P02, P04, P05, P07, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
@@ -121,8 +128,9 @@ will not close the consumers' reload, configuration or lifecycle gaps.
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
 | N01 | **P1; reproduced:** SQL ingress forces a Rust UTF-8 String and converts Latin-1 bytes into Unicode characters. Raw COM_QUERY `SELECT HEX('<E9>')` returns `C3A9`; Go's Latin-1 compatibility encoding preserves `E9`. Text rendering alone hides byte/length/storage differences. | `rust/crates/tidb-server/src/mysql_connection.rs:86`, `:1702`, `:2140`; `expanded-server-probe.txt` | `pkg/parser/charset/encoding_latin1.go::Transform` and the parser/server input boundary. Preserve source bytes/charset through lexing, literals, datum storage and result conversion; a HEX-specific patch would not fix the contract. |
-| N02 | **P2; source-confirmed:** the main flag accepts token-limit and its gauge exists, but command dispatch has no shared command permit owner. Connection-count admission is implemented and is a different limit. | `rust/crates/tidb-server/src/main_flags.rs:281`, `lib.rs:420`, `mysql_connection.rs` command loop, `sql_node.rs:1904`, `:2090`; token-limit flag admission reproduced | `pkg/server/server.go::concurrentLimiter`/`getToken`/`releaseToken`, `pkg/server/conn.go` dispatch acquires and releases a token per command. Wire the existing configured limit to command lifetime. Concurrent workload effects were not measured. |
-| N03 | **P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as token-limit, performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true. | `rust/crates/tidb-server/src/bin/tidb-server.rs:60`; `node_config.rs:399`, `:441`, `:920`; `expanded-server-probe.txt` | `cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Use the complete validated configuration as the runtime authority, including CLI precedence and consumers; merely accepting ignored fields would preserve the gap. Removed performance.run-auto-analyze is correctly refused and is not a finding. |
+| N02 | **Recorded admission mismatch repaired:** every connection to a server shares its configured command permits, held through response streaming and returned on normal/error/panic exits. Effective SourceConfig supplies the limit with Go file normalization and CLI precedence. Acquisition records token wait immediately; the metrics-only substitute is removed. Independent servers retain independent limits. | `rust/crates/tidb-server/src/mysql_connection.rs::CommandLimiter`, command dispatch and `WatcherStop::drop`; `sql_node.rs::ConnectionTracker`; `node_config.rs` and `main_flags.rs::override_token_limit`; [repair receipt](../../command-admission-ownership-execplan.md) | `pkg/server/server.go::concurrentLimiter`/`getToken`/`releaseToken`, `pkg/server/conn.go::dispatch`, `pkg/util/tokenlimiter.go` and config Load/overrideConfig. Command ownership is repaired without claiming complete pkg/server/pkg/util acceptance or measured workload effects. |
+| N03 | **P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true. Token-limit is now consumed by the shared N02 command owner; its earlier refusal is historical. | `rust/crates/tidb-server/src/bin/tidb-server.rs:60`; `node_config.rs:399`, `:441`, `:920`; `expanded-server-probe.txt` | `cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Use the complete validated configuration as the runtime authority, including CLI precedence and consumers; merely accepting ignored fields would preserve the gap. Removed performance.run-auto-analyze is correctly refused and is not a finding. |
+| N06 | **P2; source-confirmed and observed:** connection panic recovery sits outside the protocol writer lifetime. It logs and returns Panicked after unwinding the writer, so a panicking query closes without Go's attempted ERR packet. The leaked watcher socket is repaired, but error delivery still lacks the source recovery owner. | `rust/crates/tidb-server/src/mysql_connection.rs::serve_mysql_connection_with_runtime` catches after `serve_connection_inner` unwinds; `tests/panic_recovery_source.rs` currently expects no reply; command admission regression observes EOF after the watcher cleanup repair. | Master `pkg/server/conn.go::Run` retains clientConn and invokes writeError(ctx, fmt.Errorf("%v", r)) before Close in its deferred recovery. Preserve writer/protocol/session cleanup ownership through recovery, including TLS/compression and partial writes; do not bypass the framed writer with a raw socket error. |
 
 ## DDL: migrate responsibility before deleting implementations
 

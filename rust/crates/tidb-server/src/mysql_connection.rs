@@ -711,30 +711,95 @@ fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
     }
 }
 
-/// Mirrors Go `Server.getToken`/`releaseToken` around one command dispatch.
-///
-/// The Rust server does not yet enforce the configurable token limit, but the
-/// command boundary still owns the same observable metrics: active commands
-/// and the time spent acquiring a token. Keeping the decrement in `Drop`
-/// covers every early-return and protocol-error path in the dispatcher.
-struct CommandTokenMetrics {
-    started: Instant,
+/// Go Server.concurrentLimiter: one token channel shared by all connections
+/// to this server. Connection count, authentication and idle sockets do not
+/// consume these permits.
+pub(crate) struct CommandLimiter {
+    available: crossbeam_channel::Receiver<()>,
+    returned: crossbeam_channel::Sender<()>,
 }
 
-impl CommandTokenMetrics {
-    fn acquire() -> Self {
+impl CommandLimiter {
+    pub(crate) fn new(limit: usize) -> Self {
+        let (returned, available) = crossbeam_channel::bounded(limit);
+        for _ in 0..limit {
+            returned.send(()).expect("new token channel is connected");
+        }
+        Self {
+            available,
+            returned,
+        }
+    }
+
+    fn acquire(&self) -> CommandToken<'_> {
         let started = Instant::now();
+        self.available.recv().expect("server owns the token sender");
         crate::server_metrics::TOKENS.inc();
-        Self { started }
+        // Go records integer microseconds on acquisition, not command runtime
+        // (despite the histogram's `_seconds` name).
+        crate::server_metrics::GET_TOKEN_DURATION_SECONDS
+            .observe(started.elapsed().as_micros() as f64);
+        CommandToken { limiter: self }
     }
 }
 
-impl Drop for CommandTokenMetrics {
+/// The borrow keeps the channel owner alive through response streaming and
+/// returns exactly one token on normal completion, error or panic recovery.
+struct CommandToken<'a> {
+    limiter: &'a CommandLimiter,
+}
+
+impl Drop for CommandToken<'_> {
     fn drop(&mut self) {
+        self.limiter
+            .returned
+            .send(())
+            .expect("server owns the token receiver");
         crate::server_metrics::TOKENS.dec();
-        // Go records microseconds (despite the `_seconds` family name).
-        crate::server_metrics::GET_TOKEN_DURATION_SECONDS
-            .observe(self.started.elapsed().as_micros() as f64);
+    }
+}
+
+#[cfg(test)]
+mod command_token_tests {
+    use super::*;
+
+    static METRICS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn command_token_wait_is_observed_on_acquisition() {
+        let _metrics = METRICS.lock().unwrap();
+        let before = crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count();
+        let limiter = CommandLimiter::new(1);
+        let token = limiter.acquire();
+        let acquired = crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count();
+        drop(token);
+        assert_eq!(
+            acquired,
+            before + 1,
+            "Go records token wait before executing the command"
+        );
+        assert_eq!(
+            crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count(),
+            acquired,
+            "release must not record command execution time as token wait"
+        );
+    }
+
+    #[test]
+    fn command_token_returns_on_unwind_and_zero_has_no_permits() {
+        let _metrics = METRICS.lock().unwrap();
+        let limiter = CommandLimiter::new(2);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _first = limiter.acquire();
+            let _second = limiter.acquire();
+            assert!(limiter.available.is_empty());
+            panic!("command failed");
+        }));
+        assert!(result.is_err());
+        assert_eq!(limiter.available.len(), 2);
+        // Go normalizes zero only while loading a config file. An explicit
+        // zero CLI override produces an empty token channel, not unlimited.
+        assert!(CommandLimiter::new(0).available.is_empty());
     }
 }
 
@@ -974,6 +1039,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             users,
             runtime,
             &mut commands,
+            &tracker.command_limiter,
         )
     }))
     .unwrap_or_else(|payload| {
@@ -1021,6 +1087,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     users: &ConfiguredUserStore,
     runtime: MysqlConnectionRuntime<'_>,
     commands: &mut ConnectionCommandCounts,
+    command_limiter: &CommandLimiter,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
         connection_id,
@@ -1577,7 +1644,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
         }
-        let _command_token_metrics = CommandTokenMetrics::acquire();
+        let _command_token = command_limiter.acquire();
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -1691,9 +1758,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // Statements that crossed the session's slow threshold, in
                     // order; recorded into the domain's memory once the last
                     // result's engine borrow ends.
-                    let mut slow_statements: Vec<
-                        (String, std::time::SystemTime, std::time::Duration),
-                    > = Vec::new();
+                    let mut slow_statements: Vec<(
+                        String,
+                        std::time::SystemTime,
+                        std::time::Duration,
+                    )> = Vec::new();
                     commands.text_query_commands += 1;
                     // `decode_command` has already trimmed exactly one terminal
                     // NUL for issue 1989. Embedded and repeated NUL bytes remain
@@ -2007,10 +2076,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             watcher: Option<std::thread::JoinHandle<()>>,
                             socket: &'a TcpStream,
                         }
-                        impl WatcherStop<'_> {
-                            fn stop(self) {
+                        // Go Run's deferred teardown also owns the panic path.
+                        // Do not leave this Rust watcher holding the socket on
+                        // unwind while the command permit and session retire.
+                        impl Drop for WatcherStop<'_> {
+                            fn drop(&mut self) {
                                 self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                                if let Some(watcher) = self.watcher {
+                                if let Some(watcher) = self.watcher.take() {
                                     let _ = watcher.join();
                                 }
                                 // the peek timeout lives on the shared socket; clear
@@ -2027,7 +2099,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         {
                             Ok(result) => result,
                             Err(error) => {
-                                stop_watcher.stop();
+                                drop(stop_watcher);
                                 write_query_error_at(&mut output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
@@ -2053,7 +2125,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         };
                         // the streaming write above is where a slow statement's
                         // rows are produced -- the watcher must not stop before it.
-                        stop_watcher.stop();
+                        drop(stop_watcher);
                         sequence = next_sequence;
                         match write_result {
                             Ok(_) => {
@@ -2083,9 +2155,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         }
                         let elapsed = statement_started.elapsed();
-                        if slow_threshold
-                            .is_some_and(|threshold| elapsed >= threshold)
-                        {
+                        if slow_threshold.is_some_and(|threshold| elapsed >= threshold) {
                             // go `session.LogSlowQuery` lands the statement in
                             // the domain's slow-query memory at the same
                             // threshold (`ADMIN SHOW SLOW` reads it back). The

@@ -20,7 +20,7 @@
 //! Every definition below is transcribed one for one from the Go source —
 //! name, help string, labels, and buckets — with the Go symbol named in a
 //! comment. Families whose bump sites live in subsystems this node has not
-//! transcreated yet (TiFlash, PD HTTP APIs, IA remote reads, token limiting)
+//! transcreated yet (TiFlash, PD HTTP APIs, IA remote reads)
 //! are registered exactly as Go registers them at init, so the exported
 //! family set matches even where the series stay at Go's init state.
 //!

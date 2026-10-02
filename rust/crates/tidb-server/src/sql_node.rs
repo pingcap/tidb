@@ -375,9 +375,7 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
         ClusterAnalyzeError::MissingTable(name) => {
             SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
         }
-        ClusterAnalyzeError::MissingIndex(detail) => {
-            SqlQueryError::new(8109, *b"HY000", detail)
-        }
+        ClusterAnalyzeError::MissingIndex(detail) => SqlQueryError::new(8109, *b"HY000", detail),
     }
 }
 
@@ -1120,7 +1118,13 @@ pub trait QuerySession {
     /// reached the session's slow threshold lands in the domain's in-memory
     /// slow-query memory, which `ADMIN SHOW SLOW` reads. The default keeps
     /// sessions without the memory silent.
-    fn record_slow_query(&mut self, _sql: &str, _start: std::time::SystemTime, _duration: std::time::Duration) {}
+    fn record_slow_query(
+        &mut self,
+        _sql: &str,
+        _start: std::time::SystemTime,
+        _duration: std::time::Duration,
+    ) {
+    }
 
     /// The session's `tidb_slow_log_threshold`, which gates the dashboard's
     /// slow-query histograms (`adapter.go:1958` reads it from the instance
@@ -1429,8 +1433,10 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     }
 }
 
-/// Process-wide connection accounting with exactly-once owned-lease cleanup.
+/// Shared per-server connection accounting and command admission. Every socket
+/// for this server retains this authority, including dedicated worker threads.
 pub struct ConnectionTracker {
+    pub(crate) command_limiter: crate::mysql_connection::CommandLimiter,
     connection_ids: GlobalAllocator,
     active: AtomicUsize,
     max_active: AtomicUsize,
@@ -1441,7 +1447,14 @@ pub struct ConnectionTracker {
 
 impl Default for ConnectionTracker {
     fn default() -> Self {
+        Self::with_token_limit(tidb_config::config_tree::Config::default().token_limit)
+    }
+}
+
+impl ConnectionTracker {
+    fn with_token_limit(limit: usize) -> Self {
         Self {
+            command_limiter: crate::mysql_connection::CommandLimiter::new(limit),
             connection_ids: GlobalAllocator::new(|| STANDALONE_SERVER_ID, true),
             active: AtomicUsize::default(),
             max_active: AtomicUsize::default(),
@@ -1873,7 +1886,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             listener,
             factory,
             users,
-            tracker: Arc::new(ConnectionTracker::default()),
+            tracker: Arc::new(ConnectionTracker::with_token_limit(
+                config.global_config.token_limit,
+            )),
             max_allowed_packet: config.max_allowed_packet,
             tls,
             worker_count: config.max_connections,

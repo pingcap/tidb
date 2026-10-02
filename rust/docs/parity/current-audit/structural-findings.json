@@ -8,9 +8,9 @@
   },
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
-    "tracked": 85,
+    "tracked": 86,
     "unresolved": 72,
-    "repaired": 13
+    "repaired": 14
   },
   "findings": [
     {
@@ -78,21 +78,30 @@
     },
     {
       "id": "N02",
-      "status": "open",
+      "status": "repaired",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; source-confirmed:** the main flag accepts token-limit and its gauge exists, but command dispatch has no shared command permit owner. Connection-count admission is implemented and is a different limit.",
-      "rust_evidence": "`rust/crates/tidb-server/src/main_flags.rs:281`, `lib.rs:420`, `mysql_connection.rs` command loop, `sql_node.rs:1904`, `:2090`; token-limit flag admission reproduced",
-      "go_owner": "`pkg/server/server.go::concurrentLimiter`/`getToken`/`releaseToken`, `pkg/server/conn.go` dispatch acquires and releases a token per command. Wire the existing configured limit to command lifetime. Concurrent workload effects were not measured.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: The token-limit flag remains accepted without a command permit acquire/release path. Connection-count admission is not that missing contract. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**Recorded admission mismatch repaired:** every connection to a server shares its configured command permits, held through response streaming and returned on normal/error/panic exits. Effective SourceConfig supplies the limit with Go file normalization and CLI precedence. Acquisition records token wait immediately; the metrics-only substitute is removed. Independent servers retain independent limits.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs::CommandLimiter`, command dispatch and `WatcherStop::drop`; `sql_node.rs::ConnectionTracker`; `node_config.rs` and `main_flags.rs::override_token_limit`; [repair receipt](../../command-admission-ownership-execplan.md)",
+      "go_owner": "`pkg/server/server.go::concurrentLimiter`/`getToken`/`releaseToken`, `pkg/server/conn.go::dispatch`, `pkg/util/tokenlimiter.go` and config Load/overrideConfig. Command ownership is repaired without claiming complete pkg/server/pkg/util acceptance or measured workload effects.",
+      "review_basis": "Maintenance from integration 38b6db0197 with unchanged master/native pins: missing admission, lost flag/TOML settings and delayed histogram observation fail before repair. Final tests cover warm/dedicated sockets, streaming, independent servers, protocol/error/unwind exits and shutdown. Statement watcher retirement also now survives unwind. See ../../command-admission-ownership-execplan.md; panic ERR delivery remains N06."
     },
     {
       "id": "N03",
       "status": "open",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as token-limit, performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true.",
+      "finding": "**P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true. Token-limit is now consumed by the shared N02 command owner; its earlier refusal is historical.",
       "rust_evidence": "`rust/crates/tidb-server/src/bin/tidb-server.rs:60`; `node_config.rs:399`, `:441`, `:920`; `expanded-server-probe.txt`",
       "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Use the complete validated configuration as the runtime authority, including CLI precedence and consumers; merely accepting ignored fields would preserve the gap. Removed performance.run-auto-analyze is correctly refused and is not a finding.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh TOML still rejects token-limit, performance.stats-lease and security.ssl-ca; auto_tls remains true. The second NodeConfig authority remains. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh TOML still rejects token-limit, performance.stats-lease and security.ssl-ca; auto_tls remains true. The second NodeConfig authority remains. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json. Subsequent N02 maintenance accepts and consumes token-limit, including CLI precedence; the remaining whitelist/default-policy findings are unchanged."
+    },
+    {
+      "id": "N06",
+      "status": "open",
+      "group": "Wire and server admission/configuration",
+      "finding": "**P2; source-confirmed and observed:** connection panic recovery sits outside the protocol writer lifetime. It logs and returns Panicked after unwinding the writer, so a panicking query closes without Go's attempted ERR packet. The leaked watcher socket is repaired, but error delivery still lacks the source recovery owner.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_connection.rs::serve_mysql_connection_with_runtime` catches after `serve_connection_inner` unwinds; `tests/panic_recovery_source.rs` currently expects no reply; command admission regression observes EOF after the watcher cleanup repair.",
+      "go_owner": "Master `pkg/server/conn.go::Run` retains clientConn and invokes writeError(ctx, fmt.Errorf(\"%v\", r)) before Close in its deferred recovery. Preserve writer/protocol/session cleanup ownership through recovery, including TLS/compression and partial writes; do not bypass the framed writer with a raw socket error.",
+      "review_basis": "Discovered during N02 maintenance from 38b6db0197, Go master 93a01d31f6. Source Run lines 1158-1180 attempts an ERR; the Rust controlled panic closes without one. Permit release and watcher retirement are covered by the repair receipt, not acceptance of the remaining error-delivery lifecycle."
     },
     {
       "id": "D01",
@@ -781,10 +790,10 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "E06",
-    "scope": "Existing parallel projection close lifetime; no complete pkg/executor acceptance",
-    "integration_start": "6ea3668555ed095243a5d2f2952919dfdd419f65",
+    "id": "N02",
+    "scope": "Existing server command admission and unwind retirement; no complete pkg/server/pkg/util acceptance",
+    "integration_start": "38b6db0197b1f564310d9e483e62783d182ff41e",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../projection-close-ownership-execplan.md"
+    "receipt": "../../command-admission-ownership-execplan.md"
   }
 }

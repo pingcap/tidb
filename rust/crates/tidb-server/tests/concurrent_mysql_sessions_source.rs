@@ -58,6 +58,10 @@ impl QuerySessionFactory for BarrierFactory {
 }
 
 fn config() -> NodeConfig {
+    config_with_token_limit("1000")
+}
+
+fn config_with_token_limit(limit: &str) -> NodeConfig {
     NodeConfig::parse([
         "tidb-server",
         "--path",
@@ -74,6 +78,8 @@ fn config() -> NodeConfig {
         "3",
         "--port",
         "0",
+        "--token-limit",
+        limit,
     ])
     .unwrap()
 }
@@ -155,6 +161,9 @@ fn authenticate_ping_quit(address: std::net::SocketAddr) -> u32 {
 
 fn authenticate(address: std::net::SocketAddr) -> (TcpStream, PacketReader<TcpStream>) {
     let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     reader.set_sequence(0);
     let (_, salt) = handshake_fields(&reader.read_packet().unwrap());
@@ -260,6 +269,193 @@ impl QuerySession for BlockingQuerySession {
 
 struct BlockingQueryFactory {
     state: Arc<BlockingQueryState>,
+}
+
+#[test]
+fn command_token_is_shared_across_sockets_and_held_through_result_streaming() {
+    for max_connections in [0, 3] {
+        command_token_streaming_case(max_connections);
+    }
+}
+
+fn command_token_streaming_case(max_connections: usize) {
+    let state = Arc::new(BlockingQueryState {
+        entered: AtomicBool::new(false),
+        cancelled: Mutex::new(false),
+        wake: Condvar::new(),
+    });
+    let factory = Arc::new(BlockingQueryFactory {
+        state: Arc::clone(&state),
+    });
+    let mut config = config_with_token_limit("1");
+    config.max_connections = max_connections;
+    let node = ConcurrentSqlNode::bind(&config, factory, users().into()).unwrap();
+    let address = node.local_addr().unwrap();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run());
+    let (mut first, first_reader) = authenticate(address);
+    write_packet(
+        &mut first,
+        0,
+        &[&[COM_QUERY][..], b"select blocked"].concat(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !state.entered.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "first result stream did not start"
+        );
+        std::thread::yield_now();
+    }
+
+    // An independent server gets its own permit even while this one is busy.
+    let other =
+        ConcurrentSqlNode::bind(&config, Arc::new(CommandFailureFactory), users().into()).unwrap();
+    let other_address = other.local_addr().unwrap();
+    let other_shutdown = other.shutdown_handle();
+    let other_server = std::thread::spawn(move || other.run());
+    let (mut other_client, mut other_reader) = authenticate(other_address);
+    other_client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_packet(&mut other_client, 0, &[COM_PING]);
+    other_reader.set_sequence(1);
+    let independent_response = other_reader.read_packet();
+
+    // Handshake is outside command admission even while the only token is held.
+    let (mut second, mut reader) = authenticate(address);
+    second
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    write_packet(&mut second, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    let early = reader.read_packet();
+
+    // Release before any assertions so the unchanged implementation also drains.
+    *state.cancelled.lock().unwrap() = true;
+    state.wake.notify_all();
+    drop(first_reader);
+    drop(first);
+    write_packet(&mut other_client, 0, &[COM_QUIT]);
+    drop(other_reader);
+    drop(other_client);
+    other_shutdown.shutdown();
+    other_server.join().unwrap().unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let response = match early.as_ref() {
+        Ok(packet) => packet.clone(),
+        Err(_) => reader.read_packet().unwrap(),
+    };
+    write_packet(&mut second, 0, &[COM_QUIT]);
+    drop(reader);
+    drop(second);
+    shutdown.shutdown();
+    server.join().unwrap().unwrap();
+    assert_eq!(
+        response[0], 0,
+        "PING succeeds after the query releases its token"
+    );
+    assert!(early.is_err(), "PING bypassed the server's token limit");
+    assert_eq!(
+        independent_response.unwrap()[0],
+        0,
+        "independent server shared the busy server's permits"
+    );
+}
+
+struct CommandFailureFactory;
+
+struct CommandFailureSession;
+
+impl QuerySessionFactory for CommandFailureFactory {
+    type Session = CommandFailureSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(CommandFailureSession)
+    }
+}
+
+impl QuerySession for CommandFailureSession {
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        assert_ne!(sql, "panic", "injected command panic");
+        Err(SqlQueryError::unknown("injected command error"))
+    }
+}
+
+#[test]
+fn command_token_releases_on_error_no_response_quit_protocol_failure_and_panic() {
+    let node = ConcurrentSqlNode::bind(
+        &config_with_token_limit("1"),
+        Arc::new(CommandFailureFactory),
+        users().into(),
+    )
+    .unwrap();
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let server = std::thread::spawn(move || node.serve_connections(4));
+    let (mut first, mut reader) = authenticate(address);
+    first
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    for command in [
+        [&[COM_QUERY][..], b"error"].concat(),
+        [&[tidb_protocol::COM_STMT_PREPARE][..], b"select ?"].concat(),
+        // Unknown prepared handle: dispatch returns a protocol ERR.
+        vec![tidb_protocol::COM_STMT_EXECUTE, 123, 0, 0, 0, 0, 1, 0, 0, 0],
+        vec![0xfe],
+    ] {
+        write_packet(&mut first, 0, &command);
+        reader.set_sequence(1);
+        assert_eq!(reader.read_packet().unwrap()[0], 0xff);
+    }
+    // COM_STMT_CLOSE has no response, but still must return its command token.
+    write_packet(
+        &mut first,
+        0,
+        &[tidb_protocol::COM_STMT_CLOSE, 123, 0, 0, 0],
+    );
+    write_packet(&mut first, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut first, 0, &[COM_QUIT]);
+    drop(reader);
+    drop(first);
+
+    for command in [
+        vec![tidb_protocol::COM_SET_OPTION],
+        [&[COM_QUERY][..], b"panic"].concat(),
+    ] {
+        let (mut client, mut reader) = authenticate(address);
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write_packet(&mut client, 0, &command);
+        reader.set_sequence(1);
+        // Go attempts an ERR before closing a panicked connection. This test
+        // checks retirement and permit release; panic error delivery has its
+        // own unresolved writer-ownership finding.
+        match reader.read_packet() {
+            Ok(packet) => {
+                assert_eq!(packet[0], 0xff);
+                assert!(matches!(
+                    reader.read_packet(),
+                    Err(tidb_protocol::PacketError::EndOfStream)
+                ));
+            }
+            Err(error) => assert!(matches!(error, tidb_protocol::PacketError::EndOfStream)),
+        }
+    }
+    let (mut last, mut reader) = authenticate(address);
+    last.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_packet(&mut last, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut last, 0, &[COM_QUIT]);
+    server.join().unwrap().unwrap();
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.completed(), 4);
 }
 
 impl QuerySessionFactory for BlockingQueryFactory {
@@ -379,8 +575,8 @@ fn shutdown_stops_acceptance_and_forces_a_stalled_connection_after_grace() {
 fn forced_shutdown_cancels_an_inflight_com_query_before_joining_worker() {
     // pkg/server/server_test.go:238 TestServerShutdownFlags
     // pkg/server/tests/commontest/tidb_test.go:1098 TestGracefulShutdown
-    let mut config = config();
-    config.max_connections = 1;
+    let mut config = config_with_token_limit("1");
+    config.max_connections = 2;
     let state = Arc::new(BlockingQueryState {
         entered: AtomicBool::new(false),
         cancelled: Mutex::new(false),
@@ -410,12 +606,23 @@ fn forced_shutdown_cancels_an_inflight_com_query_before_joining_worker() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
+    // A second connection waits on the same command owner. Cancelling its
+    // running peer must release admission so the shutdown barrier can retire
+    // both connections.
+    let (mut waiting, mut waiting_reader) = authenticate(address);
+    waiting
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    write_packet(&mut waiting, 0, &[COM_PING]);
+    waiting_reader.set_sequence(1);
+    let early = waiting_reader.read_packet();
     shutdown.shutdown();
     server.join().unwrap();
+    assert!(early.is_err(), "waiting command bypassed admission");
     assert!(*state.cancelled.lock().unwrap());
     assert_eq!(tracker.active(), 0);
-    assert_eq!(tracker.accepted(), 1);
-    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.accepted(), 2);
+    assert_eq!(tracker.completed(), 2);
     assert_eq!(tracker.failed(), 0);
 }
 
