@@ -101,6 +101,25 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestDMLMaxExecutionTime(t *testing.T) {
+	sv := GetSysVar(TiDBDMLMaxExecutionTime)
+	require.NotNil(t, sv)
+	require.Equal(t, ScopeGlobal|ScopeSession, sv.Scope)
+	require.Equal(t, "0", sv.Value)
+	require.True(t, sv.IsHintUpdatableVerified)
+
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "99999", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "99999", val)
+	require.NoError(t, sv.SetSessionFromHook(vars, val))
+	require.Equal(t, uint64(99999), vars.DMLMaxExecutionTime)
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {
