@@ -1,0 +1,12 @@
+[package]
+name = "pd-h2-owner-probe"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+bytes = "1"
+futures = "0.3"
+h2 = { path = "h2" }
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync", "test-util"] }
+[profile.dev]
+debug = 0

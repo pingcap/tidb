@@ -1,0 +1,448 @@
+// Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
+// Isolated feasibility evidence, not a production transport or grpcutil port.
+// The deliberately fixed failure delay below is NOT Go's reconnect backoff.
+
+#![cfg(test)]
+
+use std::future::{poll_fn, Future};
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
+
+use bytes::Bytes;
+use h2::client::SendRequest;
+use tokio::net::TcpStream;
+use tokio::sync::{watch, Mutex};
+use tokio::task::JoinHandle;
+
+#[derive(Clone)]
+enum State {
+    Idle,
+    Connecting,
+    Ready(SendRequest<Bytes>),
+    Failed,
+    Closed,
+}
+
+struct Inner {
+    state: watch::Receiver<State>,
+    stop: watch::Sender<bool>,
+    demand: watch::Sender<()>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.stop.send_replace(true);
+    }
+}
+
+#[derive(Clone)]
+struct Owner(Arc<Inner>);
+
+// The setup context is deliberately absent from the retained owner. Blocking
+// setup owns a separate wait and closes the owner on failure before returning.
+impl Owner {
+    fn new(address: SocketAddr) -> Self {
+        let (state, receiver) = watch::channel(State::Connecting);
+        let (stop, mut stopping) = watch::channel(false);
+        let (demand, mut demands) = watch::channel(());
+        let worker = tokio::spawn(async move {
+            loop {
+                state.send_replace(State::Connecting);
+                let established = tokio::select! {
+                    biased;
+                    _ = stopping.wait_for(|stopped| *stopped) => break,
+                    established = connect_and_drive(address, &state) => established,
+                };
+                if established {
+                    // grpc-go pick_first returns an established lost connection to
+                    // IDLE. New demand, rather than an unconditional retry, exits it.
+                    demands.borrow_and_update();
+                    state.send_replace(State::Idle);
+                    tokio::select! {
+                        _ = stopping.wait_for(|stopped| *stopped) => break,
+                        _ = demands.changed() => {},
+                    }
+                } else {
+                    state.send_replace(State::Failed);
+                    // Test-only scheduling. Full Go backoff/jitter/option semantics
+                    // remain an explicit acceptance gate for the future adapter.
+                    tokio::select! {
+                        _ = stopping.wait_for(|stopped| *stopped) => break,
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    }
+                }
+            }
+            state.send_replace(State::Closed);
+        });
+        Self(Arc::new(Inner {
+            state: receiver,
+            stop,
+            demand,
+            worker: Mutex::new(Some(worker)),
+        }))
+    }
+
+    async fn ready(&self) -> Result<SendRequest<Bytes>, &'static str> {
+        let mut state = self.0.state.clone();
+        loop {
+            match state.borrow_and_update().clone() {
+                State::Ready(sender) => return Ok(sender),
+                State::Closed => return Err("closed"),
+                State::Idle => {
+                    self.0.demand.send_replace(());
+                }
+                State::Connecting | State::Failed => {}
+            }
+            state.changed().await.map_err(|_| "owner dropped")?;
+        }
+    }
+
+    async fn connect(address: SocketAddr, setup_timeout: Duration) -> Result<Self, &'static str> {
+        let owner = Self::new(address);
+        let result = tokio::time::timeout(setup_timeout, owner.ready()).await;
+        match result {
+            Ok(Ok(_)) => Ok(owner),
+            _ => {
+                owner.close().await;
+                Err("setup failed")
+            }
+        }
+    }
+
+    async fn close(&self) {
+        self.0.stop.send_replace(true);
+        let mut worker = self.0.worker.lock().await;
+        if let Some(handle) = worker.as_mut() {
+            handle.await.expect("owner worker panicked");
+            worker.take();
+        }
+    }
+}
+
+async fn connect_and_drive(address: SocketAddr, state: &watch::Sender<State>) -> bool {
+    let setup = async {
+        let socket = TcpStream::connect(address).await.map_err(|_| ())?;
+        let (sender, mut connection) = h2::client::handshake(socket).await.map_err(|_| ())?;
+        // Poll the protocol engine before examining readiness, and always give
+        // a terminal result precedence. No extra frame, RPC, or sentinel capacity
+        // is used. A peer may validly advertise MAX_CONCURRENT_STREAMS=0.
+        poll_fn(|cx| {
+            match Pin::new(&mut connection).poll(cx) {
+                Poll::Ready(_) => return Poll::Ready(Err(())),
+                Poll::Pending => {}
+            }
+            if connection.has_received_initial_settings() {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await?;
+        Ok::<_, ()>((sender, connection))
+    };
+    let Ok(Ok((sender, connection))) = tokio::time::timeout(Duration::from_secs(20), setup).await
+    else {
+        return false;
+    };
+    state.send_replace(State::Ready(sender));
+    let _ = connection.await;
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::{mpsc, oneshot};
+
+    const BOUND: Duration = Duration::from_secs(3);
+
+    async fn accept_preface(listener: &TcpListener) -> TcpStream {
+        let (mut socket, _) = tokio::time::timeout(BOUND, listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut preface = [0; 24];
+        tokio::time::timeout(BOUND, socket.read_exact(&mut preface))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+        socket
+    }
+
+    async fn assert_eof(mut socket: TcpStream) {
+        tokio::time::timeout(BOUND, async {
+            let mut bytes = [0; 1024];
+            loop {
+                match socket.read(&mut bytes).await {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break,
+                    Err(e) => panic!("unexpected read error: {e}"),
+                }
+            }
+        })
+        .await
+        .expect("socket survived owner close");
+    }
+
+    struct Peer {
+        address: SocketAddr,
+        arrivals: mpsc::UnboundedReceiver<()>,
+        stop: Option<oneshot::Sender<()>>,
+        worker: JoinHandle<()>,
+    }
+
+    impl Peer {
+        async fn new(max_streams: u32) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (arrivals_tx, arrivals) = mpsc::unbounded_channel();
+            let (stop, stopping) = oneshot::channel();
+            let worker = tokio::spawn(async move {
+                let serve = async {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut connection = h2::server::Builder::new()
+                        .max_concurrent_streams(max_streams)
+                        .handshake::<_, Bytes>(socket)
+                        .await
+                        .unwrap();
+                    let mut outstanding = Vec::new();
+                    while let Some(request) = connection.accept().await {
+                        match request {
+                            Ok(request) => {
+                                // Withhold responses, keeping unary/stream work active.
+                                outstanding.push(request);
+                                let _ = arrivals_tx.send(());
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                };
+                tokio::select! {
+                    _ = serve => {},
+                    _ = stopping => {},
+                }
+            });
+            Self {
+                address,
+                arrivals,
+                stop: Some(stop),
+                worker,
+            }
+        }
+
+        async fn closed(&mut self) {
+            tokio::time::timeout(BOUND, &mut self.worker)
+                .await
+                .expect("peer survived close")
+                .unwrap();
+        }
+    }
+
+    impl Drop for Peer {
+        fn drop(&mut self) {
+            self.stop.take();
+            self.worker.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn background_dial_waits_for_settings_without_sending_rpc() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let owner = Owner::new(listener.local_addr().unwrap());
+        let socket = accept_preface(&listener).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), owner.ready())
+                .await
+                .is_err()
+        );
+        owner.close().await;
+        assert_eof(socket).await;
+    }
+
+    #[tokio::test]
+    async fn blocking_setup_timeout_closes_stalled_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let setup = tokio::spawn(Owner::connect(address, Duration::from_millis(100)));
+        let socket = accept_preface(&listener).await;
+        assert!(setup.await.unwrap().is_err());
+        assert_eof(socket).await;
+    }
+
+    #[tokio::test]
+    async fn server_settings_make_idle_connection_ready_even_with_zero_stream_capacity() {
+        for limit in [0, 1, u32::MAX] {
+            let mut peer = Peer::new(limit).await;
+            let owner = Owner::connect(peer.address, BOUND).await.unwrap();
+            assert!(peer.arrivals.try_recv().is_err(), "readiness sent an RPC");
+            owner.close().await;
+            peer.closed().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_settings_never_publish_readiness() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let owner = Owner::new(listener.local_addr().unwrap());
+        let mut socket = accept_preface(&listener).await;
+        // SETTINGS_INITIAL_WINDOW_SIZE above 2^31-1 is a protocol error.
+        socket
+            .write_all(&[0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 4, 255, 255, 255, 255])
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), owner.ready())
+                .await
+                .is_err()
+        );
+        owner.close().await;
+        assert_eof(socket).await;
+    }
+
+    #[tokio::test]
+    async fn close_ends_waiters_and_socket_despite_retained_clones() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let owner = Owner::new(listener.local_addr().unwrap());
+        let retained = owner.clone();
+        let socket = accept_preface(&listener).await;
+        let waiter_owner = retained.clone();
+        let waiter = tokio::spawn(async move { waiter_owner.ready().await });
+        tokio::join!(owner.close(), retained.close());
+        assert!(matches!(waiter.await.unwrap(), Err("closed")));
+        assert!(matches!(retained.ready().await, Err("closed")));
+        assert_eof(socket).await;
+    }
+
+    #[tokio::test]
+    async fn close_cancels_active_response_and_stream_with_retained_sender() {
+        let mut peer = Peer::new(10).await;
+        let owner = Owner::connect(peer.address, BOUND).await.unwrap();
+        let sender = owner.ready().await.unwrap();
+        let mut sender = sender.ready().await.unwrap();
+        let request = http::Request::builder()
+            .method("POST")
+            .uri(format!("http://{}/test", peer.address))
+            .body(())
+            .unwrap();
+        let (response, mut body) = sender.send_request(request, false).unwrap();
+        tokio::time::timeout(BOUND, peer.arrivals.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        owner.close().await;
+        assert!(tokio::time::timeout(BOUND, response)
+            .await
+            .unwrap()
+            .is_err());
+        assert!(body.send_data(Bytes::from_static(b"late"), false).is_err());
+        peer.closed().await;
+    }
+
+    #[tokio::test]
+    async fn lost_established_connection_stays_idle_until_demand() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let owner = Owner::new(address);
+        let mut socket = accept_preface(&listener).await;
+        socket
+            .write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        let sender = tokio::time::timeout(BOUND, owner.ready())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(socket);
+        let mut state = owner.0.state.clone();
+        tokio::time::timeout(BOUND, state.wait_for(|state| matches!(state, State::Idle)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        let demand_owner = owner.clone();
+        let demanded = tokio::spawn(async move { demand_owner.ready().await });
+        let mut replacement = accept_preface(&listener).await;
+        replacement
+            .write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        assert!(tokio::time::timeout(BOUND, demanded)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_ok());
+        owner.close().await;
+        assert_eof(replacement).await;
+        assert!(sender.ready().await.is_err());
+    }
+
+    // These are Go expectations, not expectations rewritten to accept h2.
+    // Keep their failures visible until the first-frame contract is implemented.
+    #[tokio::test]
+    async fn first_frame_must_be_settings_like_go() {
+        let mut ready = Vec::new();
+        for prefix in [
+            vec![0, 0, 8, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            vec![0, 0, 0, 255, 0, 0, 0, 0, 0],
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let owner = Owner::new(listener.local_addr().unwrap());
+            let mut socket = accept_preface(&listener).await;
+            let mut frames = prefix;
+            frames.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 0, 0]);
+            socket.write_all(&frames).await.unwrap();
+            ready.push(
+                tokio::time::timeout(Duration::from_millis(150), owner.ready())
+                    .await
+                    .is_ok(),
+            );
+            owner.close().await;
+            assert_eof(socket).await;
+        }
+        println!("FIRST_FRAMES {ready:?}");
+        assert_eq!(
+            ready,
+            vec![false, false],
+            "Go rejects PING/unknown before SETTINGS"
+        );
+    }
+
+    #[tokio::test]
+    async fn settings_ack_first_frame_matches_go_readiness() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let owner = Owner::new(listener.local_addr().unwrap());
+        let mut socket = accept_preface(&listener).await;
+        socket
+            .write_all(&[0, 0, 0, 4, 1, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        let ready = tokio::time::timeout(Duration::from_millis(150), owner.ready())
+            .await
+            .is_ok();
+        owner.close().await;
+        assert_eof(socket).await;
+        println!("SETTINGS_ACK {ready}");
+        assert!(ready, "Go accepts a parsed initial SETTINGS ACK");
+    }
+
+    #[tokio::test]
+    async fn final_owner_drop_stops_stalled_setup() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let owner = Owner::new(listener.local_addr().unwrap());
+        let socket = accept_preface(&listener).await;
+        drop(owner);
+        assert_eof(socket).await;
+    }
+}

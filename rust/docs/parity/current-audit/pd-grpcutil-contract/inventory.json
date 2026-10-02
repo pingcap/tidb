@@ -363,6 +363,12 @@
       "version": "v1.82.1",
       "path": "internal/transport/http2_client.go",
       "sha256": "71830eb7918bccbc3b2718689cc7971f74b5a177981f182bf4fdfe1dcafe860f"
+    },
+    {
+      "module": "google.golang.org/grpc",
+      "version": "v1.82.1",
+      "path": "balancer/pickfirst/pickfirst.go",
+      "sha256": "c1d9b928122bae7c82007c81b92b3f950dfbbf4be7fbadfb462e2471ed986a19"
     }
   ],
   "native_retirement": {
@@ -374,10 +380,17 @@
   },
   "validation_limits": [
     "no native production integration",
-    "TLS/GOAWAY/backoff jitter and reset/background reconnect/close of active work still unproved",
+    "TLS/GOAWAY/backoff jitter and reset/configurable balancer policy/generated RPC close remain unproved; isolated H2 owner passes eight cases but fails two first-frame source contracts",
     "concurrent cache oracle does not force/count all loser candidates",
     "unreachableNetwork2 tested with URL failure before allocation",
     "non-Linux test-support execution only",
     "no live-cluster or workload measurements"
-  ]
+  ],
+  "candidate_review": {
+    "receipt": "h2-candidate-review.md",
+    "status": "not accepted; no production integration",
+    "go_reconnect_correction": "Default pick_first transitions established transport loss to Idle and reconnects on demand; unconditional idle reconnection is not required.",
+    "experiment": "probe_h2.py",
+    "source_artifacts": "h2-inputs.json"
+  }
 }

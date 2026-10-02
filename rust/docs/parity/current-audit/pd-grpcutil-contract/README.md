@@ -9,12 +9,19 @@ production integration**. All implementation and package acceptance remain open.
 
 
 A PD connection must survive cancellation of its setup context after creation,
-connect and reconnect without SQL requests driving it, and terminate outstanding
+start dialing without SQL requests driving it, and terminate outstanding
 RPCs when its owner closes it. PD, keyspace and TSO clients for the same URL must
 share the appropriate connection owner. Retry and circuit-breaker interception
 must run in Go's order, with a copied backoffer for each unary RPC and a breaker
 observation for each physical attempt. These are prerequisites to removing the
 current duplicate native transport paths.
+
+Reconnection depends on state and policy. With the pinned default `pick_first`
+balancer, losing an established connection returns it to Idle; a subsequent
+picker call or explicit Connect starts another attempt. This differs from the
+initial background dialing/retry lifecycle. The continuation's source oracle
+disproved this plan's earlier blanket requirement for autonomous reconnection
+after a Ready transport fails.
 
 Both repositories were refreshed. TiDB master is
 `93a01d31f6da205ae4bf376825293903a6899fdb`, PD is
@@ -47,6 +54,12 @@ It is saved as text and is not part of either production build.
 - [x] Publish the contract review as `a8c256a78c` after the actual hook build
   (0.69s) and a fresh post-commit locked server build (16.04s); remote branch agrees.
 - [ ] Select a transport adapter that passes the entire lifecycle acceptance set.
+- [x] Prototype the h2 SETTINGS-state accessor outside both production graphs:
+  eight lifecycle checks pass, but two source-contract tests fail. Preserve both
+  failures; the accessor alone is not an acceptable readiness adapter.
+- [x] Correct the reconnection design from Go source and a fail-before oracle:
+  established default-policy connections remain Idle until demand. The corrected
+  candidate follows that lifecycle; initial retry/backoff acceptance remains open.
 - [ ] Implement all eleven functions and three constants as one owner, migrate
   every existing native caller, and remove their displaced policies atomically.
 - [ ] Complete native/TiDB integration validation and publish the whole package.
@@ -71,14 +84,36 @@ when its wait is canceled. Each of these observable distinctions must be kept;
 none should be silently "improved" during translation.
 
 Tonic's connection worker performs request-driven reconnection without PD's
-backoff policy. Its endpoint executor owns both the channel buffer worker and
-HTTP/2 workers. Hyper also spawns its internal connection task through that
+backoff policy. Request-driven reconnection after established transport loss is
+also Go's default-policy behavior, not itself a mismatch. Its endpoint executor
+owns both the channel buffer worker and HTTP/2 workers. Hyper also spawns its internal connection task through that
 executor. A scheme that guesses task identity from spawn order is therefore not
 an acceptable connection owner. A custom TCP dialer alone cannot observe the
 TLS/HTTP/2 setup performed above it. These conclusions are from the exact source
 files hashed in the inventory, not a proposed new transport implementation.
 
 ## Decision Log
+
+
+Decision (2026-10-01, continuation): test a narrow h2 readiness accessor rather
+than infer readiness from stream capacity or parse HTTP/2 frames in a second
+owner. The protocol engine already records the relevant state. grpcio 0.13.0's
+public client credential builder accepts static certificates; its dynamic reload
+callback is server-only, whereas PD's file-based TLS config reloads client
+certificates on handshakes. Its isolated ARM build also failed in bundled
+Abseil with an x86-only compiler flag. Neither experiment changes production.
+The new grpc 0.9.0 transport uses the same early Hyper handshake boundary and
+does not by itself settle readiness. Backend feasibility is still a prerequisite,
+not a package acceptance or a reason to weaken the source lifecycle contract.
+
+Decision (2026-10-01, source-oracle correction): remove the proposed unconditional
+reconnect-after-Ready loop. `grpc/clientconn.go::createTransport` publishes Idle
+on transport loss; `balancer/pickfirst/pickfirst.go` installs an idle picker when
+the old state was Ready. The initial oracle incorrectly expected another socket
+without demand and failed after three seconds. The corrected test observes Idle,
+proves no unsolicited connection during a bounded interval, calls Connect and
+observes a replacement. This is a correction to the plan and isolated candidate,
+not a production-native repair or a claim about every configurable balancer.
 
 
 Decision (2026-10-01): retain the entire grpcutil package as one acceptance unit.
@@ -125,8 +160,9 @@ review evidence, not a passing native parity test.
 
 Milestone two must prove a candidate adapter in isolation. It must expose a
 connection handle with shared identity, a setup lifetime distinct from its
-connection lifetime, background connect/reconnect state, blocking readiness and
-explicit close. Prove TCP, TLS and HTTP/2 failures, reconnect without RPCs,
+connection lifetime, initial background connect/retry state, blocking readiness and
+explicit close. Prove TCP, TLS and HTTP/2 failures, Idle after established transport
+loss with the default policy and reconnection after demand,
 server GOAWAY with existing streams, and close of unary/stream/setup tasks. Prove
 backoff 1s/1.6/20%-jitter/3s, successful-reset behavior, caller-option ordering and
 caller setup deadlines. Do not promote a backend solely because the two initial
@@ -196,8 +232,8 @@ replace the fresh build with an earlier probe build.
 
 
 TLS certificate verification/reload policy, address edge cases, HTTP/2 GOAWAY,
-connection-backoff jitter/cap/reset, background reconnect after a ready connection
-fails, wait-for-ready/default fail-fast distinction, close while unary/stream work
+connection-backoff jitter/cap/reset, configurable resolver/balancer policy,
+wait-for-ready/default fail-fast distinction, close while generated unary/stream work
 is active, cache loser task/socket teardown, and full native wire interception
 still need candidate-adapter validation. The current cache concurrency oracle
 checks one retained map entry and closed reuse; it does not force every racing
@@ -254,3 +290,13 @@ Disk maintenance: with no active Go/Rust compiler found, verified and removed
 than six hours (10,745,339,904 allocated bytes). Final libraries, binaries, source
 and recent incremental caches remain. Free space rose from approximately 3 GiB
 to 11 GiB. The deletion manifest is `/private/tmp/pd-grpcutil-cache-removed.json`.
+
+
+Continuation result (2026-10-01): `probe_h2.py` reproduces eight passing lifecycle
+cases and two failing Go first-frame contracts in `/private/tmp/pd-h2-contract-published`.
+Both source race/goleak runs pass with the added peer-frame and Idle/demand cases.
+The whole experiment and exact commands are in `h2-candidate-review.md`.
+The source oracle disproved this plan's earlier unconditional reconnect assumption;
+the plan and isolated owner now preserve default-policy Idle until demand.
+The accessor-only readiness candidate is rejected for production; no native SHA,
+dependency pin, package acceptance or structural-register count changes.
