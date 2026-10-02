@@ -44,6 +44,52 @@ use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_hack::GoToLower;
 
+/// Go's worker reaches the revertible AUTO_RANDOM checks before executing
+/// non-revertible rebase jobs. Keep both phases outside catalog preparation.
+#[derive(Default)]
+struct PreparedAllocatorChanges {
+    layouts: Vec<crate::kv_table::PreparedAutoRandomChange>,
+    rebases: Vec<PreparedAllocatorRebase>,
+}
+
+enum PreparedAllocatorRebase {
+    Increment(crate::kv_table::PreparedAutoIdRebase),
+    Random(crate::kv_table::PreparedAutoIdRebase),
+}
+
+impl PreparedAllocatorChanges {
+    fn execute(self) -> Result<(), DriverError> {
+        for layout in self.layouts {
+            layout.execute().map_err(super::auto_random::rebase_error)?;
+        }
+        for rebase in self.rebases {
+            match rebase {
+                PreparedAllocatorRebase::Increment(rebase) => {
+                    rebase.execute().map_err(auto_increment_rebase_error)?;
+                }
+                PreparedAllocatorRebase::Random(rebase) => {
+                    rebase.execute().map_err(|error| {
+                        super::auto_random::rebase_error(crate::kv_table::AutoRandomError::AutoId(
+                            error,
+                        ))
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn auto_increment_rebase_error(error: crate::kv_table::AutoIdError) -> DriverError {
+    match error {
+        crate::kv_table::AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+        crate::kv_table::AutoIdError::OutOfRange { value, type_name } => {
+            DriverError::ConstantOverflows { value, type_name }
+        }
+        crate::kv_table::AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+    }
+}
+
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
 /// The rules are captured from TiDB: `ADD COLUMN ... DEFAULT d` gives rows
@@ -88,10 +134,12 @@ pub fn run_alter_table_in(
     // owner, stage the catalog and its copy-on-write row/index storage for
     // every ALTER, including grouped specifications within a single action.
     // Warnings still belong to the statement context on either outcome.
-    // Shared auto-ID reservations are outside catalog transaction semantics;
-    // this is not a replacement for Go's durable DDL job lifecycle.
+    // Allocators are shared outside that image: prepare their operations and
+    // execute only after every action succeeds, never restore shared counters.
     let mut staged = catalog.clone();
-    run_alter_table_in_inner(alter, &mut staged, current_db, ctx)?;
+    let mut allocators = PreparedAllocatorChanges::default();
+    run_alter_table_in_inner(alter, &mut staged, current_db, ctx, &mut allocators)?;
+    allocators.execute()?;
     *catalog = staged;
     Ok(())
 }
@@ -392,6 +440,7 @@ fn run_alter_table_in_inner(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    allocators: &mut PreparedAllocatorChanges,
 ) -> Result<(), DriverError> {
     let (database, name) = crate::driver::split_table_path_pub(&alter.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
@@ -515,6 +564,7 @@ fn run_alter_table_in_inner(
                     allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                 },
                 ctx,
+                allocators,
             )?,
             tidb_ast::AlterTableAction::ChangeColumn {
                 if_exists,
@@ -537,6 +587,7 @@ fn run_alter_table_in_inner(
                         allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                     },
                     ctx,
+                    allocators,
                 )?;
             }
             tidb_ast::AlterTableAction::DropColumn {
@@ -593,7 +644,7 @@ fn run_alter_table_in_inner(
                 drop_foreign_key_action(catalog, &database, &name, &drop.name)?;
             }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
-                set_table_options_action(catalog, &database, &name, options, ctx)?;
+                set_table_options_action(catalog, &database, &name, options, ctx, allocators)?;
             }
             tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
                 convert_table_charset_action(
@@ -2024,6 +2075,7 @@ fn set_table_options_action(
     name: &str,
     options: &[tidb_ast::TableOption],
     ctx: &crate::StmtContext,
+    allocators: &mut PreparedAllocatorChanges,
 ) -> Result<(), DriverError> {
     super::validate_table_options(options)?;
     let current_charset = match catalog.table_in(database, name) {
@@ -2085,9 +2137,12 @@ fn set_table_options_action(
                         "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
                     ));
                 }
-                table
-                    .rebase_auto_increment(seed)
-                    .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
+                let rebase = table
+                    .prepare_rebase_auto_increment(seed, false)
+                    .map_err(auto_increment_rebase_error)?;
+                allocators
+                    .rebases
+                    .push(PreparedAllocatorRebase::Increment(rebase));
             }
             tidb_ast::TableOption::Comment(comment) => {
                 table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
@@ -2102,17 +2157,12 @@ fn set_table_options_action(
                 let next = value.parse::<u64>().map_err(|_| {
                     DriverError::unsupported("FORCE AUTO_INCREMENT needs an integer value")
                 })? as i64;
-                table
-                    .force_rebase_auto_increment(next)
-                    .map_err(|error| match error {
-                        crate::kv_table::AutoIdError::Exhausted => DriverError::AutoincReadFailed,
-                        crate::kv_table::AutoIdError::OutOfRange { value, type_name } => {
-                            DriverError::ConstantOverflows { value, type_name }
-                        }
-                        crate::kv_table::AutoIdError::Store(detail) => {
-                            DriverError::AutoIdUnavailable(detail.0)
-                        }
-                    })?;
+                let rebase = table
+                    .prepare_rebase_auto_increment(next, true)
+                    .map_err(auto_increment_rebase_error)?;
+                allocators
+                    .rebases
+                    .push(PreparedAllocatorRebase::Increment(rebase));
             }
             tidb_ast::TableOption::AutoRandomBase(value)
             | tidb_ast::TableOption::ForceAutoRandomBase(value) => {
@@ -2121,12 +2171,12 @@ fn set_table_options_action(
                 })? as i64;
                 let force = matches!(option, tidb_ast::TableOption::ForceAutoRandomBase(_));
                 let previous = table.next_auto_random();
-                let result = if force {
-                    table.force_rebase_auto_random(next)
-                } else {
-                    table.rebase_auto_random(next)
-                };
-                result.map_err(super::auto_random::rebase_error)?;
+                let rebase = table
+                    .prepare_rebase_auto_random(next, force)
+                    .map_err(super::auto_random::rebase_error)?;
+                allocators
+                    .rebases
+                    .push(PreparedAllocatorRebase::Random(rebase));
                 if !force && previous.is_some_and(|current| (next as u64) < current) {
                     ctx.append_warning_parts(
                         1105,
@@ -3343,6 +3393,7 @@ fn modify_column_action(
     catalog: &mut Catalog,
     request: &ModifyColumnRequest<'_>,
     ctx: &crate::StmtContext,
+    allocators: &mut PreparedAllocatorChanges,
 ) -> Result<(), DriverError> {
     let &ModifyColumnRequest {
         database,
@@ -3893,9 +3944,12 @@ fn modify_column_action(
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
-    std::sync::Arc::make_mut(table)
-        .alter_auto_random_spec(new_auto_random, offset, &def.name)
-        .map_err(super::auto_random::rebase_error)?;
+    if let Some(layout) = std::sync::Arc::make_mut(table)
+        .prepare_alter_auto_random_spec(new_auto_random, offset, &def.name)
+        .map_err(super::auto_random::rebase_error)?
+    {
+        allocators.layouts.push(layout);
+    }
     // Go `updateFKInfoWhenModifyColumn` +
     // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
     // renames carries every constraint over the old name onto the new one,

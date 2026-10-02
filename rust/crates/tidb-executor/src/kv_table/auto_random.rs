@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::auto_id::{increment_and_offset, AutoIdError};
+use super::auto_id::{increment_and_offset, AutoIdAllocator, AutoIdError, PreparedAutoIdRebase};
 use super::{KvTable, TableAutoId};
 use tidb_datatype::Datum;
 
@@ -92,6 +92,42 @@ pub enum AutoRandomError {
     AutoId(AutoIdError),
 }
 
+/// The execution half of Go's checkNewAutoRandomBits/applyNewAutoRandomBits.
+/// Handles share the real counters; no reservation is consumed in preparation.
+#[derive(Debug)]
+pub(crate) struct PreparedAutoRandomChange {
+    source: AutoIdAllocator,
+    target: Option<AutoIdAllocator>,
+    next: AutoRandomSpec,
+    column_name: String,
+}
+
+impl PreparedAutoRandomChange {
+    pub(crate) fn execute(self) -> Result<(), AutoRandomError> {
+        // Go advances before checking capacity to serialize with DML. This
+        // remains an execution-time check, not a speculative counter read.
+        let current = self
+            .source
+            .advance_global_one()
+            .map_err(AutoRandomError::AutoId)?;
+        let used_bits = u64::from(u64::BITS - current.leading_zeros());
+        if used_bits > self.next.incremental_bits() {
+            let overlap = used_bits - self.next.incremental_bits();
+            let maximum = self.next.shard_bits.wrapping_sub(overlap);
+            return Err(AutoRandomError::InvalidDefinition(format!(
+                "max allowed auto_random shard bits is {maximum}, but got {} on column `{}`",
+                self.next.shard_bits, self.column_name
+            )));
+        }
+        if let Some(target) = self.target {
+            target
+                .rebase(current)
+                .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
+        }
+        Ok(())
+    }
+}
+
 impl KvTable {
     /// Installs the table's persisted `AUTO_RANDOM` layout.
     pub fn set_auto_random(&mut self, spec: AutoRandomSpec) {
@@ -137,6 +173,18 @@ impl KvTable {
             .map_err(AutoRandomError::AutoId)
     }
 
+    /// Validates the declared AUTO_RANDOM layout before deferring its rebase.
+    pub(crate) fn prepare_rebase_auto_random(
+        &self,
+        next: i64,
+        force: bool,
+    ) -> Result<PreparedAutoIdRebase, AutoRandomError> {
+        let next = self.checked_auto_random_base(next)?;
+        self.auto_random_id
+            .prepare_rebase_to_next(next, force)
+            .map_err(AutoRandomError::AutoId)
+    }
+
     fn checked_auto_random_base(&self, next: i64) -> Result<u64, AutoRandomError> {
         let Some(spec) = self.auto_random else {
             return Err(AutoRandomError::NotApplicable);
@@ -151,15 +199,14 @@ impl KvTable {
         Ok(pattern)
     }
 
-    /// Applies Go's MODIFY COLUMN AUTO_RANDOM transition after the ordinary
-    /// column checks have passed. The shared counter is deliberately advanced
-    /// before the bit-capacity check, matching `checkNewAutoRandomBits`.
-    pub(crate) fn alter_auto_random_spec(
+    /// Prepares the layout on this catalog image and retains the allocator
+    /// operation for execution after the whole ALTER has passed preparation.
+    pub(crate) fn prepare_alter_auto_random_spec(
         &mut self,
         next: Option<AutoRandomSpec>,
         column_offset: usize,
         column_name: &str,
-    ) -> Result<(), AutoRandomError> {
+    ) -> Result<Option<PreparedAutoRandomChange>, AutoRandomError> {
         let previous = self.auto_random;
         let Some(next) = next else {
             return if previous.is_some_and(|spec| spec.offset == column_offset) {
@@ -167,7 +214,7 @@ impl KvTable {
                     "adding/dropping/modifying auto_random is not supported".to_owned(),
                 ))
             } else {
-                Ok(())
+                Ok(None)
             };
         };
 
@@ -194,30 +241,26 @@ impl KvTable {
             }
         }
 
-        let current = if converting {
-            self.auto_id.advance_global_one()
+        let source = if converting {
+            self.auto_id.clone()
         } else {
-            self.auto_random_id.advance_global_one()
-        }
-        .map_err(AutoRandomError::AutoId)?;
-        let used_bits = u64::from(u64::BITS - current.leading_zeros());
-        if used_bits > next.incremental_bits() {
-            let overlap = used_bits - next.incremental_bits();
-            let maximum = next.shard_bits.wrapping_sub(overlap);
-            return Err(AutoRandomError::InvalidDefinition(format!(
-                "max allowed auto_random shard bits is {maximum}, but got {} on column `{column_name}`",
-                next.shard_bits
-            )));
-        }
-
+            self.auto_random_id.clone()
+        };
+        let target = converting.then(|| {
+            let mut allocator = self.auto_random_id.clone();
+            allocator.set_unsigned(next.unsigned);
+            allocator
+        });
         if converting {
-            self.auto_random_id
-                .rebase(current)
-                .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
             self.clear_auto_increment_offset();
         }
         self.set_auto_random(next);
-        Ok(())
+        Ok(Some(PreparedAutoRandomChange {
+            source,
+            target,
+            next,
+            column_name: column_name.to_owned(),
+        }))
     }
 
     /// Applies Go's explicit-value, rebase, retry, allocation, and composition

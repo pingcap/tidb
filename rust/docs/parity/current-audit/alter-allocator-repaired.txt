@@ -1,0 +1,10 @@
+CREATE TABLE alter_ids (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)
+  Ok(Done(true))
+INSERT INTO alter_ids(v) VALUES (1)
+  Ok(Affected(1))
+ALTER TABLE alter_ids AUTO_INCREMENT=1000000, ADD COLUMN id INT
+  Err(DuplicateColumnName("id"))
+INSERT INTO alter_ids(v) VALUES (2)
+  Ok(Affected(1))
+SELECT id,v FROM alter_ids ORDER BY v
+  Ok(Rows([[Int(1), Int(1)], [Int(2), Int(2)]]))

@@ -887,6 +887,169 @@ fn assert_unchanged_table(catalog: &Catalog, original: &Catalog, name: &str) {
     assert_eq!(catalog.metadata_version(), original.metadata_version());
 }
 
+fn allocator_state(
+    catalog: &Catalog,
+) -> (Vec<(String, i64, &'static str)>, Option<i64>, Option<u64>) {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+        panic!("table missing");
+    };
+    (
+        table.next_global_row_ids().unwrap(),
+        table.next_auto_increment(),
+        table.next_auto_random(),
+    )
+}
+
+fn assert_failed_alter_keeps_allocators(definition: &str, sql: &str, code: u16) {
+    let mut catalog = Catalog::default();
+    run_create_table_on(definition, &mut catalog).unwrap();
+    run_insert_on("insert into t(v) values (1), (1)", &mut catalog, &ctx()).unwrap();
+    let original = catalog.clone();
+    // Save values, not just the cloned Catalog: snapshots share allocators.
+    let ids = allocator_state(&catalog);
+    assert_eq!(
+        code_of(&alter(&mut catalog, sql).unwrap_err()),
+        code,
+        "{sql}"
+    );
+    assert_eq!(allocator_state(&catalog), ids, "failed ALTER: {sql}");
+    assert_eq!(allocator_state(&original), ids, "shared allocator: {sql}");
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_auto_increment_rebases() {
+    for sql in [
+        "alter table t auto_increment=1000000, add column v int",
+        "alter table t force auto_increment=1000000, add column v int",
+    ] {
+        assert_failed_alter_keeps_allocators(
+            "create table t (id bigint auto_increment primary key, v int)",
+            sql,
+            1060,
+        );
+    }
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_auto_random_rebases() {
+    for sql in [
+        "alter table t auto_random_base=1000000, add column v int",
+        "alter table t force auto_random_base=1000000, add column v int",
+    ] {
+        assert_failed_alter_keeps_allocators(
+            "create table t (id bigint auto_random(3) primary key, v int)",
+            sql,
+            1060,
+        );
+    }
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_auto_random_layout_counter() {
+    assert_failed_alter_keeps_allocators(
+        "create table t (id bigint auto_random(3) primary key, v int)",
+        "alter table t modify id bigint auto_random(4), add column v int",
+        1060,
+    );
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_auto_increment_conversion_counter() {
+    assert_failed_alter_keeps_allocators(
+        "create table t (id bigint auto_increment primary key, v int)",
+        "alter table t modify id bigint auto_random(3), add column v int",
+        1060,
+    );
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_rebases_after_backfill_error() {
+    assert_failed_alter_keeps_allocators(
+        "create table t (id bigint auto_increment primary key, v int)",
+        "alter table t auto_increment=1000000, add unique index idx(v)",
+        1062,
+    );
+}
+
+#[test]
+fn multi_schema_change_failed_alter_keeps_rebases_after_invalid_force_base() {
+    assert_failed_alter_keeps_allocators(
+        "create table t (id bigint auto_increment primary key, v int)",
+        "alter table t auto_increment=1000000, force auto_increment=0",
+        1467,
+    );
+}
+
+#[test]
+fn multi_schema_change_checks_random_layout_before_forced_rebase() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t (id bigint auto_random(3) primary key, v int)",
+        &mut catalog,
+    )
+    .unwrap();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
+        panic!("table missing");
+    };
+    std::sync::Arc::make_mut(table)
+        .rebase_auto_random(1_i64 << 50)
+        .unwrap();
+    let original = catalog.clone();
+    // Go visits the layout's revertible capacity check before applying the
+    // non-revertible FORCE job, even when FORCE was written first.
+    let error = alter(
+        &mut catalog,
+        "alter table t force auto_random_base=1000000, modify id bigint auto_random(15)",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, crate::DriverError::InvalidAutoRandom(_)),
+        "{error:?}"
+    );
+    assert_eq!(allocator_state(&catalog).0[0].1, (1_i64 << 50) + 1);
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+#[test]
+fn multi_schema_change_executes_prepared_rebases_on_success() {
+    for sql in [
+        "alter table t auto_increment=1000000, add column c int default 3",
+        "alter table t force auto_increment=1000000, add column c int default 3",
+        "alter table t auto_id_cache=100, auto_increment=1000000, add column c int default 3",
+        "alter table t auto_increment=1000000, auto_id_cache=100, add column c int default 3",
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "create table t (id bigint auto_increment primary key, v int)",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("insert into t(v) values (1)", &mut catalog, &ctx()).unwrap();
+        alter(&mut catalog, sql).unwrap();
+        run_insert_on("insert into t(v) values (2)", &mut catalog, &ctx()).unwrap();
+        assert_eq!(
+            text_rows(&catalog, "select id,v,c from t where v=2"),
+            vec![["1000000", "2", "3"]],
+            "{sql}"
+        );
+    }
+    for option in ["auto_random_base=1000000", "force auto_random_base=1000000"] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "create table t (id bigint auto_random(3) primary key, v int)",
+            &mut catalog,
+        )
+        .unwrap();
+        alter(
+            &mut catalog,
+            &format!("alter table t {option}, add column c int"),
+        )
+        .unwrap();
+        assert_eq!(allocator_state(&catalog).0[0].1, 1000000);
+    }
+}
+
 #[test]
 fn multi_schema_change_failed_column_preserves_statement_image() {
     for sql in [

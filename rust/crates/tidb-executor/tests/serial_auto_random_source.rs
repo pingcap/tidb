@@ -22,7 +22,8 @@
 //! `crate::ddl::auto_random::validate`; the MODIFY COLUMN transition contract
 //! is Go `checkAutoRandom` (`pkg/ddl/modify_column.go:2374`) plus
 //! `checkNewAutoRandomBits` (`pkg/ddl/column.go:1005`), transcreated as
-//! `KvTable::alter_auto_random_spec` (`src/kv_table/auto_random.rs`); the
+//! `KvTable::prepare_alter_auto_random_spec` and `PreparedAutoRandomChange::execute`
+//! (`src/kv_table/auto_random.rs`); the
 //! insert policy is Go `allocAutoRandomID`'s explicit-insert gate
 //! (`insert_common.go:1141`), transcreated as
 //! `KvTable::apply_auto_random` with `StmtContext::allow_auto_random_explicit_insert`.
@@ -534,7 +535,7 @@ fn auto_random_modify_column_type_and_sibling_column_follow_go_check_order() {
 /// but 11 answers
 /// `max allowed auto_random shard bits is 10, but got 11 on column `a``.
 // go-parity-gap: this tier's overlap computation
-// (KvTable::alter_auto_random_spec, src/kv_table/auto_random.rs) measures one
+// (PreparedAutoRandomChange::execute, src/kv_table/auto_random.rs) measures one
 // bit lower — the 6-step increase already refuses with "max allowed
 // auto_random shard bits is 9, but got 10" — and it has no global
 // `autoid.SetStep` switch to reproduce Go's allocator pacing.

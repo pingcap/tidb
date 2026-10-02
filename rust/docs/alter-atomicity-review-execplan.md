@@ -1,5 +1,41 @@
 # Recheck unresolved ownership findings and make local ALTER atomic
 
+## Continuation: prepare shared allocator effects
+
+The next maintenance step starts at f0a26898c504e7727aac19806c2d994f212be9ee,
+with unchanged Go master 93a01d31f6 and native client-rust 19a56cc. Both branches
+were pulled. Root AGENTS.md, PLANS.md and the DDL read-first guidance apply.
+This is not acceptance of the entire upstream DDL package.
+
+Go executor.go collects RebaseAutoID subjobs before execution; table.go defers
+rebases until the multi-schema job passes its revertible phase. column.go owns
+AUTO_RANDOM counter advancement and migration in execution. The starting Rust version calls
+those mutators while the local ALTER image is still being prepared.
+
+- [x] Review every allocator mutation reachable from local ALTER, including layout changes and cache replacement.
+- [x] Add failing SQL regressions for ordinary/forced rebases, random rebases/layouts, and later validation failures.
+- [x] Retain typed allocator operations through statement preparation; execute only after the staged catalog succeeds.
+- [x] Verify successful controls, unchanged counter sharing, error propagation and affected callers.
+- [x] Record residuals, pass lint/all-target checks and the actual locked-build commit hook.
+- Publication: rerun the hook for this receipt amendment, then use the guarded fresh-build/push command and verify remote SHA and checkout.
+
+Prepare operations using the existing allocator owner and argument validation.
+Do not clone allocator counters, restore reservations, or add a second transaction
+implementation. Retain allocator handles and typed parameters, not complete table
+copies or closures hiding side effects. AUTO_ID_CACHE already creates a fresh
+local reservation over the same persistent store without writing it; no deferred
+store mutation is needed there. Keep warnings in the statement context and
+preserve current execution errors. Add regression coverage before production
+edits and prove failures with unchanged code.
+
+The catalog preparation remains the current synchronous implementation; it is
+not a durable Go job executor. Runtime store failures after execution starts and
+the broader original-schema action-admission differences must be reported rather
+than hidden by an allocator rollback. The scope changes no Go/Bazel/generated
+inputs, so bazel_prepare is not required. Use the existing executor multi-schema
+and allocator suites plus session SQL tests, all-target checking, make lint and
+the mandatory locked Rust server hook/pre-push gates.
+
 ## Purpose / Big Picture
 
 Reassess every currently unresolved structural finding against Go master and
@@ -83,7 +119,7 @@ action count alone cannot define statement atomicity.
 repair and whole-package acceptance. The registry is a list of unmet contracts,
 not a count of freshly reproduced runtime failures.
 
-## Outcomes & Retrospective
+## Initial repair outcomes (f0a26898c504)
 
 All 71 known unresolved IDs still describe an unmet contract; D11 advances to
 partial, so the register is 63 open, eight partial, 15 repaired (86 tracked).
@@ -119,3 +155,23 @@ existing-owner maintenance change, not package acceptance or durable DDL closure
 so the first push was rejected. Inspected both files, rebased without conflicts,
 and retained all findings. Repeat session tests, all-target checking, lint, the
 actual hook and fresh pre-push build on the integrated branch.
+
+## Allocator continuation outcomes
+
+All eight new SQL regressions fail against unchanged production and pass after
+repair. Typed prepared operations retain live allocator handles, preserving
+interleaved allocations and store errors. Capacity checks execute before rebases;
+no shared counter is cloned or restored. AUTO_ID_CACHE keeps its existing
+fresh-range/shared-store behavior. The retained session diagnostic now returns
+IDs 1 and 2 after the failed ALTER.
+
+The targeted suites report 63 passes, three existing ignored AUTO_RANDOM cases
+and two failures also reproduced identically on unchanged code. Those two tests
+expect a local draw cursor from the existing global-reservation next() accessor;
+this repair does not alter that accessor or its tests. All-target checking and
+root lint pass. Exact commands, evidence and remaining boundaries are in the
+[allocator repair receipt](parity/current-audit/alter-allocator-repair.md). D11
+stays partial and the register remains 71 unresolved: 63 open and eight partial.
+The actual commit hook passed the locked server build in 17.96 seconds. This
+receipt amendment repeats the hook; the final commit must then pass a fresh
+locked build immediately before push and remote-SHA/checkout verification.

@@ -38,6 +38,36 @@ use crate::tests_support::*;
 use crate::*;
 
 #[test]
+fn failed_alter_does_not_change_the_next_insert_id() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO t(v) VALUES (1)").unwrap();
+    assert_eq!(
+        session
+            .run("ALTER TABLE t AUTO_INCREMENT=1000000, ADD COLUMN id INT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1060
+    );
+    session.run("INSERT INTO t(v) VALUES (2)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM t ORDER BY v")),
+        vec![["1", "1"], ["2", "2"]]
+    );
+    session
+        .run("ALTER TABLE t AUTO_INCREMENT=1000000, ADD COLUMN other INT DEFAULT 7")
+        .unwrap();
+    session.run("INSERT INTO t(v) VALUES (3)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id,v,other FROM t WHERE v=3")),
+        vec![["1000000", "3", "7"]]
+    );
+}
+
+#[test]
 fn failed_alter_keeps_rows_and_prepared_schema() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT, b INT)").unwrap();

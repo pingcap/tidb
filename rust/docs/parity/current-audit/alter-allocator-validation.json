@@ -1,0 +1,146 @@
+{
+  "integration_start": "f0a26898c504e7727aac19806c2d994f212be9ee",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_ddl_multi_schema_change_sql -- --nocapture",
+      "cwd": "rust",
+      "exit": 0,
+      "log": "/private/tmp/alter-allocator-validation-0.log",
+      "result": "28 passed"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib kv_table::auto_id::tests -- --nocapture",
+      "cwd": "rust",
+      "exit": 101,
+      "log": "/private/tmp/alter-allocator-validation-1.log",
+      "result": "12 passed; 2 identical baseline failures"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all serial_auto_random_source:: -- --nocapture",
+      "cwd": "rust",
+      "exit": 0,
+      "log": "/private/tmp/alter-allocator-validation-2.log",
+      "result": "8 passed; 3 existing ignored"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_alter_column -- --nocapture",
+      "cwd": "rust",
+      "exit": 0,
+      "log": "/private/tmp/alter-allocator-validation-3.log",
+      "result": "15 passed"
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "rust",
+      "exit": 0,
+      "log": "/private/tmp/alter-allocator-validation-4.log",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib kv_table::auto_id::tests -- --nocapture",
+      "cwd": "rust",
+      "production": "all five changed production files restored from f0a26898c504, then fixed contents restored in finally",
+      "exit": 101,
+      "result": "10 passed; same two failures",
+      "log": "/private/tmp/alter-allocator-baseline-unit.log"
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": ".",
+      "exit": 0,
+      "log": "/private/tmp/alter-allocator-lint.log"
+    },
+    {
+      "command": "run-expanded-probes.py::run('tidb-session', 'alter-residual-probe.rs', 'alter_allocator_repaired', 'alter-allocator-repaired.txt')",
+      "exit": 0,
+      "result": "failed ALTER followed by INSERT yields IDs 1 and 2"
+    },
+    {
+      "command": "TERM=xterm git -c core.hooksPath=hooks commit -m \"ddl: defer shared allocator effects until ALTER preparation succeeds\"",
+      "cwd": ".",
+      "exit": 0,
+      "result": "actual hook cargo build --locked -p tidb-server passed in 17.96s",
+      "log": "/private/tmp/alter-allocator-commit.log"
+    }
+  ],
+  "regressions_before_fix": {
+    "alter-allocator-red.log": [
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_rebases_after_invalid_force_base' (30778689) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t auto_increment=1000000, force auto_increment=0",
+      "  left: ([(\"id\", 1000000, \"_TIDB_ROWID\")], Some(1000000), None)",
+      " right: ([(\"id\", 30001, \"_TIDB_ROWID\")], Some(30001), None)",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_increment_rebases' (30778685) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t auto_increment=1000000, add column v int",
+      "  left: ([(\"id\", 1000000, \"_TIDB_ROWID\")], Some(1000000), None)",
+      " right: ([(\"id\", 30001, \"_TIDB_ROWID\")], Some(30001), None)",
+      "",
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_random_rebases' (30778687) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t auto_random_base=1000000, add column v int",
+      "  left: ([(\"id\", 1000000, \"AUTO_RANDOM\")], None, Some(1000000))",
+      " right: ([(\"id\", 30001, \"AUTO_RANDOM\")], None, Some(30001))",
+      "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_increment_rebases ... FAILED",
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_increment_conversion_counter' (30778684) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t modify id bigint auto_random(3), add column v int",
+      "  left: ([(\"id\", 30002, \"_TIDB_ROWID\")], Some(1), None)",
+      " right: ([(\"id\", 30001, \"_TIDB_ROWID\")], Some(30001), None)",
+      "",
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_random_layout_counter' (30778686) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t modify id bigint auto_random(4), add column v int",
+      "  left: ([(\"id\", 30002, \"AUTO_RANDOM\")], None, Some(1))",
+      " right: ([(\"id\", 30001, \"AUTO_RANDOM\")], None, Some(30001))",
+      "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_random_rebases ... FAILED",
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_rebases_after_backfill_error' (30778688) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:909:5:",
+      "assertion `left == right` failed: failed ALTER: alter table t auto_increment=1000000, add unique index idx(v)",
+      "  left: ([(\"id\", 1000000, \"_TIDB_ROWID\")], Some(1000000), None)",
+      " right: ([(\"id\", 30001, \"_TIDB_ROWID\")], Some(30001), None)",
+      "test tests_ddl_multi_schema_change_sql::multi_schema_change_failed_alter_keeps_auto_increment_conversion_counter ... FAILED",
+      "test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 1509 filtered out; finished in 0.02s"
+    ],
+    "alter-allocator-session-red.log": [
+      "thread 'tests_alter_column::failed_alter_does_not_change_the_next_insert_id' (30783890) panicked at crates/tidb-session/src/tests_alter_column.rs:48:5:",
+      "assertion `left == right` failed",
+      "  left: [[\"1\", \"1\"], [\"1000000\", \"2\"]]",
+      " right: [[\"1\", \"1\"], [\"2\", \"2\"]]",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2116 filtered out; finished in 0.04s"
+    ],
+    "alter-allocator-phase-red.log": [
+      "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_checks_random_layout_before_forced_rebase' (30834567) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:996:10:",
+      "called `Result::unwrap_err()` on an `Ok` value: ()",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "test tests_ddl_multi_schema_change_sql::multi_schema_change_checks_random_layout_before_forced_rebase ... FAILED",
+      "",
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1516 filtered out; finished in 0.01s"
+    ]
+  },
+  "baseline_allocator_failures": [
+    "thread 'kv_table::auto_id::tests::test_in_memory_alloc' (30886424) panicked at crates/tidb-executor/src/kv_table/auto_id.rs:1243:9:",
+    "assertion `left == right` failed",
+    "  left: 30001",
+    " right: 2",
+    "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "thread 'kv_table::auto_id::tests::test_issue40584' (30886425) panicked at crates/tidb-executor/src/kv_table/auto_id.rs:1221:9:",
+    "assertion `left == right` failed",
+    "  left: 30001",
+    " right: 20001",
+    "test kv_table::auto_id::tests::changing_cache_step_keeps_the_global_counter_and_discards_the_old_range ... ok",
+    "test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 1505 filtered out; finished in 0.03s"
+  ],
+  "fixed_allocator_failures": [
+    "thread 'kv_table::auto_id::tests::test_in_memory_alloc' (30851562) panicked at crates/tidb-executor/src/kv_table/auto_id.rs:1327:9:",
+    "assertion `left == right` failed",
+    "  left: 30001",
+    " right: 2",
+    "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    "thread 'kv_table::auto_id::tests::test_issue40584' (30851563) panicked at crates/tidb-executor/src/kv_table/auto_id.rs:1305:9:",
+    "assertion `left == right` failed",
+    "  left: 30001",
+    " right: 20001",
+    "test kv_table::auto_id::tests::test_issue40584 ... FAILED",
+    "test result: FAILED. 12 passed; 2 failed; 0 ignored; 0 measured; 1505 filtered out; finished in 0.02s"
+  ],
+  "publication": "Actual hook locked server build passed; repeat hook on receipt amendment, then fresh cargo build --locked -p tidb-server immediately before pushing the final commit. Verify remote SHA and clean checkout. No whole-package acceptance."
+}

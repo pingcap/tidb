@@ -47,6 +47,9 @@ mod row_decoder;
 pub(crate) mod table_meta;
 mod table_scan;
 
+pub(crate) use auto_id::PreparedAutoIdRebase;
+pub(crate) use auto_random::PreparedAutoRandomChange;
+
 pub use column_deps::ColumnDependent;
 
 pub use auto_id::{

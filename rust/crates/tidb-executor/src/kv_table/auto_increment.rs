@@ -271,6 +271,15 @@ impl KvTable {
         self.auto_id.force_rebase_to_next(next_id as u64)
     }
 
+    /// Prepares the DDL allocator operation without changing its shared range.
+    pub(crate) fn prepare_rebase_auto_increment(
+        &self,
+        next_id: i64,
+        force: bool,
+    ) -> Result<auto_id::PreparedAutoIdRebase, AutoIdError> {
+        self.auto_id.prepare_rebase_to_next(next_id as u64, force)
+    }
+
     /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
     ///
     /// An omitted, NULL or zero value takes the next allocated id; an explicit

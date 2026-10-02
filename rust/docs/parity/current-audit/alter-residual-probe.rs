@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 //! Diagnostic for shared allocator effects outside catalog-image rollback.
-//! This records a remaining mismatch, not an acceptance test.
+//! This records observed behavior, not whole-package acceptance.
 
 fn main() {
     let mut session = tidb_session::Session::new();

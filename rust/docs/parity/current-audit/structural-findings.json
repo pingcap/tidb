@@ -197,10 +197,10 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "**Partially repaired:** the local ALTER dispatcher now stages every catalog action and publishes only after success. Earlier column/index changes, stored keys, metadata versions and referencing-table metadata survive later failures unchanged; the foreign-key-only special case and repeated parse are removed. Shared auto-ID effects still execute during action traversal: failed AUTO_INCREMENT=1000000 followed by a duplicate column changes the next generated ID. Go prepares all subjobs before execution. Drop-column plus rename-of-its-index also still refuses where Go succeeds. Complete preparation/execution ownership remains unresolved.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`, `set_table_options_action`; `kv_table/auto_id.rs::AutoIdAllocator`; regressions in `tests_ddl_multi_schema_change_sql.rs` and `rust/crates/tidb-session/src/tests_alter_column.rs`; [repair receipt](../../alter-atomicity-review-execplan.md); `alter-review-recheck/alter-residual.txt`",
-      "go_owner": "`pkg/ddl/executor.go::alterTable` collects all subjobs before submission; `multi_schema_change.go::onMultiSchemaChange` owns combined transitions and rollback. Atomicity must cover every action list. The reproduction is in-process, not proof of a partial cluster metadata commit.",
-      "review_basis": "Review from integration b52dbfef7f against Go master 93a01d31f6 and native 19a56cc: Catalog/schema, row/index storage, metadata versions and cross-table FK references now publish only after every local ALTER action succeeds. Shared allocator effects are still eager: failed AUTO_INCREMENT=1000000 followed by duplicate-column changes the next inserted ID to 1000000. Go collects subjobs before execution. Drop-column plus rename-of-its-index also still refuses where Go succeeds; complete action preparation remains missing. See alter-review.md and alter-review-recheck/source-continuity.json."
+      "finding": "**Partially repaired:** local ALTER publishes its staged catalog only after preparation succeeds, and ordinary/forced auto-ID rebases plus AUTO_RANDOM layout/conversion effects are now deferred until then. Layout capacity checks precede non-revertible rebases, following Go worker phases. The eager shared-counter mutation and failed-ALTER next-ID symptom are repaired. Drop-column plus rename-of-its-index still refuses where Go succeeds; original-schema action admission and complete durable preparation/execution/recovery ownership remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`, `PreparedAllocatorChanges`; `kv_table/auto_id.rs::PreparedAutoIdRebase`; `kv_table/auto_random.rs::PreparedAutoRandomChange`; executor/session regressions; [allocator repair receipt](alter-allocator-repair.md); `alter-allocator-repaired.txt`",
+      "go_owner": "`pkg/ddl/executor.go::alterTable` collects all subjobs before submission; `table.go::onRebaseAutoID` defers rebases past the revertible phase; `column.go::checkNewAutoRandomBits`/`applyNewAutoRandomBits` and `multi_schema_change.go::onMultiSchemaChange` own execution and recovery. In-process maintenance is not durable cluster DDL acceptance.",
+      "review_basis": "Allocator follow-up from integration f0a26898c504, unchanged Go master 93a01d31f6 and native 19a56cc: eight regression tests fail before the change and pass afterward. The retained failed-ALTER diagnostic now inserts ID 2, not 1000000. Original-schema admission and durable execution/recovery remain unimplemented; D11 stays partial. See alter-allocator-repair.md. Other IDs retain the preceding full review evidence."
     },
     {
       "id": "C01",
@@ -792,9 +792,9 @@
   "latest_repair": {
     "id": "D11",
     "status": "partial",
-    "scope": "Statement-level catalog, row/index and referencing-table publication; shared allocator execution and action admission remain open",
-    "integration_start": "b52dbfef7f9a0076500132bc63b276617440aa89",
+    "scope": "Deferred shared allocator effects after complete local preparation; original-schema action admission and durable execution/recovery remain open",
+    "integration_start": "f0a26898c504e7727aac19806c2d994f212be9ee",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../alter-atomicity-review-execplan.md"
+    "receipt": "alter-allocator-repair.md"
   }
 }

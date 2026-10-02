@@ -448,6 +448,27 @@ pub(crate) struct AutoIdAllocator {
     pub(crate) unsigned: bool,
 }
 
+/// A validated DDL rebase that retains the live allocator without changing it.
+/// The statement owner executes it only after all ALTER actions are prepared.
+#[derive(Debug)]
+pub(crate) struct PreparedAutoIdRebase {
+    allocator: AutoIdAllocator,
+    next: u64,
+    force: bool,
+}
+
+impl PreparedAutoIdRebase {
+    pub(crate) fn execute(self) -> Result<(), AutoIdError> {
+        if self.force {
+            self.allocator.force_rebase_to_next(self.next)
+        } else {
+            self.allocator
+                .rebase_to_next(self.next)
+                .map_err(AutoIdError::Store)
+        }
+    }
+}
+
 /// Go `allocator.base` and `allocator.end`.
 #[derive(Clone, Copy, Debug)]
 struct AutoIdRange {
@@ -751,18 +772,40 @@ impl AutoIdAllocator {
         }
     }
 
+    pub(crate) fn prepare_rebase_to_next(
+        &self,
+        next: u64,
+        force: bool,
+    ) -> Result<PreparedAutoIdRebase, AutoIdError> {
+        if force {
+            self.checked_force_rebase_base(next)?;
+        }
+        Ok(PreparedAutoIdRebase {
+            allocator: self.clone(),
+            next,
+            force,
+        })
+    }
+
+    fn checked_force_rebase_base(&self, next: u64) -> Result<u64, AutoIdError> {
+        if next == 0 {
+            return Err(AutoIdError::Exhausted);
+        }
+        if self.unsigned {
+            Ok(next - 1)
+        } else {
+            (next as i64)
+                .checked_sub(1)
+                .map(|base| base as u64)
+                .ok_or(AutoIdError::Exhausted)
+        }
+    }
+
     /// Go `ALTER TABLE ... FORCE AUTO_INCREMENT = n`: discard any local
     /// reservation and replace the global base so the next allocation is
     /// exactly `n`, even when that moves the counter backwards.
     pub(crate) fn force_rebase_to_next(&self, next: u64) -> Result<(), AutoIdError> {
-        if next == 0 {
-            return Err(AutoIdError::Exhausted);
-        }
-        let base = if self.unsigned {
-            next - 1
-        } else {
-            (next as i64).checked_sub(1).ok_or(AutoIdError::Exhausted)? as u64
-        };
+        let base = self.checked_force_rebase_base(next)?;
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
         self.store
             .force_rebase(base, self.unsigned)
@@ -1186,6 +1229,47 @@ mod tests {
             allocator.force_rebase_to_next(0),
             Err(AutoIdError::Exhausted)
         );
+    }
+
+    #[test]
+    fn prepared_rebase_retains_the_live_allocator() {
+        let (store, allocator) = allocator(false);
+        let rebase = allocator.prepare_rebase_to_next(2, false).unwrap();
+        assert_eq!(global_next(&store), 1, "preparation does not reserve IDs");
+        // Interleave another holder's allocations while the DDL is prepared.
+        let writer = allocator.clone();
+        assert_eq!(writer.alloc(1, 1), Ok(1));
+        assert_eq!(writer.alloc(1, 1), Ok(2));
+        rebase.execute().unwrap();
+        assert_eq!(writer.alloc(1, 1), Ok(3));
+        assert_eq!(allocator.alloc(1, 1), Ok(4));
+
+        let force = allocator.prepare_rebase_to_next(2, true).unwrap();
+        assert_eq!(writer.alloc(1, 1), Ok(5), "FORCE is deferred too");
+        force.execute().unwrap();
+        assert_eq!(writer.alloc(1, 1), Ok(2), "execution keeps FORCE semantics");
+    }
+
+    #[test]
+    fn prepared_rebase_preserves_store_errors_and_validates_without_writes() {
+        let allocator = AutoIdAllocator::over(Arc::new(FailingStore), 1);
+        for force in [false, true] {
+            let rebase = allocator.prepare_rebase_to_next(100, force).unwrap();
+            assert_eq!(
+                rebase.execute(),
+                Err(AutoIdError::Store(AutoIdStoreError("injected".to_owned())))
+            );
+        }
+        assert!(matches!(
+            allocator.prepare_rebase_to_next(0, true),
+            Err(AutoIdError::Exhausted)
+        ));
+        assert!(matches!(
+            allocator.prepare_rebase_to_next(i64::MIN as u64, true),
+            Err(AutoIdError::Exhausted)
+        ));
+        let cache = allocator.cache.lock().unwrap();
+        assert_eq!((cache.base, cache.end), (0, 0));
     }
 
     /// Source: `pkg/meta/autoid/autoid_test.go::TestIssue40584`.
