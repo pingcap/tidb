@@ -397,9 +397,23 @@ impl SchemaChangeEvent {
         }
     }
 
+    /// Go `NewCreateSchemaEvent`.
+    pub fn create_schema(database: &DBInfo) -> Self {
+        Self {
+            inner: JsonSchemaChangeEvent {
+                action_type: ActionType::ACTION_CREATE_SCHEMA,
+                mini_db_info: Some(MiniDbInfoForSchemaEvent {
+                    id: database.id,
+                    name: database.name.clone(),
+                    tables: Vec::new(),
+                }),
+                ..JsonSchemaChangeEvent::default()
+            },
+        }
+    }
+
     /// Go `NewDropSchemaEvent`, including its deliberately small payload.
-    pub fn drop_schema(database: &DBInfo, tables: &[TableInfo]) -> Self {
-        let tables = tables
+    pub fn drop_schema(database: &DBInfo, tables: &[TableInfo]) -> Self {        let tables = tables
             .iter()
             .map(|table| MiniTableInfoForSchemaEvent {
                 id: table.id,
@@ -433,6 +447,15 @@ impl SchemaChangeEvent {
                 ..JsonSchemaChangeEvent::default()
             },
         }
+    }
+
+    /// Go `GetCreateSchemaInfo`.
+    pub fn create_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
+        self.assert_type(ActionType::ACTION_CREATE_SCHEMA);
+        self.inner
+            .mini_db_info
+            .as_ref()
+            .expect("create-schema event has mini database info")
     }
 
     /// Go `GetDropSchemaInfo`.

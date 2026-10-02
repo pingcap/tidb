@@ -686,14 +686,20 @@ impl crate::Session {
         })?;
         let mut rows = Vec::with_capacity(raw_rows.len());
         for row in raw_rows {
+            // The meta reader decodes a longblob column as a STRING datum
+            // whenever the column's collation is binary (the history table's
+            // job_meta is longblob): accept both string and bytes kinds —
+            // the payload is the encoded job JSON either way.
             let Some(encoded) = row.get(1).and_then(|value| match value {
                 Datum::Bytes(bytes) => Some(bytes.clone()),
+                Datum::String(text) => Some(text.bytes().to_vec()),
                 _ => None,
             }) else {
                 continue;
             };
             let mut job = tidb_model::Job::default();
-            if job.decode(&encoded).is_err() {
+            if let Err(decode_error) = job.decode(&encoded) {
+                eprintln!("DBG admin_show decode failed: {decode_error}");
                 continue;
             }
             // go `fetchShowDDLJobs` renders the times through

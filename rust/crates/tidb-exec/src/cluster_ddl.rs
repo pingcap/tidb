@@ -7170,6 +7170,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             writes.push(BufferMutation::set(key::database_kv_key(db_id), encoded)?);
             diff.action_type = ActionType::ACTION_CREATE_SCHEMA;
             diff.schema_id = db_id;
+            schema_change_events.push((0, SchemaChangeEvent::create_schema(&info)));
         }
         DdlStatement::DropDatabase { name, if_exists } => {
             let Some(database) = find_database(&catalog, name) else {
@@ -10189,6 +10190,106 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         &schema_change_events,
         &mut writes,
     )?;
+
+    // Go `finishDDLJob` writes every finished job into
+    // `mysql.tidb_ddl_history`, which is what `ADMIN SHOW DDL JOBS` reads
+    // (`fetchShowDDLJobs` over that table). The direct path has no persisted
+    // job, so the history rows are synthesized here from the same
+    // schema-change events the notifier announces: one row per event, ids
+    // contiguous from the job ID, each already SYNCED with its schema
+    // PUBLIC.
+    if !schema_change_events.is_empty() && diff.schema_id != 0 {
+        let history = crate::ddl_history_table::DdlHistoryTable::locate(&catalog)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        for (offset, (_, event)) in schema_change_events.iter().enumerate() {
+            let (schema_name_override, table_name) = match event.action_type() {
+                ActionType::ACTION_CREATE_TABLE => (
+                    None,
+                    Some(event.create_table_info().name.original().to_owned()),
+                ),
+                ActionType::ACTION_ADD_INDEX => (
+                    None,
+                    Some(event.add_index_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_DROP_TABLE => (
+                    None,
+                    Some(event.drop_table_info().name.original().to_owned()),
+                ),
+                ActionType::ACTION_TRUNCATE_TABLE => (
+                    None,
+                    Some(event.truncate_table_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_MODIFY_COLUMN => (
+                    None,
+                    Some(event.modify_column_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_ADD_TABLE_PARTITION => (
+                    None,
+                    Some(event.add_partition_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_DROP_TABLE_PARTITION => (
+                    None,
+                    Some(event.drop_partition_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_TRUNCATE_TABLE_PARTITION => (
+                    None,
+                    Some(event.truncate_partition_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_REORGANIZE_PARTITION => (
+                    None,
+                    Some(event.reorganize_partition_info().0.name.original().to_owned()),
+                ),
+                ActionType::ACTION_EXCHANGE_TABLE_PARTITION => (
+                    None,
+                    Some(event.exchange_partition_info().0.name.original().to_owned()),
+                ),
+                // Schema-only rows carry an EMPTY table name and their own
+                // db name; go's drop-schema history row reads schema_state
+                // 'none' (the schema is gone, not public).
+                ActionType::ACTION_CREATE_SCHEMA => (
+                    Some(event.create_schema_info().name.original().to_owned()),
+                    Some(String::new()),
+                ),
+                ActionType::ACTION_DROP_SCHEMA => (
+                    Some(event.drop_schema_info().name.original().to_owned()),
+                    Some(String::new()),
+                ),
+                _ => (None, None),
+            };
+            let Some(table_name) = table_name else {
+                continue;
+            };
+            let mut job = tidb_model::Job::default();
+            job.id = ddl_job_id + offset as i64;
+            job.type_ = event.action_type();
+            job.state = JobState::SYNCED;
+            job.schema_state = if event.action_type() == ActionType::ACTION_DROP_SCHEMA {
+                SchemaState::NONE
+            } else {
+                SchemaState::PUBLIC
+            };
+            job.schema_id = diff.schema_id;
+            job.table_id = diff.table_id;
+            job.start_ts = start_ts;
+            job.schema_name = schema_name_override
+                .unwrap_or_else(|| {
+                    catalog
+                        .databases
+                        .iter()
+                        .find(|database| database.info.id == diff.schema_id)
+                        .map(|database| database.info.name.original().to_owned())
+                        .unwrap_or_default()
+                })
+                .into();
+            job.table_name = table_name.into();
+            let encoded = job
+                .encode(false)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            history
+                .append_insert_ignore(snapshot, &job, &encoded, &mut writes)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        }
+    }
 
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
