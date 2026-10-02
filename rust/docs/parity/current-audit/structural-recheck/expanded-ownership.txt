@@ -1,0 +1,42 @@
+CREATE TABLE audit_left (id INT PRIMARY KEY, x INT)
+  Ok(Done(true))
+CREATE TABLE audit_right (id INT PRIMARY KEY, y INT)
+  Ok(Done(true))
+INSERT INTO audit_left VALUES (1,10)
+  Ok(Affected(1))
+INSERT INTO audit_right VALUES (1,20)
+  Ok(Affected(1))
+UPDATE audit_left SET x=11 WHERE id=1
+  Err(PrivilegeCheckFail("Update"))
+UPDATE audit_left a JOIN audit_right b ON a.id=b.id SET a.x=12
+  Err(PrivilegeCheckFail("Update"))
+UPDATE audit_left a JOIN audit_right b ON a.id=b.id SET x=13
+  Err(PrivilegeCheckFail("Update"))
+SELECT * FROM audit_left
+  Ok(Rows([[Int(1), Int(10)]]))
+SELECT x FROM audit_left
+  Err(TableAccessDenied { privilege: "SELECT", user: "audit_column", host: "%", table: "audit_left" })
+SELECT id FROM audit_left
+  Err(TableAccessDenied { privilege: "SELECT", user: "audit_column", host: "%", table: "audit_left" })
+CREATE USER 'audit_history'@'%' IDENTIFIED BY 'First!1234' PASSWORD HISTORY 3
+  Ok(Affected(0))
+ALTER USER 'audit_history'@'%' IDENTIFIED BY 'Second!1234'
+  Ok(Affected(0))
+ALTER USER 'audit_history'@'%' IDENTIFIED BY 'First!1234'
+  Ok(Affected(0))
+SELECT password_reuse_history FROM mysql.user WHERE user='audit_history'
+  Ok(Rows([[Null]]))
+CREATE USER 'audit_grant'@'%'
+  Ok(Affected(0))
+CREATE TABLE audit_grant_table (a INT, b INT)
+  Ok(Done(true))
+GRANT SELECT(a) ON test.audit_grant_table TO 'audit_grant'@'%'
+  Ok(Affected(0))
+CREATE USER 'audit_cert'@'%' REQUIRE X509
+  Err(Unsupported("REQUIRE X509 needs a verified client certificate, which this server does not request; only REQUIRE NONE and REQUIRE SSL are supported"))
+CREATE TABLE audit_import (a INT PRIMARY KEY, b INT)
+  Ok(Done(true))
+IMPORT INTO audit_import FROM '<temporary CSV>' WITH skip_rows=1
+  Ok(Affected(2))
+SELECT * FROM audit_import ORDER BY a
+  Ok(Rows([[Int(1), Int(10)], [Int(2), Int(20)]]))

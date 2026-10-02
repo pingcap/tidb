@@ -40,6 +40,16 @@ acceptance and must not be silently upgraded by an inventory refresh.
 - [x] Validate documentation/evidence, run the SQL diagnostic, formatter, diff check and root lint.
 - [x] Pass the actual locked-build pre-commit hook and a separate locked server build; final publication repeats the build after the final commit and records the remote result in the completion message.
 
+### Follow-up at integration 313b3cfea3
+
+
+- [x] Fetch both implementation branches and Go master; integration is 313b3cfea3500e3026a862d2be11a7fbb3d65481, native is 6163ecfc587b248dcbf0e30c1c9d905b4bc5a665, and Go master is unchanged.
+- [x] Compare all recorded source references and intervening production changes; identify stale PD descriptions and partition changes requiring fresh review.
+- [x] Rerun retained SQL/wire diagnostics and check partition data preservation.
+- [x] Publish a per-ID disposition for all 77 unresolved findings, update stale current descriptions, and retain historical evidence separately.
+- [x] Validate all IDs, assignments, source blobs, links and output cleanup; check diagnostic formatting, run git diff --check and make lint.
+- [x] Confirm the actual commit hook and post-commit locked build pass. The final receipt amendment repeats both gates before the normal branch push; its remote revision is recorded in the completion message.
+
 ## Plan of Work and Milestones
 
 
@@ -84,14 +94,23 @@ The recent health repair shares native state but TiDB's latency, feedback and
 periodic tick producers still require integration. This belongs to open T02;
 deleting duplicate types alone does not close the routing-owner migration.
 The read-side health-feedback admission still differs under mutex contention
-(T04), despite repaired nonblocking writers. Native TSO lacks a deadline/join
-owner (P06), and native PD metadata RPCs retain a global write lock over network
+(T04), despite repaired nonblocking writers. At the original review baseline,
+native TSO lacked a deadline/join owner (P06); the follow-up retains the now
+published prerequisite repairs. Native PD metadata RPCs retain a global write lock over network
 awaits (P07). Eight further missing production boundaries were consolidated.
 
 Statement-summary settings/readers did not establish a live writer. After both
 summary switches were enabled, the SQL diagnostic executed CREATE/INSERT/SELECT
 but read zero cumulative statement rows. The first diagnostic's incorrect
 variable name/scope were corrected; only the valid run is retained as evidence.
+
+At the 313b3cfea3 follow-up, all six SQL/wire diagnostics completed. Accepted
+repartition switches routing without migrating rows: both RANGE-to-HASH and
+nonpartitioned-to-HASH make old rows invisible. This is stronger evidence for
+existing D01, not another independently counted owner. Source review of the
+cluster route also finds ADD/DROP metadata assumptions and a thread-local
+metadata handoff in place of durable reorganization. No live TiKV repartition
+was run. Earlier privilege and FK runtime repairs remain intact in the probes.
 
 ## Decision Log
 
@@ -102,6 +121,11 @@ variable name/scope were corrected; only the valid run is retained as evidence.
 - Decision: use source continuity for unchanged previously reviewed findings.
   Rationale: it is stronger than stale line numbers but is not a new runtime test.
   Date: 2026-10-01.
+- Decision: retain 77 unresolved IDs and attach the new partition failure to D01.
+  Rationale: one absent durable DDL owner has multiple concrete consequences;
+  counting each symptom separately would distort the repair scope. Correct P06
+  and T02 for accepted prerequisites without accepting their parent packages.
+  Date: 2026-10-01, follow-up at 313b3cfea3.
 
 ## Idempotence and Recovery
 
@@ -135,3 +159,28 @@ the final revision without embedding a self-referential commit hash here.
 No production fix, whole-package acceptance, distributed failure or workload
 improvement is claimed. The review distinguishes existing repaired owners from
 missing integration, instead of turning stale receipt wording into deletions.
+
+### Follow-up outcome at 313b3cfea3
+
+
+The current review retains 72 open, five partial and eight repaired statuses.
+Six diagnostics completed; their outputs preserve both unresolved symptoms and
+earlier successful repairs. The new partition result strengthens D01. Published
+PD prerequisites remain accepted only at their recorded scope, and the isolated
+grpcutil candidate remains rejected. Current source continuity covers all 85 IDs
+and 138 literal path references, with 13 changed preexisting references reviewed.
+
+The per-ID/row/link/blob checker, diagnostic rustfmt check, git diff --check and
+make lint pass. Root lint log: /private/tmp/tidb-structural-recheck-lint.log.
+Only freshly built review example executables/dependency files are removed to
+reclaim space; sources, recorded outputs, compiler logs and shared build objects
+remain. Cleanup details: /private/tmp/tidb-structural-recheck-cleanup.json.
+Cleanup reclaimed 933,588,992 allocated bytes (about 890 MiB). The actual hook
+passed its locked server build (0.36 seconds), and the separate post-commit
+locked build passed (13.29 seconds). Logs are
+/private/tmp/tidb-structural-recheck-commit.log and
+/private/tmp/tidb-structural-recheck-prepush.log. This validation note's final
+amendment must repeat the hook and then the post-commit build before push;
+those final gate logs use the same names with a -final suffix. The completion
+message records the final remote revision without embedding a self-referential
+commit hash in the receipt. Native client-rust is unchanged by the review.

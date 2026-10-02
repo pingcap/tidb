@@ -1,9 +1,9 @@
 # Structural parity audit: current evidence
 
-Current inventory baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
+Current reviewed baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
-`6f663b396552eec6d1bfad76b65f813e317884a4` (published health-owner repair).
-The current review starts at integration `771e62b2871890eeae2296cbeed04a19b1316201`.
+`6163ecfc587b248dcbf0e30c1c9d905b4bc5a665` (published PD errors prerequisite).
+The current review starts at integration `313b3cfea3500e3026a862d2be11a7fbb3d65481`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
@@ -34,7 +34,13 @@ The [2026-10-01 full register reconciliation](remaining-structure-review.md) add
 11 previously unregistered source-confirmed boundaries, records the statement-summary
 SQL probe, and corrects stale T03 status. [Machine-readable findings](structural-findings.json)
 and [source continuity](structural-source-continuity.json) retain every ID and current source pin.
-No production code was repaired by this review.
+No production code was repaired by that review. The subsequent
+[review of every unresolved finding](structural-review-followup.md) retains
+all 77 statuses, corrects stale PD lifetime claims, and records six fresh SQL/wire
+diagnostics. Accepted repartition makes existing rows invisible in both tested
+shapes; this strengthens D01 without counting its missing DDL owner twice.
+[Current per-ID continuity](structural-recheck/source-continuity.json) preserves
+the previous source evidence separately from those new observations.
 
 The [full-picture repair sequence](repair-sequence.md) starts from the published
 integration audit `4285385fad20855487ec1d8ff113290d48f949a5` and maps all 77 open

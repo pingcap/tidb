@@ -1,0 +1,1697 @@
+{
+  "baseline": {
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "tidb_integration": "313b3cfea3500e3026a862d2be11a7fbb3d65481",
+    "client_rust": "6163ecfc587b248dcbf0e30c1c9d905b4bc5a665",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "previous_baseline": {
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "tidb_integration": "771e62b2871890eeae2296cbeed04a19b1316201",
+    "client_rust": "6f663b396552eec6d1bfad76b65f813e317884a4",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "scope": "All 85 register statuses, including all 77 unresolved findings. Blob continuity and changed-path review carry earlier source evidence forward; only listed diagnostics were rerun. No whole-package acceptance. Historical continuity remains in ../structural-source-continuity.json.",
+  "changed_tidb_crate_paths": [
+    "rust/crates/tidb-exec/src/cluster_ddl.rs",
+    "rust/crates/tidb-exec/src/configured_topn.rs",
+    "rust/crates/tidb-executor/src/ddl.rs",
+    "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+    "rust/crates/tidb-executor/src/ddl/table_partition.rs",
+    "rust/crates/tidb-executor/src/topn.rs",
+    "rust/crates/tidb-pd-client/src/client/mod.rs",
+    "rust/crates/tidb-pd-client/src/metrics.rs",
+    "rust/crates/tidb-txnkv/src/driver/tikv_pd_bridge.rs"
+  ],
+  "changed_native_source_paths": [
+    "src/async_util.rs",
+    "src/common/errors.rs",
+    "src/lib.rs",
+    "src/pd/backoff.rs",
+    "src/pd/backoff_tests.rs",
+    "src/pd/batch.rs",
+    "src/pd/batch_tests.rs",
+    "src/pd/circuitbreaker.rs",
+    "src/pd/circuitbreaker_tests.rs",
+    "src/pd/cluster.rs",
+    "src/pd/codec.rs",
+    "src/pd/connectionctx.rs",
+    "src/pd/deadline.rs",
+    "src/pd/errs.rs",
+    "src/pd/errs_tests.rs",
+    "src/pd/metrics.rs",
+    "src/pd/metrics/pd_definitions.rs",
+    "src/pd/metrics/resource_group_definitions.rs",
+    "src/pd/metrics/tests.rs",
+    "src/pd/mod.rs",
+    "src/pd/opt.rs",
+    "src/pd/opt_tests.rs",
+    "src/pd/retry.rs",
+    "src/pd/timestamp.rs",
+    "src/pd/timestamp_tests.rs",
+    "src/region_cache.rs",
+    "src/stats.rs"
+  ],
+  "counts": {
+    "tracked": 85,
+    "unresolved": 77,
+    "repaired": 8
+  },
+  "findings": [
+    {
+      "id": "A01",
+      "status": "partial",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "previous_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "reviewed_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/table_privilege.rs",
+          "previous_blob_or_tree": "08baf83dd24f2b5dfbb2fedaaa1cb342a1c7d706",
+          "reviewed_blob_or_tree": "08baf83dd24f2b5dfbb2fedaaa1cb342a1c7d706",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "A02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "previous_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "reviewed_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_privileges.rs",
+          "previous_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "reviewed_blob_or_tree": "2a5e5ce0e5bc2cb33b26c764212337ad07539d54",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege.rs",
+          "previous_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "reviewed_blob_or_tree": "2876f888d328492309e084359472ae0f2c046625",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "A03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_tls.rs",
+          "previous_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "reviewed_blob_or_tree": "8d005ef41196a96d4026d1037e2314aa41de2c06",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/privilege/privs.rs",
+          "previous_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "reviewed_blob_or_tree": "ecb35f6d402921d23b84fb7747573718a53ac358",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "A04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/account.rs",
+          "previous_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "reviewed_blob_or_tree": "549e66549094ce9d8ac861563ad9db1314b2fd77",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "B01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/binding_cache.rs",
+          "previous_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "reviewed_blob_or_tree": "7d409c36d313ccf9ec0b4a3f0c86f91369767f71",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "B02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_binding_seam.rs",
+          "previous_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "reviewed_blob_or_tree": "f8b399fbfe20bb8474a5e1ad11775121a5fbdd87",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/binding_arm.rs",
+          "previous_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "reviewed_blob_or_tree": "56767b9559a7fcc328bd5ee6d04a4faf7526c8a6",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "N01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/mysql_connection.rs",
+          "previous_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "reviewed_blob_or_tree": "ac228cd097abef56ec9408ce96c628a5805bb896",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-server"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "N02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/main_flags.rs",
+          "previous_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "reviewed_blob_or_tree": "a7cb438330685ae4ea2d902b0136eaedc608e7bc",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-server"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "N03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/bin/tidb-server.rs",
+          "previous_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "reviewed_blob_or_tree": "c6b2e158a82a1f730c0612b296b7e0a408b24ccb",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-server"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D01",
+      "status": "open",
+      "disposition": "Fresh partition diagnostic confirms invisible preexisting rows after accepted repartition. Newly reviewed direct cluster planner also retains metadata-only publication; see follow-up receipt.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "previous_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "reviewed_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "reviewed_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+          "previous_blob_or_tree": "d4c568b46e29e64366bf64640384cc4b84fcb1ab",
+          "reviewed_blob_or_tree": "e568b166062512a2e54ca6be8dde46a6237d0024",
+          "changed": true,
+          "newly_referenced": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true,
+          "newly_referenced": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/table_partition.rs",
+          "previous_blob_or_tree": "c1539309e3c6e7d42066033fcdc93e886799a4d3",
+          "reviewed_blob_or_tree": "2252d2d24a40c1cffdabc8e8986b04aafd6c234f",
+          "changed": true,
+          "newly_referenced": true
+        }
+      ],
+      "fresh_diagnostics": [
+        "partition-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D02",
+      "status": "open",
+      "disposition": "Partition additions do not change the online index backfill owner.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_ddl.rs",
+          "previous_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "reviewed_blob_or_tree": "42d8051a86ec18b2c50d0657f5601261b0163521",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "reviewed_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "reviewed_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D04",
+      "status": "open",
+      "disposition": "Partition additions do not change shared job control-state handling.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D05",
+      "status": "open",
+      "disposition": "Partition additions do not change shared error persistence/retry handling.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D06",
+      "status": "open",
+      "disposition": "Partition additions do not change CHECK terminal cancellation.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D07",
+      "status": "open",
+      "disposition": "Partition additions do not supply the MDL-disabled lease branch.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/ddl.rs",
+          "previous_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "reviewed_blob_or_tree": "08eccde88c5cc99a8e8787f99773d571f7dbbe27",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D08",
+      "status": "open",
+      "disposition": "Partition additions retain direct publication and do not add durable delete-range ownership.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/partition_maintenance.rs",
+          "previous_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "reviewed_blob_or_tree": "9b49182c7b20f5495088713ed3e8b2cf26b8b003",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D09",
+      "status": "open",
+      "disposition": "Partition additions do not change disabled MV build seed ownership.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mview_build_engine.rs",
+          "previous_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "reviewed_blob_or_tree": "00542dc8c3adb33a177c4e0a5ee5d63e33a37bf1",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D10",
+      "status": "open",
+      "disposition": "Partition additions do not change disabled MV/MLog dependency seed ownership.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "D11",
+      "status": "open",
+      "disposition": "Partition actions were added to the same synchronous ALTER loop; fresh multi-action diagnostic still leaves the first added column after a later error.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+          "previous_blob_or_tree": "d4c568b46e29e64366bf64640384cc4b84fcb1ab",
+          "reviewed_blob_or_tree": "e568b166062512a2e54ca6be8dde46a6237d0024",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [
+        "session-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "C01",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/plan_cache.rs",
+          "previous_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "reviewed_blob_or_tree": "9ad58bc87de62a09262764780214f7be170012e1",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/plan_cache_lru.rs",
+          "previous_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "reviewed_blob_or_tree": "e3b5f600062db8ac685756d9781b47d218b25f7e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/session_plan_cache.rs",
+          "previous_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "reviewed_blob_or_tree": "3094923085cabd2884139721d3290f40ae77887c",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "session-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "C02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "previous_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "reviewed_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "C04",
+      "status": "partial",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs",
+          "previous_blob_or_tree": "54aebf777d6d32539987de7172f10a5905be3d14",
+          "reviewed_blob_or_tree": "54aebf777d6d32539987de7172f10a5905be3d14",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E01",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/multi_dml.rs",
+          "previous_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "reviewed_blob_or_tree": "6ba7dcfb23d72fa985c44f5f57ed2375fe4678eb",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E02",
+      "status": "partial",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/dml.rs",
+          "previous_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "reviewed_blob_or_tree": "86d9f2afc6ebffe44b60b57950c410a87c6adb9d",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "session-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver.rs",
+          "previous_blob_or_tree": "1e08a9bd09ce37d444027cec85a157e8ded391cc",
+          "reviewed_blob_or_tree": "1e08a9bd09ce37d444027cec85a157e8ded391cc",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "previous_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "reviewed_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "session-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+          "previous_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "reviewed_blob_or_tree": "c8077af39152f5a4cb7bfcd273b215d54a82e2ef",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-planner/src/physical/mod.rs",
+          "previous_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "reviewed_blob_or_tree": "87000375842b744fced992507986fb03d8c8d54d",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E05",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "expanded-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "S01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "previous_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "reviewed_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "reviewed_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "S02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/real_tikv_node/mod.rs",
+          "previous_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "reviewed_blob_or_tree": "9a75b70c632d8131a7e9bc9948a7e495a43275a7",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "I01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "session-ownership"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "I02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/lib.rs",
+          "previous_blob_or_tree": "7ba3f1e82f1492359d5b108abededcf325cc72ae",
+          "reviewed_blob_or_tree": "7ba3f1e82f1492359d5b108abededcf325cc72ae",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "I03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "T01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+          "previous_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "reviewed_blob_or_tree": "6c3e8db998ac1b77180496414a4b27420dfa077e",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/transaction/mutation.rs",
+          "previous_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "reviewed_blob_or_tree": "5b96508560b9b339e9c1984105ce4a8f75d47354",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "T02",
+      "status": "partial",
+      "disposition": "Native breaker now uses the shared PD package; remaining TiDB routing/health/RPC ownership is unchanged. Do not reopen the removed breaker duplicate.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "previous_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "reviewed_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/region",
+          "previous_blob_or_tree": "c393df3aab3d4962193d582d3bd85bacabeabdcb",
+          "reviewed_blob_or_tree": "c393df3aab3d4962193d582d3bd85bacabeabdcb",
+          "changed": false
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/region_cache.rs",
+          "previous_blob_or_tree": "81072bc65e49668915a48625cd3adbf368260ca4",
+          "reviewed_blob_or_tree": "98f177812ee4858a1c22ffd00c4908140c69405e",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "T03",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-txnkv/src/driver/client_bridge.rs",
+          "previous_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "reviewed_blob_or_tree": "e208ae45a4a172dbcc4bb641d2bbb9e5b2309c72",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "T04",
+      "status": "open",
+      "disposition": "Read-side feedback admission still returns false on update-mutex contention; repaired nonblocking writes remain correct.",
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/locate.rs",
+          "previous_blob_or_tree": "633a592e2f3867c34e99e9c66ecd2e8c8a305cfe",
+          "reviewed_blob_or_tree": "633a592e2f3867c34e99e9c66ecd2e8c8a305cfe",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/serverinfo_etcd.rs",
+          "previous_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "reviewed_blob_or_tree": "5516b64ded829acd5bfb5521ac98b6897c3a001a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/sql_node.rs",
+          "previous_blob_or_tree": "9242f174cbaca1c452680fe724fb573a7d903c82",
+          "reviewed_blob_or_tree": "9242f174cbaca1c452680fe724fb573a7d903c82",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_privilege_load.rs",
+          "previous_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "reviewed_blob_or_tree": "ba14365bcd9bd158828eeba03135195c732350ca",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/mysql_bootstrap.rs",
+          "previous_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "reviewed_blob_or_tree": "53a85d193a32613adcc44ca0a7877531b57a5d6a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/client_go_metrics.rs",
+          "previous_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "reviewed_blob_or_tree": "19d8d965e3a69c144c2519925c88c9b01fc68393",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_api.rs",
+          "previous_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "reviewed_blob_or_tree": "aeb751deece25f2a316a933dd66bb388a842c764",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-ttl/src/lib.rs",
+          "previous_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "reviewed_blob_or_tree": "6bee21f73002f79c944a8df1d6fc6dca06c4a780",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O05",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "reviewed_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        },
+        {
+          "path": "rust/third_party/tikv-client-rs/src/resource_control.rs",
+          "previous_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "reviewed_blob_or_tree": "fd34a41eb5f1baeff45a529be96db8fd4672fc73",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O06",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/ru_stats.rs",
+          "previous_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "reviewed_blob_or_tree": "a9088ba8ec004f8e3dc25ef626b61e28ad46ebb7",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O07",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+          "previous_blob_or_tree": "fba945b7239420ed2c9526633aac43c2e650c568",
+          "reviewed_blob_or_tree": "fba945b7239420ed2c9526633aac43c2e650c568",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O08",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/plan_replayer.rs",
+          "previous_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "reviewed_blob_or_tree": "3e7c8f7394a9dd021fc6c9b87513c25fd8c1dfc8",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O09",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/serverinfo_syncer.rs",
+          "previous_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "reviewed_blob_or_tree": "f22959fe160242c2b6e3fb0d4974be7ddc115834",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O14",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-planner/src/plan_builder/catalog.rs",
+          "previous_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "reviewed_blob_or_tree": "646d94a28fc8673e821bb1648691eeb0867d988b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "previous_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "reviewed_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O15",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/lib.rs",
+          "previous_blob_or_tree": "43aed7fd0d94dca10cc934f3faa519add2be7d17",
+          "reviewed_blob_or_tree": "43aed7fd0d94dca10cc934f3faa519add2be7d17",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O16",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O17",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "previous_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "reviewed_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O18",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/adapter.rs",
+          "previous_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "reviewed_blob_or_tree": "0572ecb4b7eeab6ca1036331b8de868667e30ff4",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs",
+          "previous_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "reviewed_blob_or_tree": "fbd2be450193bbc2a9f57ea4f34e60d2af4b9962",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "remaining-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O19",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/catalog/sync_load.rs",
+          "previous_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "reviewed_blob_or_tree": "442d362e090eb3b8da737666525daf7b6b71fc09",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-stats-handle-metrics/src/lib.rs",
+          "previous_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "reviewed_blob_or_tree": "14dea329e966933f34ebfd021a2a1762a45e7aed",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "F01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "previous_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "reviewed_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "F02",
+      "status": "open",
+      "disposition": "Partition additions do not repair TiFlash replica reset or physical-partition availability.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_ddl.rs",
+          "previous_blob_or_tree": "0ff1f07601c522b2039890920944c0b0b4e6d5b5",
+          "reviewed_blob_or_tree": "c0c74dd79ed04b6245b88685069045d9bb467945",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "F03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_replica_manager.rs",
+          "previous_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "reviewed_blob_or_tree": "526c05248bfa87663557f5f9b677441ad1a0d8e1",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "M01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "reviewed_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "M02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "reviewed_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "M03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "reviewed_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "M04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "reviewed_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "M05",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-config/src/tiflash.rs",
+          "previous_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "reviewed_blob_or_tree": "c397adc7abefc7d3a69f256256e7e00e46541a63",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+          "previous_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "reviewed_blob_or_tree": "8bdb7f3cee5cfdeca08614a06e4267a4f6f1b49b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/bootstrap.rs",
+          "previous_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "reviewed_blob_or_tree": "9c6db3f875e45b473d485a1f0b3123605c1f25eb",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P01",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/requests.rs",
+          "previous_blob_or_tree": "736d5dfbd415a5548d9c93af31735e35cd12ebbb",
+          "reviewed_blob_or_tree": "736d5dfbd415a5548d9c93af31735e35cd12ebbb",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-proto/src/lib.rs",
+          "previous_blob_or_tree": "b3e615562ee30bdc6118fecba035c87d0ce3b38b",
+          "reviewed_blob_or_tree": "b3e615562ee30bdc6118fecba035c87d0ce3b38b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P02",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-pd-client/src/client/topology.rs",
+          "previous_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "reviewed_blob_or_tree": "b90b84cb0342a0c81d1d5b02fed5615ec418dcf0",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-pd-client/src/tso.rs",
+          "previous_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "reviewed_blob_or_tree": "94dfb5d39d215770731babb8dc9d0b507269a7c0",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P06",
+      "status": "partial",
+      "disposition": "Reconciled all published PD prerequisite receipts and current public close. Timestamp deadline/join absence is stale. Whole parent ownership and grpcutil acceptance remain open.",
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/timestamp.rs",
+          "previous_blob_or_tree": "30cfd8ee7c6b22e2d3ade4b70782b06b775a5493",
+          "reviewed_blob_or_tree": "6ddf200fac706f7866950e6d51f9fb33f0a51e6d",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P07",
+      "status": "open",
+      "disposition": "retry_mut still holds cluster.write() across the RPC await; TSO still uses the corresponding read guard. Options/metrics/error changes do not remove serialization.",
+      "source_evidence": [
+        {
+          "path": "rust/third_party/tikv-client-rs/src/pd/retry.rs",
+          "previous_blob_or_tree": "e2d1931f1663aed3af3a9e80c095f0536bb48ab7",
+          "reviewed_blob_or_tree": "d51bd4c62caeae64d038c1c752eb23d875b8da72",
+          "changed": true
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P05",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/rtree/rtree.rs",
+          "previous_blob_or_tree": "960420948a81760e80821101bbb6f5fff8fcd013",
+          "reviewed_blob_or_tree": "960420948a81760e80821101bbb6f5fff8fcd013",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "Q01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+          "previous_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "reviewed_blob_or_tree": "9840352f3e44a8a26d9e829c14f6b1c09fc8b15a",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/sysvar/catalog/optimizer.rs",
+          "previous_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "reviewed_blob_or_tree": "83c95cdadfa988c88619dc4c4e57a5001db113b3",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "X01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-expr/src/new_function.rs",
+          "previous_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "reviewed_blob_or_tree": "4b85765c5abfc3546d68ff87aa58d07d3d4bdc3e",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "X02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-expr/src",
+          "previous_blob_or_tree": "9bceb6b30f83fa198696b8a3fd5b78cb95e5f5f0",
+          "reviewed_blob_or_tree": "9bceb6b30f83fa198696b8a3fd5b78cb95e5f5f0",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+          "previous_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "reviewed_blob_or_tree": "2bc5586a7fedfaad3951e1f8807a8efcfe23a353",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-vardef/src/tidb_vars.rs",
+          "previous_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "reviewed_blob_or_tree": "b3559bf95b486c326fd8e37da48d98f081fbbd1b",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "C03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-distsql/src/copr_cache.rs",
+          "previous_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "reviewed_blob_or_tree": "395f5bf9fa17268f51c9c6a922320ab5fe1220bd",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-exec/src/real_tikv_read.rs",
+          "previous_blob_or_tree": "a0c7ae45e28176abf6ca6bb5ed02420ae26441eb",
+          "reviewed_blob_or_tree": "a0c7ae45e28176abf6ca6bb5ed02420ae26441eb",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "K01",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/cluster_auto_id.rs",
+          "previous_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "reviewed_blob_or_tree": "91c9a512fd8b2fe40819d18dbeb78a61aa251c15",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_auto_id_seam.rs",
+          "previous_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "reviewed_blob_or_tree": "6899b4b60d94324017797689738180206afa26e2",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "K02",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table/cache.rs",
+          "previous_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "reviewed_blob_or_tree": "bd54af1dadc69ef7d2e6537f8b27ae33aba6dc13",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/cluster_session.rs",
+          "previous_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "reviewed_blob_or_tree": "f33a23fea3de0785728535a346ba25ca1280dbb7",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "K03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/kv_table.rs",
+          "previous_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "reviewed_blob_or_tree": "7b592499618b89a43a3531102d418385bf053d91",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "I04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-exec/src/catalog_watch.rs",
+          "previous_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "reviewed_blob_or_tree": "073c9a508ea0f3303663b8486e072c2009850f4b",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "reviewed_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "S03",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "S04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E06",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-executor/src/projection.rs",
+          "previous_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "reviewed_blob_or_tree": "dae5dff5abd363b6f901fb4b45adcd8d649f0853",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "E07",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/lib.rs",
+          "previous_blob_or_tree": "23dfb4b29beec367becb52d59367fb8b91489672",
+          "reviewed_blob_or_tree": "23dfb4b29beec367becb52d59367fb8b91489672",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/dispatch.rs",
+          "previous_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "reviewed_blob_or_tree": "bfcf8cc772970c80b74c3444e709c8e4b2281971",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [
+        "subsystem-structure"
+      ],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "N04",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-session/src/process_arm.rs",
+          "previous_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "reviewed_blob_or_tree": "81c6ad301d143c8d15d0546dc015d29958765800",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "N05",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/http_status.rs",
+          "previous_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "reviewed_blob_or_tree": "a94f63d2d6af31c23ba1a3fef35457bcabb5fc78",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O10",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-dxf-operator/src/lib.rs",
+          "previous_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "reviewed_blob_or_tree": "e147377b948314ab3058eb721b3aae76ab9f1003",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-dxf/src/lib.rs",
+          "previous_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "reviewed_blob_or_tree": "b7ec38a25d82c0478801de8a2cc55ff9a4f52f88",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "reviewed_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O11",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-server/src/lib.rs",
+          "previous_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "reviewed_blob_or_tree": "3b25eb25390dd97b1ddb08e9019d93c38d23db80",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-util/src/topsql_reporter/mod.rs",
+          "previous_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "reviewed_blob_or_tree": "0fce21eaa9f58b22d970a2fcf60f5e41a64a0993",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O12",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-domain/src/globalconfigsync.rs",
+          "previous_blob_or_tree": "bd5c3155578fe743446daf8b93f18c2e8e1b4c11",
+          "reviewed_blob_or_tree": "bd5c3155578fe743446daf8b93f18c2e8e1b4c11",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-server/src/global_config_sync.rs",
+          "previous_blob_or_tree": "e51e2add67db2ea3a4980386a07137bfcc440119",
+          "reviewed_blob_or_tree": "e51e2add67db2ea3a4980386a07137bfcc440119",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/variables.rs",
+          "previous_blob_or_tree": "fdff03cb3f780ac220ded7b4d64f20e983488cde",
+          "reviewed_blob_or_tree": "fdff03cb3f780ac220ded7b4d64f20e983488cde",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "O13",
+      "status": "open",
+      "disposition": "Retain the earlier receipt and status. No intervening owner integration closes this finding.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+          "previous_blob_or_tree": "30385f0ed4c2c5110892591f1db18145107c2a7c",
+          "reviewed_blob_or_tree": "30385f0ed4c2c5110892591f1db18145107c2a7c",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-session/src/vars.rs",
+          "previous_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "reviewed_blob_or_tree": "ad79b5c16968aaae5b7ea48586edf1d0ec24c2ae",
+          "changed": false
+        },
+        {
+          "path": "rust/crates/tidb-txnkv/src/kv_contract.rs",
+          "previous_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "reviewed_blob_or_tree": "bdd92a37ad734e0fe2778044758b2fccb91cfda1",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    },
+    {
+      "id": "P04",
+      "status": "repaired",
+      "disposition": "Keep the repaired status and its existing acceptance limits; no regression is established by this review.",
+      "source_evidence": [
+        {
+          "path": "rust/crates/tidb-br/src/restore_utils.rs",
+          "previous_blob_or_tree": "58667c2c416f953a18b946d682f7a98a79128214",
+          "reviewed_blob_or_tree": "58667c2c416f953a18b946d682f7a98a79128214",
+          "changed": false
+        }
+      ],
+      "fresh_diagnostics": [],
+      "diagnostic_limit": "A diagnostic may confirm one symptom, admission only, or a retained earlier repair; it does not establish the whole finding or package acceptance."
+    }
+  ]
+}

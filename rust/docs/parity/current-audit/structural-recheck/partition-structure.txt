@@ -1,0 +1,24 @@
+CREATE TABLE review_partition (a INT) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)
+  Ok(Done(true))
+INSERT INTO review_partition VALUES (1),(11)
+  Ok(Affected(2))
+SELECT * FROM review_partition ORDER BY a
+  Ok(Rows([[Int(1)], [Int(11)]]))
+ALTER TABLE review_partition PARTITION BY HASH(a) PARTITIONS 2
+  Ok(Affected(0))
+SHOW CREATE TABLE review_partition
+  Ok(Rows([[Bytes([114, 101, 118, 105, 101, 119, 95, 112, 97, 114, 116, 105, 116, 105, 111, 110]), Bytes([67, 82, 69, 65, 84, 69, 32, 84, 65, 66, 76, 69, 32, 96, 114, 101, 118, 105, 101, 119, 95, 112, 97, 114, 116, 105, 116, 105, 111, 110, 96, 32, 40, 10, 32, 32, 96, 97, 96, 32, 105, 110, 116, 32, 68, 69, 70, 65, 85, 76, 84, 32, 78, 85, 76, 76, 10, 41, 32, 69, 78, 71, 73, 78, 69, 61, 73, 110, 110, 111, 68, 66, 32, 68, 69, 70, 65, 85, 76, 84, 32, 67, 72, 65, 82, 83, 69, 84, 61, 117, 116, 102, 56, 109, 98, 52, 32, 67, 79, 76, 76, 65, 84, 69, 61, 117, 116, 102, 56, 109, 98, 52, 95, 98, 105, 110, 10, 80, 65, 82, 84, 73, 84, 73, 79, 78, 32, 66, 89, 32, 72, 65, 83, 72, 32, 40, 96, 97, 96, 41, 32, 80, 65, 82, 84, 73, 84, 73, 79, 78, 83, 32, 50])]]))
+SELECT * FROM review_partition ORDER BY a
+  Ok(Rows([]))
+INSERT INTO review_partition VALUES (2),(12)
+  Ok(Affected(2))
+SELECT * FROM review_partition ORDER BY a
+  Ok(Rows([[Int(2)], [Int(12)]]))
+CREATE TABLE review_plain (a INT)
+  Ok(Done(true))
+INSERT INTO review_plain VALUES (1),(11)
+  Ok(Affected(2))
+ALTER TABLE review_plain PARTITION BY HASH(a) PARTITIONS 2
+  Ok(Affected(0))
+SELECT * FROM review_plain ORDER BY a
+  Ok(Rows([]))

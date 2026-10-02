@@ -40,6 +40,12 @@ The eight repaired register entries remain outside this queue: C01, E01, O12, P0
 
 **Migration and removal:** Native `src/pd/client.rs`, `retry.rs`, `timestamp.rs`: own service discovery, request deadlines, bounded synchronization and retained/joined workers. Preserve Go fallback and reconnection contracts; remove network-duration global write locking and discarded worker ownership.
 
+Current status is reconciled in the [full-register follow-up](structural-review-followup.md):
+native timestamp deadlines and retained/joined stream retirement are implemented.
+Keep those owners; public PD shutdown and complete parent ownership remain open.
+Go default pick_first reconnects on demand after an established connection becomes
+Idle. Initial dialing/retry and blocking readiness remain distinct contracts.
+
 **Integration gate:** All root APIs and configuration variants remain functional; stalled streams time out, pending callers complete on close, reconnect cannot resurrect a closed owner, and unrelated metadata requests overlap without racing leader replacement.
 
 ## W02 — Native KV and TiDB storage consumers

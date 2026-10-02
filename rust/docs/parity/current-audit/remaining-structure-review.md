@@ -1,5 +1,11 @@
 # Complete known remaining structural register — 2026-10-01
 
+Historical review at integration 771e62b287. The
+[follow-up at 313b3cfea3](structural-review-followup.md) supersedes its current
+status descriptions: P06 now has deadline/cancellation/join prerequisites, while
+the public PD owner remains unfinished. Keep the observations below at their
+recorded baseline; the follow-up has separate fresh outputs for all six probes.
+
 There are **77 known unresolved structural findings**, including partial repairs,
 in the [full register](structural-findings.md). Eight other entries are repaired,
 for 85 tracked entries. This review adds 11 previously unregistered boundaries
