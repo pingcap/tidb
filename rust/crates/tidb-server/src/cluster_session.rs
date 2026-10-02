@@ -47,7 +47,7 @@ use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, SequenceDef, ViewDef};
 use tidb_executor::kv_table::{KvColumn, KvForeignKey, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
-use tidb_model::{GoShared, SchemaState, TableInfo};
+use tidb_model::{GoAnyView, GoShared, SchemaState, TableInfo};
 use tidb_session::{Session, SharedCatalog};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
@@ -615,6 +615,43 @@ pub(crate) fn cluster_table(
                 )
                 .map_err(|error| format!("its column {name} has a default {error:?}"))?,
             )
+        } else if column.default_is_expr {
+            // Go stores the expression spelling with `default_is_expr`;
+            // every INSERT re-runs it for omitted columns. Carry it as a
+            // computed default like the clock markers — the literal
+            // fallback refuses the whole table, which made every table with
+            // an expression default unservable here (oracle m3-catalog:
+            // c13(a json DEFAULT (json_array())) vanished right after its
+            // CREATE).
+            let Some(GoAnyView::String(bytes)) = column.default_value.view() else {
+                return Err(format!(
+                    "its column {name} has an expression default with no stored text"
+                ));
+            };
+            let text = String::from_utf8_lossy(bytes.as_bytes()).into_owned();
+            let parsed = tidb_parser::parse(&format!("SELECT {text}")).map_err(|error| {
+                format!("its column {name} has an unparseable default {error:?}")
+            })?;
+            let tidb_ast::Stmt::Query(query) = parsed else {
+                return Err(format!("its column {name} has a non-expression default"));
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err(format!("its column {name} has a non-expression default"));
+            };
+            let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.first() else {
+                return Err(format!("its column {name} has a non-expression default"));
+            };
+            let rewritten = tidb_expr::rewriter::rewrite_expr(expr)
+                .map_err(|error| format!("its column {name} has an unresolvable default {error:?}"))?;
+            Some(tidb_executor::column_default::ColumnDefault::Computed(Box::new(
+                tidb_executor::column_default::ComputedDefault {
+                    text,
+                    kind: tidb_executor::column_default::ComputedDefaultKind::Expression,
+                    expr: rewritten,
+                    added_origin_safety:
+                        tidb_executor::column_default::AddedOriginSafety::Safe,
+                },
+            )))
         } else {
             // The loader refuses a computed default above, so what survives
             // is always a settled value.

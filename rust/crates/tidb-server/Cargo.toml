@@ -38,6 +38,7 @@ tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-exec = { path = "../tidb-exec" }
+tidb-expr = { path = "../tidb-expr" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-unistore = { path = "../tidb-unistore" }
 tidb-executor = { path = "../tidb-executor" }
