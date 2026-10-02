@@ -209,6 +209,10 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	tk.MustExec("analyze table tw")
 	usesIndex("select id from tw where match(body) against('+hello' in boolean mode)", "idx_body(body)")
 	usesIndex("select id from tw where k between 1 and 2000 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	// A rare term is estimated from the column's statistics through its ILIKE
+	// form, so the index still wins when a LIKE that a scan pushes down to the
+	// storage makes the scan cheap, as applications pair MATCH with LIKE.
+	usesIndex("select id from tw where match(body) against('+hello' in boolean mode) and body like '%hello%'", "idx_body(body)")
 	plan = explain("select id from tw where k = 5 and match(body) against('+world' in boolean mode)")
 	require.Contains(t, plan, "index:idx_k(k)", plan)
 	require.NotContains(t, plan, "FullTextIndexScan", plan)

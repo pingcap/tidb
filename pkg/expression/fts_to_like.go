@@ -418,14 +418,35 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 
 // BuildFTSTermILikePredicate builds the ILIKE predicate that selects the rows
 // whose column contains term, for estimating how many rows contain one
-// analyzed term of a full-text index.
+// analyzed term of a full-text index. It is the bare ILIKE, without the IFNULL
+// buildFTSILikePredicate adds for negation: the statistics recognize an ILIKE
+// as a string match and estimate it from the column's TopN and histogram,
+// while an IFNULL around it would get the generic selectivity.
 func BuildFTSTermILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
-	return buildFTSILikePredicate(ctx, column, term)
+	return buildFTSILike(ctx, column, term)
 }
 
 // buildFTSILikePredicate builds a single ILIKE predicate for a column and search term,
 // wrapped in IFNULL so that NULL columns are treated as not containing the term.
 func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
+	likeFunc, err := buildFTSILike(ctx, column, term)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap with IFNULL so a NULL column is treated as not containing the term
+	// (consistent with MySQL FTS semantics where NULL columns are ignored).
+	// Without this, NOT(NULL ILIKE %term%) = NOT(NULL) = NULL which incorrectly
+	// filters rows that have a NULL column and don't contain the excluded term.
+	zeroConst := &Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+}
+
+// buildFTSILike builds the ILIKE predicate matching a column that contains term.
+func buildFTSILike(ctx BuildContext, column Expression, term string) (Expression, error) {
 	escapedTerm := escapeFTSLikePattern(term)
 
 	// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
@@ -448,18 +469,5 @@ func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (E
 	// MySQL full-text search is always case-insensitive regardless of column
 	// collation, so ILIKE matches that semantic rather than plain LIKE which
 	// would follow the column's collation.
-	likeFunc, err := NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap with IFNULL so a NULL column is treated as not containing the term
-	// (consistent with MySQL FTS semantics where NULL columns are ignored).
-	// Without this, NOT(NULL ILIKE %term%) = NOT(NULL) = NULL which incorrectly
-	// filters rows that have a NULL column and don't contain the excluded term.
-	zeroConst := &Constant{
-		Value:   types.NewIntDatum(0),
-		RetType: types.NewFieldType(mysql.TypeTiny),
-	}
-	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+	return NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
 }
