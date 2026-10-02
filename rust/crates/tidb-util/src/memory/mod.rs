@@ -49,10 +49,11 @@ pub use pool::{
 #[cfg(any(target_os = "linux", test))]
 pub(crate) use process::host_memory_total;
 pub use process::{
-    allocator_live_heap_sample, apply_process_memory_setting, handle_global_mem_arbitrator_runtime,
-    install_process_arbitrator, mem_total, mem_used, parse_server_memory_limit, read_mem_stats,
-    using_global_mem_arbitration, validate_process_memory_setting, ProcessArbitratorRegistration,
-    SERVER_MEMORY_LIMIT, SERVER_MEMORY_LIMIT_SESS_MIN_SIZE,
+    allocator_live_heap_sample, apply_process_memory_setting, force_read_mem_stats,
+    handle_global_mem_arbitrator_runtime, install_process_arbitrator, mem_total, mem_used,
+    parse_server_memory_limit, read_mem_stats, using_global_mem_arbitration,
+    validate_process_memory_setting, ProcessArbitratorRegistration, SERVER_MEMORY_LIMIT,
+    SERVER_MEMORY_LIMIT_SESS_MIN_SIZE,
 };
 pub use tracker::{
     bytes_to_string, format_bytes, KillSignalTransport, Tracker, DEF_MEM_QUOTA_QUERY,

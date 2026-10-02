@@ -510,7 +510,30 @@ pub fn initialize_config(
     config_strict: bool,
     enforce_cmd_args: impl FnOnce(&mut Config) -> Result<(), String>,
 ) -> Result<Vec<String>, String> {
-    let mut config = (*super::config::get_global_config()).clone();
+    let (config, warnings) = prepare_config(
+        (*super::config::get_global_config()).clone(),
+        conf_path,
+        config_check,
+        config_strict,
+        enforce_cmd_args,
+    )?;
+    if !config_check {
+        super::config::store_global_config(config);
+    }
+    Ok(warnings)
+}
+
+/// Prepares the same effective configuration without publishing process globals.
+/// Executables can derive their runtime resources from this value, then publish
+/// it only when startup owns those resources. Loading, warnings, override order
+/// and validation stay with the configuration package.
+pub fn prepare_config(
+    mut config: Config,
+    conf_path: Option<&std::path::Path>,
+    config_check: bool,
+    config_strict: bool,
+    enforce_cmd_args: impl FnOnce(&mut Config) -> Result<(), String>,
+) -> Result<(Config, Vec<String>), String> {
     let mut warnings = Vec::new();
 
     if let Some(path) = conf_path {
@@ -567,10 +590,7 @@ pub fn initialize_config(
         .adjust_starter_config(config.deploy_mode == crate::deploymode::Mode::Starter)
         .map_err(|error| format!("invalid security env vars {error}"))?;
 
-    if !config_check {
-        super::config::store_global_config(config);
-    }
-    Ok(warnings)
+    Ok((config, warnings))
 }
 
 /// Delete a dotted path from a JSON object, mirroring Go's walk in

@@ -222,34 +222,81 @@ lease = "not-a-duration"
 }
 
 #[test]
-fn recognized_but_unowned_config_leaves_fail_closed() {
-    for (name, contents, expected) in [
-        ("log", "[log]\nlevel = \"debug\"\n", "log.level"),
-        (
-            "status",
-            "[status]\nstatus-port = 10081\n",
-            "status.status-port",
-        ),
-        (
-            "sql_ca",
-            "[security]\nssl-ca = \"ca.pem\"\n",
-            "security.ssl-ca",
-        ),
+fn shared_config_reaches_runtime_without_a_second_whitelist() {
+    let file = ConfigFile::write(
+        "shared_owner",
+        r#"
+socket = "/private/tmp/shared-{Port}.sock"
+advertise-address = "database.example"
+[performance]
+stats-lease = "17ms"
+[status]
+report-status = false
+status-host = "127.0.0.2"
+status-port = 10091
+[security]
+ssl-ca = "ca.pem"
+[isolation-read]
+engines = ["tikv", "tidb"]
+"#,
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend(["--config", &path]);
+    let config = NodeConfig::parse(args).expect("the shared config owner accepts these options");
+    assert_eq!(format!("{:?}", config.stats_lease), "Positive(17ms)");
+    assert!(!config.report_status);
+    assert_eq!(config.status_host, "127.0.0.2");
+    assert_eq!(config.status_port, 10091);
+    assert_eq!(config.advertise_address, "database.example");
+    assert_eq!(config.socket, "/private/tmp/shared-4000.sock");
+    assert_eq!(config.isolation_read_engines, ["tikv", "tidb"]);
+}
+
+#[test]
+fn automatic_tls_uses_the_go_config_default() {
+    let config = NodeConfig::parse(required()).unwrap();
+    assert!(!config.auto_tls, "Go defaults security.auto-tls to false");
+}
+
+#[test]
+fn recognized_config_leaves_use_the_shared_config_owner() {
+    for (name, contents) in [
+        ("log", "[log]\nlevel = \"debug\"\n"),
+        ("status", "[status]\nstatus-port = 10081\n"),
+        ("sql_ca", "[security]\nssl-ca = \"ca.pem\"\n"),
         (
             "cluster_verify_cn",
             "[security]\ncluster-verify-cn = [\"tidb\"]\n",
-            "security.cluster-verify-cn",
         ),
     ] {
         let file = ConfigFile::write(name, contents);
         let path = file.0.to_string_lossy().into_owned();
         let mut args = required();
         args.extend(["--config", &path]);
-        assert!(matches!(
-            NodeConfig::parse(args),
-            Err(NodeConfigError::UnsupportedConfigOptions(options)) if options == [expected]
-        ));
+        NodeConfig::parse(args).expect("recognized source configuration survives projection");
     }
+}
+
+#[test]
+fn config_check_and_strict_modes_use_source_validation_without_starting_resources() {
+    let valid = ConfigFile::write("config_check", "[performance]\nstats-lease = \"0s\"\n");
+    let result = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+        .args(["--config-check", "--config", valid.0.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result);
+    assert!(String::from_utf8_lossy(&result.stdout).contains("config check successful"));
+    let unknown = ConfigFile::write("config_strict", "not-a-tidb-option = true\n");
+    let path = unknown.0.to_str().unwrap();
+    let mut args = required();
+    args.extend(["--config", path]);
+    NodeConfig::parse(args.clone()).expect("Go warns by default about unknown config");
+    args.push("--config-strict");
+    assert!(NodeConfig::parse(args)
+        .unwrap_err()
+        .to_string()
+        .contains("not-a-tidb-option"));
 }
 
 #[test]

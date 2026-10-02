@@ -365,6 +365,7 @@ mod record_set;
 pub(crate) mod schema_lease;
 pub(crate) mod schema_sync;
 mod statistics;
+pub(crate) mod stats_maintenance;
 mod transactions;
 
 pub use boot::run_cluster_session_node;
@@ -1528,7 +1529,6 @@ impl ClusterSessionFactory {
     pub(crate) fn start_auto_analyze_worker(
         self: &Arc<Self>,
         lease: crate::node_config::StatsLease,
-        run_auto_analyze: bool,
     ) {
         let crate::node_config::StatsLease::Positive(lease) = lease else {
             return;
@@ -1536,9 +1536,9 @@ impl ClusterSessionFactory {
         if self.auto_analyze_worker.get().is_some() {
             return;
         }
-        let _ =
-            self.auto_analyze_worker
-                .set(AutoAnalyzeWorker::start(self, lease, run_auto_analyze));
+        let _ = self
+            .auto_analyze_worker
+            .set(AutoAnalyzeWorker::start(self, lease));
     }
 
     fn handle_auto_analyze_tick(self: &Arc<Self>, run_auto_analyze: bool, stats_lease: Duration) {
@@ -2028,11 +2028,7 @@ struct AutoAnalyzeWorker {
 }
 
 impl AutoAnalyzeWorker {
-    fn start(
-        factory: &Arc<ClusterSessionFactory>,
-        stats_lease: Duration,
-        run_auto_analyze: bool,
-    ) -> Self {
+    fn start(factory: &Arc<ClusterSessionFactory>, stats_lease: Duration) -> Self {
         let stop = Arc::new(UsageWorkerStop {
             stopped: Mutex::new(false),
             wake: Condvar::new(),
@@ -2048,7 +2044,10 @@ impl AutoAnalyzeWorker {
                 let Some(factory) = weak.upgrade() else {
                     return;
                 };
-                factory.handle_auto_analyze_tick(run_auto_analyze, stats_lease);
+                factory.handle_auto_analyze_tick(
+                    tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst),
+                    stats_lease,
+                );
             })
             .expect("auto-analyze worker spawns");
         Self {
@@ -2272,6 +2271,11 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
+        // Positive-lease maintenance has already joined. For zero/negative
+        // leases this is Go's quitStatsOwner lifetime instead.
+        if let Some(owner) = &self.stats_owner {
+            owner.close();
+        }
         if let Some(refresher) = self.auto_analyze_refresher.get() {
             refresher
                 .lock()

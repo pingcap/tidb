@@ -29,11 +29,8 @@
 //!
 //! Go's `LoadTLSCertificates` auto-generates a self-signed cert into the temp
 //! storage path when no `ssl-cert`/`ssl-key` is configured and `auto-tls` is
-//! on. `security.auto-tls` defaults to false in `pkg/config`, but the TiUP
-//! playground server this node is measured against runs with it enabled --
-//! which is why the Go server on the shared cluster advertises `CLIENT_SSL`
-//! out of the box, and why this node's `--auto-tls` defaults to on to match
-//! the server it is compared against.
+//! on. `security.auto-tls` defaults to false, as in Go's shared configuration.
+//! A deployment that wants generated certificates enables it explicitly.
 
 use std::fs;
 use std::io::{self, BufReader, IoSlice, Read, Write};

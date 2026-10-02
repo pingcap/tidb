@@ -71,6 +71,10 @@ fn main() -> ExitCode {
             println!("{}", NodeConfig::help_text());
             ExitCode::SUCCESS
         }
+        Err(NodeConfigError::ConfigCheckSucceeded) => {
+            println!("config check successful");
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("tidb-server configuration failure: {error}");
             ExitCode::from(2)

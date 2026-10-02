@@ -58,6 +58,9 @@ Hard requirements remain in the repository root `AGENTS.md`.
 ### Domain and statistics
 - `pkg/domain/`
 - `pkg/statistics/`
+- Rust statistics maintenance: `rust/crates/tidb-server/src/cluster_session_node/stats_maintenance.rs`
+  owns the positive-lease GC, health and cache-eviction lifetime for both stores;
+  it consumes shared statistics initialization from `rust/crates/tidb-exec/src/stats_watch.rs`.
 - Typical changes: schema/statistics lifecycle, cardinality/estimation behavior.
 
 ### Parser and AST

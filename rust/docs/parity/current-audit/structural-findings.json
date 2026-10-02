@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 67,
-    "repaired": 19
+    "unresolved": 66,
+    "repaired": 20
   },
   "findings": [
     {
@@ -87,12 +87,12 @@
     },
     {
       "id": "N03",
-      "status": "open",
+      "status": "partial",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; reproduced:** executable configuration passes a complete SourceConfig through a second hand-maintained NodeConfig whitelist. Valid Go TOML such as performance.stats-lease and security.ssl-ca is refused. NodeConfig also overrides Go's false auto-TLS default with true. Token-limit is now consumed by the shared N02 command owner; its earlier refusal is historical.",
-      "rust_evidence": "`rust/crates/tidb-server/src/bin/tidb-server.rs:60`; `node_config.rs:399`, `:441`, `:920`; `expanded-server-probe.txt`",
-      "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Use the complete validated configuration as the runtime authority, including CLI precedence and consumers; merely accepting ignored fields would preserve the gap. Removed performance.run-auto-analyze is correctly refused and is not a finding.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained TOML accepts token-limit, as repaired, but still rejects performance.stats-lease and security.ssl-ca; auto_tls remains true. The second NodeConfig authority and incomplete shared configuration remain. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**P2; partially repaired:** executable startup now uses the shared configuration loader and override pass; the second TOML parse, whitelist, presence tracker and manual reconstruction are removed. Recognized fields, CLI precedence, config-check/strict policy and Go's false auto-TLS default are covered. Native deployment defaults and incomplete runtime consumers remain; accepting ssl-ca does not repair A03 certificate enforcement.",
+      "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md)",
+      "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Finish the remaining runtime consumers and deployment defaults before complete acceptance. Deprecated performance.run-auto-analyze uses the shared loader's diagnostics; the live auto-analyze worker reads vardef.RunAutoAnalyze, as Go does.",
+      "review_basis": "Batch from integration 43e827e2c4 against Go master 93a01d31f6 and unchanged native 19a56cc. Rejection/default regressions failed before repair and pass afterward; config/CLI/startup projection and config-check tests pass. Real default-plaintext MySQL startup exposed and then verified shared instance-memory defaults. No whole-package acceptance; see config-statistics-maintenance-repair.md."
     },
     {
       "id": "N06",
@@ -411,12 +411,12 @@
     },
     {
       "id": "O07",
-      "status": "open",
+      "status": "repaired",
       "group": "Domain and process services",
-      "finding": "**P2; source-confirmed:** statistics GC has a callable implementation and direct tests, but no production caller starts its periodic lifecycle. The existing analyze-job cleanup worker only removes job history; it does not run table/column statistics GC.",
-      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/mod.rs:1438`, `:2059`, `:2587`; boot.rs startup list; all other `gc_stats` callers are tests",
-      "go_owner": "`pkg/domain/domain.go::LoadAndUpdateStatsLoop`/`gcStatsWorker`: owner-gated GC, auto-analyze window checks, cache memory eviction and health updates. Keep existing workers; compose the missing lifecycle and shutdown. No long-running retention experiment was run.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. gc_stats remains a public helper called by tests; existing startup workers do not periodically invoke it. Analyze-job cleanup is a separate responsibility. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Recorded statistics maintenance mismatch repaired:** both stores retain the positive-lease maintenance worker after statistics initialization. Current ownership gates periodic GC and auto-analyze window checks; health and memory/cache maintenance run on every node. Errors continue, zero/negative leases do not start it, and shutdown joins active work before closing statistics ownership and storage. The related auto-analyze worker now observes the live process switch.",
+      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/stats_maintenance.rs`; `boot.rs`; `unistore_node.rs`; `rust/crates/tidb-exec/src/stats_watch.rs`; [batch receipt](config-statistics-maintenance-repair.md)",
+      "go_owner": "`pkg/domain/domain.go::gcStatsWorker`/`autoAnalyzeWorker`, existing statistics GC/cache and `pkg/util/memory/memstats.go`. Composes existing owners at Go's 100-lease GC, 20-lease health and 300ms memory intervals. MVCC GC, min-active-TS and LFU admission remain separate open findings; complete Domain/statistics package acceptance is not claimed.",
+      "review_basis": "Batch from integration 43e827e2c4 against Go master 93a01d31f6 and unchanged native 19a56cc. Periodic GC and live auto-analyze-switch regressions fail before repair and pass afterward. Targeted tests cover ownership acquisition/loss, GC error continuation, init publication, timers and joined shutdown. Stock MySQL/unistore process check observes dropped-index histogram removal and persisted GC watermark, then clean SIGTERM. Live multi-node TiKV and workload performance remain unverified; see config-statistics-maintenance-repair.md."
     },
     {
       "id": "O08",
@@ -790,11 +790,17 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "id": "O19",
-    "status": "repaired",
-    "scope": "Statistics sync-load outcome and observation lifecycle",
-    "integration_start": "2e66b7c28f60ab2083559222735496c0596f1b4a",
+    "ids": [
+      "N03",
+      "O07"
+    ],
+    "statuses": {
+      "N03": "partial",
+      "O07": "repaired"
+    },
+    "scope": "Shared effective configuration, periodic statistics maintenance and live auto-analyze policy",
+    "integration_start": "43e827e2c4c96a351efb164d4f1fb4295fbbb5b6",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "syncload-lifecycle-repair.md"
+    "receipt": "config-statistics-maintenance-repair.md"
   }
 }

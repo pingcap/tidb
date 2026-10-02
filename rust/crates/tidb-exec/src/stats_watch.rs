@@ -415,6 +415,16 @@ impl SharedStats {
     pub fn receipt(&self) -> StatsReceipt {
         receipt_of(&self.load())
     }
+
+    /// Go Domain's periodic health observation over the shared statistics cache.
+    pub fn update_stats_healthy_metrics(&self) {
+        self.cache.update_stats_healthy_metrics();
+    }
+
+    /// Go Domain's memory tick asks the cache owner to enforce its current cost.
+    pub fn trigger_evict(&self) {
+        self.cache.trigger_evict();
+    }
 }
 
 /// Why a stats reload thread could not be started or stopped.
@@ -517,7 +527,7 @@ impl StatsReloader {
         interval: Duration,
         read: StatsReloadRead,
     ) -> Result<Self, StatsReloadError> {
-        Self::spawn_impl(shared, interval, read, false)
+        Self::spawn_impl(shared, interval, read, false, None)
     }
 
     /// Starts the reload thread with one immediate pass before its first
@@ -527,7 +537,18 @@ impl StatsReloader {
         interval: Duration,
         read: StatsReloadRead,
     ) -> Result<Self, StatsReloadError> {
-        Self::spawn_impl(shared, interval, read, true)
+        Self::spawn_impl(shared, interval, read, true, None)
+    }
+
+    /// Releases the shared InitStatsDone boundary only after the initial read
+    /// and cache publication, including a skipped or failed initial pass.
+    pub fn spawn_with_initial_pass_notify(
+        shared: Arc<SharedStats>,
+        interval: Duration,
+        read: StatsReloadRead,
+        initialized: Option<AsyncStatsLoaderInit>,
+    ) -> Result<Self, StatsReloadError> {
+        Self::spawn_impl(shared, interval, read, true, initialized)
     }
 
     fn spawn_impl(
@@ -535,6 +556,7 @@ impl StatsReloader {
         interval: Duration,
         mut read: StatsReloadRead,
         initial_pass: bool,
+        initialized: Option<AsyncStatsLoaderInit>,
     ) -> Result<Self, StatsReloadError> {
         if interval.is_zero() {
             return Err(StatsReloadError::ZeroInterval);
@@ -549,6 +571,9 @@ impl StatsReloader {
                 let (lock, condvar) = &*worker_signal;
                 if initial_pass {
                     run_one_stats_reload_pass(&shared, read.as_mut(), &worker_stats);
+                }
+                if let Some(initialized) = initialized {
+                    initialized.finish();
                 }
                 loop {
                     // Waiting on the condvar rather than sleeping is what
@@ -637,6 +662,14 @@ pub struct AsyncStatsLoaderInit {
 }
 
 impl AsyncStatsLoaderInit {
+    /// Whether Go InitStatsDone has been released after initial publication.
+    pub fn is_complete(&self) -> bool {
+        self.signal
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .initialized
+    }
     /// Releases the asynchronous histogram worker after the initial statistics
     /// pass finishes, fails, or is skipped.
     pub fn finish(&self) {
@@ -653,6 +686,12 @@ impl AsyncStatsLoaderInit {
 }
 
 impl AsyncStatsLoader {
+    /// Shares the existing initialization gate with other Domain workers.
+    pub fn initialization(&self) -> AsyncStatsLoaderInit {
+        AsyncStatsLoaderInit {
+            signal: Arc::clone(&self.signal),
+        }
+    }
     /// A disabled guard when Go does not start this worker (a non-positive
     /// statistics lease).
     #[must_use]
@@ -848,6 +887,49 @@ mod tests {
     use tidb_stats_handle_cache::StatsMetaRow;
 
     use super::*;
+
+    #[test]
+    fn initialization_releases_consumers_after_publication_and_after_errors() {
+        for fail in [false, true] {
+            let shared = Arc::new(SharedStats::new(Default::default()).unwrap());
+            let observed = Arc::clone(&shared);
+            let (sampled, samples) = mpsc::channel();
+            let (mut async_loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
+                Duration::from_millis(1),
+                Box::new(move || {
+                    let _ = sampled.send(observed.load().contains_key(&42));
+                }),
+            )
+            .unwrap();
+            let (entered, entry) = mpsc::channel();
+            let (release, blocked) = mpsc::channel();
+            let mut reloader = StatsReloader::spawn_with_initial_pass_notify(
+                shared,
+                Duration::from_secs(3600),
+                Box::new(move || {
+                    entered.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    if fail {
+                        Err("initial read failure".to_owned())
+                    } else {
+                        Ok(StatsReloadReadResult::Publish(
+                            [loaded_at(42, 1)].into_iter().collect(),
+                        ))
+                    }
+                }),
+                Some(init.clone()),
+            )
+            .unwrap();
+            entry.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(!init.is_complete());
+            assert!(samples.recv_timeout(Duration::from_millis(20)).is_err());
+            release.send(()).unwrap();
+            assert_eq!(samples.recv_timeout(Duration::from_secs(2)).unwrap(), !fail);
+            assert!(init.is_complete());
+            reloader.shutdown().unwrap();
+            async_loader.shutdown().unwrap();
+        }
+    }
 
     fn loaded_at(table_id: i64, version: u64) -> (i64, TableStatsState) {
         (

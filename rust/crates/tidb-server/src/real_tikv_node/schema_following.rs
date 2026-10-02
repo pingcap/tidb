@@ -263,11 +263,10 @@ where
     } else {
         (AsyncStatsLoader::disabled(), None)
     };
-    let update_async_init = async_init;
     let update_loader = Arc::clone(&loader);
     let update_opener = opener.clone();
     let update_catalog = Arc::clone(&catalog);
-    let reloader = StatsReloader::spawn_with_initial_pass(
+    let reloader = StatsReloader::spawn_with_initial_pass_notify(
         Arc::clone(&shared),
         reload_interval,
         Box::new(move || {
@@ -299,12 +298,6 @@ where
                         Err(error) => Err(error.to_string()),
                     }
                 };
-                // Go closes InitStatsDone when initialization succeeds, is
-                // skipped, or returns an error, so the async ticker can
-                // consume a tick that became pending during initialization.
-                if let Some(init) = &update_async_init {
-                    init.finish();
-                }
                 return result;
             }
             let located = update_loader
@@ -336,6 +329,7 @@ where
                 Err(error) => Err(error.to_string()),
             }
         }),
+        async_init,
     )?;
     Ok((shared, reloader, async_loader))
 }

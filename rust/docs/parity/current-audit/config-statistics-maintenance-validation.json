@@ -1,0 +1,386 @@
+{
+  "date": "2026-10-02",
+  "scope": "Existing owner maintenance; O07 repaired and N03 partial, no complete Go package acceptance.",
+  "baseline": {
+    "integration": "43e827e2c4c96a351efb164d4f1fb4295fbbb5b6",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc"
+  },
+  "distinct_targeted_test_count": 139,
+  "tests": [
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- stats_gc stats_maintenance node_config:: main_flags:: real_tikv_node::schema_following:: --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 31,
+      "test_names": [
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_close_wakes_long_timers_and_recovers_worker_panics",
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_drives_all_tickers_and_joins_active_work",
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_waits_for_initialization_and_close_interrupts_that_wait",
+        "cluster_session_node::tests::unistore_cop::stats_gc_keeps_meta_for_existing_table_without_histograms",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_column_usage_cleanup",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_item_and_dropped_table_phases",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_partition_phases",
+        "cluster_session_node::tests::unistore_cop::stats_gc_runs_periodically_only_after_ownership_is_acquired",
+        "cluster_session_node::tests::unistore_cop::stats_maintenance_is_absent_for_zero_and_negative_leases",
+        "main_flags::tests::an_unwritten_flag_never_touches_the_config",
+        "main_flags::tests::initialize_polarities_follow_go",
+        "main_flags::tests::main_go_flags_are_extracted_and_node_options_survive",
+        "main_flags::tests::override_config_keyspace_activate_mode",
+        "main_flags::tests::tls_flags_follow_go_deployment_scope_and_pair_validation",
+        "node_config::tests::affinity_cpu_list_matches_the_source_command_line_parser",
+        "node_config::tests::an_unknown_store_names_both_executables",
+        "node_config::tests::cluster_tls_options_build_security_and_reject_partial_material",
+        "node_config::tests::command_token_file_and_flag_precedence_matches_go",
+        "node_config::tests::command_token_flag_reaches_effective_config",
+        "node_config::tests::expired_passwords_disconnect_by_default_and_the_flag_opts_into_sandboxing",
+        "node_config::tests::file_settings_and_cli_overrides_share_the_startup_projection",
+        "node_config::tests::instance_memory_arbitrator_settings_are_admitted_as_one_startup_policy",
+        "node_config::tests::run_ddl_defaults_on_and_follows_the_main_go_flag",
+        "node_config::tests::skip_grant_table_is_root_only_and_reaches_the_resolved_node_config",
+        "node_config::tests::startup_config_projection_contains_the_effective_owned_values",
+        "node_config::tests::stats_lease_uses_go_duration_parsing_and_allows_zero",
+        "node_config::tests::store_tikv_still_requires_the_pd_path",
+        "node_config::tests::store_unistore_is_accepted_without_a_pd_path",
+        "node_config::tests::the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster",
+        "real_tikv_node::schema_following::tests::asynchronous_statistics_loading_requires_a_positive_lease",
+        "real_tikv_node::schema_following::tests::statistics_reload_targets_follow_the_current_catalog"
+      ],
+      "summary": "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 459 filtered out; finished in 10.68s",
+      "local_log": "/private/tmp/config-stats-server-final.log",
+      "sha256": "8ce1840390e207280556c446da7897b19512c84446a9aa006eb02a972c43c331"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all -- node_config_source:: mysql_tls_source:: mysql_client_lifecycle_source:: concurrent_mysql_sessions_source:: --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 57,
+      "test_names": [
+        "concurrent_mysql_sessions_source::command_dispatch_exports_success_and_error_counters",
+        "concurrent_mysql_sessions_source::command_token_is_shared_across_sockets_and_held_through_result_streaming",
+        "concurrent_mysql_sessions_source::command_token_releases_on_error_no_response_quit_protocol_failure_and_panic",
+        "concurrent_mysql_sessions_source::fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all",
+        "concurrent_mysql_sessions_source::forced_shutdown_cancels_an_inflight_com_query_before_joining_worker",
+        "concurrent_mysql_sessions_source::prepared_execute_exports_cached_statement_label",
+        "concurrent_mysql_sessions_source::query_metrics_use_post_dispatch_group_and_exclude_text_ddl",
+        "concurrent_mysql_sessions_source::shutdown_stops_acceptance_and_forces_a_stalled_connection_after_grace",
+        "mysql_client_lifecycle_source::a_multi_row_write_ok_packet_carries_the_records_message_as_info",
+        "mysql_client_lifecycle_source::a_prepared_write_answers_with_an_ok_packet_carrying_affected_rows",
+        "mysql_client_lifecycle_source::a_write_inside_a_transaction_reports_the_open_transaction_on_its_own_ok_packet",
+        "mysql_client_lifecycle_source::begin_and_commit_dispatch_toggles_the_in_transaction_status_flag",
+        "mysql_client_lifecycle_source::cursor_execute_releases_snapshot_before_fetch_and_fetch_uses_only_materialized_rows",
+        "mysql_client_lifecycle_source::cursor_fetch_encoding_error_resets_cursor_atomically",
+        "mysql_client_lifecycle_source::cursor_reader_error_is_reported_by_fetch_and_closes_cursor",
+        "mysql_client_lifecycle_source::handshake_without_protocol_41_uses_the_source_auth_mode_error",
+        "mysql_client_lifecycle_source::load_stats_requires_client_local_files",
+        "mysql_client_lifecycle_source::load_stats_uses_client_local_infile_packets",
+        "mysql_client_lifecycle_source::long_data_quota_refuses_before_copy_and_releases_on_execute_and_close",
+        "mysql_client_lifecycle_source::malformed_handshake_response_uses_the_generic_protocol_error",
+        "mysql_client_lifecycle_source::prepared_point_range_keeps_its_two_marker_contract",
+        "mysql_client_lifecycle_source::prepared_point_read_honors_read_only_cursor_protocol",
+        "mysql_client_lifecycle_source::query_error_is_written_as_err_and_connection_remains_command_aligned",
+        "mysql_client_lifecycle_source::real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup",
+        "mysql_client_lifecycle_source::real_tcp_malformed_prepared_execute_counts_command_without_success",
+        "mysql_client_lifecycle_source::real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reuse",
+        "mysql_client_lifecycle_source::send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter",
+        "mysql_client_lifecycle_source::stmt_reset_drops_the_long_data_buffer_before_the_next_execute",
+        "mysql_tls_source::a_half_configured_pair_is_refused_rather_than_silently_self_signed",
+        "mysql_tls_source::a_missing_certificate_file_is_reported_rather_than_ignored",
+        "mysql_tls_source::auto_tls_generates_material_when_none_is_configured",
+        "mysql_tls_source::configured_pem_material_is_loaded_and_wins_over_auto_tls",
+        "mysql_tls_source::no_material_and_no_auto_tls_leaves_the_port_plaintext",
+        "mysql_tls_source::the_same_socket_carries_plaintext_and_then_tls",
+        "node_config_source::automatic_tls_uses_the_go_config_default",
+        "node_config_source::cluster_privilege_accounts_can_bind_a_non_loopback_listener",
+        "node_config_source::config_check_and_strict_modes_use_source_validation_without_starting_resources",
+        "node_config_source::config_path_accepts_inline_syntax_and_reports_missing_files",
+        "node_config_source::configured_sem_is_installed_before_startup_resource_admission",
+        "node_config_source::configured_spill_policy_is_loaded_from_the_tidb_config_file",
+        "node_config_source::connection_limit_is_go_uint32_with_zero_unlimited",
+        "node_config_source::connection_timeout_is_positive_explicit_and_documented",
+        "node_config_source::every_store_uses_the_shared_session_without_table_descriptors",
+        "node_config_source::explicit_cli_values_override_the_config_before_validation",
+        "node_config_source::impossible_spill_quota_fails_before_auth_listener_or_cluster_startup",
+        "node_config_source::legacy_cluster_session_flag_does_not_change_the_session_owner",
+        "node_config_source::ordinary_tikv_startup_defaults_to_persisted_accounts",
+        "node_config_source::packet_limit_and_help_are_checked_before_startup",
+        "node_config_source::plaintext_native_password_boundary_cannot_bind_a_public_address",
+        "node_config_source::recognized_config_leaves_use_the_shared_config_owner",
+        "node_config_source::shared_config_reaches_runtime_without_a_second_whitelist",
+        "node_config_source::source_port_alias_and_long_option_share_one_value_slot",
+        "node_config_source::source_tikv_startup_uses_the_shared_catalog",
+        "node_config_source::static_table_options_cannot_select_an_alternate_sql_engine",
+        "node_config_source::the_advertise_address_follows_gos_resolution",
+        "node_config_source::unsupported_or_ambiguous_startup_options_fail_closed",
+        "node_config_source::version_flag_prints_the_effective_source_identity_without_topology"
+      ],
+      "summary": "test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 143 filtered out; finished in 2.86s",
+      "local_log": "/private/tmp/config-stats-wire.log",
+      "sha256": "f5b27a57709e6abcc93cb3697c26451a53d367c724234140c4885fa32d280eb2"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib stats_watch::tests -- --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 23,
+      "test_names": [
+        "stats_watch::tests::a_failed_pass_keeps_the_previous_snapshot_published",
+        "stats_watch::tests::a_histogram_carrying_table_still_reports_its_version",
+        "stats_watch::tests::a_negative_go_lease_has_no_reload_worker",
+        "stats_watch::tests::a_newly_analyzed_table_publishes_even_though_no_prior_version_moved",
+        "stats_watch::tests::a_proven_unchanged_pass_costs_no_reload_and_publishes_nothing",
+        "stats_watch::tests::a_published_snapshot_replaces_the_previous_one_whole",
+        "stats_watch::tests::a_receipt_counts_loaded_and_pseudo_tables_separately",
+        "stats_watch::tests::a_table_absent_from_the_map_is_distinct_from_pseudo",
+        "stats_watch::tests::a_zero_interval_is_refused_rather_than_spinning",
+        "stats_watch::tests::an_older_stats_version_cannot_move_the_shared_cache_backward",
+        "stats_watch::tests::an_unchanged_read_publishes_nothing",
+        "stats_watch::tests::analyze_publication_does_not_advance_the_cache_lifecycle_version",
+        "stats_watch::tests::async_histogram_loading_has_an_independent_ticker_and_shutdown",
+        "stats_watch::tests::async_histogram_ticker_retains_one_tick_while_init_is_running",
+        "stats_watch::tests::dropping_the_reloader_stops_its_thread",
+        "stats_watch::tests::go_load_worker_runs_initial_pass_before_first_tick",
+        "stats_watch::tests::initialization_releases_consumers_after_publication_and_after_errors",
+        "stats_watch::tests::published_snapshots_reference_the_cache_objects_and_drop_deleted_tables",
+        "stats_watch::tests::sync_load_inserts_analyzed_column_without_a_resident_object",
+        "stats_watch::tests::sync_load_inserts_analyzed_index_without_a_resident_object",
+        "stats_watch::tests::sync_load_installs_go_empty_column_for_known_unanalyzed_metadata",
+        "stats_watch::tests::sync_load_replaces_only_the_evicted_item_without_mutating_held_snapshots",
+        "stats_watch::tests::the_thread_publishes_only_when_a_version_moves_and_stops_promptly_on_shutdown"
+      ],
+      "summary": "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 346 filtered out; finished in 0.11s",
+      "local_log": "/private/tmp/config-stats-watch.log",
+      "sha256": "064c78330f5897b2daa029596a62acd476b282d4d571980e1b74142879128023"
+    },
+    {
+      "command": "cargo test --locked -p tidb-config --lib config_tree::load:: -- --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 14,
+      "test_names": [
+        "config_tree::load::tests::conflict_instance_config",
+        "config_tree::load::tests::deploy_mode_classic",
+        "config_tree::load::tests::deploy_mode_defaults_and_invalid_mode",
+        "config_tree::load::tests::deprecated_config",
+        "config_tree::load::tests::error_message_extension_config_load",
+        "config_tree::load::tests::get_json_config",
+        "config_tree::load::tests::initialize_config_matches_strict_and_check_contract",
+        "config_tree::load::tests::invalid_config_with_deprecated_config",
+        "config_tree::load::tests::load_partial",
+        "config_tree::load::tests::load_partial_preserves_resolved_keyspace_observability",
+        "config_tree::load::tests::removed_variable_check",
+        "config_tree::load::tests::test_config_example",
+        "config_tree::load::tests::token_limit",
+        "config_tree::load::tests::undecoded_items"
+      ],
+      "summary": "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.01s",
+      "local_log": "/private/tmp/config-stats-loader.log",
+      "sha256": "6021ef5db3cfa36462e4bfe3cc5e3bb6aa4b981f403556c4871259051a68daca"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- auto_analyze_worker auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 3,
+      "test_names": [
+        "cluster_session_node::tests::unistore_cop::auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path",
+        "cluster_session_node::tests::unistore_cop::auto_analyze_worker_observes_the_live_process_switch",
+        "cluster_session_node::tests::unistore_cop::auto_analyze_worker_uses_gos_positive_lease_gate_and_stops"
+      ],
+      "summary": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 488 filtered out; finished in 11.72s",
+      "local_log": "/private/tmp/config-stats-auto-after.log",
+      "sha256": "7b0c09ee373d0a0884d01c5ab5529df58a90d91e9b05a3f92811a863178366e7"
+    },
+    {
+      "command": "cargo test --locked -p tidb-util --lib memory::process::tests -- --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 3,
+      "test_names": [
+        "memory::process::tests::explicit_server_memory_limit_observes_the_source_minimum",
+        "memory::process::tests::go_process_memory_returns_may_be_ignored",
+        "memory::process::tests::process_rss_sampling_needs_no_external_command"
+      ],
+      "summary": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 572 filtered out; finished in 0.01s",
+      "local_log": "/private/tmp/config-stats-memory.log",
+      "sha256": "615bb814b1125abcd1ad60a647d2b079dda80f2cec669be938df7c13ce6b3566"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --manifest-path rust/Cargo.toml --lib node_config:: -- --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb",
+      "exit_code": 0,
+      "test_count": 15,
+      "test_names": [
+        "node_config::tests::affinity_cpu_list_matches_the_source_command_line_parser",
+        "node_config::tests::an_unknown_store_names_both_executables",
+        "node_config::tests::cluster_tls_options_build_security_and_reject_partial_material",
+        "node_config::tests::command_token_file_and_flag_precedence_matches_go",
+        "node_config::tests::command_token_flag_reaches_effective_config",
+        "node_config::tests::expired_passwords_disconnect_by_default_and_the_flag_opts_into_sandboxing",
+        "node_config::tests::file_settings_and_cli_overrides_share_the_startup_projection",
+        "node_config::tests::instance_memory_arbitrator_settings_are_admitted_as_one_startup_policy",
+        "node_config::tests::run_ddl_defaults_on_and_follows_the_main_go_flag",
+        "node_config::tests::skip_grant_table_is_root_only_and_reaches_the_resolved_node_config",
+        "node_config::tests::startup_config_projection_contains_the_effective_owned_values",
+        "node_config::tests::stats_lease_uses_go_duration_parsing_and_allows_zero",
+        "node_config::tests::store_tikv_still_requires_the_pd_path",
+        "node_config::tests::store_unistore_is_accepted_without_a_pd_path",
+        "node_config::tests::the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster"
+      ],
+      "summary": "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 475 filtered out; finished in 0.02s",
+      "local_log": "/private/tmp/config-stats-config-final.log",
+      "sha256": "1921034a253dd1fb1b0dfcedc98f96d27cc96f48a8befc0b59960e7a2e2078f9"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- schema_sync:: stats_gc stats_maintenance --test-threads=1",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "test_count": 17,
+      "test_names": [
+        "cluster_session_node::schema_sync::tests::a_job_ahead_of_the_loaded_version_waits",
+        "cluster_session_node::schema_sync::tests::an_acknowledged_job_is_not_resent_until_its_version_moves",
+        "cluster_session_node::schema_sync::tests::an_unresolved_name_blocks_conservatively",
+        "cluster_session_node::schema_sync::tests::disabled_mdl_reports_loaded_schema_without_replaying_job_versions",
+        "cluster_session_node::schema_sync::tests::first_use_wins_and_release_clears",
+        "cluster_session_node::schema_sync::tests::must_reload_gives_up_when_the_node_stops",
+        "cluster_session_node::schema_sync::tests::must_reload_waits_out_failed_passes_until_one_succeeds",
+        "cluster_session_node::schema_sync::tests::only_work_on_the_jobs_own_tables_holds_it_back",
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_close_wakes_long_timers_and_recovers_worker_panics",
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_drives_all_tickers_and_joins_active_work",
+        "cluster_session_node::stats_maintenance::tests::stats_maintenance_waits_for_initialization_and_close_interrupts_that_wait",
+        "cluster_session_node::tests::unistore_cop::stats_gc_keeps_meta_for_existing_table_without_histograms",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_column_usage_cleanup",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_item_and_dropped_table_phases",
+        "cluster_session_node::tests::unistore_cop::stats_gc_matches_go_partition_phases",
+        "cluster_session_node::tests::unistore_cop::stats_gc_runs_periodically_only_after_ownership_is_acquired",
+        "cluster_session_node::tests::unistore_cop::stats_maintenance_is_absent_for_zero_and_negative_leases"
+      ],
+      "summary": "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 474 filtered out; finished in 11.33s",
+      "local_log": "/private/tmp/config-stats-rebase-tests.log",
+      "sha256": "1677fe64ceb2d98a87310bba2c5d4fa0141f16baff97ed86ca0bf6bbf3d96876"
+    }
+  ],
+  "before_repair": [
+    {
+      "test_names": [
+        "node_config_source::automatic_tls_uses_the_go_config_default",
+        "node_config_source::shared_config_reaches_runtime_without_a_second_whitelist"
+      ],
+      "summary": "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 197 filtered out; finished in 0.03s",
+      "expected_failure": "Recognized TOML rejected by duplicate whitelist; automatic TLS defaults true.",
+      "local_log": "/private/tmp/config-stats-before.log",
+      "sha256": "3d4e5a634cc66dbbc85ec53683e1cefe6657e4efc8fc178bf98bfaff1c1fb0be"
+    },
+    {
+      "test_names": [
+        "cluster_session_node::tests::unistore_cop::stats_gc_runs_periodically_only_after_ownership_is_acquired"
+      ],
+      "summary": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 483 filtered out; finished in 4.24s",
+      "expected_failure": "Positive stats lease never invokes periodic GC after owner acquisition.",
+      "local_log": "/private/tmp/config-stats-gc-before.log",
+      "sha256": "6a5d95544426f4d1bab7c0d11f0204985ff11ea5399ed2d1379fbaba2619eab9"
+    },
+    {
+      "test_names": [
+        "cluster_session_node::tests::unistore_cop::auto_analyze_worker_observes_the_live_process_switch"
+      ],
+      "summary": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 490 filtered out; finished in 4.26s",
+      "expected_failure": "Auto-analyze worker does not observe the live process switch.",
+      "local_log": "/private/tmp/config-stats-auto-before.log",
+      "sha256": "768d36da694d5ef737dcccdb0e8eabe89a231e6d6e5a20d1265f4c12ea1008f2"
+    }
+  ],
+  "real_process_smoke": {
+    "command": [
+      "/Users/qiliu/projects/tidb/rust/target/debug/tidb-server",
+      "--auth-file",
+      "/private/tmp/config-stats-smoke-795np4l5/users.tsv",
+      "--config",
+      "/private/tmp/config-stats-smoke-795np4l5/tidb.toml",
+      "--temp-dir",
+      "/private/tmp/config-stats-smoke-795np4l5/temp"
+    ],
+    "config": "store = \"unistore\"\nport = 0\nsocket = \"\"\nlease = \"1s\"\ntmp-storage-path = \"/private/tmp/config-stats-smoke-795np4l5/spill\"\n[status]\nreport-status = false\n[performance]\nstats-lease = \"5ms\"\nrun-auto-analyze = false\n",
+    "log": "/private/tmp/config-stats-smoke-795np4l5/server.log",
+    "setup_sql": "CREATE DATABASE batch;\nCREATE TABLE batch.a (id BIGINT PRIMARY KEY, v BIGINT, KEY idx(v));\nINSERT INTO batch.a VALUES (1,10),(2,20);\nANALYZE TABLE batch.a WITH 0 TOPN;\nALTER TABLE batch.a DROP INDEX idx;\nUPDATE mysql.stats_meta SET version=1;\nUPDATE mysql.tidb SET variable_value='0' WHERE variable_name='tidb_stats_gc_last_ts';\nSELECT count(*) FROM mysql.stats_histograms WHERE is_index=1;\n",
+    "setup_output": "1\n",
+    "gc_output": [
+      "0",
+      "469489002636902400"
+    ],
+    "checks": [
+      "source TOML controls store/status/stats lease",
+      "default plaintext MySQL login",
+      "ANALYZE and DROP INDEX through ordinary SQL",
+      "periodic GC removes obsolete index histogram",
+      "GC persists watermark without manual invocation"
+    ],
+    "server_exit": 0,
+    "driver_command": "python3 /private/tmp/config-stats-smoke.py",
+    "exit_code": 0,
+    "cleanup": "SIGTERM returned zero; no forced kill; temporary authentication file removed.",
+    "driver_sha256": "e07333eaa8fd264a43c816e44113e5a6c8e2d92d48661f755beae7b4520c9b9a",
+    "mysql_client": "/opt/homebrew/opt/mysql-client/bin/mysql"
+  },
+  "gates": [
+    {
+      "command": "cargo check --locked -p tidb-server --all-targets",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "local_log": "/private/tmp/config-stats-check-final.log",
+      "sha256": "73435b4c81dddf0ccc4efb0b3af6e3c319b387fca06bbe980ba5edb76faf412c"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "working_directory": "/Users/qiliu/projects/tidb/rust",
+      "exit_code": 0,
+      "local_log": "/private/tmp/config-stats-smoke-build.log",
+      "sha256": "dab9ad93a8c0529d137d907dcb1bf7eac3bf6af184f26e4d0cd678b042da401a"
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "working_directory": "/Users/qiliu/projects/tidb",
+      "exit_code": 0,
+      "local_log": "/private/tmp/config-stats-rebase-lint.log",
+      "sha256": "cd13d6f066b3ea8912de84c983b21f887541cea10993b8fca9db989fc0d0fad8"
+    },
+    {
+      "command": "git diff --check",
+      "working_directory": "/Users/qiliu/projects/tidb",
+      "exit_code": 0
+    }
+  ],
+  "register": {
+    "tracked": 86,
+    "open": 57,
+    "partial": 9,
+    "repaired": 20,
+    "unresolved": 66
+  },
+  "not_verified": [
+    "Full Rust workspace and original Go suites",
+    "Live multi-node TiKV ownership/faults",
+    "A03 TLS identity/CA policy enforcement",
+    "sysbench/TPC-C/TPC-H/YCSB performance"
+  ],
+  "diagnostics": [
+    "Existing compiler/linker and malformed jemalloc configuration warnings remain.",
+    "An initial embedded test needed unsandboxed host sysctl memory discovery before reproducing the intended missing-worker failure.",
+    "First process smoke found empty instance-memory defaults; shared vardef fallbacks repaired it before the passing rerun.",
+    "Final lint first encountered sandbox DNS restrictions while fetching its pinned tool; the authorized network-enabled rerun passed."
+  ],
+  "publication": {
+    "status": "pending_actual_hook_commit_and_fresh_pre_push_build"
+  },
+  "self_review": [
+    "All production changes reviewed against the named master source owners.",
+    "Register counts and receipt links checked.",
+    "Architecture index adds navigation only; referenced paths exist; no new agent policy.",
+    "No Go/Bazel/generated/dependency artifacts changed."
+  ],
+  "rebase": {
+    "parent": "11d1727fea563da7d64e9ee42f7f6c8e470d84f0",
+    "reason": "Target branch advanced during validation; first push was rejected. Non-overlapping schema_sync.rs change was inspected, then rebased without conflict; schema acknowledgement and statistics lifecycle tests plus lint pass afterward.",
+    "force_push": false
+  }
+}

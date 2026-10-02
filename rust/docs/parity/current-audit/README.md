@@ -25,7 +25,7 @@ and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
 this does not accept the complete root/discovery/TSO packages or close P03.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 86 tracked ownership/contract findings (67 unresolved, 19 repaired), review candidates and the
+consolidates 86 tracked ownership/contract findings (66 unresolved, 20 repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -34,6 +34,14 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [configuration/statistics maintenance batch](config-statistics-maintenance-repair.md)
+closes O07 and advances N03 to partial from integration `43e827e2c4` at the same
+Go master. Startup shares one effective configuration; both stores run the
+existing statistics GC, health and cache maintenance owners. Auto-analyze reads
+the live process switch. 139 distinct Rust tests and a stock-MySQL unistore process
+check pass. Native deployment defaults and missing configuration consumers,
+including A03 TLS policy, remain unresolved; this grants no package acceptance.
 
 The [shared server session batch](shared-server-session-repair.md) closes S01 and
 S02 together at Go master `93a01d31f6`, from integration `44be2a9d756`; the native

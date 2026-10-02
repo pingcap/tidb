@@ -391,12 +391,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
             })?;
     }
     factory.start_stats_usage_workers(config.stats_lease);
-    factory.start_auto_analyze_worker(
+    let stats_maintenance = super::stats_maintenance::StatsMaintenanceWorker::start(
+        &factory,
         config.stats_lease,
-        tidb_config::config_tree::config::get_global_config()
-            .performance
-            .run_auto_analyze,
-    );
+        config.schema_lease,
+        async_stats_loader.initialization(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
@@ -469,6 +471,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // on this node, so the acknowledger has nothing left to say.
             schema_sync_ack,
             workload_repository,
+            stats_maintenance,
             replica_poll,
             global_config_keeper,
             factory,
@@ -487,6 +490,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             server_info_runner,
             schema_sync_ack,
             workload_repository,
+            stats_maintenance,
             replica_poll,
             global_config_keeper,
             factory,
@@ -532,6 +536,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             workload_repository.stop();
+            drop(stats_maintenance);
             drop(replica_poll);
             drop(global_config_keeper);
             // The reload threads hold their own transaction openers; joining

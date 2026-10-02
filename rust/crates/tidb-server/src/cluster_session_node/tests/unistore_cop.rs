@@ -3852,16 +3852,52 @@ fn auto_analyze_worker_uses_gos_positive_lease_gate_and_stops() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = stack.factory;
-    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Zero, true);
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Zero);
     assert!(factory.auto_analyze_worker.get().is_none());
-    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Disabled, true);
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Disabled);
     assert!(factory.auto_analyze_worker.get().is_none());
-    factory.start_auto_analyze_worker(
-        crate::node_config::StatsLease::Positive(Duration::from_secs(60)),
-        true,
-    );
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Positive(
+        Duration::from_secs(60),
+    ));
     assert!(factory.auto_analyze_worker.get().is_some());
     drop(factory);
+}
+
+#[test]
+fn auto_analyze_worker_observes_the_live_process_switch() {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_vardef::RUN_AUTO_ANALYZE.store(self.0, Ordering::SeqCst);
+        }
+    }
+    let _restore = Restore(tidb_vardef::RUN_AUTO_ANALYZE.swap(true, Ordering::SeqCst));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let factory = &stack.factory;
+    let owner = factory.stats_owner.as_ref().unwrap();
+    owner.campaign_owner(&[]).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !owner.is_owner() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
+    factory.handle_auto_analyze_tick(true, Duration::ZERO);
+    assert!(queue.is_initialized());
+    factory.start_auto_analyze_worker(crate::node_config::StatsLease::Positive(
+        Duration::from_millis(10),
+    ));
+    tidb_vardef::RUN_AUTO_ANALYZE.store(false, Ordering::SeqCst);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while queue.is_initialized() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker must observe Go's current process switch"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    owner.campaign_cancel();
 }
 
 /// Go creates one pending job for every physical partition task before
@@ -4524,9 +4560,104 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     }
 }
 
+#[test]
+fn stats_gc_runs_periodically_only_after_ownership_is_acquired() {
+    let (stack, _users) = cop_backed_stack_with_stats_lease(Some(
+        crate::node_config::StatsLease::Positive(Duration::from_millis(1)),
+    ));
+    let factory = &stack.factory;
+    let owner = factory.stats_owner.as_ref().unwrap();
+    let mut session = factory.open_session(session_context(79)).unwrap();
+    let gc_marker = "SELECT count(*) FROM mysql.tidb WHERE variable_name = 'tidb_stats_gc_last_ts'";
+    std::thread::sleep(Duration::from_millis(220));
+    assert_eq!(displayed(rows(&mut session, gc_marker)), [["0"]]);
+    rows(
+        &mut session,
+        "CREATE TABLE test.periodic_gc (a INT, KEY idx(a))",
+    );
+    rows(&mut session, "INSERT INTO test.periodic_gc VALUES (1),(2)");
+    rows(&mut session, "ANALYZE TABLE test.periodic_gc WITH 0 TOPN");
+    rows(&mut session, "ALTER TABLE test.periodic_gc DROP INDEX idx");
+    // Make only the stats version old enough for Go's 10 * max(lease) window.
+    // The production worker must retain the actual schema lease, not use zero.
+    rows(&mut session, "UPDATE mysql.stats_meta SET version = 1");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms WHERE is_index = 1"
+        )),
+        [["1"]]
+    );
+    owner.campaign_owner(&[]).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        if displayed(rows(&mut session, gc_marker)) == [["1"]] {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "positive statistics lease must run GC through the elected owner without a manual call"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.stats_histograms WHERE is_index = 1"
+        )),
+        [["0"]]
+    );
+    owner.campaign_cancel();
+    // A later ownership term must keep the same worker and continue after
+    // storage errors. An invalid persisted watermark is a real GC read error.
+    std::thread::sleep(Duration::from_millis(220));
+    rows(&mut session, "UPDATE mysql.tidb SET variable_value = 'invalid' WHERE variable_name = 'tidb_stats_gc_last_ts'");
+    owner.campaign_owner(&[]).unwrap();
+    std::thread::sleep(Duration::from_millis(220));
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tidb_stats_gc_last_ts'"
+        )),
+        [["invalid"]]
+    );
+    rows(
+        &mut session,
+        "UPDATE mysql.tidb SET variable_value = '0' WHERE variable_name = 'tidb_stats_gc_last_ts'",
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        if displayed(rows(
+            &mut session,
+            "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tidb_stats_gc_last_ts'",
+        )) != [["0"]]
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a failed GC pass must not retire the owner worker"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    owner.campaign_cancel();
+}
+
+#[test]
+fn stats_maintenance_is_absent_for_zero_and_negative_leases() {
+    for lease in [
+        crate::node_config::StatsLease::Zero,
+        crate::node_config::StatsLease::Disabled,
+    ] {
+        let (stack, _users) = cop_backed_stack_with_stats_lease(Some(lease));
+        assert!(stack._stats_maintenance.is_none());
+    }
+}
+
 /// Pinned storage `TestGCStats`: stale index and column rows are removed one
 /// item transaction at a time, while a dropped table needs one pass to clear
 /// payload and a later pass to remove `stats_meta`.
+
 #[test]
 fn stats_gc_matches_go_item_and_dropped_table_phases() {
     let (stack, _users) =

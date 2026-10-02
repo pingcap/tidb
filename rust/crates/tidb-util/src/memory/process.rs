@@ -389,15 +389,16 @@ pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
 /// every `ReadMemInterval` (300 ms, `pkg/util/memory/memstats.go:28`) instead
 /// of the runtime each tick, and `/proc/self/status` is not free for a
 /// process with a hundred threads.
-fn cached_process_memory_usage() -> Option<u64> {
+fn cached_process_memory_usage(force: bool) -> Option<u64> {
     static CACHE: OnceLock<Mutex<MemInfoCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(MemInfoCache::default()));
     let mut cache = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cache
-        .updated_at
-        .is_some_and(|updated_at| updated_at.elapsed() < Duration::from_millis(300))
+    if !force
+        && cache
+            .updated_at
+            .is_some_and(|updated_at| updated_at.elapsed() < Duration::from_millis(300))
     {
         return Some(cache.value);
     }
@@ -410,7 +411,17 @@ fn cached_process_memory_usage() -> Option<u64> {
 /// Go `ReadMemStats`: the process-wide memory picture the memory-limit
 /// handle, the usage alarm and the arbitrator runtime tick on.
 pub fn read_mem_stats() -> MemStats {
-    let rss = cached_process_memory_usage()
+    sample_mem_stats(false)
+}
+
+/// Go `ForceReadMemStats`: refresh the shared process sample at the Domain's
+/// memory tick even when another reader sampled within the cache interval.
+pub fn force_read_mem_stats() -> MemStats {
+    sample_mem_stats(true)
+}
+
+fn sample_mem_stats(force: bool) -> MemStats {
+    let rss = cached_process_memory_usage(force)
         .and_then(|value| i64::try_from(value).ok())
         .unwrap_or(0);
     if let Some((allocated, active, resident)) = allocator_live_heap_sample() {

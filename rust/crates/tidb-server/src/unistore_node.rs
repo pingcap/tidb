@@ -370,6 +370,7 @@ pub(crate) fn run_unistore_cluster_session(
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
         _async_stats_loader,
+        _stats_maintenance: stats_maintenance,
         _read_authority: read_authority,
     } = stack;
     if tidb_config::config_tree::config::get_global_config()
@@ -440,6 +441,7 @@ pub(crate) fn run_unistore_cluster_session(
         stats_receipt.pseudo,
     );
     let result = node.run().map_err(RunConfiguredNodeError::Node);
+    drop(stats_maintenance);
     drop(reloader);
     drop(sysvar_reloader);
     drop(stats_reloader);
@@ -458,6 +460,8 @@ pub(crate) struct UnistoreClusterStack {
     pub(crate) factory: Arc<crate::cluster_session_node::ClusterSessionFactory>,
     pub(crate) schema_version: i64,
     pub(crate) stats: Arc<tidb_exec::stats_watch::SharedStats>,
+    pub(crate) _stats_maintenance:
+        Option<crate::cluster_session_node::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
@@ -646,10 +650,20 @@ pub(crate) fn unistore_cluster_session_stack(
     };
     let factory = factory.with_bindings(bindings);
 
+    let stats_maintenance =
+        crate::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(
+            &factory,
+            config.stats_lease,
+            config.schema_lease,
+            async_stats_loader.initialization(),
+        )
+        .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+
     Ok(UnistoreClusterStack {
         factory,
         schema_version,
         stats,
+        _stats_maintenance: stats_maintenance,
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,

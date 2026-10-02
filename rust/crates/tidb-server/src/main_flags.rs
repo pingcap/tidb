@@ -40,6 +40,8 @@ use tidb_config::config_tree::config::Config;
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 pub struct MainFlags {
+    pub config_check: bool,
+    pub config_strict: bool,
     // Base (`main.go:248-269`)
     pub store: Option<String>,
     pub store_path: Option<String>,
@@ -152,6 +154,8 @@ impl MainFlags {
                 }
             };
             match name {
+                "config-check" => flags.config_check = boolean(&inline)?,
+                "config-strict" => flags.config_strict = boolean(&inline)?,
                 "store" => flags.store = Some(take()?),
                 "path" => flags.store_path = Some(take()?),
                 "host" => flags.host = Some(take()?),
@@ -354,6 +358,61 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     }
 
     // Bootstrap and security
+    // Go's SQL/cluster TLS flags apply only to Starter deployments. Classic
+    // deployments obtain these fields from TOML (or native CLI aliases).
+    if cfg.deploy_mode == tidb_config::deploymode::Mode::Starter {
+        if let Some(ca) = &flags.cluster_ca {
+            cfg.security.cluster_ssl_ca.clone_from(ca);
+        }
+        if let Some(cert) = &flags.cluster_cert {
+            cfg.security.cluster_ssl_cert.clone_from(cert);
+        }
+        if let Some(key) = &flags.cluster_key {
+            cfg.security.cluster_ssl_key.clone_from(key);
+        }
+        if let Some(ca) = &flags.sql_ca {
+            cfg.security.ssl_ca.clone_from(ca);
+        }
+        if let Some(cert) = &flags.sql_cert {
+            cfg.security.ssl_cert.clone_from(cert);
+        }
+        if let Some(key) = &flags.sql_key {
+            cfg.security.ssl_key.clone_from(key);
+        }
+        for (name, ca, cert, key, effective_ca, effective_cert, effective_key) in [
+            (
+                "cluster",
+                &flags.cluster_ca,
+                &flags.cluster_cert,
+                &flags.cluster_key,
+                &cfg.security.cluster_ssl_ca,
+                &cfg.security.cluster_ssl_cert,
+                &cfg.security.cluster_ssl_key,
+            ),
+            (
+                "sql",
+                &flags.sql_ca,
+                &flags.sql_cert,
+                &flags.sql_key,
+                &cfg.security.ssl_ca,
+                &cfg.security.ssl_cert,
+                &cfg.security.ssl_key,
+            ),
+        ] {
+            if ca.is_some() || cert.is_some() || key.is_some() {
+                if cert.is_some() != key.is_some() {
+                    return Err(format!("{name}-cert and {name}-key must be set together"));
+                }
+                if !effective_ca.is_empty()
+                    && (effective_cert.is_empty() || effective_key.is_empty())
+                {
+                    return Err(format!(
+                        "{name}-ca requires both {name}-cert and {name}-key"
+                    ));
+                }
+            }
+        }
+    }
     if flags.initialize_secure.is_some() && flags.initialize_insecure.is_some() {
         return Err(
             "the options -initialize-insecure and -initialize-secure are mutually exclusive"
@@ -398,6 +457,42 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tls_flags_follow_go_deployment_scope_and_pair_validation() {
+        let flags = MainFlags::parse(&["--sql-ca=ca".to_owned()]).unwrap();
+        let mut classic = Config::default();
+        override_config(&mut classic, &flags).unwrap();
+        assert!(classic.security.ssl_ca.is_empty());
+        let mut starter = Config::default();
+        starter.deploy_mode = tidb_config::deploymode::Mode::Starter;
+        assert_eq!(
+            override_config(&mut starter, &flags).unwrap_err(),
+            "sql-ca requires both sql-cert and sql-key"
+        );
+        for name in ["sql", "cluster"] {
+            let flags = MainFlags::parse(&[format!("--{name}-cert=cert")]).unwrap();
+            assert_eq!(
+                override_config(&mut starter, &flags).unwrap_err(),
+                format!("{name}-cert and {name}-key must be set together")
+            );
+        }
+        let flags = MainFlags::parse(&[
+            "--sql-ca=ca".to_owned(),
+            "--sql-cert=cert".to_owned(),
+            "--sql-key=key".to_owned(),
+        ])
+        .unwrap();
+        override_config(&mut starter, &flags).unwrap();
+        assert_eq!(
+            (
+                &*starter.security.ssl_ca,
+                &*starter.security.ssl_cert,
+                &*starter.security.ssl_key
+            ),
+            ("ca", "cert", "key")
+        );
+    }
 
     /// Go `TestOverrideConfigKeyspaceActivateMode` (`main_test.go:76-95`):
     /// `--keyspace-activate=true` lands on the config, and the starter
@@ -503,6 +598,8 @@ const MAIN_GO_ONLY_FLAGS: &[(&str, bool)] = &[
     ("repair-list", false),
     ("temp-dir", false),
     ("cluster-ca", false),
+    ("cluster-cert", false),
+    ("cluster-key", false),
     ("sql-ca", false),
     ("sql-cert", false),
     ("sql-key", false),
