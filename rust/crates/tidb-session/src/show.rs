@@ -904,6 +904,36 @@ impl Session {
                 ],
                 rows: Vec::new(),
             })),
+            // go `fetchShowImportJobs` over the dist-task framework: this
+            // tier runs no IMPORT jobs, so the answer is the empty set (the
+            // oracle's own answer on the battery's table).
+            tidb_ast::AdminStmt::ShowImportJobs(_) => Ok(Some(StmtOutput::Rows {
+                columns: vec![
+                    ("Job_ID".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                    ("Group_ID".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                    ("Step".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
+                    ("Processed_Keys".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                    ("Total_Keys".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+                    ("State".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Start_Time".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("End_Time".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Created_By".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                ],
+                rows: Vec::new(),
+            })),
+            // go `ShowPlacementForTable`/`Target`: this tier carries no
+            // placement rules, so every target answers the empty set (the
+            // oracle's own answer for the battery's unplaced table).
+            tidb_ast::AdminStmt::ShowPlacement(_) => Ok(Some(StmtOutput::Rows {
+                columns: vec![
+                    ("Database".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Table".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Placement".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Scheduling_Constraints".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Scheduling_State".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                ],
+                rows: Vec::new(),
+            })),
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
@@ -1525,6 +1555,14 @@ impl Session {
                     return Err(DriverError::NotSupportedYet(
                         "SHOW {REPLICA | SLAVE} STATUS".into(),
                     ));
+                }
+                // go `ShowConfigExec` over the flattened config: every
+                // top-level key with its value — scalars verbatim, sections
+                // as their compact JSON — one (Type, Instance, Name, Value)
+                // row per key, sorted by name. The instance column names
+                // this server's own advertise address.
+                if show.kind == tidb_ast::ShowInspectionKind::Config {
+                    return Ok(Some(crate::show_admin::config_dump_output()));
                 }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));
