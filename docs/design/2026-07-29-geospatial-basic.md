@@ -534,9 +534,9 @@ Out of scope here, each with a home:
 | Partition table, clustered index | None. Geometry cannot be a primary or clustering key, having no meaningful ordering. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | Updated in this design. |
-| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is rejected as unsupported in v1, whatever the change: the `SRID` attribute, the subtype in either direction, or conversion to or from another type. The exception is `NULL`/`NOT NULL`, which the generic nullability path handles without knowing the column is geometry. Anything else means adding a new column and backfilling it. `DROP COLUMN` is ordinary. |
+| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints, at `CREATE TABLE` and `ADD COLUMN`. `MODIFY`/`CHANGE COLUMN` on a geometry column is limited in v1. `DROP COLUMN` is ordinary. |
 | `information_schema` | One new table, `st_spatial_reference_systems`, read-only with two static rows. Its two siblings in MySQL are deferred. |
-| Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry as it skips JSON and the blob types, which means adding `geometry` both to the accepted values of `tidb_analyze_skip_column_types` and to its default, today `json,blob,mediumblob,longblob,mediumtext,longtext`. |
+| Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. `ANALYZE` skips geometry columns. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | BR | None. Backs up and restores bytes and metadata without interpreting column values. |
 | Dumpling, Lightning | Geometry dumps as MySQL's binary format, which reloads as a bare literal (see [Types and storage](#types-and-storage)), so the round-trip needs no function call and a `mysqldump` loads unchanged, unless the table has a spatial index, which v1 rejects. A column holding Z/M values cannot be dumped that way, since MySQL has no form for them and a bare `SELECT` errors; those need `ST_AsEWKB` and an `ST_GeomFromEWKB(0x...)` literal, which is Dumpling work and TiDB-only output. An SRID outside 0 and 4326 needs none of that, since it round-trips on the bare path unchanged. |
@@ -559,7 +559,7 @@ Every deliberate difference from MySQL 9.7 in v1:
 | NaN and Inf at SRID 0 | rejected | stored through WKB and a bare literal |
 | Indexes on a geometry column | none: a spatial index, and any other index with a geometry member, is rejected | a plain `KEY` on a geometry column becomes a spatial index |
 | Generated columns | no `ST_*` function allowed | allowed |
-| `MODIFY`/`CHANGE COLUMN` on geometry | rejected, except `NULL`/`NOT NULL` | allowed |
+| `MODIFY`/`CHANGE COLUMN` on geometry | limited | any change |
 | Functions and spatial catalog tables | the v1 allowlist and `st_spatial_reference_systems`; the rest is in [Scope and deferrals](#scope-and-deferrals) | the full set |
 | Z/M coordinates | stored, through `ST_GeomFromEWKB` and GeoJSON `options` 5 and 6 | rejected |
 | `ORDER BY` on a column mixing SRIDs or subtypes | subtype first | SRID first |
