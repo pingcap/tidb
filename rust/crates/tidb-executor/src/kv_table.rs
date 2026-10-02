@@ -1037,16 +1037,6 @@ pub enum KvTableError {
     CacheTableUnsupported(&'static str),
 }
 
-/// Carries a generation failure across the module boundary without losing the
-/// MySQL code the evaluation error already knows.
-fn generation_error(error: crate::generated_column::GenerationError) -> KvTableError {
-    KvTableError::Generation {
-        column: error.column,
-        detail: error.detail,
-        eval: error.eval,
-    }
-}
-
 /// Go `ShardIDFormat.Compose` for a SIGNED `BIGINT` handle, which is what
 /// `_tidb_rowid` always is.
 ///
@@ -2090,34 +2080,6 @@ impl KvTable {
             Some(offset) => vec![offset],
             None => self.common_handle_offsets.clone(),
         }
-    }
-
-    /// Recomputes every generated column of `row` from the row itself
-    /// (Go's `addRecord`/`updateRecord` calling `GenerateColumnValue`).
-    ///
-    /// Idempotent, so every writer may call it without coordinating with any
-    /// other writer -- see [`crate::generated_column`].
-    ///
-    /// A row shorter than the table is WIDENED here rather than rejected: a
-    /// statement builds its row over the VISIBLE columns, and the hidden
-    /// columns an expression index added are exactly the ones whose value
-    /// this call is what produces. Widening in the one place that fills them
-    /// means no caller has to know the table has any.
-    /// `ctx` is the writing statement's evaluation context: a generated
-    /// expression obeys the statement's SQL mode exactly as any other
-    /// expression of that statement does, so `b INT AS (100/a)` over `a = 0`
-    /// fails the write under `ERROR_FOR_DIVISION_BY_ZERO` and stores NULL
-    /// without it.
-    pub fn materialize_generated(
-        &self,
-        row: &mut Vec<Datum>,
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        if row.len() < self.columns.len() {
-            row.resize(self.columns.len(), Datum::Null);
-        }
-        crate::generated_column::materialize(&self.columns, row, false, ctx)
-            .map_err(generation_error)
     }
 
     /// Builds one enforced, writable CHECK constraint from persisted metadata.
@@ -3443,19 +3405,9 @@ impl KvTable {
         stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
-        // The generated columns are recomputed HERE, at the one place every
-        // row reaches, so the stored bytes, the row handle and the index
-        // entries all see the same computed values and no caller can write a
-        // row whose generated columns were never filled in.
-        let mut owned;
-        let row = if self.columns.iter().any(|c| c.generated.is_some()) {
-            owned = row.to_vec();
-            owned.resize(self.columns.len(), Datum::Null);
-            self.materialize_generated(&mut owned, ctx)?;
-            owned.as_slice()
-        } else {
-            row
-        };
+        // Go AddRecord receives a row completed by the mutation executor.
+        // Re-evaluation here would duplicate warnings and could replace its
+        // converted/NULL-substituted generated values before index encoding.
         self.validate_check_constraints(row, ctx)?;
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
@@ -3744,18 +3696,7 @@ impl KvTable {
         stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<(), KvTableError> {
         let zone = ctx.time_zone();
-        // Recomputed, never carried over: an UPDATE that changes a dependency
-        // must not leave a STORED generated column holding the value computed
-        // from the old dependency.
-        let mut owned;
-        let row = if self.columns.iter().any(|c| c.generated.is_some()) {
-            owned = row.to_vec();
-            owned.resize(self.columns.len(), Datum::Null);
-            self.materialize_generated(&mut owned, ctx)?;
-            owned.as_slice()
-        } else {
-            row
-        };
+        // The shared update owner has already completed generated values.
         self.validate_check_constraints(row, ctx)?;
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
         // allocator, exactly as an explicit value on INSERT does, so later rows

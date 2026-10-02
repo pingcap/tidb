@@ -982,8 +982,15 @@ fn run_insert_with_physical(
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
             // same values the write will store.
-            kv.materialize_generated(&mut row, ctx)
-                .map_err(kv_write_error)?;
+            materialize_generated_for_write(
+                &kv.columns,
+                &mut row,
+                ctx,
+                GeneratedWrite::Insert {
+                    row_index: new_rows.len(),
+                    null_level: bad_null_level,
+                },
+            )?;
         }
         new_rows.push(row);
         inserted += 1;
@@ -1302,6 +1309,7 @@ fn run_insert_with_physical(
                     position,
                     &table_name,
                     insert.ignore,
+                    bad_null_level,
                     &mut updates,
                     ctx,
                 )?;
@@ -1790,6 +1798,7 @@ fn apply_on_duplicate(
     row_index: usize,
     target_table_name: &str,
     ignore: bool,
+    null_level: crate::bad_null::NullLevel,
     updates: &mut UpdateRecords,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -1858,6 +1867,10 @@ fn apply_on_duplicate(
         &mut updated,
         prepared.selected_partitions.as_deref(),
         ignore,
+        GeneratedWrite::OnDuplicate {
+            row_index,
+            null_level,
+        },
         ctx,
     )?;
     Ok(if outcome.changed() {
@@ -3314,7 +3327,7 @@ fn run_update_with_physical(
             }
         }
     }
-    for (id, old_row, mut new_row) in rewrites {
+    for (row_index, (id, old_row, mut new_row)) in rewrites.into_iter().enumerate() {
         let outcome = records.write(
             catalog,
             &database,
@@ -3324,6 +3337,7 @@ fn run_update_with_physical(
             &mut new_row,
             update_partitions.as_deref(),
             update.ignore,
+            GeneratedWrite::Update { row_index },
             ctx,
         )?;
         touched += u64::from(outcome.touched());

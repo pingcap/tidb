@@ -755,7 +755,8 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     columns.push(generated);
     let mut table = KvTable::new(42, columns);
     let handle = table
-        .insert_row(&[Datum::Int(2), Datum::Null], &statement)
+        // Table.AddRecord consumes an already materialized mutation row.
+        .insert_row(&[Datum::Int(2), Datum::Int(3)], &statement)
         .unwrap();
 
     // Stored reads preserve the value written under the old expression.

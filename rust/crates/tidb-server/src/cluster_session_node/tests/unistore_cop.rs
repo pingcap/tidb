@@ -9306,3 +9306,75 @@ fn shared_update_record_uses_cluster_statement_buffer() {
         [["1", "11", "21"], ["2", "31", "41"], ["3", "50", "60"]]
     );
 }
+
+#[test]
+fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(990)).unwrap();
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET sql_mode='STRICT_TRANS_TABLES'");
+    rows(&mut session, "CREATE TABLE generated_policy (id INT PRIMARY KEY, a INT, b TINYINT AS (a) STORED, KEY idx(b))");
+    let error = session
+        .execute_write("INSERT INTO generated_policy(id,a) VALUES (1,1000)")
+        .unwrap_err();
+    assert_eq!(error.code, 1264);
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM generated_policy")),
+        [["0"]]
+    );
+    rows(&mut session, "SET sql_mode=''");
+    rows(
+        &mut session,
+        "INSERT INTO generated_policy(id,a) VALUES (1,1000)",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1264",
+            "Out of range value for column 'b' at row 1"
+        ]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a,b FROM generated_policy FORCE INDEX(idx) WHERE b=127"
+        )),
+        [["1000", "127"]]
+    );
+    let prepared = session
+        .prepare_general("UPDATE generated_policy SET a=? WHERE id=1")
+        .unwrap();
+    rows(&mut session, "SET sql_mode='STRICT_TRANS_TABLES'");
+    let error = session
+        .execute_general(
+            &prepared,
+            &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
+        )
+        .err()
+        .expect("prepared UPDATE uses its execution-time statement policy");
+    assert_eq!(error.code, 1264);
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a,b FROM generated_policy")),
+        [["1000", "127"]]
+    );
+    rows(&mut session, "SET sql_mode=''");
+    session
+        .execute_general(
+            &prepared,
+            &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1264",
+            "Out of range value for column 'b' at row 1"
+        ]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a,b FROM generated_policy")),
+        [["2000", "127"]]
+    );
+}

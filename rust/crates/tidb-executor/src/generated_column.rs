@@ -26,11 +26,10 @@
 //! expression instead of the stored bytes. Everything that follows is that
 //! single statement applied consistently, NOT a family of special cases:
 //!
-//! * The value is recomputed from the row whenever the row is written
-//!   ([`materialize`]). Recomputation is IDEMPOTENT -- an expression may only
+//! * The value is computed from the row by the statement that writes it
+//!   (the mutation caller of `materialize_with`). An expression may only
 //!   read non-generated columns and generated columns defined EARLIER, so a
-//!   left-to-right pass always sees final values -- which is why every write
-//!   path may call it without asking whether someone already did. That is
+//!   left-to-right pass sees the final converted values. That is
 //!   what keeps a `STORED` column from going stale after an `UPDATE` to its
 //!   dependency: the update writes a freshly computed row, never a patched
 //!   one. "Whenever the row is written" is stronger than it sounds -- the
@@ -43,16 +42,14 @@
 //! * `STORED` writes that value into the row bytes; `VIRTUAL` does not
 //!   ([`is_virtual`] drives the encoder's skip list, exactly as the handle
 //!   columns are skipped). On the way back a virtual column is therefore
-//!   filled the same way it was written -- by evaluating -- so the read and
-//!   the write cannot disagree.
+//!   restored by evaluation in the reading statement's context.
 //! * An index over a generated column is built from the materialized row, so
 //!   it stores the computed value with no index-specific code at all. An index
-//!   BACKFILL is therefore a write too, and evaluates at the write level: a
-//!   row the expression cannot compute fails the `ALTER TABLE` rather than
-//!   being indexed under a value that does not exist.
+//!   backfill uses the row decoder's separate evaluation and conversion
+//!   contract rather than an INSERT statement's NULL/error policy.
 //! * The expression is evaluated under the SQL MODE of the statement that
 //!   writes the row, exactly as every other expression of that statement is
-//!   ([`materialize`]'s `ctx`). There is no separate rule for generated
+//!   (the mutation caller's `ctx`). There is no separate rule for generated
 //!   columns and no special case per condition: `100/a` over `a = 0` fails the
 //!   write with 1365 under `ERROR_FOR_DIVISION_BY_ZERO` and stores NULL
 //!   without it, because that is what `errctx.ErrGroupDividedByZero` says for
@@ -62,43 +59,14 @@
 //!   special case, just the level Go's `SELECT` carries -- so restoring a
 //!   virtual column warns and reads NULL.
 //!
-//! # NOT MODELLED (measured, documented, and NOT half-done)
-//!
-//! The CAST of the computed value into the column's declared type still uses
-//! a fixed flag set rather than the statement's, so the STRICT half of the
-//! mode does not reach it. Captured from real TiDB under the default mode,
-//! against what this tier answers today:
-//!
-//! | write | TiDB | here |
-//! | --- | --- | --- |
-//! | `b DATE AS (a) STORED`, `a = '0000-00-00'` | 1292 | stored |
-//! | `b DATE AS (a) STORED`, `a = 'not-a-date'` | 1292 | 1064 |
-//! | `b TINYINT AS (a) STORED`, `a = 1000` | 1264 | clamped to 127 |
-//! | `b INT AS (a) STORED`, `a = '12abc'` | 1366 | truncated to 12 |
-//! | `b INT AS (a+1) STORED NOT NULL`, `a = NULL` | 1048 | stored NULL |
-//!
-//! Every row above was RE-CAPTURED and still holds. What has changed is the
-//! reason it holds, so read the old one with care: this was once "the
-//! ORDINARY write path is equally lax, so fixing it here alone would give
-//! generated columns a strictness ordinary columns do not have". The ordinary
-//! path has since been fixed, and the asymmetry now runs the other way.
-//! `INSERT INTO t(a INT NOT NULL) VALUES (NULL)` is 1048 and
-//! `INSERT INTO t(a INT UNSIGNED) VALUES (-5)` overflows, in both SQL modes,
-//! while the same values reaching the same columns THROUGH a generated
-//! expression are still stored.
-//!
-//! The reason this half stayed behind is a signature, not a decision to defer
-//! twice: [`materialize`] takes a `tidb_expr::Columns`, the EXPRESSION
-//! context, and the write-level rules live on `StmtContext` --
-//! `write_conversion_flags` (Go `GetTypeFlagsForInsert`), the warning buffer,
-//! and the per-statement `bad_null::NullLevel`. Go has no such split: its
-//! `table.CastValue` takes the session and every caller of it is a write. The
-//! honest unit here is therefore to route generation's cast through
-//! `driver::dml::cast_value_for_column` and `bad_null::handle_bad_null`, which
-//! means giving `materialize` the statement context -- and its callers are not
-//! all writes (a virtual column is filled on READ, and an index backfill is a
-//! write at DDL level), so each call site has to choose its level rather than
-//! inherit one. That is why it is still one named seam and not a patch here.
+//! Mutation policy belongs to the statement owner. INSERT, UPDATE and ODKU
+//! use the shared column-cast/error/NULL handlers before storage and constraints
+//! consume the row. Table insert/update do not evaluate it again: warnings and
+//! expression evaluation are observable effects, even when values are unchanged.
+//! Row decoding and ANALYZE still use raw datatype conversion and discard its
+//! events. Their full Go `CastColumnValue` behavior remains unresolved; Go's
+//! deliberate read/backfill truncation suppression is not an INSERT policy.
+//! Shared column casting also retains documented datatype/error-identity gaps.
 //!
 //! # What Go refuses, and this refuses with it
 //!
@@ -392,12 +360,12 @@ pub struct GenerationError {
     pub eval: Option<tidb_expr::EvalError>,
 }
 
-/// Go `table.FillVirtualColumnValue` + the generated-column half of
-/// `addRecord`: recomputes every generated column of `row` from the row
-/// itself, left to right, casting each result into the column's own type.
+/// Raw materialization for existing analysis/read callers. Mutation callers
+/// use `materialize_with` with their statement's column-cast/error/NULL policy.
 ///
-/// `only_virtual` selects the READ path, which restores the columns the bytes
-/// never held; the write path passes `false` and recomputes all of them.
+/// `only_virtual` restores only the columns the row bytes never held; `false`
+/// recomputes all generated values. This wrapper does not complete Go's
+/// `CastColumnValue` warning and error handling.
 ///
 /// Left-to-right is the whole of the dependency order: DDL has already
 /// refused a generated column that reads a generated column defined at or
@@ -425,6 +393,31 @@ pub(crate) fn materialize_with_conversion_flags<S: GeneratedColumnSlot>(
     ctx: &impl tidb_expr::Columns,
     conversion_flags: tidb_datatype::ConversionFlags,
 ) -> Result<(), GenerationError> {
+    materialize_with(columns, row, only_virtual, ctx, |column, value| {
+        if value.is_null() {
+            return Ok(Datum::Null);
+        }
+        value
+            .convert_to_in(column.column_type(), conversion_flags, &ctx.time_zone())
+            .map(|converted| converted.value)
+            .map_err(|error| GenerationError {
+                column: column.column_name().to_owned(),
+                detail: format!("{error:?}"),
+                eval: None,
+            })
+    })
+}
+
+/// Evaluates each expression, then applies its caller's conversion/NULL policy
+/// before later generated dependencies can read that column. Mutation and row
+/// decoding share dependency evaluation without sharing their error levels.
+pub(crate) fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>(
+    columns: &[S],
+    row: &mut [Datum],
+    only_virtual: bool,
+    ctx: &impl tidb_expr::Columns,
+    mut convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
+) -> Result<(), E> {
     if !columns.iter().any(|c| c.generation().is_some()) {
         return Ok(());
     }
@@ -464,24 +457,7 @@ pub(crate) fn materialize_with_conversion_flags<S: GeneratedColumnSlot>(
                 detail: format!("{error:?}"),
                 eval: Some(error),
             })?;
-        // Go casts the generated value into the column's declared type before
-        // it is stored or returned (`table.CastValue`), which is what makes
-        // `b INT AS (a / 2)` an integer rather than the decimal the division
-        // produced.
-        let value = if value.is_null() {
-            Datum::Null
-        } else {
-            match value.convert_to_in(column.column_type(), conversion_flags, &ctx.time_zone()) {
-                Ok(converted) => converted.value,
-                Err(error) => {
-                    return Err(GenerationError {
-                        column: columns[offset].column_name().to_owned(),
-                        detail: format!("{error:?}"),
-                        eval: None,
-                    })
-                }
-            }
-        };
+        let value = convert(column, value)?;
         row[offset] = value;
     }
     Ok(())

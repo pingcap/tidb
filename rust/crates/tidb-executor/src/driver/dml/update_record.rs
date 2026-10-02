@@ -80,6 +80,7 @@ impl UpdateRecords {
         new: &mut Vec<Datum>,
         partitions: Option<&[i64]>,
         ignore: bool,
+        generation: GeneratedWrite,
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
         let entry = catalog.get_in(database, name).ok_or_else(|| {
@@ -96,9 +97,9 @@ impl UpdateRecords {
             return Ok(UpdateOutcome::Unchanged);
         }
         if let TableEntry::Kv(kv) = entry {
-            kv.materialize_generated(new, ctx).map_err(kv_write_error)?;
+            materialize_generated_for_write(&kv.columns, new, ctx, generation)?;
         }
-        let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+        let level = generation.null_level(ctx);
         for (value, (column, field_type)) in new.iter_mut().zip(entry.columns()) {
             crate::bad_null::handle_bad_null(value, field_type, column, level, ctx)?;
         }

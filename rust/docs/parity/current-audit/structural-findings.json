@@ -672,12 +672,12 @@
     },
     {
       "id": "K03",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; reproduced:** generated columns use default conversion flags and discard conversion warnings instead of the current write policy. Under strict mode ordinary TINYINT rejects 1000, while generated TINYINT accepts it as 127.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/kv_table.rs:2109`; `generated_column.rs:406`, `:422`, `:474`; `subsystem-structure-probe.txt`",
-      "go_owner": "`pkg/executor/insert_common.go::fillRow`, `update.go` and `write.go` use `table.CastValue` with the active mutation context. Carry conversion/error/warning/null policy through generated INSERT, UPDATE, index and DDL evaluation; do not patch one overflow literal.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Fresh strict ordinary TINYINT rejects 1000; generated TINYINT stores 127 without warnings. Shared materialization still uses default conversion policy. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**P1; partial repair:** generated INSERT/UPDATE/ODKU/cascade values now use the statement-owned ordinary-column cast, warning and NULL policy. Duplicate storage-layer evaluation is removed. RowDecoder/DDL/ANALYZE still use raw datatype conversion rather than complete Go CastColumnValue semantics; shared datatype/error-identity gaps remain.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::materialize_generated_for_write`; `driver/dml/update_record.rs`; `foreign_key.rs`; `generated_column.rs::materialize_with_conversion_flags`; `kv_table/row_decoder.rs`; `../../generated-write-ownership-execplan.md`",
+      "go_owner": "`pkg/executor/insert_common.go::fillRow`, `write.go::updateRecord`, `insert.go` ODKU error handler, `pkg/table/column.go::CastValue` and `pkg/util/rowDecoder/decoder.go::EvalRemainedExprColumnMap`. INSERT handles generated NULL before the next dependency; UPDATE handles NULL after expressions. Read/backfill force-ignore truncation is a distinct contract.",
+      "review_basis": "Nine generated mutation regressions fail with unchanged production at 793c67cae4 and pass with the repair; 19 session and 36 executor full-suite failures are unchanged. Statement/prepared cluster-session and decoder coverage is recorded in ../../generated-write-ownership-execplan.md and generated-write-validation.json. Concurrent DDL commits through e8c7c9211d integrated before publication. This is maintenance of an existing mutation owner, not complete package acceptance."
     },
     {
       "id": "I04",
@@ -790,10 +790,11 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "N06",
-    "scope": "Existing command recovery, framed error delivery and ordered connection retirement; no complete pkg/server acceptance",
-    "integration_start": "725d442d2901a2c31450a3b0e0ceea684b68c314",
+    "id": "K03",
+    "status": "partial",
+    "scope": "Statement-owned generated mutations and removal of duplicate table evaluation; read/DDL conversion and broader datatype parity remain unresolved",
+    "integration_start": "793c67cae425ac6863ca1050071be05a8986ea73",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../connection-recovery-ownership-execplan.md"
+    "receipt": "../../generated-write-ownership-execplan.md"
   }
 }

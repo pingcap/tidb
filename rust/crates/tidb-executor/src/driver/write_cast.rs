@@ -30,6 +30,102 @@
 
 use super::*;
 
+/// The source statement caller that completes generated-column errors.
+#[derive(Clone, Copy)]
+pub(crate) enum GeneratedWrite {
+    Insert {
+        row_index: usize,
+        null_level: crate::bad_null::NullLevel,
+    },
+    Update {
+        row_index: usize,
+    },
+    OnDuplicate {
+        row_index: usize,
+        null_level: crate::bad_null::NullLevel,
+    },
+}
+
+impl GeneratedWrite {
+    pub(crate) fn null_level(self, ctx: &crate::StmtContext) -> crate::bad_null::NullLevel {
+        match self {
+            Self::Insert { null_level, .. } | Self::OnDuplicate { null_level, .. } => null_level,
+            Self::Update { .. } => {
+                crate::bad_null::NullLevel::from_is_error(ctx.strict() && !ctx.ignore_err())
+            }
+        }
+    }
+}
+
+/// Go fillRow/updateRecord: cast each generated value before the next dependency.
+/// INSERT also handles each NULL here; UPDATE keeps its later row-wide NULL pass.
+/// Storage must not repeat these expressions or their warning side effects.
+pub(crate) fn materialize_generated_for_write(
+    columns: &[crate::kv_table::KvColumn],
+    row: &mut Vec<Datum>,
+    ctx: &crate::StmtContext,
+    policy: GeneratedWrite,
+) -> Result<(), DriverError> {
+    row.resize(row.len().max(columns.len()), Datum::Null);
+    crate::generated_column::materialize_with(columns, row, false, ctx, |column, value| {
+        let mut value = match policy {
+            GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
+                value,
+                &column.field_type,
+                &column.name,
+                row_index,
+                ctx,
+                ctx.ignore_err(),
+            ),
+            GeneratedWrite::Update { row_index } => cast_value_for_update_assignment(
+                value,
+                &column.field_type,
+                &column.name,
+                row_index,
+                ctx,
+            ),
+            GeneratedWrite::OnDuplicate { row_index, .. } => {
+                // Go updateRecord passes rawVal to the ODKU error handler,
+                // whereas ordinary ODKU assignments pass the converted value.
+                let source = value.clone();
+                cast_value_for_column(
+                    value,
+                    &column.field_type,
+                    &column.name,
+                    row_index,
+                    ctx,
+                    false,
+                )
+                .map_err(|error| raw_assignment_error(error, &source, &column.field_type))
+            }
+        }?;
+        // fillRow substitutes bad NULL before the next generated expression;
+        // updateRecord completes all expressions before its row-wide NULL pass.
+        if let GeneratedWrite::Insert { null_level, .. } = policy {
+            crate::bad_null::handle_bad_null(
+                &mut value,
+                &column.field_type,
+                &column.name,
+                null_level,
+                ctx,
+            )?;
+        }
+        Ok(value)
+    })
+}
+
+impl From<crate::generated_column::GenerationError> for DriverError {
+    fn from(error: crate::generated_column::GenerationError) -> Self {
+        match error.eval {
+            Some(error) => DriverError::Exec(crate::ExecError::Eval(error)),
+            None => DriverError::Parse(format!(
+                "generated column '{}': {}",
+                error.column, error.detail
+            )),
+        }
+    }
+}
+
 /// Whether a conversion event is one TiDB reports nothing for.
 ///
 /// Rounding a NUMBER into a narrower decimal is the case: captured, both

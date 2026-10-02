@@ -923,7 +923,7 @@ pub(crate) fn run_multi_update(
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
-    for (ids, values) in &rows {
+    for (row_index, (ids, values)) in rows.iter().enumerate() {
         let chunk = row_chunk(values, &field_types)?;
         let mut prepared = Vec::with_capacity(source.tables.len());
         // Compose every target from the same input row before merging aliases.
@@ -1008,6 +1008,7 @@ pub(crate) fn run_multi_update(
                 new,
                 None,
                 update.ignore,
+                super::GeneratedWrite::Update { row_index },
                 ctx,
             )?;
             if multiple[slot] {

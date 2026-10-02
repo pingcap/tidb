@@ -2431,3 +2431,27 @@ receipt records the mandatory commit-hook and fresh pre-push locked builds.
 The register is 86 tracked, 71 unresolved (65 open/six partial), 15 repaired.
 Client-rust and its dependency remain current at 19a56cc. No complete Go
 pkg/server acceptance, cluster correctness sweep or benchmark gain is claimed.
+
+
+## Generated mutation ownership (2026-10-02)
+
+
+The [generated-write receipt](generated-write-ownership-execplan.md) partially
+repairs K03 in the existing executor. Generated values use ordinary-column
+statement conversion, including INSERT/UPDATE/ODKU's different warning and NULL
+ordering. Every existing mutation producer reaches that owner, including FK
+cascades before nested changes. Table insert/update's redundant expression pass
+and row copies are removed; partition maintenance preserves completed rows.
+
+Nine new session regressions fail under unchanged production and pass after the
+repair. Full-suite controls retain the same 19 session and 36 executor failures.
+The receipt records 43 focused session/cluster-session/decoder passes, all-target
+checking, lint and required publication gates. Concurrent remote DDL commits through
+e8c7c9211d are integrated before publication, with affected checks repeated.
+
+K03 stays partial because read/DDL/ANALYZE raw conversion has not acquired the
+complete Go CastColumnValue contract; shared casting also has documented datatype
+and error-identity gaps. The register remains 86 tracked/71 unresolved/15 repaired,
+now 64 open and seven partial. Native client-rust is current and unchanged at
+19a56cc. This is existing-owner maintenance, with no complete Go package
+acceptance or measured sysbench/TPC-C/TPC-H/YCSB gain.

@@ -615,6 +615,28 @@ fn cascade_at_depth(
                             _ => Datum::Null,
                         };
                     }
+                    if let Some(TableEntry::Kv(kv)) = catalog.get_in(&child_db, &child_table) {
+                        crate::driver::materialize_generated_for_write(
+                            &kv.columns,
+                            &mut new,
+                            ctx,
+                            crate::driver::GeneratedWrite::Update {
+                                row_index: rewritten.len(),
+                            },
+                        )?;
+                        let level = crate::bad_null::NullLevel::from_is_error(
+                            ctx.strict() && !ctx.ignore_err(),
+                        );
+                        for (value, column) in new.iter_mut().zip(kv.columns.iter()) {
+                            crate::bad_null::handle_bad_null(
+                                value,
+                                &column.field_type,
+                                &column.name,
+                                level,
+                                ctx,
+                            )?;
+                        }
+                    }
                     accountant.account_row(&new).map_err(DriverError::from)?;
                     rewritten.push((old, new));
                 }
