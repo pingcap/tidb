@@ -81,9 +81,8 @@ pub struct LoadedRegistry {
 ///
 /// Go's loader keeps a `mysql.user` row's privileges on the row itself; this
 /// registry stores an account's global mask, so the two are the same state
-/// reached differently. A row whose `User` is empty is Go's anonymous-user
-/// row, which this node's host-matching login path has no way to select, so it
-/// is not created at all rather than created and never reachable.
+/// reached differently. Empty usernames are retained like any other account:
+/// Go indexes them under the empty username and matches their host patterns.
 #[must_use]
 pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
     let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
@@ -91,9 +90,6 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
     let mut account_count = 0;
 
     for user in &loaded.users {
-        if user.user.is_empty() {
-            continue;
-        }
         create_account(&registry, user);
         account_count += 1;
         let mut mask = 0u64;
@@ -222,7 +218,7 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
 /// the licence to proceed.
 #[must_use]
 pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
-    let mut reasons: Vec<String> = registry_from_cluster(loaded)
+    let reasons: Vec<String> = registry_from_cluster(loaded)
         .skipped
         .into_iter()
         .map(|grant| {
@@ -232,15 +228,6 @@ pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
             )
         })
         .collect();
-    // Go's anonymous-user row is not created at all by the load (this node's
-    // host-matching login path cannot select it), so writing the table back
-    // would delete it from the cluster.
-    if loaded.users.iter().any(|user| user.user.is_empty()) {
-        reasons.push(
-            "mysql.user holds an anonymous ''@'host' row, which this node does not model"
-                .to_owned(),
-        );
-    }
     reasons
 }
 
@@ -832,17 +819,26 @@ mod tests {
     }
 
     #[test]
-    fn the_anonymous_row_is_not_created_at_all() {
-        // A `User = ''` row is Go's anonymous account; this node's host
-        // matching cannot select it, so creating it would only leave a row
-        // nothing can ever reach.
+    fn empty_username_survives_load_matching_and_writeback() {
+        // Go's matchUser indexes by the requested username, including "".
+        // Retention does not introduce a fallback for a different username.
         let loaded = ClusterPrivileges {
-            users: vec![user("", "localhost", "", false, Vec::new())],
+            users: vec![user("", "localhost", "", false, vec!["SELECT"])],
             ..ClusterPrivileges::default()
         };
         let built = registry_from_cluster(&loaded);
-        assert_eq!(built.account_count, 0);
-        assert!(built.registry.accounts().is_empty());
+        assert_eq!(built.account_count, 1);
+        assert!(built.registry.user_exists("", "localhost"));
+        assert_eq!(
+            built.registry.matching_account("", "localhost"),
+            Some((String::new(), "localhost".to_owned()))
+        );
+        assert_eq!(built.registry.matching_account("alice", "localhost"), None);
+        assert!(built
+            .registry
+            .has_global_priv("", "localhost", GlobalPriv::Select));
+        assert!(unwritable_account_rows(&loaded).is_empty());
+        assert_eq!(cluster_image_from_registry(&built.registry), loaded);
     }
 
     #[test]

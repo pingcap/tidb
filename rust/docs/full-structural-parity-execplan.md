@@ -2493,3 +2493,15 @@ still generic. The receipt records regressions, affected checks, baseline
 controls and publication gates. Counts remain 86 tracked, 71 unresolved (64 open,
 seven partial), 15 repaired. Native client-rust remains current and unchanged at
 19a56cc. No complete Go package or workload-performance acceptance is claimed.
+
+### Cloud test hygiene and empty-account prerequisite, 2026-10-02
+
+The [cloud review](parity/current-audit/cloud-account-test-review.md) compares all
+66 carried findings against prior source hashes (44 unchanged evidence, 22 changed
+owner references). No entire unresolved finding closes. A02 advances to partial
+for empty-account preservation across loading/matching/writeback; policy state
+and A04 history remain open. A stale discard test is removed with its incorrect
+production behavior, three parser API-stale calls are corrected, and a valid Go
+EOF diagnostic mismatch is repaired without weakening original assertions.
+Current counts are 66 unresolved (56 open, ten partial), 20 repaired, 86 tracked.
+This maintains existing owners; no complete Go package or benchmark is accepted.

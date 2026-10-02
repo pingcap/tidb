@@ -890,11 +890,18 @@ fn parse_standalone_hint_occurrence(
                 let near = format!("{}*/", &inner[anchor.offset..]);
                 diagnostics.push(hint_1064_diagnostic(initial_line, column, &near));
             } else {
-                diagnostics.push(HintDiagnostic {
-                    message: format!(
-                        "[parser:1064]Optimizer hint syntax error at line {initial_line}"
-                    ),
-                });
+                let anchor = parser.peek();
+                let (column, near) = if parser.at_eof() {
+                    // Go's hint scanner consumes the closing comment before
+                    // reporting EOF, so its column includes both delimiters.
+                    (anchor.end_offset + column_base + 5, String::new())
+                } else {
+                    (
+                        anchor.end_offset + column_base + 3,
+                        format!("{}*/", &inner[anchor.offset..]),
+                    )
+                };
+                diagnostics.push(hint_1064_diagnostic(initial_line, column, &near));
             }
             while !parser.at_eof() && !parser.is_op(")") {
                 parser.bump();

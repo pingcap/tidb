@@ -109,7 +109,7 @@ fn signature(hint: &Hint) -> String {
 }
 
 fn assert_hints(input: &str, ansi_quotes: bool, expected: &[&str]) {
-    let result = parse_hint(&format!("/*+{input}*/"), ansi_quotes, 1);
+    let result = parse_hint(&format!("/*+{input}*/"), ansi_quotes, 1, 0);
     assert!(
         result.diagnostics.is_empty(),
         "{input}: diagnostics={:?}, hints={:?}",
@@ -124,7 +124,7 @@ fn assert_hints(input: &str, ansi_quotes: bool, expected: &[&str]) {
 }
 
 fn assert_errors(input: &str, expected: &[&str]) {
-    let result = parse_hint(&format!("/*+{input}*/"), false, 1);
+    let result = parse_hint(&format!("/*+{input}*/"), false, 1, 0);
     assert!(result.hints.is_empty(), "{input}: {:?}", result.hints);
     assert_eq!(result.diagnostics.len(), expected.len(), "{input}");
     for (actual, expected) in result.diagnostics.iter().zip(expected) {
@@ -348,7 +348,7 @@ fn test_max_optimizer_hint_parentheses_depth() {
         "(".repeat(10_001),
         ")".repeat(10_001)
     );
-    let result = parse_hint(&input, false, 1);
+    let result = parse_hint(&input, false, 1, 0);
     assert!(
         result.diagnostics.iter().any(|diagnostic| diagnostic
             .message
@@ -406,4 +406,24 @@ fn test_hint_error() {
     )
     .unwrap();
     assert!(parsed.warnings.is_empty());
+}
+
+#[test]
+fn bare_parenthesized_hint_reports_go_eof_location() {
+    // Direct ParseHint observations from Go master 93a01d31f6, initPos {Line: 1}.
+    for (input, column) in [
+        ("NO_DECORRELATE", 19),
+        ("SEMI_JOIN_REWRITE", 22),
+        ("USE_PLAN_CACHE", 19),
+    ] {
+        let result = parse_hint(&format!("/*+{input}*/"), false, 1, 0);
+        assert!(result.hints.is_empty());
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].message,
+            format!(
+                "[parser:1064]Optimizer hint syntax error at line 1 column {column} near \"\" "
+            )
+        );
+    }
 }

@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+Latest cloud [source/test review](cloud-account-test-review.md): 66 unresolved
+(56 open, ten partial), 20 repaired. Empty-account preservation advances A02 to
+partial; complete durable policy and password reuse remain open.
+
 Full-register review baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
 `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665` (published PD errors prerequisite).

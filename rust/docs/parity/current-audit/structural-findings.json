@@ -24,12 +24,12 @@
     },
     {
       "id": "A02",
-      "status": "open",
+      "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "**P1; source-confirmed:** the durable account image omits `mysql.global_priv`, password-change time/lifetime, failed-login policy/state and other user attributes. Rebuilding the registry supplies `SslType::None`, a fresh password timestamp and no lock policy. The live authentication code therefore cannot enforce the policies loaded from a Go peer. Empty usernames are also discarded.",
+      "finding": "**P1; partially repaired:** the durable account image omits `mysql.global_priv`, password-change time/lifetime, failed-login policy/state and other user attributes. Rebuilding the registry supplies `SslType::None`, a fresh password timestamp and no lock policy. The live authentication code therefore cannot enforce the policies loaded from a Go peer. Empty usernames now survive load, matching and account-image writeback; the former discard test was removed because it contradicted Go. The other policy-loss boundaries remain open.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs:120`, `:191`, `:294`, `:428`; `rust/crates/tidb-server/src/cluster_privileges.rs:88`, `:381`, `:702`; `rust/crates/tidb-session/src/privilege.rs:262`",
       "go_owner": "`pkg/privilege/privileges/cache.go::LoadAll`, `decodeUserTableRow`, `decodeGlobalPrivTableRow`, and `privileges.go::ConnectionVerification`/`checkSSL`. Carry the complete policy image through read, publication and writeback; preserve expiry/lock epochs. Policy loss is source-confirmed; no live mixed-node authentication exploit was run.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. The durable loader still omits mysql.global_priv and policy fields; registry reconstruction and empty-user handling remain unchanged. No mixed-node authentication test was run. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch starting b6520ebe83c against freshly fetched Go master 93a01d31f6 and unchanged native 19a56cc. Empty-account preservation failed before and passes after the loader repair. Expiry/TLS/locking image probes still fail, so A02 remains partial; no complete privilege package or mixed-node acceptance. See cloud-account-test-review.md."
     },
     {
       "id": "A03",
@@ -47,7 +47,7 @@
       "finding": "**P1; reproduced:** account SQL accepts PASSWORD HISTORY and REUSE options as no-ops. Creating history=3, changing the password, then reusing the first password succeeds; `password_reuse_history` remains NULL.",
       "rust_evidence": "`rust/crates/tidb-session/src/account.rs:145`; `expanded-ownership-probe.txt`",
       "go_owner": "`pkg/executor/simple.go::whetherSavePasswordHistory`, `checkPasswordHistoryRule`, `checkPasswordReusePolicy` persist and check `mysql.password_history` and user policy. Move full account policy validation and storage together; parsing or SHOW output alone is insufficient.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained SQL accepts PASSWORD HISTORY 3, reuses the first password and reads NULL policy. Account option handling still ignores the history/reuse fields. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained SQL accepts PASSWORD HISTORY 3, reuses the first password and reads NULL policy. Account option handling still ignores the history/reuse fields. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json. Cloud reproduction confirms PASSWORD HISTORY 3 still allows reuse through ALTER USER; credential-history implementation remains pending. See cloud-account-test-review.md."
     },
     {
       "id": "B01",
@@ -791,16 +791,14 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "ids": [
-      "N03",
-      "O07"
+      "A02"
     ],
     "statuses": {
-      "N03": "partial",
-      "O07": "repaired"
+      "A02": "partial"
     },
-    "scope": "Shared effective configuration, periodic statistics maintenance and live auto-analyze policy",
-    "integration_start": "43e827e2c4c96a351efb164d4f1fb4295fbbb5b6",
+    "scope": "Empty-account load/matching/writeback preservation and source-aligned parser test maintenance",
+    "integration_start": "b6520ebe83c992a34cf75dc7e381b1eef20e288f",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "config-statistics-maintenance-repair.md"
+    "receipt": "cloud-account-test-review.md"
   }
 }
