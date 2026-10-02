@@ -2740,9 +2740,7 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	lastVersion := tbl.Version
-	// Column c is a string, so p0's ["1","4"] bucket spans all of p1's
-	// "10".."14" values and the global merge folds them into fewer buckets.
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")

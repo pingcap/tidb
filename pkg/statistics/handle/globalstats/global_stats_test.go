@@ -1199,3 +1199,165 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 	require.Equal(t, blockingBuckets, asyncBuckets,
 		"global buckets should be identical between async and blocking merge")
 }
+
+// TestGlobalStatsMergeV1 covers global stats merged from analyze version
+// 1 partition stats, which take the separate TopN and histogram merges.
+func TestGlobalStatsMergeV1(t *testing.T) {
+	for _, async := range []string{"OFF", "ON"} {
+		t.Run("async="+async, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + async)
+			tk.MustExec("set @@tidb_analyze_version = 1")
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+			// b = 1 is in every partition's TopN. c = 7 is in p0's TopN
+			// (6 rows) and in p1's and p2's (2 rows each).
+			tk.MustExec("create table t (a int, b int, c int, key idx_b(b)) partition by hash(a) partitions 3")
+			vals := make([]string, 0, 60)
+			for a := 1; a <= 60; a++ {
+				b := a
+				switch {
+				case a <= 30:
+					b = 1
+				case a <= 36:
+					b = 2
+				}
+				c := 100 + a
+				if (a%3 == 0 && a <= 18) || a == 1 || a == 2 || a == 4 || a == 5 {
+					c = 7
+				}
+				vals = append(vals, fmt.Sprintf("(%d, %d, %d)", a, b, c))
+			}
+			tk.MustExec("insert into t values " + strings.Join(vals, ","))
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("60"))
+			tk.MustExec("analyze table t with 1 topn, 4 buckets")
+			// Version 1 column histograms keep the rows of their
+			// partition's TopN values, which must not be counted twice.
+			tk.MustQuery("show stats_topn where table_name = 't' and partition_name = 'global'").Sort().Check(testkit.Rows(
+				"test t global b 0 1 30",
+				"test t global c 0 7 10"))
+			// Version 1 range estimation reads only the histogram, so the
+			// global histograms keep every row, TopN values included.
+			tk.MustQuery("show stats_buckets where table_name = 't' and partition_name = 'global'").Sort().Check(testkit.Rows(
+				"test t global a 0 0 12 2 1 17 0",
+				"test t global a 0 1 30 2 17 35 0",
+				"test t global a 0 2 42 3 35 52 0",
+				"test t global a 0 3 60 1 52 60 0",
+				"test t global b 0 0 30 30 1 1 0",
+				"test t global b 0 1 42 3 1 47 0",
+				"test t global b 0 2 60 1 47 60 0",
+				"test t global c 0 0 12 2 7 116 0",
+				"test t global c 0 1 30 2 116 135 0",
+				"test t global c 0 2 42 3 135 152 0",
+				"test t global c 0 3 60 1 152 160 0",
+				"test t global idx_b 1 0 14 5 1 40 0",
+				"test t global idx_b 1 1 28 3 40 41 0",
+				"test t global idx_b 1 2 42 1 41 42 0",
+				"test t global idx_b 1 3 60 1 42 60 0"))
+
+			// Version 1 column TopN values use the value encoding, whose
+			// byte order is not the value order: 'b' sorts before 'aa',
+			// and 1 before -2. p0 has 'aa' and -2 in its TopN, p1 has 'b'
+			// and 1 in its TopN and 'aa' and -2 in its histogram.
+			tk.MustExec("create table t2 (a int, s varchar(10), n int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+			vals = vals[:0]
+			for a := 0; a < 20; a++ {
+				s, n := fmt.Sprintf("x%02d", a), 100+a
+				if a < 6 {
+					s, n = "aa", -2
+				}
+				vals = append(vals, fmt.Sprintf("(%d, '%s', %d)", a, s, n))
+			}
+			for a := 100; a < 120; a++ {
+				s, n := fmt.Sprintf("x%02d", a-80), 200+a
+				switch {
+				case a < 104:
+					s, n = "b", 1
+				case a < 107:
+					s, n = "aa", -2
+				}
+				vals = append(vals, fmt.Sprintf("(%d, '%s', %d)", a, s, n))
+			}
+			tk.MustExec("insert into t2 values " + strings.Join(vals, ","))
+			tk.MustQuery("select count(*) from t2").Check(testkit.Rows("40"))
+			tk.MustExec("analyze table t2 with 3 topn, 4 buckets")
+			tk.MustQuery("show stats_topn where table_name = 't2' and partition_name = 'global' and column_name in ('s', 'n')").Sort().Check(testkit.Rows(
+				"test t2 global n 0 -2 9",
+				"test t2 global n 0 1 4",
+				"test t2 global s 0 aa 9",
+				"test t2 global s 0 b 4"))
+			tk.MustQuery("show stats_buckets where table_name = 't2' and partition_name = 'global' and column_name in ('s', 'n')").Sort().Check(testkit.Rows(
+				"test t2 global n 0 0 19 1 -2 111 0",
+				"test t2 global n 0 1 27 1 111 119 0",
+				"test t2 global n 0 2 40 1 119 319 0",
+				"test t2 global s 0 0 19 1 aa x11 0",
+				"test t2 global s 0 1 27 1 x11 x19 0",
+				"test t2 global s 0 2 40 1 x19 x39 0"))
+			// Version 1 equality estimation looks a TopN value up by its
+			// value encoding.
+			tk.MustQuery("explain format = 'brief' select * from t2 where s = 'aa'").Check(testkit.Rows(
+				"TableReader 9.00 root partition:all data:Selection",
+				"└─Selection 9.00 cop[tikv]  eq(test.t2.s, \"aa\")",
+				"  └─TableFullScan 40.00 cop[tikv] table:t2 keep order:false"))
+			tk.MustQuery("explain format = 'brief' select * from t2 where n = -2").Check(testkit.Rows(
+				"TableReader 9.00 root partition:all data:Selection",
+				"└─Selection 9.00 cop[tikv]  eq(test.t2.n, -2)",
+				"  └─TableFullScan 40.00 cop[tikv] table:t2 keep order:false"))
+		})
+	}
+}
+
+// TestGlobalStatsMergeMixedV1V2 covers a table moving from analyze
+// version 1 to 2: until every partition is re-analyzed, some partitions
+// still have version 1 stats, and the merge takes the separate TopN and
+// histogram merges for them.
+func TestGlobalStatsMergeMixedV1V2(t *testing.T) {
+	for _, async := range []string{"OFF", "ON"} {
+		t.Run("async="+async, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + async)
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			tk.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+			// b = 1: 10 rows in p0, 3 in p1. b = 2: 5 rows in p1.
+			vals := make([]string, 0, 40)
+			for a := 0; a < 20; a++ {
+				b := 100 + a
+				if a < 10 {
+					b = 1
+				}
+				vals = append(vals, fmt.Sprintf("(%d, %d)", a, b))
+			}
+			for a := 100; a < 120; a++ {
+				b := 200 + a
+				switch {
+				case a < 105:
+					b = 2
+				case a < 108:
+					b = 1
+				}
+				vals = append(vals, fmt.Sprintf("(%d, %d)", a, b))
+			}
+			tk.MustExec("insert into t values " + strings.Join(vals, ","))
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("40"))
+			tk.MustExec("set @@tidb_analyze_version = 1")
+			tk.MustExec("analyze table t partition p0 with 1 topn, 4 buckets")
+			tk.MustExec("set @@tidb_analyze_version = 2")
+			tk.MustExec("analyze table t partition p1 with 1 topn, 4 buckets")
+			// p0 keeps its version 1 stats, p1 has version 2 stats.
+			tk.MustQuery(`select p.partition_name, h.stats_ver from mysql.stats_histograms h
+				join information_schema.partitions p on h.table_id = p.tidb_partition_id
+				where p.table_schema = 'test' and p.table_name = 't' and h.is_index = 0`).Sort().Check(testkit.Rows(
+				"p0 1", "p0 1", "p1 2", "p1 2"))
+			// p0's version 1 histogram keeps its TopN value 1, and so does
+			// the global histogram.
+			tk.MustQuery("show stats_buckets where table_name = 't' and partition_name = 'global' and column_name = 'b'").Sort().Check(testkit.Rows(
+				"test t global b 0 0 10 10 1 1 0",
+				"test t global b 0 1 16 1 1 115 0",
+				"test t global b 0 2 20 1 115 119 0"))
+		})
+	}
+}

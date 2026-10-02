@@ -22,12 +22,14 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -205,6 +207,7 @@ func blockingMergePartitionStats2GlobalStats(
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
 	allFms := make([][]*statistics.FMSketch, globalStats.Num)
+	hasV1Stats := make([]bool, globalStats.Num)
 	for i := 0; i < globalStats.Num; i++ {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
@@ -292,6 +295,7 @@ func blockingMergePartitionStats2GlobalStats(
 				allCms[i] = append(allCms[i], cms)
 				allTopN[i] = append(allTopN[i], topN)
 				allFms[i] = append(allFms[i], fms)
+				hasV1Stats[i] = hasV1Stats[i] || isV1Stats(partitionStats, histIDs[i], isIndex)
 			}
 		}
 	}
@@ -334,15 +338,11 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 		allCms[i] = nil // Release for GC.
 
-		// Combined TopN + histogram merge that extracts
-		// histogram upper-bound Repeat counts into the TopN counter.
 		killer := &sc.GetSessionVars().SQLKiller
-		globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
+		globalStats.TopN[i], globalStats.Hg[i], err = mergeTopNAndHist(
 			sc.GetSessionVars().StmtCtx, killer,
 			allTopN[i], allHg[i],
-			uint32(opts[ast.AnalyzeOptNumTopN]),
-			int64(opts[ast.AnalyzeOptNumBuckets]),
-			isIndex,
+			opts, isIndex, hasV1Stats[i],
 		)
 		allTopN[i] = nil // Release for GC.
 		allHg[i] = nil   // Release for GC.
@@ -350,13 +350,76 @@ func blockingMergePartitionStats2GlobalStats(
 			return
 		}
 
-		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
-		// we just set the table-level NDV.
+		// mergeTopNAndHist already leaves bucket NDV = 0; here we just set
+		// the table-level NDV.
 		if globalStats.Hg[i] != nil {
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return
+}
+
+// isV1Stats reports whether a partition's stats for histID were built by
+// analyze version 1.
+func isV1Stats(partitionStats *statistics.Table, histID int64, isIndex bool) bool {
+	if isIndex {
+		idx := partitionStats.GetIdx(histID)
+		return idx != nil && idx.StatsVer == statistics.Version1
+	}
+	col := partitionStats.GetCol(histID)
+	return col != nil && col.StatsVer == statistics.Version1
+}
+
+// mergeTopNAndHist merges the partition TopNs and histograms of one
+// column or index into the global TopN and histogram.
+//
+// Version 1 column histograms still hold the rows of their partition's
+// TopN values, version 1 column TopN values use the value encoding
+// rather than the key encoding, and version 1 range estimation reads
+// only the histogram. The combined merge assumes none of that, so
+// whenever some partition has version 1 stats, the merge takes the
+// separate TopN and histogram merges instead.
+func mergeTopNAndHist(
+	sc *stmtctx.StatementContext,
+	killer *sqlkiller.SQLKiller,
+	topNs []*statistics.TopN,
+	hists []*statistics.Histogram,
+	opts map[ast.AnalyzeOptionType]uint64,
+	isIndex bool,
+	hasV1Stats bool,
+) (*statistics.TopN, *statistics.Histogram, error) {
+	if !hasV1Stats {
+		// Combined TopN + histogram merge that extracts histogram
+		// upper-bound Repeat counts into the TopN counter.
+		return statistics.MergePartTopNAndHistToGlobal(
+			sc, killer, topNs, hists,
+			uint32(opts[ast.AnalyzeOptNumTopN]),
+			int64(opts[ast.AnalyzeOptNumBuckets]),
+			isIndex,
+		)
+	}
+	// Merge topN.
+	// Note: We need to merge TopN before merging the histogram.
+	// Because after merging TopN, some numbers will be left.
+	// These remaining topN numbers will be used as a separate bucket for later histogram merging.
+	globalTopN, poppedTopN, hists, err := MergePartTopN2GlobalTopN(
+		sc.TimeZone(), statistics.Version1, topNs, uint32(opts[ast.AnalyzeOptNumTopN]), hists, isIndex, killer)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Merge histogram.
+	globalHg, err := statistics.MergePartitionHist2GlobalHist(sc, hists, poppedTopN,
+		int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+	if globalHg != nil {
+		for j := range globalHg.Buckets {
+			globalHg.Buckets[j].NDV = 0
+		}
+	}
+	return globalTopN, globalHg, nil
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage

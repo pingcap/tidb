@@ -108,6 +108,9 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	partitionIDs              []int64
 	partitionNum              int
 	skipMissingPartitionStats bool
+	// hasV1Stats[i] is set when some partition's stats for histIDs[i]
+	// were built by analyze version 1.
+	hasV1Stats []bool
 }
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
@@ -149,6 +152,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	a.globalStats = newGlobalStats(len(a.histIDs))
 	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	a.hasV1Stats = make([]bool, len(a.histIDs))
 	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
 		zap.String("table", a.globalTableInfo.Name.L),
 		zap.Int64("tableID", a.globalTableInfo.ID),
@@ -192,7 +196,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 			}
 		}
 		for idx, hist := range a.histIDs {
-			err1 := skipColumnPartition(sctx, partitionID, isIndex, hist)
+			statsVer, err1 := skipColumnPartition(sctx, partitionID, isIndex, hist)
+			if err1 == nil && statsVer == statistics.Version1 {
+				a.hasV1Stats[idx] = true
+			}
 			if err1 != nil {
 				err := a.dealWithSkipPartition(partitionID, isIndex, idx, err1)
 				if err != nil {
@@ -567,22 +574,19 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				return nil
 			}
 			var err error
-			// Combined TopN + histogram merge.
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
-			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
+			a.globalStats.TopN[item.idx], *globalHg, err = mergeTopNAndHist(
 				stmtCtx, killer,
 				wrapper.AllTopN, wrapper.AllHg,
-				uint32(opts[ast.AnalyzeOptNumTopN]),
-				int64(opts[ast.AnalyzeOptNumBuckets]),
-				isIndex,
+				opts, isIndex, a.hasV1Stats[item.idx],
 			)
 			if err != nil {
 				return err
 			}
 
-			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
-			// we just set the table-level NDV.
+			// mergeTopNAndHist already leaves bucket NDV = 0; here we just
+			// set the table-level NDV.
 			if *globalHg != nil {
 				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}
@@ -596,6 +600,6 @@ func skipPartition(sctx sessionctx.Context, partitionID int64, isIndex bool) err
 	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex))
 }
 
-func skipColumnPartition(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
+func skipColumnPartition(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) (int64, error) {
 	return storage.CheckSkipColumnPartiion(sctx, partitionID, toSQLIndex(isIndex), histsID)
 }

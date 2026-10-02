@@ -238,15 +238,16 @@ func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int) error
 }
 
 // CheckSkipColumnPartiion checks if we can skip loading the partition.
-func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) error {
-	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
+// When the partition's stats exist, it returns their stats version.
+func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) (int64, error) {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count, stats_ver from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(rows) == 0 {
-		return types.ErrPartitionColumnStatsMissing
+		return 0, types.ErrPartitionColumnStatsMissing
 	}
-	return nil
+	return rows[0].GetInt64(1), nil
 }
 
 // ExtendedStatsFromStorage reads extended stats from storage.
