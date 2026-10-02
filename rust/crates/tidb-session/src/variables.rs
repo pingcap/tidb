@@ -285,9 +285,23 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::SetUserVar(set) => {
+                // Go plans the whole SET statement ONCE, against the variable
+                // state as it stood BEFORE any assignment ran: `SET @usr = 5,
+                // @usr2 = @usr * 2` resolves the `@usr` reference with the
+                // type @usr had at plan time — unset, hence the string-typed
+                // GetVar whose real-arithmetic result renders 10.0. Binding
+                // each expression lazily made the second assignment see the
+                // FIRST's freshly stored integer and answer an int where go
+                // answers a real (oracle m21). Bind everything first, then
+                // evaluate in order.
+                let mut bound_values = Vec::with_capacity(set.assignments.len());
                 for assignment in &set.assignments {
-                    let value = self.eval_value(&assignment.value)?;
+                    let bound = self.bind_variables_in(&assignment.value)?;
                     let key = assignment.name.to_ascii_lowercase();
+                    bound_values.push((bound, key));
+                }
+                for (bound, key) in &bound_values {
+                    let value = self.eval_bound_value(bound)?;
                     // Go's `SET @x = NULL` CLEARS the variable
                     // (`UnsetUserVar`), which is the opposite of the inline
                     // `@x := NULL` assignment expression -- that one leaves
@@ -297,9 +311,9 @@ impl Session {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if matches!(value, Datum::Null) {
-                        vars.remove(&key);
+                        vars.remove(key);
                     } else {
-                        vars.insert(key, value);
+                        vars.insert(key.clone(), value);
                     }
                 }
                 Ok(Some(()))
@@ -1207,12 +1221,20 @@ impl Session {
                 return Ok(Datum::new_string(word.clone()));
             }
         }
+        let bound = self.bind_variables_in(expr)?;
+        self.eval_bound_value(&bound)
+    }
+
+    /// Evaluates an ALREADY-VARIABLE-SUBSTITUTED expression. Split from
+    /// [`Self::eval_value`] so a multi-assignment `SET` can bind every
+    /// expression against the PRE-statement variable state first.
+    fn eval_bound_value(&mut self, bound: &tidb_ast::Expr) -> Result<Datum, DriverError> {
         // A scalar subquery value runs as its own SELECT: Go's executor
         // evaluates the subplan and enforces the one-row scalar contract
         // (1242 on more than one row, NULL on none). The surrounding
         // `SELECT (subquery)` shape is not plannable here, so the inner
         // query runs directly over the same catalog.
-        if let tidb_ast::Expr::Subquery(sub) = expr {
+        if let tidb_ast::Expr::Subquery(sub) = bound {
             let sql = sub.restore();
             let ctx = self.statement_context(false);
             let rows =
@@ -1223,7 +1245,6 @@ impl Session {
                 _ => Err(DriverError::SubqueryReturnsMoreThanOneRow),
             };
         }
-        let bound = self.bind_variables_in(expr)?;
         let sql = format!("SELECT {}", bound.restore());
         let ctx = self.statement_context(false);
         let rows =

@@ -426,10 +426,18 @@ pub fn cluster_session_catalog_with_templates(
                         .register_kv_in(&schema, table.name.original(), kv_table)
                         .expect("the schema was created just above this loop");
                 }
-                Err(reason) => skipped.push(SkippedTable {
-                    name: format!("{schema}.{}", table.name.original()),
-                    reason,
-                }),
+                Err(reason) => {
+                    eprintln!(
+                        "DBG catalog skip: {}.{} reason: {}",
+                        schema,
+                        table.name.original(),
+                        reason
+                    );
+                    skipped.push(SkippedTable {
+                        name: format!("{schema}.{}", table.name.original()),
+                        reason,
+                    });
+                }
             }
         }
     }
