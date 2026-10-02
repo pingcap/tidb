@@ -1,0 +1,282 @@
+{
+  "date": "2026-10-02",
+  "base": "44be2a9d756cc6e3003ab87ce0fd38a5d5e6348f",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "S01/S02 runtime-owner removal; no complete upstream package acceptance",
+  "distinct_passing_rust_tests": 97,
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-server --test all -- node_config_source:: mysql_client_lifecycle_source:: concurrent_mysql_sessions_source:: --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 149 filtered out; finished in 2.88s"
+      ],
+      "tests": [
+        "concurrent_mysql_sessions_source::command_dispatch_exports_success_and_error_counters",
+        "concurrent_mysql_sessions_source::command_token_is_shared_across_sockets_and_held_through_result_streaming",
+        "concurrent_mysql_sessions_source::command_token_releases_on_error_no_response_quit_protocol_failure_and_panic",
+        "concurrent_mysql_sessions_source::fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all",
+        "concurrent_mysql_sessions_source::forced_shutdown_cancels_an_inflight_com_query_before_joining_worker",
+        "concurrent_mysql_sessions_source::prepared_execute_exports_cached_statement_label",
+        "concurrent_mysql_sessions_source::query_metrics_use_post_dispatch_group_and_exclude_text_ddl",
+        "concurrent_mysql_sessions_source::shutdown_stops_acceptance_and_forces_a_stalled_connection_after_grace",
+        "mysql_client_lifecycle_source::a_multi_row_write_ok_packet_carries_the_records_message_as_info",
+        "mysql_client_lifecycle_source::a_prepared_write_answers_with_an_ok_packet_carrying_affected_rows",
+        "mysql_client_lifecycle_source::a_write_inside_a_transaction_reports_the_open_transaction_on_its_own_ok_packet",
+        "mysql_client_lifecycle_source::begin_and_commit_dispatch_toggles_the_in_transaction_status_flag",
+        "mysql_client_lifecycle_source::cursor_execute_releases_snapshot_before_fetch_and_fetch_uses_only_materialized_rows",
+        "mysql_client_lifecycle_source::cursor_fetch_encoding_error_resets_cursor_atomically",
+        "mysql_client_lifecycle_source::cursor_reader_error_is_reported_by_fetch_and_closes_cursor",
+        "mysql_client_lifecycle_source::handshake_without_protocol_41_uses_the_source_auth_mode_error",
+        "mysql_client_lifecycle_source::load_stats_requires_client_local_files",
+        "mysql_client_lifecycle_source::load_stats_uses_client_local_infile_packets",
+        "mysql_client_lifecycle_source::long_data_quota_refuses_before_copy_and_releases_on_execute_and_close",
+        "mysql_client_lifecycle_source::malformed_handshake_response_uses_the_generic_protocol_error",
+        "mysql_client_lifecycle_source::prepared_point_range_keeps_its_two_marker_contract",
+        "mysql_client_lifecycle_source::prepared_point_read_honors_read_only_cursor_protocol",
+        "mysql_client_lifecycle_source::query_error_is_written_as_err_and_connection_remains_command_aligned",
+        "mysql_client_lifecycle_source::real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup",
+        "mysql_client_lifecycle_source::real_tcp_malformed_prepared_execute_counts_command_without_success",
+        "mysql_client_lifecycle_source::real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reuse",
+        "mysql_client_lifecycle_source::send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter",
+        "mysql_client_lifecycle_source::stmt_reset_drops_the_long_data_buffer_before_the_next_execute",
+        "node_config_source::cluster_privilege_accounts_can_bind_a_non_loopback_listener",
+        "node_config_source::config_path_accepts_inline_syntax_and_reports_missing_files",
+        "node_config_source::configured_sem_is_installed_before_startup_resource_admission",
+        "node_config_source::configured_spill_policy_is_loaded_from_the_tidb_config_file",
+        "node_config_source::connection_limit_is_go_uint32_with_zero_unlimited",
+        "node_config_source::connection_timeout_is_positive_explicit_and_documented",
+        "node_config_source::every_store_uses_the_shared_session_without_table_descriptors",
+        "node_config_source::explicit_cli_values_override_the_config_before_validation",
+        "node_config_source::impossible_spill_quota_fails_before_auth_listener_or_cluster_startup",
+        "node_config_source::legacy_cluster_session_flag_does_not_change_the_session_owner",
+        "node_config_source::ordinary_tikv_startup_defaults_to_persisted_accounts",
+        "node_config_source::packet_limit_and_help_are_checked_before_startup",
+        "node_config_source::plaintext_native_password_boundary_cannot_bind_a_public_address",
+        "node_config_source::recognized_but_unowned_config_leaves_fail_closed",
+        "node_config_source::source_port_alias_and_long_option_share_one_value_slot",
+        "node_config_source::source_tikv_startup_uses_the_shared_catalog",
+        "node_config_source::static_table_options_cannot_select_an_alternate_sql_engine",
+        "node_config_source::the_advertise_address_follows_gos_resolution",
+        "node_config_source::unsupported_or_ambiguous_startup_options_fail_closed",
+        "node_config_source::version_flag_prints_the_effective_source_identity_without_topology"
+      ],
+      "log": "/private/tmp/shared-session-wire-final.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib node_config::tests -- --test-threads=1",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 469 filtered out; finished in 0.01s"
+      ],
+      "tests": [
+        "node_config::tests::affinity_cpu_list_matches_the_source_command_line_parser",
+        "node_config::tests::an_unknown_store_names_both_executables",
+        "node_config::tests::cluster_tls_options_build_security_and_reject_partial_material",
+        "node_config::tests::command_token_file_and_flag_precedence_matches_go",
+        "node_config::tests::command_token_flag_reaches_effective_config",
+        "node_config::tests::expired_passwords_disconnect_by_default_and_the_flag_opts_into_sandboxing",
+        "node_config::tests::instance_memory_arbitrator_settings_are_admitted_as_one_startup_policy",
+        "node_config::tests::run_ddl_defaults_on_and_follows_the_main_go_flag",
+        "node_config::tests::skip_grant_table_is_root_only_and_reaches_the_resolved_node_config",
+        "node_config::tests::startup_config_projection_contains_the_effective_owned_values",
+        "node_config::tests::stats_lease_uses_go_duration_parsing_and_allows_zero",
+        "node_config::tests::store_tikv_still_requires_the_pd_path",
+        "node_config::tests::store_unistore_is_accepted_without_a_pd_path",
+        "node_config::tests::the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster"
+      ],
+      "log": "/private/tmp/shared-session-config-lib-final.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib real_tikv_node:: -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 469 filtered out; finished in 0.07s"
+      ],
+      "tests": [
+        "real_tikv_node::schema_following::tests::asynchronous_statistics_loading_requires_a_positive_lease",
+        "real_tikv_node::schema_following::tests::statistics_reload_targets_follow_the_current_catalog",
+        "real_tikv_node::session_time_zone::tests::an_offset_zone_stamps_an_empty_dag_name_and_a_named_one_stamps_its_name",
+        "real_tikv_node::session_time_zone::tests::fresh_session_uses_the_resolved_system_location",
+        "real_tikv_node::session_time_zone::tests::real_tikv_session_time_zone_accepts_the_go_parse_time_zone_domain",
+        "real_tikv_node::session_time_zone::tests::real_tikv_session_time_zone_uses_the_source_parser",
+        "real_tikv_node::tests::an_undetermined_cluster_ddl_is_connection_fatal_without_an_error_packet",
+        "real_tikv_node::tests::authority_failure_suppresses_final_success_event",
+        "real_tikv_node::tests::cluster_startup_installs_the_bootstrap_system_timezone",
+        "real_tikv_node::tests::configured_account_policy_makes_skip_grant_table_a_real_login_authority",
+        "real_tikv_node::tests::configured_write_backoff_error_is_coded_on_the_wire",
+        "real_tikv_node::tests::final_success_event_runs_only_after_factory_drop_and_authority_shutdown",
+        "real_tikv_node::tests::ordinary_cluster_sysvars_are_also_installed_before_login_and_reloaded",
+        "real_tikv_node::tests::skip_grant_sysvar_runtime_is_fail_closed_at_first_login_and_reloads_without_accounts"
+      ],
+      "log": "/private/tmp/shared-session-lifecycle.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib cluster_session_node::schema_sync::tests -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 475 filtered out; finished in 0.66s"
+      ],
+      "tests": [
+        "cluster_session_node::schema_sync::tests::a_job_ahead_of_the_loaded_version_waits",
+        "cluster_session_node::schema_sync::tests::an_acknowledged_job_is_not_resent_until_its_version_moves",
+        "cluster_session_node::schema_sync::tests::an_unresolved_name_blocks_conservatively",
+        "cluster_session_node::schema_sync::tests::disabled_mdl_reports_loaded_schema_without_replaying_job_versions",
+        "cluster_session_node::schema_sync::tests::first_use_wins_and_release_clears",
+        "cluster_session_node::schema_sync::tests::must_reload_gives_up_when_the_node_stops",
+        "cluster_session_node::schema_sync::tests::must_reload_waits_out_failed_passes_until_one_succeeds",
+        "cluster_session_node::schema_sync::tests::only_work_on_the_jobs_own_tables_holds_it_back"
+      ],
+      "log": "/private/tmp/shared-session-schema-sync.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib session_activation -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 478 filtered out; finished in 5.03s"
+      ],
+      "tests": [
+        "cluster_session_node::tests::unistore_cop::session_activation_checks_existence_for_pessimistic_locks",
+        "cluster_session_node::tests::unistore_cop::session_activation_controls_the_native_commit_protocol",
+        "cluster_session_node::tests::unistore_cop::session_activation_preserves_assertion_level_until_transaction_end",
+        "cluster_session_node::tests::unistore_cop::shared_session_activation_inherits_globals_and_obeys_set",
+        "cluster_session_node::transactions::tests::session_activation_retains_options_after_timestamp_future_failure"
+      ],
+      "log": "/private/tmp/shared-session-transaction-activation.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib shared_session_ -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 481 filtered out; finished in 2.52s"
+      ],
+      "tests": [
+        "cluster_session_node::tests::unistore_cop::shared_session_activation_inherits_globals_and_obeys_set",
+        "cluster_session_node::tests::unistore_cop::shared_session_serves_ranges_joins_and_locking_reads_without_table_selection"
+      ],
+      "log": "/private/tmp/shared-session-shared.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib replans_after_another_session -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 481 filtered out; finished in 2.47s"
+      ],
+      "tests": [
+        "cluster_session_node::tests::unistore_cop::prepared_select_replans_after_another_session_changes_columns",
+        "cluster_session_node::tests::unistore_cop::prepared_update_replans_after_another_session_adds_a_column"
+      ],
+      "log": "/private/tmp/shared-session-prepared-reload.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --test all panic_recovery_source:: -- --test-threads=1 --nocapture",
+      "workdir": "rust/",
+      "summary": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 2.41s"
+      ],
+      "tests": [
+        "panic_recovery_source::panic_recovery_covers_prepared_dispatch",
+        "panic_recovery_source::panic_recovery_preserves_partial_reply_sequence_and_buffered_bytes",
+        "panic_recovery_source::panic_recovery_preserves_sequence_after_local_infile",
+        "panic_recovery_source::panic_recovery_retires_connection_when_error_write_fails",
+        "panic_recovery_source::panic_recovery_writes_error_before_close_and_server_keeps_serving"
+      ],
+      "log": "/private/tmp/shared-session-protocol-panic.log"
+    }
+  ],
+  "red_regressions": [
+    {
+      "test": "node_config_source::every_store_uses_the_shared_session_without_table_descriptors",
+      "before": "MissingOption(\"--read-table\")",
+      "after": "passes"
+    },
+    {
+      "test": "node_config_source::static_table_options_cannot_select_an_alternate_sql_engine",
+      "before": "static descriptors accepted",
+      "after": "passes"
+    }
+  ],
+  "removed_files": [
+    "rust/crates/tidb-server/src/real_tikv_multi_node.rs",
+    "rust/crates/tidb-server/src/real_tikv_node/query_observability.rs",
+    "rust/crates/tidb-server/src/transaction_overlay_result_set.rs",
+    "rust/crates/tidb-server/tests/real_tikv_multi_relation_node_source.rs",
+    "rust/scripts/lib/live-sql-node-harness.sh",
+    "rust/scripts/run-live-bigint-selection-sql-node.sh",
+    "rust/scripts/run-live-clustered-pk-range-sql-node.sh",
+    "rust/scripts/run-live-concurrent-auth-sql-node.sh",
+    "rust/scripts/run-live-multi-relation-join-sql-node.sh",
+    "rust/scripts/run-live-multicolumn-sql-node.sh",
+    "rust/scripts/run-live-ordered-join-sql-node.sh",
+    "rust/scripts/run-live-prepared-point-read-sql-node.sh",
+    "rust/scripts/run-live-read-only-sql-node.sh",
+    "rust/scripts/run-live-topology-churn-sql-node.sh",
+    "rust/scripts/test-ddl-unservable-fixture.sh"
+  ],
+  "unistore_process_smoke": {
+    "command": [
+      "/Users/qiliu/projects/tidb/rust/target/debug/tidb-server",
+      "--store",
+      "unistore",
+      "--port",
+      "0",
+      "--auth-file",
+      "/private/tmp/shared-session-smoke-xztdtxp9/users.tsv",
+      "--config",
+      "/private/tmp/shared-session-smoke-xztdtxp9/tidb.toml",
+      "--no-auto-tls",
+      "--report-status=false",
+      "--temp-dir",
+      "/private/tmp/shared-session-smoke-xztdtxp9/temp"
+    ],
+    "log": "/private/tmp/shared-session-smoke-xztdtxp9/server.log",
+    "checks": [
+      "normal startup without table/mode flags",
+      "three-table join",
+      "SQL prepare/execute",
+      "transaction read-your-writes and rollback",
+      "autocommit locking read"
+    ],
+    "sql": "CREATE DATABASE batch;\nCREATE TABLE batch.a (id BIGINT PRIMARY KEY, v BIGINT);\nCREATE TABLE batch.b (id BIGINT PRIMARY KEY, v BIGINT);\nCREATE TABLE batch.c (id BIGINT PRIMARY KEY, v BIGINT);\nINSERT INTO batch.a VALUES (1,10),(2,20);\nINSERT INTO batch.b VALUES (1,100);\nINSERT INTO batch.c VALUES (1,1000);\nSELECT a.id,a.v,b.v,c.v FROM batch.a a JOIN batch.b b USING(id) JOIN batch.c c USING(id);\nPREPARE s FROM 'SELECT v FROM batch.a WHERE id = ?';\nSET @id=1;\nEXECUTE s USING @id;\nBEGIN;\nUPDATE batch.a SET v=99 WHERE id=1;\nSELECT v FROM batch.a WHERE id=1;\nROLLBACK;\nSELECT v FROM batch.a WHERE id=1 FOR UPDATE;\nDEALLOCATE PREPARE s;\n",
+    "returncode": 0,
+    "stdout": "1\t10\t100\t1000\n10\n99\n10\n",
+    "stderr": "",
+    "ready": {
+      "event": "cluster_session_node_ready",
+      "address": "127.0.0.1:56515",
+      "store": "unistore",
+      "schema_version": 1,
+      "max_connections": 0,
+      "account_count": 1,
+      "stats_loaded": 0,
+      "stats_pseudo": 0
+    },
+    "server_exit": 0
+  },
+  "other_passed": [
+    "cargo check --locked -p tidb-server --all-targets (rust/)",
+    "GOTOOLCHAIN=go1.25.14 make lint (repository root)",
+    "git diff --check",
+    "bash rust/scripts/test-ddl-json-fixture.sh",
+    "bash rust/scripts/test-ddl-change-count.sh",
+    "bash -n rust/scripts/run-held-transaction-budget.sh",
+    "bash -n rust/scripts/run-live-write-proof.sh",
+    "bash -n rust/scripts/run-lost-update-check.sh",
+    "bash -n rust/scripts/run-realtikv-catalog-load.sh",
+    "bash -n rust/scripts/run-realtikv-convergence.sh",
+    "bash -n rust/scripts/run-realtikv-ddl-notify.sh",
+    "bash -n rust/scripts/run-realtikv-ddl.sh",
+    "bash -n rust/scripts/run-realtikv-multi-statement-txn.sh",
+    "bash -n rust/scripts/run-realtikv-session-driver.sh",
+    "bash -n rust/scripts/run-sysbench-ladder.sh",
+    "bash -n rust/scripts/test-ddl-json-fixture.sh"
+  ],
+  "limits": [
+    "No full unfiltered integration-suite pass",
+    "No live TiKV topology/peer-DDL/combined blocked shutdown",
+    "No Go race package acceptance",
+    "No sysbench/TPC-C/TPC-H/YCSB performance measurements"
+  ],
+  "publication": "Actual hook build and fresh pre-push locked build required; publication result in task thread"
+}

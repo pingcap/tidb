@@ -330,7 +330,6 @@ fi
 # Only the PD address, the table NAME, and the accounts file.
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
   --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --load-table "${DATABASE}.${SERVED_TABLE}" \
   --auth-file "${AUTH_FILE}" --max-connections 8 \
   >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
@@ -342,7 +341,7 @@ for _ in $(seq 1 900); do
     tail -200 "${RUST_LOG}" >&2
     exit 1
   fi
-  READY_JSON=$(grep -F '"event":"sql_node_ready"' "${RUST_LOG}" | tail -1 || true)
+  READY_JSON=$(grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG}" | tail -1 || true)
   if [[ -n "${READY_JSON}" ]]; then
     break
   fi
@@ -353,14 +352,8 @@ if [[ -z "${READY_JSON}" ]]; then
   tail -200 "${RUST_LOG}" >&2
   exit 1
 fi
-if ! printf '%s\n' "${READY_JSON}" | jq -e \
-  --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
-  '(.tables | length) == 1
-   and (.tables[0].table_id | tostring) == $table_id
-   and (.cluster_id | tostring) == $cluster_id' \
-  >/dev/null; then
-  echo "Rust readiness did not carry the cluster-loaded table identity" >&2
-  printf '%s\n' "${READY_JSON}" >&2
+if [[ "$(rust_node -Nse "SELECT TIDB_TABLE_ID FROM information_schema.tables WHERE TABLE_SCHEMA='${DATABASE}' AND TABLE_NAME='${SERVED_TABLE}'")" != "${TABLE_ID}" ]]; then
+  echo "Rust did not load the cluster table identity" >&2
   exit 1
 fi
 

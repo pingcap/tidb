@@ -25,7 +25,7 @@ and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
 this does not accept the complete root/discovery/TSO packages or close P03.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 85 tracked ownership/contract findings (73 unresolved, twelve repaired), review candidates and the
+consolidates 86 tracked ownership/contract findings (67 unresolved, 19 repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -34,6 +34,12 @@ zero omissions/contract differences and retains the 71 opaque representations.
 See [the removal receipt](complete-protocol-owner-repair.md) for caller and
 validation coverage. Neither document claims that every repository semantic
 mismatch is known.
+
+The [shared server session batch](shared-server-session-repair.md) closes S01 and
+S02 together at Go master `93a01d31f6`, from integration `44be2a9d756`; the native
+dependency remains `19a56cc`. Both stores now use one ordinary session/catalog
+lifecycle. Ninety-seven distinct targeted Rust tests and a stock-client unistore
+process check pass. Live TiKV topology and benchmark measurements remain unverified.
 
 The [2026-10-02 review after shared worker repairs](worker-followup-structural-review.md)
 rechecked every then-unresolved ID. **All 75 were valid parity gaps: 69 open

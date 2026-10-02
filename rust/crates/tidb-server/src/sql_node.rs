@@ -27,6 +27,7 @@ use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
+#[cfg(test)]
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
@@ -401,6 +402,7 @@ pub(crate) fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> Sq
     }
 }
 
+#[cfg(test)]
 pub(crate) fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
     match error {
         ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
@@ -2514,9 +2516,7 @@ pub(crate) fn prepare_accepted_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_config::{
-        ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, MemoryArbitratorConfig,
-    };
+    use crate::node_config::MemoryArbitratorConfig;
     use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
@@ -2553,22 +2553,9 @@ mod tests {
             port: 0,
             affinity_cpus: Vec::new(),
             pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
-            read_tables: vec![ConfiguredReadTable {
-                database: "test".to_owned(),
-                table: "rows".to_owned(),
-                table_id: 42,
-                columns: vec![ConfiguredReadColumn {
-                    name: "id".to_owned(),
-                    id: 1,
-                    kind: ConfiguredReadColumnKind::ClusteredPrimaryKey,
-                }],
-                indexes: Vec::new(),
-            }],
-            load_tables: Vec::new(),
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
             auth_file: PathBuf::from("unused"),
             load_privileges: false,
-            cluster_session: false,
             ssl_cert: None,
             ssl_key: None,
             // The unit tests here exercise worker lifecycle, not the wire, so
@@ -2580,7 +2567,6 @@ mod tests {
             skip_grant_table: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
-            max_topn_rows: 1_024,
             deadlock_history_capacity: 10,
             deadlock_history_collect_retryable: false,
             schema_lease: Duration::from_millis(45_000),

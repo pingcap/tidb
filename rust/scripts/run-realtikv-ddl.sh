@@ -16,7 +16,7 @@
 #   * the Go TiDB INSERTs into it, proving it accepts the TableInfo for writes;
 #   * a second Rust node loads the new table BY NAME and reads Go's rows back;
 #   * the Rust node DROPs the table and the database, and Go confirms both gone;
-#   * JSON DDL is admitted, while an explicit bounded reader refuses that table
+#   * JSON DDL and values are visible through a second shared-catalog reader
 #     with the precise decoding limitation;
 #   * Go writes and reads a Rust-created table without a primary key, using its
 #     implicit row handle; CREATE IF NOT EXISTS adds no catalog change.
@@ -271,12 +271,11 @@ await_go() {
 
 start_rust_node() {
   local port=$1
-  local table=$2
-  local log=$3
-  shift 3
+  local log=$2
+  shift 2
   "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
     --host 127.0.0.1 --port "${port}" \
-    --load-table "${table}" "$@" \
+    "$@" \
     --lease-ms 2000 \
     --auth-file "${AUTH_FILE}" --max-connections 8 \
     >"${log}" 2>&1 &
@@ -292,7 +291,7 @@ await_rust_ready() {
       tail -200 "${log}" >&2
       return 1
     fi
-    ready=$(grep -F '"event":"sql_node_ready"' "${log}" | tail -1 || true)
+    ready=$(grep -F '"event":"cluster_session_node_ready"' "${log}" | tail -1 || true)
     if [[ -n "${ready}" ]]; then
       printf '%s\n' "${ready}"
       return 0
@@ -413,38 +412,34 @@ CREATE TABLE ${DATABASE}.${ANCHOR_TABLE} (
 );
 SQL
 
-start_rust_node "${RUST_SQL_PORT}" "${DATABASE}.${ANCHOR_TABLE}" "${RUST_LOG}"
+start_rust_node "${RUST_SQL_PORT}" "${RUST_LOG}"
 RUST_PID=$!
 READY_JSON=$(await_rust_ready "${RUST_PID}" "${RUST_LOG}")
 if ! printf '%s\n' "${READY_JSON}" | jq -e \
-  --arg cluster_id "${PD_CLUSTER_ID}" \
-  '(.tables | length) == 1 and (.cluster_id | tostring) == $cluster_id' >/dev/null; then
-  echo "Rust readiness did not carry the cluster-loaded anchor identity" >&2
+  '.schema_version > 0' >/dev/null; then
+  echo "Rust readiness did not carry the shared catalog version" >&2
   printf '%s\n' "${READY_JSON}" >&2
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# DDL admission is decoupled from servability (the bootstrap-ddl widening):
-# a JSON column CREATE succeeds -- it builds the TableInfo a real TiDB
-# accepts -- and it is SERVING the table that this node refuses, naming the
-# column and type at query time.
+# JSON DDL and reads both use the ordinary table owner. A second node must
+# discover the same persisted schema and values without static descriptors.
 # ---------------------------------------------------------------------------
 rust_node -Nse \
   "CREATE TABLE ${DATABASE}.unservable (id BIGINT PRIMARY KEY, j JSON NOT NULL)"
-# This bounded reader serves only tables explicitly requested at startup.
-# Keep one servable anchor so it can start and report the JSON table's refusal.
-start_rust_node "${RUST_READER_PORT}" "${DATABASE}.${ANCHOR_TABLE}" "${READER_LOG}" \
-  --load-table "${DATABASE}.unservable"
+rust_node -Nse "INSERT INTO ${DATABASE}.unservable VALUES (1, JSON_OBJECT('v', 7))"
+start_rust_node "${RUST_READER_PORT}" "${READER_LOG}"
 READER_PID=$!
 await_rust_ready "${READER_PID}" "${READER_LOG}" >/dev/null
-REFUSAL=$(rust_reader -Nse "SELECT id FROM ${DATABASE}.unservable" 2>&1 || true)
-if ! printf '%s' "${REFUSAL}" | grep -qF "which this node cannot decode yet"; then
-  echo "an unservable table was not refused at query time with a precise message: ${REFUSAL}" >&2
+JSON_ROWS=$(rust_reader -Nse "SELECT id, j FROM ${DATABASE}.unservable")
+GO_JSON_ROWS=$(go_tidb -Nse "SELECT id, j FROM ${DATABASE}.unservable")
+if [[ "${JSON_ROWS}" != "${GO_JSON_ROWS}" ]]; then
+  echo "shared JSON reads differ from Go: ${JSON_ROWS} versus ${GO_JSON_ROWS}" >&2
   exit 1
 fi
 if ! stop_rust_node "${READER_PID}" "${RUST_READER_PORT}"; then
-  echo "the Rust refusal reader did not stop" >&2
+  echo "the Rust JSON reader did not stop" >&2
   exit 1
 fi
 READER_PID=
@@ -535,12 +530,12 @@ go_tidb -e "INSERT INTO ${DATABASE}.${MADE_TABLE} VALUES
   (1, -40, 18446744073709551615, 1.5, 'alpha', 'first row', 12.34),
   (2, 70, 7, -0.25, 'beta', 'second row', -9.99)"
 
-start_rust_node "${RUST_READER_PORT}" "${DATABASE}.${MADE_TABLE}" "${READER_LOG}"
+start_rust_node "${RUST_READER_PORT}" "${READER_LOG}"
 READER_PID=$!
 READER_READY=$(await_rust_ready "${READER_PID}" "${READER_LOG}")
 if ! printf '%s\n' "${READER_READY}" | jq -e \
-  --arg table_id "${TABLE_ID}" \
-  '(.tables | length) == 1 and (.tables[0].table_id | tostring) == $table_id' >/dev/null; then
+  '.schema_version > 0' >/dev/null \
+  || [[ "$(rust_reader -Nse "SELECT TIDB_TABLE_ID FROM information_schema.tables WHERE TABLE_SCHEMA='${DATABASE}' AND TABLE_NAME='${MADE_TABLE}'")" != "${TABLE_ID}" ]]; then
   echo "the Rust reader did not load the Rust-created table by name" >&2
   printf '%s\n' "${READER_READY}" >&2
   exit 1
@@ -647,5 +642,5 @@ SchemaVersionKey and one Diff:<ver> per change in a single optimistic 2PC each; 
 Go TiDB reloaded those diffs, restored the table byte-for-byte with SHOW CREATE TABLE, and \
 INSERTed rows a second Rust node loaded by name and read back; the Rust node then DROPped \
 both objects and the Go TiDB confirmed them gone and ran its own DDL afterwards; \
-JSON DDL was admitted and its bounded read refused precisely, while Go wrote and read \
+JSON DDL and reads agreed with Go through the shared catalog, while Go wrote and read \
 the Rust-created table without a primary key; pd_cluster_id=${PD_CLUSTER_ID}"

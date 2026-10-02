@@ -35,6 +35,11 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - `pkg/sessionctx/variable/`
 - `pkg/server/`
 - Typical changes: session lifecycle, statement context behavior, protocol-level behavior.
+- Rust server entrypoint: `rust/crates/tidb-server/src/lib.rs`. TiKV and
+  unistore use `cluster_session_node` for ordinary SQL sessions and the shared
+  catalog lifecycle; storage selection does not select a separate SQL engine.
+  Shared bootstrap, schema reload and shutdown helpers live in
+  `rust/crates/tidb-server/src/real_tikv_node/`.
 
 ### DDL and metadata
 - `pkg/ddl/`

@@ -17,8 +17,8 @@
 //! Every other module in this directory serves `cop_scans: None`, so a plan
 //! that only misbehaves when base-table scans are answered by the pushdown
 //! coprocessor -- `CopScanSource` over the in-process unistore transport --
-//! never fails in-tree. This module builds the same stack `--store unistore
-//! --cluster-session` boots and pins those plans.
+//! never fails in-tree. This module builds the same stack `--store unistore`
+//! boots and pins those plans.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -54,7 +54,6 @@ fn cop_backed_stack_with_stats_lease(
         "tidb-server",
         "--store",
         "unistore",
-        "--cluster-session",
         "--port",
         "0",
         // Parse-time requirement only: the test passes its own user store
@@ -245,34 +244,74 @@ fn session_activation_controls_the_native_commit_protocol() {
 }
 
 #[test]
-fn lightweight_session_activation_inherits_globals_and_obeys_set() {
+fn shared_session_serves_ranges_joins_and_locking_reads_without_table_selection() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(134)).unwrap();
+    for name in ["shared_left", "shared_right", "shared_third"] {
+        rows(
+            &mut session,
+            &format!("CREATE TABLE test.{name} (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)"),
+        );
+    }
+    rows(
+        &mut session,
+        "INSERT INTO test.shared_left VALUES (-7, 10), (0, 20), (1, 30), (42, 40)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.shared_right VALUES (-7, 100), (1, 300), (42, 400)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.shared_third VALUES (1, 3000)",
+    );
+    for (sql, expected) in [
+        ("SELECT id FROM test.shared_left WHERE id != 0 AND v >= 20 ORDER BY id", vec![vec!["1"], vec!["42"]]),
+        ("SELECT id FROM test.shared_left WHERE id < -9223372036854775808", vec![]),
+        ("SELECT l.id, r.v FROM test.shared_left l JOIN test.shared_right r ON l.id=r.id ORDER BY r.v DESC LIMIT 1, 1", vec![vec!["1", "300"]]),
+        ("SELECT l.id, r.v, t.v FROM test.shared_left l JOIN test.shared_right r USING (id) JOIN test.shared_third t USING (id)", vec![vec!["1", "300", "3000"]]),
+        ("SELECT id FROM test.shared_left WHERE id=1 FOR UPDATE", vec![vec!["1"]]),
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), expected, "{sql}");
+    }
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "UPDATE test.shared_left SET v=99 WHERE id=1");
+    rows(&mut session, "INSERT INTO test.shared_left VALUES (2, 88)");
+    rows(&mut session, "DELETE FROM test.shared_left WHERE id=0");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, v FROM test.shared_left WHERE id BETWEEN 0 AND 2 ORDER BY id"
+        )),
+        [["1", "99"], ["2", "88"]],
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, v FROM test.shared_left WHERE id BETWEEN 0 AND 2 ORDER BY id"
+        )),
+        [["0", "20"], ["1", "30"]],
+    );
+}
+
+#[test]
+fn shared_session_activation_inherits_globals_and_obeys_set() {
     if crate::isolate_process_globals() {
         return;
     }
-    let config = crate::node_config::NodeConfig::parse([
-        "tidb-server",
-        "--store",
-        "unistore",
-        "--port",
-        "0",
-        "--auth-file",
-        "/dev/null",
-        "--read-table",
-        "test",
-        "activation_light",
-        "42",
-        "2",
-        "id:1:clustered-pk",
-        "v:2:stored-not-null",
-    ])
-    .unwrap();
-    let (factory, _authority, _admission) =
-        crate::unistore_node::unistore_session_factory(&config).unwrap();
-    let globals = tidb_session::GlobalSysvars::from_cluster_rows([
+    let (stack, users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut ddl = factory.open_session(session_context(133)).unwrap();
+    rows(
+        &mut ddl,
+        "CREATE TABLE test.activation_light (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
+    );
+    let globals = users.global_vars();
+    globals.load_from_cluster([
         ("tidb_enable_async_commit".to_owned(), "OFF".to_owned()),
         ("tidb_enable_1pc".to_owned(), "ON".to_owned()),
     ]);
-    let factory = factory.with_global_vars(globals.clone());
     let mut first = factory.open_session(session_context(131)).unwrap();
     globals.load_from_cluster([("tidb_enable_1pc".to_owned(), "OFF".to_owned())]);
     let mut second = factory.open_session(session_context(132)).unwrap();
@@ -8394,6 +8433,13 @@ fn prepared_select_replans_after_another_session_changes_columns() {
         .factory
         .open_session(session_context(91))
         .expect("DDL session");
+    // Table count must not select a different SQL engine or stop schema refresh.
+    for name in ["schema_anchor_a", "schema_anchor_b", "schema_anchor_c"] {
+        rows(
+            &mut ddl,
+            &format!("CREATE TABLE test.{name} (id INT PRIMARY KEY)"),
+        );
+    }
     // Equality exercises the retained point reader; range exercises a physical SELECT.
     for (table, comparison) in [
         ("prepared_point_schema", "="),

@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 69,
-    "repaired": 17
+    "unresolved": 67,
+    "repaired": 19
   },
   "findings": [
     {
@@ -276,21 +276,21 @@
     },
     {
       "id": "S01",
-      "status": "open",
+      "status": "repaired",
       "group": "Additional configured-server pipeline",
-      "finding": "Optional non-cluster-session mode selects a separate session/optimizer by configured table count. ASTs lower to ReadOnlyScanPlan/ConfiguredOrderedJoinPlan and a separate write planner, bypassing ordinary physical planning. It imposes one/two-table admission and refuses autocommit locking reads.",
-      "rust_evidence": "`rust/crates/tidb-server/src/lib.rs:291`, `:338`; `real_tikv_multi_node.rs:308`, `:575`; `rust/crates/tidb-exec/src/real_tikv_dml.rs:1940`",
-      "go_owner": "Go session ExecuteStmt, planner Optimize, executor compiler and TxnManager are shared across stores. Move these selectable entrypoints and consumers to regular session/storage adapters before deleting their configured planner/dispatcher family. This does not describe the default cluster-session path.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. The optional configured server still selects its one/two-table private read/write planner rather than ordinary session/compiler ownership. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Repaired:** Both TiKV and unistore now always use ClusterSessionFactory and ordinary Session. Removed the one/two-table factories, public entrypoints, static descriptor parser, private TopN cap and decoded transaction overlay. Legacy --cluster-session is a no-op spelling, not another owner.",
+      "rust_evidence": "`rust/crates/tidb-server/src/lib.rs::run_configured_node`; `cluster_session_node/boot.rs`; `unistore_node.rs`; receipt `shared-server-session-repair.md`",
+      "go_owner": "Master cmd/tidb-server storage selection and BootstrapSession, pkg/server TiDBDriver, ordinary session/compiler/TxnManager. Existing lower support APIs do not constitute another selectable server.",
+      "review_basis": "Batch from integration 44be2a9d756 against Go master 93a01d31f6; 97 scoped Rust tests pass, including two red-before startup regressions. Actual unistore server passed stock-client SQL and joined shutdown. No full package acceptance or benchmark claim."
     },
     {
       "id": "S02",
-      "status": "open",
+      "status": "repaired",
       "group": "Additional configured-server pipeline",
-      "finding": "With two loaded tables in that mode, startup discards the catalog snapshot and retains static descriptors; only the one-table branch installs schema/stats reloaders. Peer DDL can leave the two-table route stale.",
-      "rust_evidence": "`rust/crates/tidb-server/src/real_tikv_node/mod.rs:1940`, `:1966`; RealTiKvMultiSessionFactory",
-      "go_owner": "Go Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Fold consumers into that owner with S01; adding another table-count-specific reloader preserves duplication. Peer-DDL reproduction not run.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. The two-table startup branch still drops its initial catalog snapshot and installs no shared catalog reloader, unlike the one-table branch. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Repaired:** Removed the table-count branch that discarded its catalog. Both stores share ordinary catalog/schema-validator/statistics reload ownership. Prepared point/range queries replan after another session changes columns with more than two tables present.",
+      "rust_evidence": "`rust/crates/tidb-server/src/real_tikv_node/schema_following.rs`; `cluster_session_node/boot.rs`; `unistore_node.rs`; `cluster_session_node/tests/unistore_cop.rs`; receipt `shared-server-session-repair.md`",
+      "go_owner": "Master Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Consumers now use that existing shared owner; no additional table-count reloader was added.",
+      "review_basis": "Removed with S01 at integration 44be2a9d756 / master 93a01d31f6. Shared catalog lifecycle, schema-sync, prepared replan and process shutdown tests pass. Live TiKV peer-DDL and topology composition were not rerun."
     },
     {
       "id": "I01",
@@ -323,8 +323,8 @@
       "id": "T01",
       "status": "open",
       "group": "Transaction and routing ownership",
-      "finding": "Generic `BufferMutation::insert` chooses both presume-not-exists and AssertNotExist. The configured INSERT planner does not read a snapshot and its planning interface lacks transaction-mode policy. A lazy optimistic miss requires a different assertion from an eager/pessimistic insert.",
-      "rust_evidence": "`rust/crates/tidb-txnkv/src/transaction/mutation.rs:47`, `rust/crates/tidb-exec/src/real_tikv_dml.rs:402`",
+      "finding": "Generic BufferMutation::insert still chooses both presume-not-exists and AssertNotExist, including system-row callers. The configured SQL server consumer was removed with S01, but the remaining table/index/system-row contracts still need caller-owned uniqueness and transaction-mode assertion policy.",
+      "rust_evidence": "`rust/crates/tidb-txnkv/src/transaction/mutation.rs::BufferMutation::insert`; `rust/crates/tidb-exec/src/system_row_write.rs`; lower `real_tikv_dml.rs` support APIs. S01/S02 receipt records the removed server consumer.",
       "go_owner": "`pkg/table/tables` owns uniqueness checking and assertion selection; the KV buffer transports the flags. Review table, index and system-row callers together; blanket AssertUnknown is also incorrect.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. BufferMutation::insert still couples presume-not-exists to AssertNotExist; the configured INSERT planner has no source transaction-mode policy input. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },

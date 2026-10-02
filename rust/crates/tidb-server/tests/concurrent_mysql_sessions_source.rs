@@ -32,8 +32,12 @@ const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 struct Session;
 
 impl QuerySession for Session {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        panic!("concurrency proof uses authenticated PING and QUIT only")
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        // Go TiDBDriver.OpenCtx installs the handshake collation before commands.
+        assert_eq!(sql, "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'");
+        Ok(QueryResult::new(Box::new(
+            tidb_server::MaterializedResultSetSource::new(Vec::new(), Vec::new()),
+        )))
     }
 }
 
@@ -66,12 +70,6 @@ fn config_with_token_limit(limit: &str) -> NodeConfig {
         "tidb-server",
         "--path",
         "127.0.0.1:2379",
-        "--read-table",
-        "campaign21",
-        "rows",
-        "42",
-        "1",
-        "id:1:clustered-pk",
         "--auth-file",
         "/tmp/campaign21-users.tsv",
         "--max-connections",

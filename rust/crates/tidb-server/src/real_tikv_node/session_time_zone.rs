@@ -18,9 +18,6 @@ impl Default for RealTiKvSessionTimeZone {
 }
 
 impl RealTiKvSessionTimeZone {
-    pub(crate) fn from_zone(zone: tidb_datatype::SessionTimeZone) -> Self {
-        Self { zone }
-    }
     fn from_timeutil(zone: tidb_util::timeutil::TimeZone) -> Self {
         let zone = match zone {
             tidb_util::timeutil::TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
@@ -63,99 +60,10 @@ pub(crate) fn time_zone_sql_error(
     )
 }
 
-/// Routes supported variable assignments through the normal SQL parser and SET owner.
-/// The lightweight table reader has no lifecycle for other session commands.
-pub(crate) fn execute_storage_session_set(
-    session: &mut tidb_session::Session,
-    sql: &str,
-) -> Result<bool, crate::sql_node::SqlQueryError> {
-    let Ok(tidb_ast::Stmt::Session(statement)) = tidb_parser::parse(sql) else {
-        return Ok(false);
-    };
-    let tidb_ast::SessionStmt::Set(set) = statement.as_ref() else {
-        return Ok(false);
-    };
-    // These variables have storage consumers in the lightweight session.
-    // Transaction-control SETs still need its separate lifecycle adapter.
-    use tidb_vardef::tidb_vars::{
-        TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-        TIDB_TXN_ASSERTION_LEVEL,
-    };
-    if !set.assignments.iter().all(|assignment| {
-        [
-            "time_zone",
-            "innodb_lock_wait_timeout",
-            TIDB_ENABLE1_PC,
-            TIDB_ENABLE_ASYNC_COMMIT,
-            TIDB_TXN_ASSERTION_LEVEL,
-            TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
-        ]
-        .iter()
-        .any(|name| assignment.name.eq_ignore_ascii_case(name))
-    }) {
-        return Ok(false);
-    }
-    session.execute_statement(sql).map_err(|error| {
-        let error = error.to_mysql_error();
-        crate::sql_node::SqlQueryError::new(error.code, error.state, error.message)
-    })?;
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn malformed_set_prefix_is_not_a_statement() {
-        let mut session = tidb_session::Session::new();
-        assert!(!execute_storage_session_set(&mut session, "SETtime_zone='UTC'").unwrap());
-        assert!(!execute_storage_session_set(&mut session, "SET SESSIONtime_zone='UTC'").unwrap());
-    }
-
-    #[test]
-    fn storage_settings_use_normal_set_validation_and_expressions() {
-        let mut session = tidb_session::Session::new();
-        assert!(execute_storage_session_set(&mut session,
-            "SET /* comment */ LOCAL time_zone = CONCAT('+', '05:00'), innodb_lock_wait_timeout = 7"
-        ).unwrap());
-        assert_eq!(
-            session.vars().session_time_zone().dag_zone(),
-            (String::new(), 18_000)
-        );
-        assert_eq!(
-            session
-                .vars()
-                .get_system("innodb_lock_wait_timeout")
-                .unwrap(),
-            "7"
-        );
-        let error =
-            execute_storage_session_set(&mut session, "SET time_zone='not-a-zone'").unwrap_err();
-        assert_eq!(error.code, 1298);
-        assert_eq!(session.vars().session_time_zone().dag_zone().1, 18_000);
-    }
-
-    /// Go `ConstructDAGReq` stamps `timeutil.Zone(SessionVars.Location())`,
-    /// and `Zone` returns `loc.String()` as the NAME. An offset zone is
-    /// `time.FixedZone("", ofst)` (`timeutil.ParseTimeZone`'s `+HH:MM`
-    /// branch), whose `String()` is EMPTY -- TiKV then falls back to the
-    /// offset, which is the only half it can use. Measured against Go on this
-    /// branch (`timeutil.Zone(timeutil.ParseTimeZone(s))`, system TZ
-    /// `Asia/Shanghai`):
-    ///
-    /// ```text
-    /// 'Asia/Shanghai' -> name "Asia/Shanghai" offset 28800
-    /// '+05:00'        -> name ""              offset 18000
-    /// '-08:00'        -> name ""              offset -28800
-    /// 'UTC'           -> name "UTC"           offset 0
-    /// '+00:00'        -> name ""              offset 0
-    /// 'SYSTEM'        -> the resolved `timeutil.SystemLocation()` pair
-    /// ```
-    ///
-    /// Note the last two rows: `'+00:00'` is NOT `"UTC"` -- it is an offset
-    /// zone that happens to be zero -- and `SYSTEM` sends the RESOLVED system
-    /// zone's name rather than the spelling `SYSTEM`.
     #[test]
     fn an_offset_zone_stamps_an_empty_dag_name_and_a_named_one_stamps_its_name() {
         let dag = |value: &str| {

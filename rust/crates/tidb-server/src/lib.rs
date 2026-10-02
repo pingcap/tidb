@@ -108,7 +108,6 @@ mod native_password;
 mod node_config;
 mod pipeline_session;
 mod query_metrics;
-mod real_tikv_multi_node;
 mod real_tikv_node;
 pub mod resultset_source;
 pub mod resultset_writer;
@@ -121,7 +120,6 @@ mod shutdown_signal;
 pub mod signal_exit;
 mod sorting_result_set;
 mod sql_node;
-mod transaction_overlay_result_set;
 mod unistore_node;
 pub mod wire_status;
 pub use aggregate_result_set::AggregateResultSetSource;
@@ -179,10 +177,7 @@ pub use native_password::{
     generate_handshake_salt, verify_candidate, NativePasswordHash, NativePasswordHashError,
     HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
-pub use node_config::{
-    ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig,
-    NodeConfigError,
-};
+pub use node_config::{NodeConfig, NodeConfigError};
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
@@ -190,18 +185,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
-pub use real_tikv_multi_node::{
-    run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
-};
-use real_tikv_node::{
-    connect_loaded_catalog_authority, node_accounts, run_bound_node,
-    run_configured_node_with_spill, LoadedCatalogAuthority,
-};
-pub use real_tikv_node::{
-    run_configured_node as run_single_configured_node, run_with_process_shutdown,
-    ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
-};
+pub use real_tikv_node::{run_with_process_shutdown, ProcessReadAuthority, RunConfiguredNodeError};
 pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
@@ -220,21 +204,7 @@ pub use wire_status::{
     SERVER_STATUS_IN_TRANS, SERVER_STATUS_LAST_ROW_SEND,
 };
 
-/// Starts the one configured SQL-node authority for its admitted table shape.
-///
-/// One servable table keeps the established single-reader path. Exactly two
-/// servable tables use the connected same-snapshot join path; no fallback can
-/// silently execute a multi-table query against an in-memory or single-table
-/// authority. A command-line-only shape (`--read-table` with no
-/// `--load-table`) still routes purely from its local table count, with no PD
-/// side effect needed to make that decision. A `--load-table` shape cannot be
-/// routed until its schema is read from the cluster's own catalog, so it
-/// connects once and then serves whichever of the single-reader or
-/// connected-join surfaces its servable table count reaches.
-///
-/// `--cluster-session` leaves that family entirely: it names no table and
-/// serves the cluster's whole loaded catalog through the wide-SQL session
-/// driver ([`cluster_session_node`]), so it is routed first.
+/// Starts the shared SQL session/catalog lifecycle over the selected storage engine.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
@@ -276,77 +246,13 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
         // -- the same node code over the embedded store, no PD dialed.
-        if config.cluster_session {
-            return unistore_node::run_unistore_cluster_session(
-                config,
-                spill_storage,
-                memory_arbitrator.arbitrator(),
-            );
-        }
-        return unistore_node::run_unistore_node(
+        return unistore_node::run_unistore_cluster_session(
             config,
             spill_storage,
             memory_arbitrator.arbitrator(),
         );
     }
-    if config.cluster_session {
-        return run_cluster_session_node_with_spill(
-            config,
-            spill_storage,
-            memory_arbitrator.arbitrator(),
-        );
-    }
-    if !config.load_tables.is_empty() {
-        return match connect_loaded_catalog_authority(&config)
-            .map_err(RunConfiguredNodeError::Engine)?
-        {
-            LoadedCatalogAuthority::Single(factory, authority) => {
-                let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-                run_bound_node(
-                    config,
-                    *factory,
-                    authority,
-                    users,
-                    Arc::clone(&spill_storage),
-                    memory_arbitrator.arbitrator(),
-                    privilege_reloader,
-                )
-            }
-            LoadedCatalogAuthority::Multi(factory, authority) => {
-                let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-                run_bound_multi_node(
-                    config,
-                    *factory,
-                    authority,
-                    users,
-                    Arc::clone(&spill_storage),
-                    memory_arbitrator.arbitrator(),
-                    privilege_reloader,
-                )
-            }
-        };
-    }
-    if command_line_privilege_source_requires_cluster(&config) {
-        // The account load rides the same authority a `--load-table` node
-        // connects; a command-line-only node never connects one, so there is
-        // nothing to read `mysql.*` through.
-        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            "--load-privileges requires at least one --load-table, which is what connects this \
-             node to the cluster whose mysql.* holds the accounts"
-                .to_owned(),
-        )));
-    }
-    match config.read_tables.len() {
-        1 => run_configured_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator()),
-        2 => run_configured_multi_node_with_spill(
-            config,
-            spill_storage,
-            memory_arbitrator.arbitrator(),
-        ),
-        count => Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            format!("configured SQL node requires one or two tables, got {count}"),
-        ))),
-    }
+    run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
 }
 
 struct TempDirCleanup;
@@ -381,10 +287,6 @@ fn initialize_temp_dir(config: &NodeConfig) -> Result<(), RunConfiguredNodeError
             source,
         })
     })
-}
-
-fn command_line_privilege_source_requires_cluster(config: &NodeConfig) -> bool {
-    config.load_privileges && !config.skip_grant_table
 }
 
 static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -531,8 +433,6 @@ mod skip_grant_startup_tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ])
@@ -553,28 +453,5 @@ mod skip_grant_startup_tests {
         assert_eq!(arbitrator.soft_limit(), 3 << 28);
         drop(authority);
         assert!(!arbitrator.stop());
-    }
-
-    #[test]
-    fn skip_grant_table_ignores_a_command_line_privilege_source_without_cluster_tables() {
-        let mut config = NodeConfig::parse([
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--read-table",
-            "test",
-            "rows",
-            "42",
-            "1",
-            "id:1:clustered-pk",
-            "--load-privileges",
-        ])
-        .expect("the command line shape parses");
-        assert!(command_line_privilege_source_requires_cluster(&config));
-        config.skip_grant_table = true;
-        assert!(
-            !command_line_privilege_source_requires_cluster(&config),
-            "recovery mode does not consult the configured privilege source"
-        );
     }
 }

@@ -9,10 +9,8 @@
 # the statement with the SAME driver the in-process tier uses -- scan, WHERE,
 # an expression over columns, ORDER BY.
 #
-# What this proves that `run-realtikv-catalog-load.sh` does not: the SQL is not
-# a bounded single-relation read lowered into a coprocessor request. It is the
-# ordinary session driver, reading rows through `KvTable` over
-# `ClusterTableStorage`.
+# This invokes the ordinary session driver directly, reading rows through
+# `KvTable` over `ClusterTableStorage`. The server uses the same SQL owner.
 #
 # NOTE: this script has NOT been run against a live cluster yet; the playground
 # slot was held by another worker. Run it before treating the live claim as

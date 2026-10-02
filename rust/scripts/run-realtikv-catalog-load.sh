@@ -3,7 +3,7 @@
 # Live proof that the Rust SQL node can read a schema it never created.
 #
 # A real Go tidb-server (the playground's own) creates the database, the table,
-# and the rows. The Rust node is told only the PD address and the table's NAME;
+# and the rows. The Rust node is told only the PD address;
 # it discovers the table ID, the column IDs, and every column type by reading
 # the cluster's stored catalog out of TiKV's `m` meta namespace, then serves a
 # SELECT over the rows the real TiDB inserted.
@@ -350,8 +350,6 @@ GO_VARCHAR_ROWS=$(go_tidb -N -B -e \
 # column IDs, no column types.
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
   --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --load-table "${DATABASE}.${SERVED_TABLE}" \
-  --load-table "${DATABASE}.${VARCHAR_TABLE}" \
   --auth-file "${AUTH_FILE}" --max-connections 4 \
   >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
@@ -363,7 +361,7 @@ for _ in $(seq 1 900); do
     tail -200 "${RUST_LOG}" >&2
     exit 1
   fi
-  READY_JSON=$(grep -F '"event":"sql_node_ready"' "${RUST_LOG}" | tail -1 || true)
+  READY_JSON=$(grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG}" | tail -1 || true)
   if [[ -n "${READY_JSON}" ]]; then
     break
   fi
@@ -375,41 +373,13 @@ if [[ -z "${READY_JSON}" ]]; then
   exit 1
 fi
 
-# The proof that the schema was LOADED: the node published the physical table
-# ID and the exact column shape that only the cluster's stored catalog knows.
-if ! printf '%s\n' "${READY_JSON}" | jq -e \
-  --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
-  --arg database "${DATABASE}" --arg table "${SERVED_TABLE}" \
-  '(.tables | map(select(.database == $database and .table == $table))) as $served
-   | (.tables | length) == 2 and ($served | length) == 1
-   and ($served[0].table_id | tostring) == $table_id
-   and ($served[0].columns | length) == 5
-   and ($served[0].columns[0] | endswith(":clustered-pk"))
-   and ($served[0].columns[0] | startswith("id:"))
-   and ($served[0].columns[1] | endswith(":stored-not-null"))
-   and ($served[0].columns[2] | endswith(":stored-unsigned-bigint-not-null"))
-   and ($served[0].columns[3] | endswith(":stored-double-not-null"))
-   and ($served[0].columns[4] | endswith(":stored-char-not-null:16"))
-   and (.cluster_id | tostring) == $cluster_id' \
-  >/dev/null; then
-  echo "Rust readiness did not carry the cluster-loaded table identity and column shape" >&2
-  printf '%s\n' "${READY_JSON}" >&2
-  exit 1
-fi
-
-# Go rowcodec decodes VARCHAR as a string; it is a supported catalog column.
-if ! printf '%s\n' "${READY_JSON}" | jq -e \
-  --arg database "${DATABASE}" --arg table "${VARCHAR_TABLE}" \
-  --arg table_id "${VARCHAR_TABLE_ID}" \
-  '(.tables | map(select(.database == $database and .table == $table))) as $varchar
-   | (.refused_tables | length) == 0 and ($varchar | length) == 1
-   and ($varchar[0].table_id | tostring) == $table_id
-   and $varchar[0].columns == ["id:1:clustered-pk", "note:2:stored-varchar-not-null:64:false"]' \
-  >/dev/null; then
-  echo "Rust readiness did not carry the supported VARCHAR table metadata" >&2
-  printf '%s\n' "${READY_JSON}" >&2
-  exit 1
-fi
+# Query the shared catalog's physical identities and column metadata through SQL.
+for table in "${SERVED_TABLE}" "${VARCHAR_TABLE}"; do
+  metadata="SELECT TABLE_NAME, TIDB_TABLE_ID FROM information_schema.tables WHERE TABLE_SCHEMA='${DATABASE}' AND TABLE_NAME='${table}'"
+  [[ "$(rust_node -N -B -e "${metadata}")" == "$(go_tidb -N -B -e "${metadata}")" ]]
+  metadata="SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.columns WHERE TABLE_SCHEMA='${DATABASE}' AND TABLE_NAME='${table}' ORDER BY ORDINAL_POSITION"
+  [[ "$(rust_node -N -B -e "${metadata}")" == "$(go_tidb -N -B -e "${metadata}")" ]]
+done
 
 if ! RUST_ROWS=$(rust_node -N -B \
   -e "SELECT id, balance, counter, score, label FROM ${DATABASE}.${SERVED_TABLE}" \

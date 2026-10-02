@@ -19,19 +19,16 @@
 //! everything above `kv.Storage` runs unchanged. This module is that
 //! registration's Rust half: it builds the in-process capability triple
 //! (client, region plane, TSO) from `tidb-unistore`, derives the SAME
-//! generic session factory the production node uses, and serves the same
-//! listener. No PD is dialed, no etcd is watched, and no catalog is loaded:
-//! the served table comes from the command line, which is why the
-//! cluster-catalog flags are refused by name below.
+//! ordinary session/catalog lifecycle used by TiKV, with the embedded store
+//! supplying the same storage capabilities. Bootstrap and catalog reloads run
+//! against that store; no PD or etcd connection is needed.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::cop_paging::DirectUnaryRuntimeConfig;
 use tidb_distsql::DirectUnaryQueryTransport;
-use tidb_exec::real_tikv_read::{
-    ReadSessionAdmissionOwner, RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory,
-};
+use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_txnkv::gc_state::TxnSafePointRefresher;
 use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::region::RegionCache;
@@ -40,16 +37,10 @@ use tidb_txnkv::{SharedReadAuthority, SharedReadOpener};
 use tidb_unistore::client::InProcessClient;
 use tidb_unistore::kv_handler::KvHandler;
 use tidb_unistore::mvcc_store::MvccStore;
-use tidb_unistore::region_loader::{
-    InProcessRegionLoader, IN_PROCESS_CLUSTER_ID, IN_PROCESS_STORE_ID,
-};
+use tidb_unistore::region_loader::{InProcessRegionLoader, IN_PROCESS_STORE_ID};
 use tidb_unistore::tso::InProcessPd;
 
-use crate::node_config::NodeConfig;
-use crate::real_tikv_node::{
-    configured_account_store, configured_table, served_table_descriptor, RealTiKvSessionFactory,
-    RunConfiguredNodeError,
-};
+use crate::real_tikv_node::{configured_account_store, RunConfiguredNodeError};
 use crate::sql_node::ConcurrentSqlNode;
 use crate::SqlQueryError;
 
@@ -120,19 +111,9 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
     }
 }
 
-/// The concrete factory instantiation the unistore node serves through --
-/// same generic shape as production, embedded parameters throughout.
-pub type UnistoreSessionFactory = RealTiKvSessionFactory<
-    InProcessReadSessionFactory,
-    CapabilityTimestampSource<InProcessPd>,
-    InProcessClient,
-    InProcessRegionLoader,
-    InProcessPd,
->;
-
 /// The embedded write stack: one store, its region plane, its TSO, and the
 /// generic transaction opener over all three. Every unistore surface --
-/// single-table and cluster-session alike -- derives from this one build.
+/// bootstrap, reads and writes alike -- derives from this one build.
 type InProcessOpener =
     RealOptimisticTransactionOpener<InProcessClient, InProcessRegionLoader, InProcessPd>;
 
@@ -356,135 +337,6 @@ pub(crate) fn in_process_write_stack() -> Result<
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
     .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
     Ok((read_authority, pd, transaction_opener))
-}
-
-/// Builds the whole in-process node: store, region plane, TSO, transaction
-/// opener, session factory. Fails closed on any flag that needs a cluster
-/// catalog, naming the flag.
-pub(crate) fn unistore_session_factory(
-    config: &NodeConfig,
-) -> Result<
-    (
-        UnistoreSessionFactory,
-        SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
-        ReadSessionAdmissionOwner,
-    ),
-    SqlQueryError,
-> {
-    if !config.load_tables.is_empty() {
-        return Err(SqlQueryError::unknown(
-            "--store unistore serves command-line tables only; --load-table needs a cluster catalog",
-        ));
-    }
-    if config.load_privileges {
-        return Err(SqlQueryError::unknown(
-            "--store unistore has no bootstrapped mysql.* to load; drop --load-privileges",
-        ));
-    }
-    let table = match config.read_tables.as_slice() {
-        [one] => configured_table(one),
-        [] => {
-            return Err(SqlQueryError::unknown(
-                "--store unistore requires exactly one --read-table",
-            ))
-        }
-        _ => {
-            return Err(SqlQueryError::unknown(
-                "multiple configured tables require the multi-relation dispatcher",
-            ))
-        }
-    };
-
-    let (read_authority, pd, transaction_opener) = in_process_write_stack()?;
-
-    let transport_factory = InProcessReadSessionFactory {
-        read_opener: read_authority.opener(),
-        lock_timestamp_source: CapabilityTimestampSource(pd.clone()),
-    };
-    let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
-        table,
-        transport_factory,
-        CapabilityTimestampSource(pd),
-        IN_PROCESS_CLUSTER_ID,
-    );
-    let factory = RealTiKvSessionFactory::from_opener_parts(
-        opener,
-        transaction_opener,
-        read_authority.authority_id(),
-    );
-    Ok((factory, read_authority, admission))
-}
-
-/// Runs the SQL node over the embedded store until shutdown.
-///
-/// Same listener, same session code, same flags as the production node;
-/// only the store underneath differs, which is the entire point.
-pub(crate) fn run_unistore_node(
-    config: NodeConfig,
-    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
-) -> Result<(), RunConfiguredNodeError> {
-    let users = configured_account_store(&config)?;
-    let users = Arc::new(users);
-    let (factory, read_authority, admission) =
-        unistore_session_factory(&config).map_err(RunConfiguredNodeError::Engine)?;
-    let factory = factory
-        .with_global_vars(users.global_vars())
-        .with_spill_storage(spill_storage);
-    let factory = match memory_arbitrator {
-        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
-        None => factory,
-    };
-    let factory = Arc::new(factory);
-    let served_table = factory.served_table().clone();
-    let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
-        .map_err(RunConfiguredNodeError::Node)?;
-    // Go starts the status HTTP server beside the SQL listener
-    // (`cfg.Status.ReportStatus`, default true); `/status` is the first
-    // thing `main_test.go` and every health probe reads. A failed bind
-    // logs and continues, as Go's does.
-    let _status_server = if config.report_status {
-        match crate::http_status::start_status_listener(
-            &config.status_host,
-            config.status_port,
-            node.tracker(),
-            tidb_mysql::runtime_versions().server_version,
-            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
-        ) {
-            Ok(server) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
-                    server.local_addr()
-                );
-                Some(server)
-            }
-            Err(error) => {
-                eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
-    let shutdown_grace_ms = node.shutdown_grace_ms();
-    let shutdown = node.shutdown_handle();
-    let last_signal =
-        crate::shutdown_signal::install(move || shutdown.shutdown()).map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
-        })?;
-    let table_descriptors = served_table_descriptor(&served_table);
-    eprintln!(
-        "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"cluster_id\":{IN_PROCESS_CLUSTER_ID},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
-        config.max_connections,
-        users.len(),
-    );
-    let result = node.run().map_err(RunConfiguredNodeError::Node);
-    // The admission owner and read authority outlive every session by
-    // construction; drop order alone ends the store with the node.
-    drop(admission);
-    drop(read_authority);
-    finish_with_signal_code(result, &last_signal)
 }
 
 /// Runs the wide cluster-session surface over the embedded store.

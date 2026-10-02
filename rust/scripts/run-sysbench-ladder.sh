@@ -349,9 +349,8 @@ for _ in $(seq 1 900); do
     tail -60 "${RUST_LOG_FILE}" | tee -a "${LADDER_LOG}"
     exit 1
   fi
-  # `--cluster-session` publishes its own readiness event name; the configured
-  # read-table mode publishes `sql_node_ready`. Either one means listening.
-  if grep -qE '"event":"(sql_node_ready|cluster_session_node_ready)"' "${RUST_LOG_FILE}"; then
+  # Both storage engines publish readiness after shared-session startup.
+  if grep -qF '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}"; then
     rust_ready=true
     break
   fi

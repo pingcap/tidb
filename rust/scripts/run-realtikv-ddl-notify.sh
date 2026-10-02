@@ -359,7 +359,6 @@ SQL
 
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
   --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --load-table "${DATABASE}.${ANCHOR_TABLE}" \
   --lease-ms "${RUST_LEASE_MS}" \
   --auth-file "${AUTH_FILE}" --max-connections 8 \
   >"${RUST_LOG_FILE}" 2>&1 &
@@ -372,7 +371,7 @@ for _ in $(seq 1 900); do
     tail -200 "${RUST_LOG_FILE}" >&2
     exit 1
   fi
-  READY_JSON=$(grep -F '"event":"sql_node_ready"' "${RUST_LOG_FILE}" | tail -1 || true)
+  READY_JSON=$(grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" | tail -1 || true)
   if [[ -n "${READY_JSON}" ]]; then
     break
   fi
@@ -390,10 +389,8 @@ if grep -qF '"event":"schema_version_notifier_unavailable"' "${RUST_LOG_FILE}" \
   exit 1
 fi
 
-# The catalog-following node. `--load-table` serves one table from a snapshot
-# it never revisits; `--cluster-session` is the shape that owns the reload
-# thread the etcd watch nudges, so it is the one direction 2 measures. Its
-# accounts come from the cluster's own `mysql.user`, written just above.
+# A second node uses the same session/catalog lifecycle. Its accounts come
+# from the cluster's own mysql.user, written just above.
 "${RUST_SERVER}" --path "${PD_ADDR}" \
   --port "${RUST_FOLLOWER_PORT}" \
   --cluster-session --load-privileges \

@@ -350,7 +350,7 @@ for _ in $(seq 1 900); do
     tail -200 "${RUST_LOG}" >&2
     exit 1
   fi
-  READY_JSON=$(grep -E '"event":"(sql_node_ready|cluster_session_node_ready)"' "${RUST_LOG}" | tail -1 || true)
+  READY_JSON=$(grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG}" | tail -1 || true)
   if [[ -n "${READY_JSON}" ]]; then
     break
   fi

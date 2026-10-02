@@ -259,7 +259,7 @@ for _ in $(seq 1 900); do
     tail -60 "${RUST_LOG_FILE}" | tee -a "${CHECK_LOG}"
     exit 1
   fi
-  if grep -qE '"event":"(sql_node_ready|cluster_session_node_ready)"' "${RUST_LOG_FILE}"; then
+  if grep -qF '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}"; then
     rust_ready=true
     break
   fi

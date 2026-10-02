@@ -10,7 +10,7 @@
 #
 #   run-realtikv-catalog-load.sh    the catalog comes from the cluster
 #   run-realtikv-session-driver.sh  the session driver reads cluster storage
-#   run-live-concurrent-auth-*.sh   the MySQL wire front end authenticates
+#   server wire/concurrency tests the MySQL front end authenticates and drains
 #   run-realtikv-optimistic-2pc.sh  writes publish through the 2PC
 #
 # The last steps close the loop the other direction: the GO TiDB reads back the
@@ -206,6 +206,18 @@ JOINED=$(rust_sql -N -B -e "
   SELECT o.id, c.region FROM orders o JOIN customers c ON o.customer = c.id ORDER BY o.id;
 " | tr '\n' ';')
 expect "join" $'1\t1;2\t1;3\t1;4\t1;5\t2;' "${JOINED}"
+
+# Positive SQL coverage migrated from the retired configured-table campaigns.
+# Compare ordinary Go/Rust results; no private planner telemetry is required.
+for query in \
+  "SELECT id FROM conv.orders WHERE id != 3 AND amount >= 55 ORDER BY id" \
+  "SELECT id FROM conv.orders WHERE id < -9223372036854775808" \
+  "SELECT o.id, c.region FROM conv.orders o JOIN conv.customers c ON o.customer=c.id ORDER BY o.amount DESC, o.id LIMIT 1, 3" \
+  "SELECT o.id FROM conv.orders o, conv.customers c WHERE o.customer=c.id ORDER BY o.id LIMIT 0" \
+  "SELECT id FROM conv.orders WHERE id=1 FOR UPDATE"; do
+  expect "shared session: ${query}" \
+    "$(go_sql -N -B -e "${query}")" "$(rust_sql -N -B -e "${query}")"
+done
 
 # An aggregate with GROUP BY over the join.
 GROUPED=$(rust_sql -N -B -e "

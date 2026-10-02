@@ -1,14 +1,15 @@
 # Remaining structural mismatches, reviewed 2026-10-02
 
-The [last full-register review](mdl-mode-review.md) rechecked all 71 previously
-unresolved IDs and repaired D07, leaving 70. The subsequent
-[statistics sync-load repair](syncload-lifecycle-repair.md) closes O19 against
-Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, starting integration
-`2e66b7c28f60ab2083559222735496c0596f1b4a`; native client remains `19a56cc`.
-**69 remain unresolved (61 open, eight partial)**, including 67 live/missing-runtime
-findings and two disabled seeds. Seventeen IDs are repaired. The other 69
-retain the previous review evidence; this is not a fresh exhaustive review or
-complete Go package acceptance.
+The [last full-register review](mdl-mode-review.md) left 70 unresolved IDs.
+The [statistics sync-load repair](syncload-lifecycle-repair.md) closed O19;
+the [shared server session batch](shared-server-session-repair.md) now closes
+S01 and S02 together against Go master
+`93a01d31f6da205ae4bf376825293903a6899fdb`, starting integration
+`44be2a9d756cc6e3003ab87ce0fd38a5d5e6348f`; native client remains `19a56cc`.
+**67 remain unresolved (59 open, eight partial)**, including 65 live/missing-runtime
+findings and two disabled seeds. Nineteen IDs are repaired. Other IDs retain
+previous review evidence; this is not a new exhaustive review or complete Go
+package acceptance.
 
 D11 remains partial. The [allocator follow-up](alter-allocator-repair.md),
 [index follow-up](alter-index-preparation-repair.md) and
@@ -98,9 +99,9 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **86 tracked findings: 69 unresolved (including partial
-repairs) and seventeen repaired ownership/contract findings (C01, D04, D06, D07, E01, E06, N02, N06, O12, O19,
-P01, P02, P04, P05, P07, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
+The register contains **86 tracked findings: 67 unresolved (including partial
+repairs) and nineteen repaired ownership/contract findings (C01, D04, D06, D07, E01, E06, N02, N06, O12, O19,
+P01, P02, P04, P05, P07, S01, S02, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
 see [its package receipt](rtree-protocol-repair.md).
@@ -221,8 +222,8 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
-| S01 | Optional non-cluster-session mode selects a separate session/optimizer by configured table count. ASTs lower to ReadOnlyScanPlan/ConfiguredOrderedJoinPlan and a separate write planner, bypassing ordinary physical planning. It imposes one/two-table admission and refuses autocommit locking reads. | `rust/crates/tidb-server/src/lib.rs:291`, `:338`; `real_tikv_multi_node.rs:308`, `:575`; `rust/crates/tidb-exec/src/real_tikv_dml.rs:1940` | Go session ExecuteStmt, planner Optimize, executor compiler and TxnManager are shared across stores. Move these selectable entrypoints and consumers to regular session/storage adapters before deleting their configured planner/dispatcher family. This does not describe the default cluster-session path. |
-| S02 | With two loaded tables in that mode, startup discards the catalog snapshot and retains static descriptors; only the one-table branch installs schema/stats reloaders. Peer DDL can leave the two-table route stale. | `rust/crates/tidb-server/src/real_tikv_node/mod.rs:1940`, `:1966`; RealTiKvMultiSessionFactory | Go Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Fold consumers into that owner with S01; adding another table-count-specific reloader preserves duplication. Peer-DDL reproduction not run. |
+| S01 | **Repaired:** Both TiKV and unistore now always use ClusterSessionFactory and ordinary Session. Removed the one/two-table factories, public entrypoints, static descriptor parser, private TopN cap and decoded transaction overlay. Legacy --cluster-session is a no-op spelling, not another owner. | `rust/crates/tidb-server/src/lib.rs::run_configured_node`; `cluster_session_node/boot.rs`; `unistore_node.rs`; receipt `shared-server-session-repair.md` | Master cmd/tidb-server storage selection and BootstrapSession, pkg/server TiDBDriver, ordinary session/compiler/TxnManager. Existing lower support APIs do not constitute another selectable server. |
+| S02 | **Repaired:** Removed the table-count branch that discarded its catalog. Both stores share ordinary catalog/schema-validator/statistics reload ownership. Prepared point/range queries replan after another session changes columns with more than two tables present. | `rust/crates/tidb-server/src/real_tikv_node/schema_following.rs`; `cluster_session_node/boot.rs`; `unistore_node.rs`; `cluster_session_node/tests/unistore_cop.rs`; receipt `shared-server-session-repair.md` | Master Domain/InfoSchema synchronization and ordinary session schema/transaction lifecycle. Consumers now use that existing shared owner; no additional table-count reloader was added. |
 
 ## Runtime information-schema providers
 
@@ -236,7 +237,7 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
-| T01 | Generic `BufferMutation::insert` chooses both presume-not-exists and AssertNotExist. The configured INSERT planner does not read a snapshot and its planning interface lacks transaction-mode policy. A lazy optimistic miss requires a different assertion from an eager/pessimistic insert. | `rust/crates/tidb-txnkv/src/transaction/mutation.rs:47`, `rust/crates/tidb-exec/src/real_tikv_dml.rs:402` | `pkg/table/tables` owns uniqueness checking and assertion selection; the KV buffer transports the flags. Review table, index and system-row callers together; blanket AssertUnknown is also incorrect. |
+| T01 | Generic BufferMutation::insert still chooses both presume-not-exists and AssertNotExist, including system-row callers. The configured SQL server consumer was removed with S01, but the remaining table/index/system-row contracts still need caller-owned uniqueness and transaction-mode assertion policy. | `rust/crates/tidb-txnkv/src/transaction/mutation.rs::BufferMutation::insert`; `rust/crates/tidb-exec/src/system_row_write.rs`; lower `real_tikv_dml.rs` support APIs. S01/S02 receipt records the removed server consumer. | `pkg/table/tables` owns uniqueness checking and assertion selection; the KV buffer transports the flags. Review table, index and system-row callers together; blanket AssertUnknown is also incorrect. |
 | T02 | TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. The native region-metadata circuit breaker now delegates to the shared PD package; that removed duplicate is not part of the remaining routing allegation. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs` | Pinned client-go owns storage routing/recovery; TiDB coprocessor code consumes it. Move all consumers before deleting the TiDB owner. Native RetryBackoffer already owns the retry budget and must not be duplicated again. |
 | T03 | Repaired the listed request-type and client-mode lifetime heuristics in this continuation. Native owners now distinguish explicit rollback, initialization rollback, failed-commit cleanup, secondary completion and pipelined TTL work; native transport also observes cancellation. | `rust/crates/tidb-txnkv/src/driver/client_bridge.rs`, client-rust `488bb73`, and `operation-lifetime-repair.md` | Pinned client-go transaction/lock owners select the context. The bridge's heartbeat exception and `transaction_tasks` flag are removed. This closes the listed workaround, not the broader shutdown/foreground-context audit or a complete-package parity claim. |
 

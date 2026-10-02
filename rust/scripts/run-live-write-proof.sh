@@ -108,17 +108,19 @@ mysql_go() {
 }
 
 launch_rust_node() {
+  local ready_before
+  ready_before=$(grep -cF '"event":"cluster_session_node_ready"' "${RUST_LOG}" 2>/dev/null || true)
+  ready_before=${ready_before:-0}
   "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
     --host 127.0.0.1 --port "${RUST_PORT}" \
-    --read-table "${DATABASE}" accounts "${TABLE_ID}" 2 \
-    id:1:clustered-pk balance:2:stored-not-null \
     --auth-file "${AUTH_FILE}" --max-connections 4 >>"${RUST_LOG}" 2>&1 &
   RUST_PID=$!
   for _ in $(seq 1 120); do
     if ! kill -0 "${RUST_PID}" 2>/dev/null; then
       echo "Rust node exited during startup" >&2; tail -40 "${RUST_LOG}" >&2; return 1
     fi
-    endpoint_reachable "127.0.0.1:${RUST_PORT}" && return 0
+    if endpoint_reachable "127.0.0.1:${RUST_PORT}" \
+      && [[ $(grep -cF '"event":"cluster_session_node_ready"' "${RUST_LOG}" || true) -gt "${ready_before}" ]]; then return 0; fi
     sleep 0.5
   done
   echo "Rust node did not become reachable on ${RUST_PORT}" >&2; return 1

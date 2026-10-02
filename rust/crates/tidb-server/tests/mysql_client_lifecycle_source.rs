@@ -1260,7 +1260,10 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(report.commands.stmt_close_commands, 0);
     assert_eq!(
         queries.lock().unwrap().as_slice(),
-        ["select balance as amount, id from campaign20.rows\0"]
+        [
+            "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'",
+            "select balance as amount, id from campaign20.rows\0"
+        ]
     );
     let lifecycle = lifecycle.lock().unwrap();
     assert_eq!(lifecycle.finished, 1);
@@ -1775,8 +1778,8 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
     assert_eq!(tracker.failed(), 0);
 }
 
-/// A session that owns only the transaction state machine, faithfully mirroring
-/// `RealTiKvServerSession`: `control_transaction` delegates to the same
+/// A wire fixture that owns only the transaction state machine:
+/// `control_transaction` delegates to the same
 /// classifier plus [`SessionTransaction`], and a text `execute` reports whether
 /// a transaction is open — proving BEGIN/COMMIT change real session state rather
 /// than merely painting an OK packet.

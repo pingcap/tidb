@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the DDL gate's actual fixture against an explicitly loaded catalog.
+# Exercise the DDL gate's JSON round trip through the shared catalog.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORK_DIR=$(mktemp -d)
@@ -10,10 +10,7 @@ ANCHOR_TABLE=anchor
 RUST_READER_PORT=0
 READER_LOG="$WORK_DIR/reader.log"
 rust_node() {
-  case "$*" in
-    *'SELECT id FROM'*) echo 'unknown table: campaign31.unservable'; return 1 ;;
-    *) return 0 ;;
-  esac
+  return 0
 }
 start_rust_node() {
   printf '%s\n' "$@" > "$WORK_DIR/loaded"
@@ -21,11 +18,10 @@ start_rust_node() {
 }
 await_rust_ready() { return 0; }
 rust_reader() {
-  grep -qx 'campaign31.anchor' "$WORK_DIR/loaded" || return 2
-  grep -qx 'campaign31.unservable' "$WORK_DIR/loaded" || return 2
-  echo 'column j has type JSON, which this node cannot decode yet'
-  return 1
+  [[ $(wc -l < "$WORK_DIR/loaded") -eq 2 ]] || return 2
+  printf '1\t{"v": 7}\n'
 }
+go_tidb() { printf '1\t{"v": 7}\n'; }
 stop_rust_node() {
   kill "$1"
   wait "$1" 2>/dev/null || true
@@ -34,4 +30,4 @@ fixture=$(awk '/^rust_node -Nse \\/ { pending=$0; next } /CREATE TABLE .*\.unser
 [[ -n "$fixture" ]]
 eval "$fixture"
 [[ -f "$WORK_DIR/loaded" ]]
-echo 'PASS: the refusal query targets a node that explicitly loaded the table'
+echo 'PASS: JSON DDL and reads use the shared catalog without table descriptors'

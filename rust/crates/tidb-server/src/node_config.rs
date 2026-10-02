@@ -20,7 +20,7 @@
 //! signed-BIGINT table-column catalogs. Unknown or duplicate options fail startup so an
 //! operator cannot believe an unsupported TiDB setting was applied.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::net::IpAddr;
@@ -29,7 +29,6 @@ use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config::kerneltype;
-use tidb_hack::GoToLower;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
@@ -50,86 +49,9 @@ const DEFAULT_MAX_CONNECTIONS: usize = 0;
 /// `go s.onConn(clientConn)` per accept.
 pub(crate) const MAX_CONNECTION_WORKERS: usize = 256;
 const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
-// The current configured reader only exposes fixed-width signed BIGINT rows.
-// Keep the first in-memory TopN vertical deliberately small until the executor
-// owns spill and general memory-quota semantics.
-const DEFAULT_MAX_TOPN_ROWS: usize = 1_024;
 /// Go's `tidb-server --lease` default: the DDL schema lease. The catalog
 /// reload thread ticks at half of it, matching Go's domain reload loop.
 const DEFAULT_SCHEMA_LEASE_MS: u64 = 45_000;
-const MAX_CONFIGURED_TOPN_ROWS: usize = 65_536;
-// The benchmark gate serves a full 32-table sysbench schema, so the loaded
-// catalog must scale past the original campaign-sized surface. The per-column
-// and per-index caps still bound each table's shape.
-const MAX_CONFIGURED_READ_TABLES: usize = 4_096;
-const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
-const MAX_CONFIGURED_READ_INDEXES: usize = 64;
-
-/// Storage shape of one configured column.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConfiguredReadColumnKind {
-    /// The table's sole signed integer clustered primary key.
-    ClusteredPrimaryKey,
-    /// A signed `BIGINT` stored non-null column decoded from the TiKV row payload.
-    StoredNotNull,
-    /// A signed `INT` (int32-domain) stored non-null column.
-    StoredIntNotNull,
-    /// A `CHAR(max_length)` stored non-null column (utf8mb4 bytes).
-    StoredCharNotNull {
-        /// Declared character length, per the SQL `CHAR(N)` width.
-        max_length: u32,
-    },
-}
-
-/// One atomic configured column descriptor.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfiguredReadColumn {
-    /// Table-visible column name.
-    pub name: String,
-    /// Stable column identifier from TiDB schema metadata.
-    pub id: i64,
-    /// Physical storage role admitted by this milestone.
-    pub kind: ConfiguredReadColumnKind,
-}
-
-/// One configured secondary index descriptor over a single stored column.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfiguredReadIndex {
-    /// Index-visible name, retained for diagnostics.
-    pub name: String,
-    /// Stable index identifier from TiDB schema metadata.
-    pub index_id: i64,
-    /// Stable identifier of the single indexed column.
-    pub column_id: i64,
-    /// Whether the index key enforces uniqueness.
-    pub unique: bool,
-}
-
-/// One table shape admitted by the deployable read-only node.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfiguredReadTable {
-    /// Schema name matched case-insensitively by the bounded planner.
-    pub database: String,
-    /// Table name matched case-insensitively by the bounded planner.
-    pub table: String,
-    /// Physical TiKV table identifier resolved by the fixture/owner.
-    pub table_id: i64,
-    /// Checked columns in configured order.
-    pub columns: Vec<ConfiguredReadColumn>,
-    /// Secondary indexes maintained by the write path, in configured order.
-    /// Empty for a table without any declared index.
-    pub indexes: Vec<ConfiguredReadIndex>,
-}
-
-/// One `<database>.<table>` name whose schema the node reads from the cluster.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LoadedTableName {
-    /// Database name, matched case-insensitively against the stored catalog.
-    pub database: String,
-    /// Table name, matched case-insensitively against the stored catalog.
-    pub table: String,
-}
-
 /// Process-wide memory-controller values from TiDB's `[instance]` section.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryArbitratorConfig {
@@ -217,12 +139,6 @@ pub struct NodeConfig {
     /// Plaintext PD endpoints in configured order. Empty for the in-process
     /// store, which has no control plane to dial.
     pub pd_endpoints: Vec<String>,
-    /// Checked tables exposed to the bounded planner in command-line order.
-    pub read_tables: Vec<ConfiguredReadTable>,
-    /// Tables whose schema is read from the cluster's own stored catalog at
-    /// startup instead of being described on the command line, as
-    /// `<database>.<table>` pairs in command-line order.
-    pub load_tables: Vec<LoadedTableName>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
     /// Immutable native-password account file. Empty when accounts would
@@ -239,23 +155,12 @@ pub struct NodeConfig {
     /// reloader uses, so a grant made afterwards reaches this node without a
     /// restart.
     pub load_privileges: bool,
-    /// Serve the wide-SQL session driver over the whole cluster catalog
-    /// instead of the bounded one- or two-table read surface.
-    ///
-    /// This mode names no table at all: it reads the cluster's entire stored
-    /// catalog at boot, keeps following it, and gives every connection a
-    /// session whose tables read and write through real transactions. It is
-    /// therefore incompatible with `--read-table`/`--load-table`, which
-    /// describe the bounded surface.
-    pub cluster_session: bool,
     /// Go's `Instance.MaxConnections`: the configured cap on simultaneous
     /// client connections. `0` means unlimited, exactly as
     /// `server.go`'s `checkConnectionCount` treats it.
     pub max_connections: usize,
     /// Handshake, idle-command, and socket-write deadline for one connection.
     pub connection_timeout: Duration,
-    /// Process-wide maximum ORDER BY LIMIT heap cardinality for the bounded executor.
-    pub max_topn_rows: usize,
     /// Maximum recent deadlock records retained process-wide.
     pub deadlock_history_capacity: usize,
     /// Whether retryable in-statement deadlocks are retained.
@@ -562,16 +467,13 @@ impl NodeConfig {
         let mut affinity_cpus = None;
         let mut path = None;
         let mut store = None;
-        let mut read_tables = Vec::new();
-        let mut load_tables = Vec::new();
         let mut max_allowed_packet = None;
         let mut auth_file = None;
         let mut max_connections = None;
         let mut connection_timeout_ms = None;
-        let mut max_topn_rows = None;
         let mut schema_lease_ms = None;
         let mut load_privileges = false;
-        let mut cluster_session = false;
+        let mut legacy_cluster_session_option = false;
         let mut ssl_cert = None;
         let mut ssl_key = None;
         let mut no_auto_tls = false;
@@ -619,22 +521,11 @@ impl NodeConfig {
                 continue;
             }
             if argument == "--cluster-session" {
-                if cluster_session {
+                // Compatibility spelling only: both stores use the shared session.
+                if legacy_cluster_session_option {
                     return Err(NodeConfigError::DuplicateOption(argument));
                 }
-                cluster_session = true;
-                continue;
-            }
-            if argument == "--read-table" {
-                read_tables.push(parse_read_table(&mut pending)?);
-                continue;
-            }
-            if argument == "--load-table" {
-                let value = pending
-                    .next()
-                    .filter(|value| !value.starts_with("--"))
-                    .ok_or_else(|| NodeConfigError::MissingValue("--load-table".to_owned()))?;
-                load_tables.push(parse_loaded_table_name(&value)?);
+                legacy_cluster_session_option = true;
                 continue;
             }
             let (option, inline_value) = split_option(&argument)?;
@@ -652,12 +543,6 @@ impl NodeConfig {
                 "--socket" => set_once(&mut socket, option, value)?,
                 "--path" => set_once(&mut path, option, value)?,
                 "--store" => set_once(&mut store, option, value)?,
-                "--read-table" => {
-                    return Err(invalid(
-                        option,
-                        "expected separate <database> <table> <table-id> <column-count> values",
-                    ));
-                }
                 "--max-allowed-packet" => {
                     set_once(&mut max_allowed_packet, option, value)?;
                 }
@@ -666,8 +551,6 @@ impl NodeConfig {
                 "--connection-timeout-ms" => {
                     set_once(&mut connection_timeout_ms, option, value)?;
                 }
-                "--load-table" => load_tables.push(parse_loaded_table_name(&value)?),
-                "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
                 "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
                 "--ssl-cert" => set_once(&mut ssl_cert, option, value)?,
                 "--ssl-key" => set_once(&mut ssl_key, option, value)?,
@@ -803,26 +686,13 @@ impl NodeConfig {
             }
         }
 
-        // Drop-in compatibility for cluster supervisors (tiup cluster,
-        // playground) that start a tikv-backed node with Go's flag surface
-        // only: no --auth-file and no bounded --read-table/--load-table
-        // means the node serves the cluster's whole catalog with accounts
-        // from mysql.* -- exactly what `--cluster-session --load-privileges`
-        // names explicitly. Explicit choices are never overridden.
+        // TiKV uses persisted mysql.* accounts unless another source is explicit.
         let store_is_tikv = store
             .as_deref()
             .map(|value| value.eq_ignore_ascii_case("tikv"))
             .unwrap_or(true);
-        if store_is_tikv
-            && auth_file.is_none()
-            && !load_privileges
-            && !cluster_session
-            && read_tables.is_empty()
-            && load_tables.is_empty()
-            && !file_skip_grant_table
-        {
+        if store_is_tikv && auth_file.is_none() && !load_privileges && !file_skip_grant_table {
             load_privileges = true;
-            cluster_session = true;
         }
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
         // Cluster privilege mode is used behind TiProxy on a private network.
@@ -849,21 +719,6 @@ impl NodeConfig {
             StoreKind::TiKv => parse_pd_endpoints(required(path, "--path")?)?,
             StoreKind::Unistore => Vec::new(),
         };
-        if cluster_session {
-            // The bounded surface is described by naming tables; this one is
-            // the cluster's whole catalog. Accepting both would leave two
-            // answers to "what does this node serve".
-            if !read_tables.is_empty() || !load_tables.is_empty() {
-                return Err(invalid(
-                    "--cluster-session",
-                    "cannot be combined with --read-table or --load-table; this mode serves the \
-                     cluster's whole loaded catalog",
-                ));
-            }
-        } else {
-            validate_read_tables(&read_tables, &load_tables)?;
-            validate_load_tables(&read_tables, &load_tables)?;
-        }
         let max_allowed_packet = match max_allowed_packet {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
@@ -895,13 +750,6 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--connection-timeout-ms", &value)?,
             None => DEFAULT_CONNECTION_TIMEOUT_MS,
         });
-        let max_topn_rows = match max_topn_rows {
-            Some(value) => parse_positive_number("--max-topn-rows", &value)?,
-            None => DEFAULT_MAX_TOPN_ROWS,
-        };
-        if max_topn_rows > MAX_CONFIGURED_TOPN_ROWS {
-            return Err(invalid("--max-topn-rows", "value must not exceed 65536"));
-        }
         // A zero lease would make the reload thread spin; the parser rejects it
         // here so the node never has to.
         let schema_lease = match schema_lease_ms.as_deref() {
@@ -1045,20 +893,16 @@ impl NodeConfig {
             affinity_cpus,
             store_kind,
             pd_endpoints,
-            read_tables,
-            load_tables,
             max_allowed_packet,
             auth_file,
             max_connections,
             connection_timeout,
-            max_topn_rows,
             deadlock_history_capacity,
             deadlock_history_collect_retryable,
             schema_lease,
             run_ddl,
             stats_lease,
             load_privileges,
-            cluster_session,
             ssl_cert: ssl_cert.map(PathBuf::from),
             ssl_key: ssl_key.map(PathBuf::from),
             auto_tls,
@@ -1139,15 +983,10 @@ impl NodeConfig {
     #[must_use]
     pub const fn help_text() -> &'static str {
         "Usage: tidb-server [-V] [--config <tidb.toml>] --path <pd[,pd...]> \
-[--read-table <database> <table> <table-id> <column-count> \
-<name>:<id>:<clustered-pk|stored-not-null> \
-[<name>:<id>:<clustered-pk|stored-not-null> ...]] \
-[--read-table <database> <table> <table-id> <column-count> <column> ...] \
-[--load-table <database>.<table> ...] [--cluster-session] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
-[--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
+[--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \
-[--host <listen-ip>] [-P <port>|--port <port>] [--store tikv] \
+[--host <listen-ip>] [-P <port>|--port <port>] [--store tikv|unistore] \
 [--affinity-cpus <cpu[,cpu...]>] \
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
@@ -1214,121 +1053,6 @@ fn install_process_globals(config: SourceConfig) {
             configured_server
         },
     );
-}
-
-fn parse_read_table<I>(
-    arguments: &mut std::iter::Peekable<I>,
-) -> Result<ConfiguredReadTable, NodeConfigError>
-where
-    I: Iterator<Item = String>,
-{
-    let database = parse_identifier("--read-table", next_read_table_value(arguments)?)?;
-    let table = parse_identifier("--read-table", next_read_table_value(arguments)?)?;
-    let table_id = parse_positive_id("--read-table", next_read_table_value(arguments)?)?;
-    let column_count: usize =
-        parse_positive_number("--read-table", &next_read_table_value(arguments)?)?;
-    if column_count > MAX_CONFIGURED_READ_COLUMNS {
-        return Err(invalid("--read-table", "column count must not exceed 4096"));
-    }
-    let mut columns = Vec::with_capacity(column_count);
-    for _ in 0..column_count {
-        columns.push(parse_column_descriptor(
-            "--read-table",
-            next_read_table_value(arguments)?,
-        )?);
-    }
-    validate_columns("--read-table", &columns)?;
-    let indexes = parse_optional_indexes("--read-table", arguments, &columns)?;
-    Ok(ConfiguredReadTable {
-        database,
-        table,
-        table_id,
-        columns,
-        indexes,
-    })
-}
-
-/// Parses the optional trailing secondary-index section of a `--read-table`.
-///
-/// The section is backward compatible: a table with no index simply omits it,
-/// so parsing stops as soon as the next token is another option or the end of
-/// the arguments. When present, one count precedes that many
-/// `name:index_id:column_id[:unique]` descriptors, each over an existing
-/// column. The optional `unique` suffix is explicit so existing command lines
-/// retain their non-unique meaning.
-fn parse_optional_indexes<I>(
-    option: &str,
-    arguments: &mut std::iter::Peekable<I>,
-    columns: &[ConfiguredReadColumn],
-) -> Result<Vec<ConfiguredReadIndex>, NodeConfigError>
-where
-    I: Iterator<Item = String>,
-{
-    let has_index_section = matches!(arguments.peek(), Some(value) if !value.starts_with('-'));
-    if !has_index_section {
-        return Ok(Vec::new());
-    }
-    let index_count: usize = parse_number(option, &next_read_table_value(arguments)?)?;
-    if index_count > MAX_CONFIGURED_READ_INDEXES {
-        return Err(invalid(option, "index count must not exceed 64"));
-    }
-    let mut indexes = Vec::with_capacity(index_count);
-    for _ in 0..index_count {
-        indexes.push(parse_index_descriptor(
-            option,
-            next_read_table_value(arguments)?,
-            columns,
-        )?);
-    }
-    Ok(indexes)
-}
-
-/// Parses one `name:index_id:column_id[:unique]` index descriptor.
-fn parse_index_descriptor(
-    option: &str,
-    value: String,
-    columns: &[ConfiguredReadColumn],
-) -> Result<ConfiguredReadIndex, NodeConfigError> {
-    let fields: Vec<&str> = value.split(':').collect();
-    let (name, index_id, column_id, unique) = match fields.as_slice() {
-        [name, index_id, column_id] => (*name, *index_id, *column_id, false),
-        [name, index_id, column_id, "unique"] => (*name, *index_id, *column_id, true),
-        _ => {
-            return Err(invalid(
-                option,
-                "index descriptor must be name:index_id:column_id[:unique]",
-            ));
-        }
-    };
-    let name = parse_identifier(option, name.to_owned())?;
-    let index_id = parse_positive_id(option, index_id.to_owned())?;
-    let column_id = parse_positive_id(option, column_id.to_owned())?;
-    if !columns.iter().any(|column| column.id == column_id) {
-        return Err(invalid(
-            option,
-            "index column id does not match any configured column",
-        ));
-    }
-    Ok(ConfiguredReadIndex {
-        name,
-        index_id,
-        column_id,
-        unique,
-    })
-}
-
-fn next_read_table_value<I>(
-    arguments: &mut std::iter::Peekable<I>,
-) -> Result<String, NodeConfigError>
-where
-    I: Iterator<Item = String>,
-{
-    match arguments.peek() {
-        Some(value) if !value.starts_with('-') => Ok(arguments
-            .next()
-            .expect("peeked read-table value must remain available")),
-        _ => Err(NodeConfigError::MissingValue("--read-table".to_owned())),
-    }
 }
 
 fn split_option(argument: &str) -> Result<(&str, Option<&str>), NodeConfigError> {
@@ -1398,189 +1122,6 @@ fn parse_connection_limit(option: &str, value: &str) -> Result<usize, NodeConfig
         .parse::<u32>()
         .map_err(|_| invalid(option, "expected an unsigned 32-bit integer"))?;
     Ok(usize::try_from(parsed).expect("u32 fits usize"))
-}
-
-fn parse_positive_id(option: &str, value: String) -> Result<i64, NodeConfigError> {
-    let parsed = value
-        .parse::<i64>()
-        .map_err(|_| invalid(option, "expected a signed decimal integer"))?;
-    if parsed <= 0 {
-        return Err(invalid(option, "value must be greater than zero"));
-    }
-    Ok(parsed)
-}
-
-fn parse_identifier(option: &str, value: String) -> Result<String, NodeConfigError> {
-    if value.is_empty() || value.as_bytes().contains(&0) {
-        return Err(invalid(
-            option,
-            "identifier must be nonempty and contain no NUL",
-        ));
-    }
-    Ok(value)
-}
-
-fn parse_column_descriptor(
-    option: &str,
-    value: String,
-) -> Result<ConfiguredReadColumn, NodeConfigError> {
-    let mut fields = value.split(':');
-    let (Some(name), Some(id), Some(kind)) = (fields.next(), fields.next(), fields.next()) else {
-        return Err(invalid(
-            option,
-            "expected <name>:<id>:<kind>[:<char-length>]",
-        ));
-    };
-    // Only `stored-char-not-null` carries a fourth `:<char-length>` field.
-    let extra = fields.next();
-    if fields.next().is_some() {
-        return Err(invalid(
-            option,
-            "too many ':'-separated fields in column descriptor",
-        ));
-    }
-    let name = parse_identifier(option, name.to_owned())?;
-    let id = parse_positive_id(option, id.to_owned())?;
-    let kind = match (kind, extra) {
-        ("clustered-pk", None) => ConfiguredReadColumnKind::ClusteredPrimaryKey,
-        ("stored-not-null", None) => ConfiguredReadColumnKind::StoredNotNull,
-        ("stored-int-not-null", None) => ConfiguredReadColumnKind::StoredIntNotNull,
-        ("stored-char-not-null", Some(length)) => ConfiguredReadColumnKind::StoredCharNotNull {
-            max_length: parse_char_length(option, length)?,
-        },
-        ("stored-char-not-null", None) => {
-            return Err(invalid(
-                option,
-                "stored-char-not-null requires a :<char-length> field",
-            ));
-        }
-        (_, Some(_)) => {
-            return Err(invalid(
-                option,
-                "only stored-char-not-null takes a :<char-length> field",
-            ));
-        }
-        _ => {
-            return Err(invalid(
-                option,
-                "column kind must be clustered-pk, stored-not-null, stored-int-not-null, or stored-char-not-null:<N>",
-            ));
-        }
-    };
-    Ok(ConfiguredReadColumn { name, id, kind })
-}
-
-/// Parses and range-checks a `CHAR(N)` length: a positive integer in MySQL's
-/// `1..=255` character-count range.
-fn parse_char_length(option: &str, value: &str) -> Result<u32, NodeConfigError> {
-    let length: u32 = value
-        .parse()
-        .map_err(|_| invalid(option, "char length must be a positive integer"))?;
-    if !(1..=255).contains(&length) {
-        return Err(invalid(option, "char length must be between 1 and 255"));
-    }
-    Ok(length)
-}
-
-fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigError> {
-    if columns.is_empty() {
-        return Err(invalid(option, "at least one column is required"));
-    }
-
-    let mut names = HashSet::with_capacity(columns.len());
-    let mut ids = HashSet::with_capacity(columns.len());
-    let mut clustered_primary_keys = 0;
-    for column in columns {
-        if !names.insert(column.name.go_to_lower()) {
-            return Err(invalid(
-                option,
-                "column names must be unique case-insensitively",
-            ));
-        }
-        if !ids.insert(column.id) {
-            return Err(invalid(option, "column IDs must be unique"));
-        }
-        if column.kind == ConfiguredReadColumnKind::ClusteredPrimaryKey {
-            clustered_primary_keys += 1;
-        }
-    }
-    if clustered_primary_keys != 1 {
-        return Err(invalid(option, "exactly one column must be clustered-pk"));
-    }
-    Ok(())
-}
-
-/// Splits `<database>.<table>`, the only shape `--load-table` accepts: the
-/// cluster's stored catalog supplies everything else about the table.
-fn parse_loaded_table_name(value: &str) -> Result<LoadedTableName, NodeConfigError> {
-    let Some((database, table)) = value.split_once('.') else {
-        return Err(invalid("--load-table", "expected <database>.<table>"));
-    };
-    Ok(LoadedTableName {
-        database: parse_identifier("--load-table", database.to_owned())?,
-        table: parse_identifier("--load-table", table.to_owned())?,
-    })
-}
-
-fn validate_load_tables(
-    read_tables: &[ConfiguredReadTable],
-    load_tables: &[LoadedTableName],
-) -> Result<(), NodeConfigError> {
-    if load_tables.len() > MAX_CONFIGURED_READ_TABLES {
-        return Err(invalid(
-            "--load-table",
-            &format!("loaded table count must not exceed {MAX_CONFIGURED_READ_TABLES}"),
-        ));
-    }
-    let mut names = HashSet::with_capacity(load_tables.len());
-    for loaded in load_tables {
-        let name = (loaded.database.go_to_lower(), loaded.table.go_to_lower());
-        if !names.insert(name.clone()) {
-            return Err(invalid(
-                "--load-table",
-                "loaded table names must be unique case-insensitively",
-            ));
-        }
-        if read_tables
-            .iter()
-            .any(|table| (table.database.go_to_lower(), table.table.go_to_lower()) == name)
-        {
-            return Err(invalid(
-                "--load-table",
-                "a table cannot be both described on the command line and loaded",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_read_tables(
-    tables: &[ConfiguredReadTable],
-    load_tables: &[LoadedTableName],
-) -> Result<(), NodeConfigError> {
-    if tables.is_empty() && load_tables.is_empty() {
-        return Err(NodeConfigError::MissingOption("--read-table"));
-    }
-    if tables.len() > MAX_CONFIGURED_READ_TABLES {
-        return Err(invalid(
-            "--read-table",
-            &format!("configured table count must not exceed {MAX_CONFIGURED_READ_TABLES}"),
-        ));
-    }
-    let mut names = HashSet::with_capacity(tables.len());
-    let mut ids = HashSet::with_capacity(tables.len());
-    for table in tables {
-        if !names.insert((table.database.go_to_lower(), table.table.go_to_lower())) {
-            return Err(invalid(
-                "--read-table",
-                "table names must be unique case-insensitively within each database",
-            ));
-        }
-        if !ids.insert(table.table_id) {
-            return Err(invalid("--read-table", "table IDs must be unique"));
-        }
-    }
-    Ok(())
 }
 
 fn parse_pd_endpoints(value: String) -> Result<Vec<String>, NodeConfigError> {
@@ -1658,10 +1199,7 @@ mod tests {
     use std::fs;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use super::{
-        parse_column_descriptor, parse_stats_lease, ConfiguredReadColumnKind, NodeConfig,
-        NodeConfigError, StatsLease, StoreKind,
-    };
+    use super::{parse_stats_lease, NodeConfig, NodeConfigError, StatsLease, StoreKind};
 
     #[test]
     fn command_token_flag_reaches_effective_config() {
@@ -1721,8 +1259,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ];
@@ -1797,57 +1333,12 @@ mod tests {
         ));
     }
 
-    /// The command-line descriptor field must parse back to the same typed
-    /// kind for every admitted shape, including the CHAR length as a fourth
-    /// `:N` field — the same descriptor strings
-    /// `real_tikv_node::served_table_descriptor` renders for the readiness
-    /// event.
-    #[test]
-    fn column_descriptor_strings_round_trip_through_parse() {
-        let cases = [
-            (
-                "clustered-pk",
-                ConfiguredReadColumnKind::ClusteredPrimaryKey,
-            ),
-            ("stored-not-null", ConfiguredReadColumnKind::StoredNotNull),
-            (
-                "stored-int-not-null",
-                ConfiguredReadColumnKind::StoredIntNotNull,
-            ),
-            (
-                "stored-char-not-null:120",
-                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 120 },
-            ),
-            (
-                "stored-char-not-null:1",
-                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 1 },
-            ),
-            (
-                "stored-char-not-null:255",
-                ConfiguredReadColumnKind::StoredCharNotNull { max_length: 255 },
-            ),
-        ];
-        for (descriptor_name, kind) in cases {
-            let descriptor = format!("c:3:{descriptor_name}");
-            let parsed = parse_column_descriptor("--read-table", descriptor).unwrap();
-            assert_eq!(parsed.name, "c");
-            assert_eq!(parsed.id, 3);
-            assert_eq!(parsed.kind, kind, "round-trip of {kind:?}");
-        }
-    }
-
     /// `--load-privileges` names the cluster's own `mysql.*` as the account
     /// source, which is only meaningful in place of `--auth-file`: two
     /// sources would be two answers to "may this user log in".
     #[test]
     fn the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster() {
-        let base = [
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
-        ];
+        let base = ["tidb-server", "--path", "127.0.0.1:2379"];
 
         let from_cluster = NodeConfig::parse(
             base.iter()
@@ -1877,10 +1368,9 @@ mod tests {
             ),
             Err(NodeConfigError::InvalidValue { .. })
         ));
-        assert!(matches!(
-            NodeConfig::parse(base),
-            Err(NodeConfigError::MissingOption("--auth-file"))
-        ));
+        let ordinary = NodeConfig::parse(base).unwrap();
+        assert!(ordinary.load_privileges);
+        assert!(ordinary.auth_file.as_os_str().is_empty());
     }
 
     /// The only source surface for skip-grant-table is TiDB's security TOML
@@ -1905,8 +1395,6 @@ mod tests {
             &path_text,
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
         ]);
         let combined = NodeConfig::parse([
             "tidb-server",
@@ -1914,8 +1402,6 @@ mod tests {
             &path_text,
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--load-privileges",
             "--auth-file",
             "/definitely/not/read.tsv",
@@ -1952,8 +1438,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ])
@@ -1983,8 +1467,6 @@ mod tests {
             &path_text,
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ])
@@ -2007,8 +1489,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--load-privileges",
         ];
         assert!(
@@ -2046,8 +1526,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
             "--port",
@@ -2092,8 +1570,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ];
@@ -2113,8 +1589,6 @@ mod tests {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--load-table",
-            "test.rows",
             "--auth-file",
             "/tmp/users.tsv",
         ];
@@ -2151,12 +1625,6 @@ mod tests {
             "unistore",
             "--auth-file",
             "/tmp/users.tsv",
-            "--read-table",
-            "test",
-            "t",
-            "100",
-            "1",
-            "a:1:clustered-pk",
         ])
         .expect("unistore parses without --path");
         assert_eq!(config.store_kind, StoreKind::Unistore);
@@ -2171,12 +1639,6 @@ mod tests {
             "tikv",
             "--auth-file",
             "/tmp/users.tsv",
-            "--read-table",
-            "test",
-            "t",
-            "100",
-            "1",
-            "a:1:clustered-pk",
         ])
         .expect_err("tikv without --path refuses");
         assert!(format!("{err}").contains("--path"));
