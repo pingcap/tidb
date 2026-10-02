@@ -12,9 +12,13 @@ register was **74 unresolved (68 open, six partial), eleven repaired, 85 tracked
 full-register source snapshots retain their original pins and dispositions.
 
 The [PD request-ownership repair](../../pd-request-ownership-execplan.md) then
-closes P07 with native `952013279bc64e590f17c18b9c9222fdaf5a3604`. The current
-register is **73 unresolved (67 open, six partial), twelve repaired, 85 tracked**.
-No other finding or full-package acceptance changes with this maintenance.
+closes P07 with native `952013279bc64e590f17c18b9c9222fdaf5a3604`. At that checkpoint the
+register was **73 unresolved (67 open, six partial), twelve repaired, 85 tracked**.
+
+The [projection close-lifetime repair](../../projection-close-ownership-execplan.md)
+closes E06. The current register is **72 unresolved (66 open, six partial),
+thirteen repaired, 85 tracked**. Native client-rust remains current at 19a56cc;
+this executor maintenance grants no complete package acceptance.
 
 Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
@@ -40,8 +44,8 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **85 tracked findings: 73 unresolved (including partial
-repairs) and twelve repaired ownership/contract findings (C01, D04, D06, E01, O12,
+The register contains **85 tracked findings: 72 unresolved (including partial
+repairs) and thirteen repaired ownership/contract findings (C01, D04, D06, E01, E06, O12,
 P01, P02, P04, P05, P07, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
@@ -308,7 +312,7 @@ limits and the complete [scope matrix](structural-coverage.md).
 | I04 | **P2; source-confirmed:** the published catalog is a latest materialized table image, without Go's versioned InfoCache and configurable lazy InfoSchema V2 owner. The schema-cache-size setter updates state but does not govern a production catalog loader/evictor. | `rust/crates/tidb-exec/src/catalog_watch.rs:100`; `cluster_catalog.rs:197`; `rust/crates/tidb-session/src/vars.rs:1226` | `pkg/domain/domain.go::GetSnapshotInfoSchema`, `pkg/infoschema/issyncer/loader.go` and `syncer.go::ChangeSchemaCacheSize` coordinate schema versions, cache capacity and lazy loading. Rust already applies schema diffs; this is not a claim that every reload is full. Memory/large-schema performance is unmeasured. S04 records the separate historical-query consumer. |
 | S03 | **P2; reproduced:** SHOW SESSION_STATES and SET SESSION_STATES reach unsupported dispatch. Variable extraction helpers do not compose the session migration handlers for variables, prepared statements and bindings. | `rust/crates/tidb-session/src/dispatch.rs:3063`; `warnings.rs:116`; `vars.rs:2758`; `subsystem-structure-probe.txt` | `pkg/session/session.go::EncodeStates`/`DecodeStates`, executor show/simple handlers and `pkg/server/driver_tidb.go` prepared-state handlers. Preserve the complete encode/decode/validation lifecycle; a JSON echo or variables-only transfer is insufficient. |
 | S04 | **P2; reproduced:** setting tidb_read_staleness succeeds but the ordinary query owner rejects the next read. Another transaction path uses local commit-history catalog snapshots instead of the shared historical timestamp/schema provider. | `rust/crates/tidb-session/src/dispatch.rs:2158`, `:3141`; `txn.rs:451`; `subsystem-structure-probe.txt` | `pkg/sessiontxn/staleread/provider.go` and Domain snapshot InfoSchema own statement/transaction timestamps, schema and safe-point checks. Migrate all snapshot/staleness entrypoints to that provider. The reproduction is an explicit refusal, not evidence of silently reading newer rows. |
-| E06 | **P2; source-confirmed:** parallel projection Close drops its receiver and closes its child without cancelling/joining queued or running evaluation tasks. Arc ownership keeps memory alive, but work can outlive executor Close. | `rust/crates/tidb-executor/src/projection.rs:296`, `:386` | `pkg/executor/projection.go::Close` closes the finish channel, waits for fetcher/workers and drains resources. Give projection the corresponding cancellation/completion owner for early LIMIT, error, close and reopen. Parallel projection itself exists; memory unsafety or a live race has not been demonstrated. |
+| E06 | **Recorded close-lifetime mismatch repaired:** projection owns cancellation and completion for all submitted evaluations. Close removes queued work, waits for running work and releases buffers before closing the child; errors and recovered panics retain that barrier. Rust drop and reopening also retire the previous execution before child retirement. The detached receiver-drop path is removed. | `rust/crates/tidb-executor/src/projection.rs::ParallelProjection`, `ProjectionExec::close`, `ProjectionExec::open`, `Drop`; `rust/crates/tidb-executor/src/worker_pool.rs::TaskGroup`; [repair receipt](../../projection-close-ownership-execplan.md) | `pkg/executor/projection.go::Close` closes finishCh, waits for fetcher/workers, drains resources, then closes children. Rust retains its shared CPU scheduling while giving each projection the corresponding lifetime owner. This repairs E06, not acceptance of the complete pkg/executor package or a workload-performance claim. |
 | E07 | **P2; partially reproduced:** BRIE syntax exists but its statements have no executor/job queue; BACKUPS/RESTORES return constant empty tables. SHOW BR JOB is refused. The BR helper crate does not supply backup/restore dispatch. | `rust/crates/tidb-session/src/dispatch.rs:3063`; `show_admin.rs:188`; `rust/crates/tidb-br/src/lib.rs`; `subsystem-structure-probe.txt` | `pkg/executor/brie.go::buildBRIE`, `BRIEExec` and its queue own backup/restore tasks, status, cancellation and progress. Migrate the complete owner and dependencies before exposing seed helpers. No backup/restore operation was attempted. |
 | N04 | **P2; source-confirmed:** KILL validates the global ID but only looks up the local process registry. It assumes the enabled-global-kill mode and never dispatches to the decoded remote server. | `rust/crates/tidb-session/src/process_arm.rs:32`, `:145` | `pkg/executor/simple.go::executeKillStmt` honors EnableGlobalKill, compares ServerID and invokes `killRemoteConn` with TiPB Kill. Compose configuration, server discovery, authorization and remote dispatch. O01's server-ID lease is a prerequisite, not a substitute. No two-node KILL test was run. |
 | N05 | **P2; source-confirmed:** status HTTP is a small fixed route dispatcher with read-only settings; the broader administrative handler/configuration owner is absent. | `rust/crates/tidb-server/src/http_status.rs:125`, `:313` | `pkg/server/http_status.go` registers settings mutation, statistics/history, DDL, regions/MVCC, labels/info and other service handlers. Port the handler owner and its shared dependencies as packages, not one invented route at a time. Basic status/metrics/schema responses do exist. No live admin endpoint comparison was run. |

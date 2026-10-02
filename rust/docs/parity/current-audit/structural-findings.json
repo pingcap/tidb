@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 85,
-    "unresolved": 73,
-    "repaired": 12
+    "unresolved": 72,
+    "repaired": 13
   },
   "findings": [
     {
@@ -699,12 +699,12 @@
     },
     {
       "id": "E06",
-      "status": "open",
+      "status": "repaired",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; source-confirmed:** parallel projection Close drops its receiver and closes its child without cancelling/joining queued or running evaluation tasks. Arc ownership keeps memory alive, but work can outlive executor Close.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/projection.rs:296`, `:386`",
-      "go_owner": "`pkg/executor/projection.go::Close` closes the finish channel, waits for fetcher/workers and drains resources. Give projection the corresponding cancellation/completion owner for early LIMIT, error, close and reopen. Parallel projection itself exists; memory unsafety or a live race has not been demonstrated.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Projection close drops the parallel receiver and closes its child; queued evaluation tasks have no joined cancellation. This proves the ownership difference, not memory unsafety. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**Recorded close-lifetime mismatch repaired:** projection owns cancellation and completion for all submitted evaluations. Close removes queued work, waits for running work and releases buffers before closing the child; errors and recovered panics retain that barrier. Rust drop and reopening also retire the previous execution before child retirement. The detached receiver-drop path is removed.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/projection.rs::ParallelProjection`, `ProjectionExec::close`, `ProjectionExec::open`, `Drop`; `rust/crates/tidb-executor/src/worker_pool.rs::TaskGroup`; [repair receipt](../../projection-close-ownership-execplan.md)",
+      "go_owner": "`pkg/executor/projection.go::Close` closes finishCh, waits for fetcher/workers, drains resources, then closes children. Rust retains its shared CPU scheduling while giving each projection the corresponding lifetime owner. This repairs E06, not acceptance of the complete pkg/executor package or a workload-performance claim.",
+      "review_basis": "Repair from integration 6ea3668555, unchanged Go master 93a01d31f6 and native 19a56cc: five original lifecycle cases fail before the fix; six final lifecycle cases and three queue-owner cases pass. All 27 focused/integration cases pass; the broader executor suite has the same 36 baseline failures, with no new failing IDs. See ../../projection-close-ownership-execplan.md. Earlier full-register snapshots remain historical."
     },
     {
       "id": "E07",
@@ -781,10 +781,10 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "P06",
-    "scope": "Existing native explicit shutdown; P06 remains partial",
-    "integration_start": "74f36495062a97c04916031e286a012fdb05e0dc",
+    "id": "E06",
+    "scope": "Existing parallel projection close lifetime; no complete pkg/executor acceptance",
+    "integration_start": "6ea3668555ed095243a5d2f2952919dfdd419f65",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../pd-shutdown-ownership-execplan.md"
+    "receipt": "../../projection-close-ownership-execplan.md"
   }
 }

@@ -2373,3 +2373,21 @@ focused tests establish the boundary without claiming complete PD packages.
 P06 remains partial and the register remains 85 tracked / 73 unresolved /
 12 repaired. Native publication, maintained sync and the two mandatory locked
 server-build gates are recorded in the focused receipt.
+
+## Parallel projection completion ownership (2026-10-02)
+
+
+The [projection close receipt](projection-close-ownership-execplan.md) repairs
+E06 in the existing executor. One task owner removes queued work and joins
+running evaluations before child close, reopen or Rust drop. Result-channel
+errors and recovered panics cannot detach the completion barrier. Other CPU
+pool users retain their scheduling and queued work; no new threads are added.
+
+Five initial lifecycle regressions fail before production edits. All 27 final
+focused/integration cases pass, including six lifecycle and three queue-owner
+cases. The complete executor library still has 36 failures, exactly matching
+an unchanged-commit control; 1,468 cases pass. All-target compilation and root
+lint pass. The focused receipt records the required hook and fresh locked
+server-build publication gates. No full pkg/executor acceptance or workload
+speedup is claimed. Native client-rust remains current at 19a56cc. The current
+register is 85 tracked, 72 unresolved (66 open/six partial), 13 repaired.

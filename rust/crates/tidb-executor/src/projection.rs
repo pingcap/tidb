@@ -15,8 +15,8 @@
 //! `pkg/executor` `ProjectionExec`: evaluates a list of expressions over each
 //! input row to form the output rows.
 //!
-//! This is the serial path: one child batch per `Next`, each input row producing
-//! one output row. Go's parallel projection (worker pool) is deferred.
+//! Serial evaluation runs on the caller. Parallel evaluation circulates bounded
+//! input/output chunks through the shared CPU pool and joins work on close.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use std::collections::{BTreeMap, VecDeque};
@@ -85,6 +85,8 @@ struct ParallelProjectionShared<C> {
 /// order. `numWorkers` input and output chunks circulate, so the fetch runs at
 /// most that far ahead of the parent, as Go's `inputCh`/`outputCh` bound it.
 struct ParallelProjection<C> {
+    // Drop the worker owner before the context, result receiver and buffers.
+    workers: crate::worker_pool::TaskGroup,
     shared: Arc<ParallelProjectionShared<C>>,
     result_tx: Sender<(u64, Result<(Chunk, Chunk), ExecError>)>,
     result_rx: Receiver<(u64, Result<(Chunk, Chunk), ExecError>)>,
@@ -167,6 +169,14 @@ impl<C: Columns> ProjectionExec<C> {
     }
 }
 
+impl<C: Columns> Drop for ProjectionExec<C> {
+    fn drop(&mut self) {
+        // Rust callers can drop without an explicit Close. Retire evaluation
+        // before field destruction can release the child or statement state.
+        self.parallel.take();
+    }
+}
+
 impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
     /// Go `parallelExecute`: the next finished output in fetch order, fetching
     /// and dispatching further child chunks while a free input and output
@@ -177,6 +187,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         if self.parallel.is_none() {
             let (result_tx, result_rx) = std::sync::mpsc::channel();
             self.parallel = Some(ParallelProjection {
+                workers: crate::worker_pool::TaskGroup::new(),
                 shared: Arc::new(ParallelProjectionShared {
                     program: Arc::clone(&self.program),
                     ctx: self.ctx.clone(),
@@ -292,7 +303,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
         pipeline.in_flight += 1;
         let shared = Arc::clone(&pipeline.shared);
         let result_tx = pipeline.result_tx.clone();
-        crate::worker_pool::enqueue_public(Box::new(move || {
+        pipeline.workers.submit(move || {
             let mut input = input;
             let mut output = output;
             let result = crate::sort_util::recover_worker_panic(|| {
@@ -302,9 +313,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
                     .map(|()| (input, output))
                     .map_err(Self::evaluator_error)
             });
-            // A dropped receiver means the projection is already closed.
             let _ = result_tx.send((seq, result));
-        }));
+        });
         Ok(())
     }
 
@@ -340,9 +350,9 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
 
 impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.parallel = None;
         self.child.open()?;
         self.child_chunk.reset();
-        self.parallel = None;
         Ok(())
     }
 
@@ -384,8 +394,8 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        // Go closes `finishCh` and waits for the fetcher and workers; a task
-        // still running here finds its receiver gone and drops its chunks.
+        // Go closes finishCh, waits for workers, drains their resources, then
+        // closes the child. The task owner enforces that order even on error.
         self.parallel = None;
         self.child.close()
     }
@@ -797,6 +807,265 @@ mod tests {
             required.iter().all(|rows| *rows == 37),
             "every child fetch carries the parent's request: {required:?}"
         );
+    }
+
+    #[derive(Default)]
+    struct EvaluationGate {
+        state: std::sync::Mutex<(usize, bool)>,
+        changed: std::sync::Condvar,
+        finished: std::sync::atomic::AtomicBool,
+    }
+
+    impl EvaluationGate {
+        fn wait_for(&self, ready: impl Fn(&(usize, bool)) -> bool) {
+            let (state, timeout) = self
+                .changed
+                .wait_timeout_while(
+                    self.state.lock().unwrap(),
+                    std::time::Duration::from_secs(5),
+                    |state| !ready(state),
+                )
+                .unwrap();
+            assert!(ready(&state), "evaluation gate timed out: {timeout:?}");
+        }
+
+        fn release(&self) {
+            self.state.lock().unwrap().1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum FirstResult {
+        Row,
+        Error,
+        Panic,
+        ChildError,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Retirement {
+        Close,
+        Reopen,
+        Drop,
+    }
+
+    #[derive(Clone)]
+    struct GatedProjectionContext {
+        gate: Arc<EvaluationGate>,
+        first_result: FirstResult,
+    }
+
+    impl Columns for GatedProjectionContext {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn param_value(&self, _order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            let call = {
+                let mut state = self.gate.state.lock().unwrap();
+                state.0 += 1;
+                state.0
+            };
+            self.gate.changed.notify_all();
+            if call == 1 {
+                // Return the first batch only after its sibling is evaluating.
+                self.gate.wait_for(|state| state.0 == 2);
+                match self.first_result {
+                    FirstResult::Error => {
+                        return Err(tidb_expr::EvalError::Unsupported("evaluation failed"))
+                    }
+                    FirstResult::Panic => panic!("projection evaluation panic"),
+                    FirstResult::Row | FirstResult::ChildError => {}
+                }
+            } else {
+                self.gate.wait_for(|state| state.1);
+                self.gate
+                    .finished
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            Ok(Datum::Int(7))
+        }
+    }
+
+    impl ProjectionContext for GatedProjectionContext {
+        fn parallel_next_bridge(
+            exec: &mut ProjectionExec<Self>,
+            req: &mut Chunk,
+        ) -> Option<Result<(), ExecError>> {
+            Some(exec.parallel_next(req))
+        }
+    }
+
+    struct LifetimeSource {
+        inner: Box<NumberSource>,
+        gate: Arc<EvaluationGate>,
+        retired: Sender<bool>,
+        opened: bool,
+        fail_fetch: bool,
+    }
+
+    impl LifetimeSource {
+        fn record_retirement(&self) {
+            let _ = self.retired.send(
+                self.gate
+                    .finished
+                    .load(std::sync::atomic::Ordering::Acquire),
+            );
+        }
+    }
+
+    impl Drop for LifetimeSource {
+        fn drop(&mut self) {
+            self.record_retirement();
+        }
+    }
+
+    impl Executor for LifetimeSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            if self.opened {
+                self.record_retirement();
+            }
+            self.opened = true;
+            self.inner.open()
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            if self.fail_fetch && self.inner.next == 2 {
+                return Err(ExecError::internal("child fetch error"));
+            }
+            if self.inner.next == 1 {
+                // Establish which batch enters the evaluator first, without
+                // depending on the global CPU pool's scheduling order.
+                self.gate.wait_for(|state| state.0 >= 1);
+            }
+            self.inner.next(req)
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            self.record_retirement();
+            Err(ExecError::internal("child close error"))
+        }
+        fn schema(&self) -> &Schema {
+            self.inner.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.inner.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.inner.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.inner.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.inner.new_chunk()
+        }
+    }
+
+    fn projection_lifetime_case(first_result: FirstResult, action: Retirement) {
+        // These gates deliberately block CPU workers. Keep the cases serial
+        // even on a two-core host so one case cannot starve another's sibling.
+        static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _case = CASE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let gate = Arc::new(EvaluationGate::default());
+        let (retired, observed) = std::sync::mpsc::channel();
+        let (inner, _) = NumberSource::new(2, 1);
+        let source = LifetimeSource {
+            inner,
+            gate: Arc::clone(&gate),
+            retired,
+            opened: false,
+            fail_fetch: first_result == FirstResult::ChildError,
+        };
+        let mut projection = ProjectionExec::new(
+            ExecutorMeta::new(Schema::new(vec![Column::new(3, long())]), 8, 1, 1024),
+            vec![parameter(0)],
+            Box::new(source),
+            GatedProjectionContext {
+                gate: Arc::clone(&gate),
+                first_result,
+            },
+        )
+        .with_workers(2);
+        projection.open().unwrap();
+        let mut chunk = projection.new_chunk();
+        let result = projection.next(&mut chunk);
+        assert_eq!(
+            result.is_err(),
+            matches!(first_result, FirstResult::Error | FirstResult::Panic)
+        );
+        if result.is_ok() {
+            assert_eq!(chunk.get_row(0).get_int64(0), 7);
+        }
+        if first_result == FirstResult::ChildError {
+            assert!(format!("{:?}", projection.next(&mut chunk).unwrap_err())
+                .contains("child fetch error"));
+        }
+        let (started, starting) = std::sync::mpsc::channel();
+        let retirement =
+            std::thread::spawn(move || {
+                started.send(()).unwrap();
+                match action {
+                    Retirement::Close => assert!(format!("{:?}", projection.close().unwrap_err())
+                        .contains("child close error")),
+                    Retirement::Reopen => projection.open().unwrap(),
+                    Retirement::Drop => {
+                        drop(projection);
+                        return None;
+                    }
+                }
+                Some(projection)
+            });
+        starting.recv().unwrap();
+        let early = observed.recv_timeout(std::time::Duration::from_millis(200));
+        // Always unblock and join before asserting, including on the old code.
+        gate.release();
+        let mut projection = retirement.join().unwrap();
+        let released = early.unwrap_or_else(|_| observed.recv().unwrap());
+        assert!(
+            released,
+            "child retired while projection evaluation was still running"
+        );
+        if action == Retirement::Reopen {
+            let projection = projection.as_mut().unwrap();
+            for expected_rows in [1, 1, 0] {
+                projection.next(&mut chunk).unwrap();
+                assert_eq!(chunk.num_rows(), expected_rows);
+            }
+            assert!(projection.close().is_err());
+        }
+        drop(projection);
+    }
+
+    #[test]
+    fn projection_lifetime_early_close_joins_before_child_close() {
+        projection_lifetime_case(FirstResult::Row, Retirement::Close);
+    }
+
+    #[test]
+    fn projection_lifetime_error_close_joins_before_child_close() {
+        projection_lifetime_case(FirstResult::Error, Retirement::Close);
+    }
+
+    #[test]
+    fn projection_lifetime_panic_close_joins_before_child_close() {
+        projection_lifetime_case(FirstResult::Panic, Retirement::Close);
+    }
+
+    #[test]
+    fn projection_lifetime_reopen_joins_before_child_open() {
+        projection_lifetime_case(FirstResult::Row, Retirement::Reopen);
+    }
+
+    #[test]
+    fn projection_lifetime_drop_joins_before_child_drop() {
+        projection_lifetime_case(FirstResult::Row, Retirement::Drop);
+    }
+
+    #[test]
+    fn projection_lifetime_child_error_joins_before_child_close() {
+        projection_lifetime_case(FirstResult::ChildError, Retirement::Close);
     }
 
     #[test]

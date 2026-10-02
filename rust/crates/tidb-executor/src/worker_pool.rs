@@ -202,7 +202,95 @@ impl Drop for LanePool {
 }
 
 /// One queued unit of work.
-struct Task(Box<dyn FnOnce() + Send>);
+struct Task {
+    run: Box<dyn FnOnce() + Send>,
+    group: Option<Arc<AtomicBool>>,
+}
+
+/// Go's finish channel and worker wait group for one executor on the shared
+/// CPU pool. Drop cancels queued work and joins evaluations already running.
+/// The result channel is independent: receiving an error does not lose joins.
+pub(crate) struct TaskGroup {
+    pool: Arc<Shared>,
+    cancelled: Arc<AtomicBool>,
+    completion: Option<std::sync::mpsc::Sender<()>>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl TaskGroup {
+    pub(crate) fn new() -> Self {
+        Self::on_pool(Arc::clone(shared()))
+    }
+
+    fn on_pool(pool: Arc<Shared>) -> Self {
+        let (completion, done) = std::sync::mpsc::channel();
+        Self {
+            pool,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            completion: Some(completion),
+            done,
+        }
+    }
+
+    pub(crate) fn submit(&self, task: impl FnOnce() + Send + 'static) {
+        let completion = self.completion.as_ref().expect("live task group").clone();
+        let cancelled = Arc::clone(&self.cancelled);
+        enqueue_on(
+            &self.pool,
+            Task {
+                run: Box::new(move || {
+                    // This sender is dropped after all task captures, including
+                    // on unwind. Channel EOF is the completion barrier.
+                    let _completion = completion;
+                    if cancelled.load(Ordering::Acquire) {
+                        drop(task);
+                    } else {
+                        task();
+                    }
+                }),
+                group: Some(Arc::clone(&self.cancelled)),
+            },
+        );
+    }
+}
+
+impl Drop for TaskGroup {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        // A drained executor has no task holding its identity. Avoid touching
+        // the shared queue on this usual close path. Rust's exclusive Drop
+        // prevents new submissions after this observation.
+        if Arc::strong_count(&self.cancelled) == 1 {
+            return;
+        }
+        let mut cancelled = Vec::new();
+        {
+            let mut state = self
+                .pool
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Remove only this owner's queued work, preserving other owners'
+            // order. A task already popped by a worker retains its join token.
+            for _ in 0..state.pending.len() {
+                let task = state.pending.pop_front().expect("queued task");
+                if task
+                    .group
+                    .as_ref()
+                    .is_some_and(|group| Arc::ptr_eq(group, &self.cancelled))
+                {
+                    cancelled.push(task);
+                } else {
+                    state.pending.push_back(task);
+                }
+            }
+        }
+        // Captures can own other executors; their Drop may acquire this queue.
+        drop(cancelled);
+        self.completion.take();
+        let _ = self.done.recv();
+    }
+}
 
 #[derive(Default)]
 struct QueueState {
@@ -257,7 +345,7 @@ fn worker_loop(shared: Arc<Shared>) {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         };
-        (task.0)();
+        (task.run)();
     }
 }
 
@@ -267,13 +355,22 @@ pub fn enqueue_public(task: Box<dyn FnOnce() + Send>) {
 }
 
 fn enqueue(task: Box<dyn FnOnce() + Send>) {
-    let shared = shared();
+    enqueue_on(
+        shared(),
+        Task {
+            run: task,
+            group: None,
+        },
+    );
+}
+
+fn enqueue_on(shared: &Shared, task: Task) {
     {
         let mut state = shared
             .queue
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.pending.push_back(Task(task));
+        state.pending.push_back(task);
     }
     shared.signal.notify_one();
 }
@@ -426,6 +523,134 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct QueuedCapture {
+        pool: Arc<Shared>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for QueuedCapture {
+        fn drop(&mut self) {
+            assert!(
+                self.pool.queue.try_lock().is_ok(),
+                "capture dropped under queue lock"
+            );
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn task_group_cancels_only_its_queued_work_and_releases_captures() {
+        // An isolated queue makes cancellation deterministic even when the
+        // process pool has idle workers. No worker is needed for retired work.
+        let pool = Arc::new(Shared::default());
+        let group = TaskGroup::on_pool(Arc::clone(&pool));
+        let other = TaskGroup::on_pool(Arc::clone(&pool));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let capture = QueuedCapture {
+            pool: Arc::clone(&pool),
+            dropped: Arc::clone(&dropped),
+        };
+        group.submit(move || {
+            drop(capture);
+            panic!("cancelled work must not run");
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        for i in 0..3 {
+            let tx = tx.clone();
+            if i == 1 {
+                other.submit(move || tx.send(i).unwrap());
+            } else {
+                enqueue_on(
+                    &pool,
+                    Task {
+                        run: Box::new(move || tx.send(i).unwrap()),
+                        group: None,
+                    },
+                );
+            }
+        }
+        drop(group);
+        assert!(dropped.load(Ordering::Acquire));
+        let pending = std::mem::take(&mut pool.queue.lock().unwrap().pending);
+        assert_eq!(pending.len(), 3);
+        for task in pending {
+            (task.run)();
+        }
+        drop(other);
+        drop(tx);
+        assert_eq!(rx.into_iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn task_group_waits_for_running_work_and_unwinding_captures() {
+        for panic in [false, true] {
+            let pool = Arc::new(Shared::default());
+            let group = TaskGroup::on_pool(Arc::clone(&pool));
+            let dropped = Arc::new(AtomicBool::new(false));
+            let capture = QueuedCapture {
+                pool: Arc::clone(&pool),
+                dropped: Arc::clone(&dropped),
+            };
+            let (started, starting) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel();
+            group.submit(move || {
+                let _capture = capture;
+                started.send(()).unwrap();
+                released.recv().unwrap();
+                assert!(!panic, "task panic");
+            });
+            let task = pool.queue.lock().unwrap().pending.pop_front().unwrap();
+            let worker = std::thread::spawn(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(task.run))
+            });
+            starting.recv().unwrap();
+            let (closing, closing_rx) = std::sync::mpsc::channel();
+            let (closed, closed_rx) = std::sync::mpsc::channel();
+            let closer = std::thread::spawn(move || {
+                closing.send(()).unwrap();
+                drop(group);
+                closed.send(()).unwrap();
+            });
+            closing_rx.recv().unwrap();
+            let early = closed_rx.recv_timeout(std::time::Duration::from_millis(100));
+            release.send(()).unwrap();
+            closed_rx.recv().unwrap();
+            let captures_released_at_close = dropped.load(Ordering::Acquire);
+            assert_eq!(worker.join().unwrap().is_err(), panic);
+            closer.join().unwrap();
+            assert!(early.is_err(), "close returned before the task completed");
+            assert!(captures_released_at_close);
+        }
+    }
+
+    #[test]
+    fn task_group_cancels_work_claimed_but_not_started() {
+        let pool = Arc::new(Shared::default());
+        let group = TaskGroup::on_pool(Arc::clone(&pool));
+        let cancelled = Arc::clone(&group.cancelled);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let capture = QueuedCapture {
+            pool: Arc::clone(&pool),
+            dropped: Arc::clone(&dropped),
+        };
+        group.submit(move || {
+            drop(capture);
+            panic!("work claimed before close must still check cancellation");
+        });
+        let task = pool.queue.lock().unwrap().pending.pop_front().unwrap();
+        let worker = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !cancelled.load(Ordering::Acquire) {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            (task.run)();
+        });
+        drop(group);
+        assert!(dropped.load(Ordering::Acquire));
+        worker.join().unwrap();
+    }
 
     #[test]
     fn submit_returns_the_task_value() {
