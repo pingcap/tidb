@@ -567,10 +567,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Combined TopN + histogram merge.
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
+			unique := statistics.IsUniqueBySchema(a.globalTableInfo, isIndex, a.histIDs[item.idx])
 			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
 				stmtCtx, killer,
 				wrapper.AllTopN, wrapper.AllHg,
-				uint32(opts[ast.AnalyzeOptNumTopN]),
+				globalNumTopN(opts, unique),
 				int64(opts[ast.AnalyzeOptNumBuckets]),
 				isIndex,
 			)

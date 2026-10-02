@@ -326,10 +326,11 @@ func blockingMergePartitionStats2GlobalStats(
 		// Combined TopN + histogram merge that extracts
 		// histogram upper-bound Repeat counts into the TopN counter.
 		killer := &sc.GetSessionVars().SQLKiller
+		unique := statistics.IsUniqueBySchema(globalTableInfo, isIndex, histIDs[i])
 		globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
 			sc.GetSessionVars().StmtCtx, killer,
 			allTopN[i], allHg[i],
-			uint32(opts[ast.AnalyzeOptNumTopN]),
+			globalNumTopN(opts, unique),
 			int64(opts[ast.AnalyzeOptNumBuckets]),
 			isIndex,
 		)
@@ -349,6 +350,16 @@ func blockingMergePartitionStats2GlobalStats(
 		allHg[i] = nil // Release for GC.
 	}
 	return
+}
+
+// globalNumTopN returns the global TopN size. Schema-unique values occur once
+// each, so they get no TopN, as in ANALYZE; otherwise the merge would promote
+// arbitrary histogram upper bounds that occur once.
+func globalNumTopN(opts map[ast.AnalyzeOptionType]uint64, unique bool) uint32 {
+	if unique {
+		return 0
+	}
+	return uint32(opts[ast.AnalyzeOptNumTopN])
 }
 
 // uniqueGlobalNDV sums partition NDVs for a column or index whose non-NULL

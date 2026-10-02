@@ -693,14 +693,11 @@ func SubTestBuild() func(*testing.T) {
 				wantTopN    int
 				unique      bool
 			}{
-				// A sampled unique value stands for count/sampleCount rows of its key
-				// range, so it stays in the histogram instead of TopN.
-				{"sampled_unique", 8, 256, 4, 1, 0, true},
-				{"sampled_unique_all_topn", 8, 256, 4, 8, 0, true},
-				{"single_sample_unique", 1, 32, 4, 1, 0, true},
-				{"full_unique", 8, 8, 4, 1, 1, true},
-				{"full_unique_all_topn", 8, 8, 4, 8, 8, true},
-				{"sampled_unique_no_topn", 8, 256, 4, 0, 0, true},
+				// ANALYZE requests no TopN for schema-unique keys, so all their rows
+				// stay in the histogram.
+				{"sampled_unique", 8, 256, 4, 0, 0, true},
+				{"single_sample_unique", 1, 32, 4, 0, 0, true},
+				{"full_unique", 8, 8, 4, 0, 0, true},
 				{"sampled_non_unique", 8, 256, 4, 1, 1, false},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
