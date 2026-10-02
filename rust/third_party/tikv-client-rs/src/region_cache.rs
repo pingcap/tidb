@@ -3176,24 +3176,24 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .collect::<Vec<_>>();
         for (store_id, address, liveness, health_status) in stores {
             crate::stats::increment_health_feedback_operation(store_id, "tick");
-            if health_status.needs_active_feedback(now)
-                && liveness == StoreLiveness::Reachable
-                && !address.is_empty()
-            {
-                if let Some(callback) = callback.as_ref() {
-                    crate::stats::increment_health_feedback_operation(store_id, "active_update");
-                    if let Err(error) = callback(address).await {
-                        crate::stats::increment_health_feedback_operation(
-                            store_id,
-                            "active_update_err",
-                        );
-                        debug!(
-                            "active health feedback request failed for store {store_id}: {error}"
-                        );
+            health_status
+                .tick_with_feedback(now, async {
+                    if liveness == StoreLiveness::Reachable && !address.is_empty() {
+                        if let Some(callback) = callback.as_ref() {
+                            crate::stats::increment_health_feedback_operation(store_id, "active_update");
+                            if let Err(error) = callback(address).await {
+                                crate::stats::increment_health_feedback_operation(
+                                    store_id,
+                                    "active_update_err",
+                                );
+                                debug!(
+                                    "active health feedback request failed for store {store_id}: {error}"
+                                );
+                            }
+                        }
                     }
-                }
-            }
-            health_status.tick(now);
+                })
+                .await;
             Self::publish_store_health_metrics(store_id, &health_status);
         }
     }
@@ -5225,6 +5225,16 @@ mod test {
             Box::pin(async move {
                 assert_eq!(address, "store-9");
                 requests.fetch_add(1, SeqCst);
+                assert_eq!(
+                    cache
+                        .upgrade()
+                        .unwrap()
+                        .store_health(9)
+                        .unwrap()
+                        .client_side_slow_score,
+                    1,
+                    "Go updates the client score before requesting feedback"
+                );
                 cache.upgrade().unwrap().record_health_feedback_at(
                     &crate::proto::kvrpcpb::HealthFeedback {
                         store_id: 9,
@@ -5249,6 +5259,66 @@ mod test {
             .await;
         assert_eq!(requests.load(SeqCst), 1);
         assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 95);
+
+        assert!(cache.set_store_liveness(9, StoreLiveness::Reachable));
+        let callback_requests = requests.clone();
+        cache.set_health_feedback_callback(Arc::new(move |_| {
+            callback_requests.fetch_add(1, SeqCst);
+            Box::pin(async { Err(Error::StringError("feedback unavailable".to_owned())) })
+        }));
+        cache
+            .tick_store_health_with_callback(start + Duration::from_secs(45))
+            .await;
+        assert_eq!(requests.load(SeqCst), 2);
+        assert_eq!(cache.store_health(9).unwrap().tikv_side_slow_score, 90);
+    }
+
+    #[test]
+    fn health_tick_requests_feedback_during_concurrent_update() {
+        let cache = Arc::new(RegionCache::new(Arc::new(MockRetryClient::default())));
+        let store = CachedStore::new(metapb::Store {
+            id: 9,
+            address: "store-9".to_owned(),
+            ..Default::default()
+        });
+        let health = store.health_status.clone();
+        cache.store_cache.write().unwrap().insert(9, store);
+        let start = std::time::Instant::now();
+        health.record_tikv_slow_score(80, start);
+        let requests = Arc::new(AtomicU64::new(0));
+        let callback_requests = requests.clone();
+        let callback_health = health.clone();
+        cache.set_health_feedback_callback(Arc::new(move |address| {
+            assert_eq!(address, "store-9");
+            callback_requests.fetch_add(1, SeqCst);
+            callback_health.record_tikv_slow_score(100, start + Duration::from_secs(15));
+            Box::pin(async { Ok(()) })
+        }));
+
+        let update = health.lock_feedback_for_test();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            futures::executor::block_on(
+                cache.tick_store_health_with_callback(start + Duration::from_secs(15)),
+            );
+            finished_tx.send(()).unwrap();
+        });
+        let finished = finished_rx.recv_timeout(Duration::from_secs(1));
+        // Release even on failure so a blocking implementation cannot hang the test.
+        drop(update);
+        worker.join().unwrap();
+        assert!(
+            finished.is_ok(),
+            "the cache health tick must not wait for a writer"
+        );
+        assert_eq!(
+            requests.load(SeqCst),
+            1,
+            "a contended writer must not suppress the RPC"
+        );
+        assert_eq!(health.detail().tikv_side_slow_score, 80);
+        health.tick(start + Duration::from_secs(15));
+        assert_eq!(health.detail().tikv_side_slow_score, 75);
     }
 
     async fn source_store_reresolve_updates_metadata_without_resetting_runtime_state() -> Result<()>

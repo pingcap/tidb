@@ -2320,3 +2320,21 @@ All 187 scoped tests, the affected all-target check, lint and audit consistency
 pass. D05 stays partial and counts remain 85 tracked, 75 unresolved, ten repaired.
 Other producers, action effects, reset/retry/metric policy and whole-package
 acceptance remain open; no benchmark or distributed interoperability is claimed.
+
+### Atomic store-health publication, 2026-10-02
+
+The [health-publication continuation](health-feedback-publication-execplan.md)
+repairs recorded T04 in the existing native owner and synchronizes published
+client-rust c97dafb89883312deb526dc8d8f36cc7f7001f47. Presence/time no longer live
+behind the feedback mutex; only writers contend. The native owner performs
+client-score update before the asynchronous callback and rechecks freshness
+before decay. Three regressions fail with the prior implementation and pass
+after repair; original Go health cases and a contention oracle pass with -race.
+
+All 1,524 native library cases pass (two ignored). Native strict library Clippy
+passes; all-target Clippy exposes two existing unrelated test warnings. TiDB
+health/topology/recovery/distsql and locked all-target checks pass. The focused
+receipt records lint and required locked publication builds. T04 is repaired;
+T02 and whole internal/locate acceptance remain open. The current register is
+85 tracked, 74 unresolved (68 open, six partial), eleven repaired. Earlier
+review snapshots preserve their historical source hashes and counts.

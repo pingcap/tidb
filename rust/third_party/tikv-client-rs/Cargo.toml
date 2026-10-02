@@ -34,6 +34,7 @@ members = [
 ]
 
 [dependencies]
+arc-swap = "1.9.2"
 async-recursion = "0.3"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }

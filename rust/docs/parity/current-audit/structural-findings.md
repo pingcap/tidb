@@ -1,9 +1,16 @@
 # Remaining structural mismatches, reviewed 2026-10-02
 
-Latest follow-up compared integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0` with freshly fetched
+The full-register review compared integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0` with freshly fetched
 TiDB master `93a01d31f6da205ae4bf376825293903a6899fdb`. Both implementation
-branches were already current; native client-rust is `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
-The [current follow-up](worker-followup-structural-review.md) rechecks all 75 unresolved IDs after the shared worker repairs: 73 concern live behavior or missing runtime integration; D09/D10 are disabled seeds. Six SQL/wire diagnostics and a controlled cache regression supply fresh observations for 14 IDs; 59 others retain source/caller evidence. No entire unresolved ID is disproved or closed by this review.
+branches were already current; native client-rust was `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
+That [full-register follow-up](worker-followup-structural-review.md) rechecked all 75 then-unresolved IDs after the shared worker repairs: 73 concerned live behavior or missing runtime integration; D09/D10 were disabled seeds. Six SQL/wire diagnostics and a controlled cache regression supplied fresh observations for 14 IDs; 59 others retained source/caller evidence. No entire unresolved ID was disproved or closed by that review.
+
+The subsequent [atomic health-publication repair](../../health-feedback-publication-execplan.md)
+closes T04 using native client-rust `c97dafb89883312deb526dc8d8f36cc7f7001f47`,
+synchronized through the maintained dependency workflow. The current register is
+**74 unresolved (68 open, six partial), eleven repaired, 85 tracked**. Earlier
+full-register source snapshots retain their original pins and dispositions.
+
 Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
 `v0.0.0-20260820070758-623e58e60fa9`, PD client
@@ -28,9 +35,9 @@ to the master above, not this branch's Go working tree. Unless marked as a
 reproduction, findings are source comparisons and their stated consequences
 are inferences; no live distributed failure or benchmark is claimed.
 
-The register contains **85 tracked findings: 75 unresolved (including partial
-repairs) and ten repaired ownership/contract findings (C01, D04, D06, E01, O12,
-P01, P02, P04, P05, T03)**. This is not a count of accepted packages. E02 has a runtime
+The register contains **85 tracked findings: 74 unresolved (including partial
+repairs) and eleven repaired ownership/contract findings (C01, D04, D06, E01, O12,
+P01, P02, P04, P05, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
 repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
 P05 was found and repaired during the complete range-tree package follow-up;
 see [its package receipt](rtree-protocol-repair.md).
@@ -68,8 +75,8 @@ retain their original states and source hashes.
 
 The subsequent [cancellation and error-checkpoint repair](../../ddl-cancellation-lifecycle-execplan.md)
 closes the recorded D04/D06 control/object-validation gaps and advances D05 to
-partial. The current total is 75 unresolved (69 open and six partial), with ten
-repaired findings. Complete Go package acceptance, unsupported actions and D05's
+partial. At that checkpoint there were 75 unresolved (69 open and six partial),
+with ten repaired findings. Complete Go package acceptance, unsupported actions and D05's
 remaining error/transaction/retry policy are not implied by those dispositions.
 
 The [action panic recovery repair](../../ddl-panic-owner-execplan.md) then recovers
@@ -195,13 +202,14 @@ limits, secondary retry history, locked-entry timestamps, mock normal wake-up
 and detached read-resolution fixes are not reopened merely because T02 remains.
 The operation-lifetime continuation used native `488bb73`; the synchronized
 dependency at that checkpoint was `6f663b3` after those error, candidate and health follow-ups;
-the current reviewed dependency is `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
+the full-register review used `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
+T04's follow-up synchronizes `c97dafb89883312deb526dc8d8f36cc7f7001f47`.
 
-### Native client concurrency still requiring repair
+### Native client health feedback concurrency
 
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
-| T04 | **P2; source-confirmed:** active health-feedback admission now returns false whenever the feedback mutex is held. Go reads its last-feedback time and score atomically and may request feedback before attempting the update mutex. Rust can omit an otherwise due network probe during an overlapping update. This is a read/admission boundary left different by the recent health repair; feedback writes and decay correctly remain nonblocking. | `rust/third_party/tikv-client-rs/src/locate.rs::StoreHealthStatus::needs_active_feedback`; native `src/region_cache.rs::tick_store_health_with_callback` | Pinned client-go `internal/locate/store_cache.go::updateTiKVServerSideSlowScoreOnTick`: publish sufficient read-side metadata independently of the update lock and preserve callback-before-update ordering. This is a source scheduling comparison, not a demonstrated outage. |
+| T04 | **Contract repaired:** native health feedback presence and timestamp now publish atomically beside the score. A held writer lock no longer suppresses an overdue network probe. The shared native health owner updates the client score before the callback, then rechecks feedback freshness before nonblocking decay. Contended writes still skip. | `rust/third_party/tikv-client-rs/src/locate.rs::StoreHealthStatus`; native `src/region_cache.rs::tick_store_health_with_callback`; client-rust `c97dafb`; [repair receipt](../../health-feedback-publication-execplan.md) | Pinned client-go `internal/locate/store_cache.go::StoreHealthStatus`: atomic read-side metadata, callback before the writer lock, timestamp rechecks and unchanged-score refresh. Original Go health tests and a held-writer oracle pass under -race. This closes T04, not T02 or complete internal/locate acceptance. |
 
 ## Domain and process services
 

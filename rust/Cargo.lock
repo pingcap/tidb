@@ -73,6 +73,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4582,6 +4591,7 @@ dependencies = [
 name = "tikv-client"
 version = "0.4.0"
 dependencies = [
+ "arc-swap",
  "async-recursion",
  "async-trait",
  "chrono",

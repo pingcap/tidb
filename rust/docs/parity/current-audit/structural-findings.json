@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 85,
-    "unresolved": 75,
-    "repaired": 10
+    "unresolved": 74,
+    "repaired": 11
   },
   "findings": [
     {
@@ -339,12 +339,12 @@
     },
     {
       "id": "T04",
-      "status": "open",
+      "status": "repaired",
       "group": "Transaction and routing ownership",
-      "finding": "**P2; source-confirmed:** active health-feedback admission now returns false whenever the feedback mutex is held. Go reads its last-feedback time and score atomically and may request feedback before attempting the update mutex. Rust can omit an otherwise due network probe during an overlapping update. This is a read/admission boundary left different by the recent health repair; feedback writes and decay correctly remain nonblocking.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/locate.rs::StoreHealthStatus::needs_active_feedback`; native `src/region_cache.rs::tick_store_health_with_callback`",
-      "go_owner": "Pinned client-go `internal/locate/store_cache.go::updateTiKVServerSideSlowScoreOnTick`: publish sufficient read-side metadata independently of the update lock and preserve callback-before-update ordering. This is a source scheduling comparison, not a demonstrated outage.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: needs_active_feedback still returns false on a contended feedback mutex; pinned client-go reads atomic metadata and requests feedback before taking the update mutex. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**Contract repaired:** native health feedback presence and timestamp now publish atomically beside the score. A held writer lock no longer suppresses an overdue network probe. The shared native health owner updates the client score before the callback, then rechecks feedback freshness before nonblocking decay. Contended writes still skip.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/locate.rs::StoreHealthStatus`; native `src/region_cache.rs::tick_store_health_with_callback`; client-rust `c97dafb`; [repair receipt](../../health-feedback-publication-execplan.md)",
+      "go_owner": "Pinned client-go `internal/locate/store_cache.go::StoreHealthStatus`: atomic read-side metadata, callback before the writer lock, timestamp rechecks and unchanged-score refresh. Original Go health tests and a held-writer oracle pass under -race. This closes T04, not T02 or complete internal/locate acceptance.",
+      "review_basis": "Follow-up from integration 1e5b7e65a4 against unchanged Go master 93a01d31f6 and pinned client-go: three Rust regressions fail on previous production and pass with native c97dafb; 1,524 native library cases pass (two ignored). Maintained TiDB sync, health/topology/recovery/distsql tests and locked all-target checks pass. See ../../health-feedback-publication-execplan.md for exact commands, broader Clippy limitation and publication gates."
     },
     {
       "id": "O01",
@@ -779,5 +779,11 @@
       "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Retain repaired disposition at its linked receipt scope; this review does not reopen it or grant full package acceptance. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     }
   ],
-  "review_receipt": "worker-followup-structural-review.md"
+  "review_receipt": "worker-followup-structural-review.md",
+  "latest_repair": {
+    "id": "T04",
+    "integration_start": "1e5b7e65a494111a4a044f1ec162a66a174171a3",
+    "client_rust": "c97dafb89883312deb526dc8d8f36cc7f7001f47",
+    "receipt": "../../health-feedback-publication-execplan.md"
+  }
 }

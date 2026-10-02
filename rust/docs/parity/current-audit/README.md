@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Current reviewed baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
+Full-register review baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
 `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665` (published PD errors prerequisite).
 The current review starts at integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0`.
@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 85 tracked ownership/contract findings (75 unresolved, ten repaired), review candidates and the
+consolidates 85 tracked ownership/contract findings (74 unresolved, eleven repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -31,7 +31,7 @@ validation coverage. Neither document claims that every repository semantic
 mismatch is known.
 
 The [2026-10-02 review after shared worker repairs](worker-followup-structural-review.md)
-rechecks every current unresolved ID. **All 75 remain valid parity gaps: 69 open
+rechecked every then-unresolved ID. **All 75 were valid parity gaps: 69 open
 and six partial.** Of these, 73 concern live behavior or missing production
 integration and two (D09/D10) concern disabled seeds. Fourteen IDs have fresh
 symptom/refusal observations; 59 others have source/caller evidence. This is not
@@ -41,13 +41,21 @@ The [per-ID review](worker-followup-recheck/source-continuity.json) retains exac
 source hashes, all intervening crate changes and the remaining contract for
 every ID. No production code or package acceptance changes in this review.
 
+The [atomic health-publication repair](../../health-feedback-publication-execplan.md)
+subsequently closes T04. Native `c97dafb89883312deb526dc8d8f36cc7f7001f47`
+publishes feedback metadata independently of the writer mutex and owns the
+client-score/callback/decay sequence. Three regressions fail before repair and
+pass afterward; TiDB synchronizes that owner without a second implementation.
+The current total is **74 unresolved (68 open, six partial), eleven repaired,
+85 tracked**. T02 and complete native locate ownership remain open.
+
 The subsequent [DDL error identity repair](../../ddl-error-identity-execplan.md)
 removes CHECK's premature wire-error conversion and retains typed errors from the
 existing persisted action producers through the shared worker and history.
 Cancellation/rollback distinguish equal numbers with different source identities;
 plain decode failures persist as ddl:-1 while SQL still returns 1105. Old numeric
-Rust history remains readable. D05 stays partial and all 75 structural IDs remain
-unresolved; other producers, transaction reset, retry configuration/metrics and
+Rust history remains readable. D05 stayed partial and all 75 structural IDs remained
+unresolved at that checkpoint; other producers, transaction reset, retry configuration/metrics and
 complete action ownership still require work. No new action is enabled.
 
 The [CHECK error generation follow-up](../../ddl-error-generation-execplan.md)
@@ -608,8 +616,8 @@ The [shared cancellation and error-checkpoint repair](../../ddl-cancellation-lif
 subsequently closes D04/D06's recorded live control/object-validation gaps and
 advances D05 to partial. It removes the detached CHECK rollback transaction,
 preserves concurrent administrative state through the original transaction and
-connects error checkpoints to the current global retry limit. The current register
-has 75 unresolved findings (69 open, six partial) and ten repaired findings.
+connects error checkpoints to the current global retry limit. At that checkpoint
+the register had 75 unresolved findings (69 open, six partial) and ten repaired findings.
 These are maintained live-path contracts, not complete pkg/ddl acceptance; external
 error/panic/retry policy, durable SQL submission and scheduler ownership remain open.
 Earlier reviews above retain their historical counts and pins.

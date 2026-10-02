@@ -59,3 +59,14 @@ The hook must pass cd rust && cargo build --locked -p tidb-server. After the fin
 The shared health algorithms and per-store handle do not close T02's competing cache/RPC/request-state owners. TiDB's removed latency-recording, feedback and tick methods had only test callers; connecting the corresponding production events and periodic owner remains necessary. Native client-rust's cache already drives those native methods. This change does not claim that all TiDB routing health signals are now wired.
 
 No original Go suite, full Rust workspace suite, real TiKV deployment or sysbench/TPC-C/TPC-H/YCSB measurement was run. Shared handles avoid copying score histories and atomic score reads avoid the feedback mutex, but throughput and contention improvements are unmeasured.
+
+## Atomic-publication follow-up, 2026-10-02
+
+The earlier statement that active-feedback checks defer while metadata is being
+updated is superseded by the [T04 repair](../../health-feedback-publication-execplan.md).
+Go's read-side presence and timestamp also remain atomic. Native c97dafb now
+preserves that admission contract and the client-score/callback/decay order;
+TiDB consumes the synchronized owner. This closes that recorded scheduling gap,
+while the T02 integration limits above remain open. The follow-up runs the
+original Go health cases under the race detector and retains red/green native
+contention/callback evidence; no benchmark improvement is claimed.

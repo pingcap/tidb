@@ -1,4 +1,4 @@
-//! Dependency-free state from client-go's `internal/locate` package.
+//! Shared state from client-go's `internal/locate` package.
 //!
 //! The public source-shaped cache and sender façades live in `region_cache`,
 //! `region_request`, and `tikv`; this module owns their private selector,
@@ -6,9 +6,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::{Mutex, TryLockError};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
+
+use arc_swap::ArcSwapOption;
 
 use crate::retry::RetryConfig;
 
@@ -246,16 +249,88 @@ pub struct StoreHealthStatus {
 
 #[derive(Debug, Default)]
 struct TikvSideSlowScore {
-    // Reads must not wait for a feedback update, including update_slow_flag
-    // after a failed try_lock. Go also keeps this score atomic.
+    // Go reads these fields independently without taking the writer mutex.
+    // ArcSwap retains the immutable Instant while a reader observes it.
+    has_feedback: AtomicBool,
     score: AtomicI64,
-    feedback: Mutex<TikvFeedback>,
+    last_update: ArcSwapOption<Instant>,
+    feedback: Mutex<()>,
 }
 
-#[derive(Debug, Default)]
-struct TikvFeedback {
-    has_feedback: bool,
-    last_update: Option<Instant>,
+impl TikvSideSlowScore {
+    fn elapsed_since_update(&self, now: Instant) -> Option<Duration> {
+        self.last_update
+            .load()
+            .as_ref()
+            .map(|last| now.saturating_duration_since(**last))
+    }
+
+    fn needs_refreshing(&self, now: Instant) -> bool {
+        self.elapsed_since_update(now)
+            .is_some_and(|elapsed| elapsed >= TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL)
+    }
+
+    fn record(&self, score: i64, now: Instant) {
+        // Preserve Go's pre-lock score comparison: an unchanged score refreshes
+        // its timestamp even inside the changed-score rate-limit window.
+        if self.score.load(Ordering::Acquire) == score {
+            if score > 1 {
+                let _update = match self.feedback.try_lock() {
+                    Err(TryLockError::WouldBlock) => return,
+                    result => result.unwrap(),
+                };
+                self.last_update.store(Some(Arc::new(now)));
+            }
+            return;
+        }
+        if self
+            .elapsed_since_update(now)
+            .is_some_and(|elapsed| elapsed < TIKV_SLOW_SCORE_UPDATE_INTERVAL)
+        {
+            return;
+        }
+        let _update = match self.feedback.try_lock() {
+            Err(TryLockError::WouldBlock) => return,
+            result => result.unwrap(),
+        };
+        self.has_feedback.store(true, Ordering::Release);
+        // Another writer may have refreshed the timestamp before we locked.
+        if self
+            .elapsed_since_update(now)
+            .is_some_and(|elapsed| elapsed < TIKV_SLOW_SCORE_UPDATE_INTERVAL)
+        {
+            return;
+        }
+        self.score.store(score, Ordering::Release);
+        self.last_update.store(Some(Arc::new(now)));
+    }
+
+    fn decay(&self, now: Instant) {
+        // The active callback can publish fresh feedback. Check before trying
+        // the write lock, and again under it, just as Go's periodic tick does.
+        if !self.needs_refreshing(now) {
+            return;
+        }
+        let _update = match self.feedback.try_lock() {
+            Err(TryLockError::WouldBlock) => return,
+            result => result.unwrap(),
+        };
+        let Some(elapsed) = self.elapsed_since_update(now) else {
+            return;
+        };
+        if elapsed < TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL {
+            return;
+        }
+        let score = self.score.load(Ordering::Acquire);
+        if score < 1 {
+            return;
+        }
+        let score = ((score as f64 - TIKV_SLOW_SCORE_DECAY_PER_SECOND * elapsed.as_secs_f64())
+            .round() as i64)
+            .max(1);
+        self.score.store(score, Ordering::Release);
+        self.last_update.store(Some(Arc::new(now)));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -305,72 +380,46 @@ impl StoreHealthStatus {
     }
 
     pub(crate) fn needs_active_feedback(&self, now: Instant) -> bool {
-        let feedback = match self.tikv_side_slow_score.feedback.try_lock() {
-            Err(TryLockError::WouldBlock) => return false,
-            result => result.unwrap(),
-        };
-        feedback.has_feedback
+        self.tikv_side_slow_score
+            .has_feedback
+            .load(Ordering::Acquire)
             && self.tikv_side_slow_score.score.load(Ordering::Acquire) > 1
-            && feedback.last_update.is_some_and(|last| {
-                now.saturating_duration_since(last) >= TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL
-            })
+            && self.tikv_side_slow_score.needs_refreshing(now)
     }
 
     /// Source `updateTiKVServerSideSlowScore`; contended updates are skipped.
     pub fn record_tikv_slow_score(&self, score: i64, now: Instant) {
-        let mut feedback = match self.tikv_side_slow_score.feedback.try_lock() {
-            Err(TryLockError::WouldBlock) => {
-                self.update_slow_flag();
-                return;
-            }
-            result => result.unwrap(),
-        };
-        if self.tikv_side_slow_score.score.load(Ordering::Acquire) == score {
-            if score > 1 {
-                feedback.last_update = Some(now);
-            }
-        } else if !feedback.last_update.is_some_and(|last| {
-            now.saturating_duration_since(last) < TIKV_SLOW_SCORE_UPDATE_INTERVAL
-        }) {
-            feedback.has_feedback = true;
-            self.tikv_side_slow_score
-                .score
-                .store(score, Ordering::Release);
-            feedback.last_update = Some(now);
-        }
-        drop(feedback);
+        self.tikv_side_slow_score.record(score, now);
         self.update_slow_flag();
     }
 
-    /// Source periodic decay after the owning cache attempts active feedback.
-    /// A concurrent feedback update must never block this maintenance tick.
+    /// Source periodic update when no active-feedback callback is available.
     pub fn tick(&self, now: Instant) {
         self.client_side_slow_score.update();
-        let mut feedback = match self.tikv_side_slow_score.feedback.try_lock() {
-            Err(TryLockError::WouldBlock) => {
-                self.update_slow_flag();
-                return;
-            }
-            result => result.unwrap(),
-        };
-        let score = self.tikv_side_slow_score.score.load(Ordering::Acquire);
-        if feedback.has_feedback && score > 1 {
-            if let Some(last) = feedback.last_update {
-                let elapsed = now.saturating_duration_since(last);
-                if elapsed >= TIKV_SLOW_SCORE_ACTIVE_UPDATE_INTERVAL {
-                    let score = ((score as f64
-                        - TIKV_SLOW_SCORE_DECAY_PER_SECOND * elapsed.as_secs_f64())
-                    .round() as i64)
-                        .max(1);
-                    self.tikv_side_slow_score
-                        .score
-                        .store(score, Ordering::Release);
-                    feedback.last_update = Some(now);
-                }
-            }
+        if self.needs_active_feedback(now) {
+            self.tikv_side_slow_score.decay(now);
         }
-        drop(feedback);
         self.update_slow_flag();
+    }
+
+    /// Keep the source tick lifecycle around the cache's asynchronous callback:
+    /// client score, unlocked feedback request, possible decay, then slow flag.
+    pub(crate) async fn tick_with_feedback(
+        &self,
+        now: Instant,
+        feedback: impl Future<Output = ()>,
+    ) {
+        self.client_side_slow_score.update();
+        if self.needs_active_feedback(now) {
+            feedback.await;
+            self.tikv_side_slow_score.decay(now);
+        }
+        self.update_slow_flag();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lock_feedback_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.tikv_side_slow_score.feedback.lock().unwrap()
     }
 
     fn update_slow_flag(&self) {
@@ -884,13 +933,15 @@ mod tests {
         let health = std::sync::Arc::new(StoreHealthStatus::default());
         let start = Instant::now();
         health.record_tikv_slow_score(80, start);
-        let update = health.tikv_side_slow_score.feedback.lock().unwrap();
+        let update = health.lock_feedback_for_test();
         let (finished_tx, finished_rx) = std::sync::mpsc::channel();
         let worker_health = health.clone();
         let worker = std::thread::spawn(move || {
+            let fresh = worker_health.needs_active_feedback(start + Duration::from_secs(14));
+            let due = worker_health.needs_active_feedback(start + Duration::from_secs(15));
             worker_health.record_tikv_slow_score(100, start + Duration::from_secs(1));
             worker_health.tick(start + Duration::from_secs(60));
-            finished_tx.send(()).unwrap();
+            finished_tx.send((fresh, due)).unwrap();
         });
         let finished = finished_rx.recv_timeout(Duration::from_secs(1));
         drop(update);
@@ -898,6 +949,11 @@ mod tests {
         assert!(
             finished.is_ok(),
             "Go skips contended health updates without waiting"
+        );
+        assert_eq!(
+            finished.unwrap(),
+            (false, true),
+            "Go admits overdue feedback before trying the update lock"
         );
         assert_eq!(health.detail().tikv_side_slow_score, 80);
         health.tick(start + Duration::from_secs(60));
