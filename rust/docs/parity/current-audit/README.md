@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 85 tracked ownership/contract findings (74 unresolved, eleven repaired), review candidates and the
+consolidates 85 tracked ownership/contract findings (73 unresolved, twelve repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -46,8 +46,16 @@ subsequently closes T04. Native `c97dafb89883312deb526dc8d8f36cc7f7001f47`
 publishes feedback metadata independently of the writer mutex and owns the
 client-score/callback/decay sequence. Three regressions fail before repair and
 pass afterward; TiDB synchronizes that owner without a second implementation.
-The current total is **74 unresolved (68 open, six partial), eleven repaired,
-85 tracked**. T02 and complete native locate ownership remain open.
+At that checkpoint there were **74 unresolved (68 open, six partial), eleven
+repaired, 85 tracked**. T02 and complete native locate ownership remain open.
+
+The [PD request-ownership follow-up](../../pd-request-ownership-execplan.md)
+closes P07 with native `952013279bc64e590f17c18b9c9222fdaf5a3604`, synchronized
+through the maintained dependency workflow. Metadata and TSO requests retain
+connections without holding the cluster lock across I/O; discovery and retired
+stream joins also run outside that lock. The current count is **73 unresolved
+(67 open, six partial), twelve repaired, 85 tracked**. P03/P06 and complete
+PD parent-package acceptance remain open.
 
 The subsequent [DDL error identity repair](../../ddl-error-identity-execplan.md)
 removes CHECK's premature wire-error conversion and retains typed errors from the

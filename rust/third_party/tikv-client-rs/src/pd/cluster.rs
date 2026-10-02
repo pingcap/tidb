@@ -1,6 +1,7 @@
 // Copyright 2018 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -44,259 +45,380 @@ macro_rules! pd_request {
     }};
 }
 
-// These methods make a single attempt to make a request.
+// Construct each request while borrowing the published cluster, then retain only
+// its connection and owned arguments across I/O. The static future lifetime
+// prevents a retry caller from accidentally holding the cluster lock while waiting.
 impl Cluster {
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
 
-    pub async fn get_region(
-        &mut self,
+    pub fn get_region(
+        &self,
         key: Vec<u8>,
         timeout: Duration,
-    ) -> Result<pdpb::GetRegionResponse> {
-        self.get_region_with_buckets(key, timeout, false).await
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        self.get_region_with_buckets(key, timeout, false)
     }
 
-    pub async fn get_region_with_buckets(
-        &mut self,
+    pub fn get_region_with_buckets(
+        &self,
         key: Vec<u8>,
         timeout: Duration,
         need_buckets: bool,
-    ) -> Result<pdpb::GetRegionResponse> {
-        let mut req = pd_request!(self.id, pdpb::GetRegionRequest);
-        req.region_key = key;
-        req.need_buckets = need_buckets;
-        req.send(&mut self.client, timeout).await
-    }
-
-    pub async fn get_prev_region(
-        &mut self,
-        key: Vec<u8>,
-        timeout: Duration,
-    ) -> Result<pdpb::GetRegionResponse> {
-        self.get_prev_region_with_buckets(key, timeout, false).await
-    }
-
-    pub async fn get_prev_region_with_buckets(
-        &mut self,
-        key: Vec<u8>,
-        timeout: Duration,
-        need_buckets: bool,
-    ) -> Result<pdpb::GetRegionResponse> {
-        let mut request = pd_request!(self.id, pdpb::GetRegionRequest).into_request();
-        request.get_mut().region_key = key;
-        request.get_mut().need_buckets = need_buckets;
-        request.set_timeout(timeout);
-        let response = self.client.get_prev_region(request).await?.into_inner();
-        if let Some(error) = &response.header().error {
-            Err(internal_err!(error.message))
-        } else {
-            Ok(response)
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::GetRegionRequest);
+            req.region_key = key;
+            req.need_buckets = need_buckets;
+            req.send(&mut client, timeout).await
         }
     }
 
-    pub async fn get_region_by_id(
-        &mut self,
-        id: u64,
+    pub fn get_prev_region(
+        &self,
+        key: Vec<u8>,
         timeout: Duration,
-    ) -> Result<pdpb::GetRegionResponse> {
-        self.get_region_by_id_with_buckets(id, timeout, false).await
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        self.get_prev_region_with_buckets(key, timeout, false)
     }
 
-    pub async fn get_region_by_id_with_buckets(
-        &mut self,
+    pub fn get_prev_region_with_buckets(
+        &self,
+        key: Vec<u8>,
+        timeout: Duration,
+        need_buckets: bool,
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut request = pd_request!(cluster_id, pdpb::GetRegionRequest).into_request();
+            request.get_mut().region_key = key;
+            request.get_mut().need_buckets = need_buckets;
+            request.set_timeout(timeout);
+            let response = client.get_prev_region(request).await?.into_inner();
+            if let Some(error) = &response.header().error {
+                Err(internal_err!(error.message))
+            } else {
+                Ok(response)
+            }
+        }
+    }
+
+    pub fn get_region_by_id(
+        &self,
+        id: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        self.get_region_by_id_with_buckets(id, timeout, false)
+    }
+
+    pub fn get_region_by_id_with_buckets(
+        &self,
         id: u64,
         timeout: Duration,
         need_buckets: bool,
-    ) -> Result<pdpb::GetRegionResponse> {
-        let mut req = pd_request!(self.id, pdpb::GetRegionByIdRequest);
-        req.region_id = id;
-        req.need_buckets = need_buckets;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::GetRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::GetRegionByIdRequest);
+            req.region_id = id;
+            req.need_buckets = need_buckets;
+            req.send(&mut client, timeout).await
+        }
     }
 
     /// Fetches at most `limit` consecutive PD regions from `start_key` through
     /// `end_key` (empty end means positive infinity). This is the PD RPC used
     /// by client-go `RegionCache.BatchLoadRegionsFromKey`.
-    pub async fn scan_regions(
-        &mut self,
+    pub fn scan_regions(
+        &self,
         start_key: Vec<u8>,
         end_key: Vec<u8>,
         limit: usize,
         timeout: Duration,
-    ) -> Result<pdpb::ScanRegionsResponse> {
-        let mut req = pd_request!(self.id, pdpb::ScanRegionsRequest);
-        req.start_key = start_key;
-        req.end_key = end_key;
-        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::ScanRegionsResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::ScanRegionsRequest);
+            req.start_key = start_key;
+            req.end_key = end_key;
+            req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn batch_scan_regions(
-        &mut self,
+    pub fn batch_scan_regions(
+        &self,
         ranges: Vec<pdpb::KeyRange>,
         limit: usize,
         options: super::retry::RegionScanOptions,
         timeout: Duration,
-    ) -> Result<pdpb::BatchScanRegionsResponse> {
-        let mut req = pd_request!(self.id, pdpb::BatchScanRegionsRequest);
-        req.ranges = ranges;
-        req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
-        req.need_buckets = options.need_buckets;
-        req.contain_all_key_range = options.output_must_contain_all_key_range;
-        match req.send(&mut self.client, timeout).await {
-            Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
-                Err(Error::Unimplemented)
+    ) -> impl Future<Output = Result<pdpb::BatchScanRegionsResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::BatchScanRegionsRequest);
+            req.ranges = ranges;
+            req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
+            req.need_buckets = options.need_buckets;
+            req.contain_all_key_range = options.output_must_contain_all_key_range;
+            match req.send(&mut client, timeout).await {
+                Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
+                    Err(Error::Unimplemented)
+                }
+                result => result,
             }
-            result => result,
         }
     }
 
-    pub async fn split_regions(
-        &mut self,
+    pub fn split_regions(
+        &self,
         split_keys: Vec<Vec<u8>>,
         retry_limit: u64,
         timeout: Duration,
-    ) -> Result<pdpb::SplitRegionsResponse> {
-        let mut req = pd_request!(self.id, pdpb::SplitRegionsRequest);
-        req.split_keys = split_keys;
-        req.retry_limit = retry_limit;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::SplitRegionsResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::SplitRegionsRequest);
+            req.split_keys = split_keys;
+            req.retry_limit = retry_limit;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn get_store(
-        &mut self,
+    pub fn get_store(
+        &self,
         id: u64,
         timeout: Duration,
-    ) -> Result<pdpb::GetStoreResponse> {
-        let mut req = pd_request!(self.id, pdpb::GetStoreRequest);
-        req.store_id = id;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::GetStoreResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::GetStoreRequest);
+            req.store_id = id;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn get_all_stores(
-        &mut self,
+    pub fn get_all_stores(
+        &self,
         timeout: Duration,
-    ) -> Result<pdpb::GetAllStoresResponse> {
-        let req = pd_request!(self.id, pdpb::GetAllStoresRequest);
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::GetAllStoresResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let req = pd_request!(cluster_id, pdpb::GetAllStoresRequest);
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn get_timestamp(&self) -> Result<Timestamp> {
-        let connection = self
-            .tso
-            .randomly_pick()
-            .ok_or_else(|| internal_err!("no TSO connection is registered"))?;
-        connection.stream.clone().get_timestamp().await
+    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
+        let connection = self.tso.randomly_pick();
+        async move {
+            let connection =
+                connection.ok_or_else(|| internal_err!("no TSO connection is registered"))?;
+            connection.stream.clone().get_timestamp().await
+        }
     }
 
-    pub async fn get_min_timestamp(&mut self, timeout: Duration) -> Result<Timestamp> {
-        let request = pd_request!(self.id, pdpb::GetMinTsRequest);
-        request
-            .send(&mut self.client, timeout)
-            .await?
-            .timestamp
-            .ok_or_else(|| Error::StringError("PD GetMinTS response has no timestamp".to_owned()))
+    pub fn get_min_timestamp(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let request = pd_request!(cluster_id, pdpb::GetMinTsRequest);
+            request
+                .send(&mut client, timeout)
+                .await?
+                .timestamp
+                .ok_or_else(|| {
+                    Error::StringError("PD GetMinTS response has no timestamp".to_owned())
+                })
+        }
     }
 
-    pub async fn set_external_timestamp(
-        &mut self,
+    pub fn set_external_timestamp(
+        &self,
         timestamp: u64,
         timeout: Duration,
-    ) -> Result<()> {
-        let mut request = pd_request!(self.id, pdpb::SetExternalTimestampRequest);
-        request.timestamp = timestamp;
-        request.send(&mut self.client, timeout).await.map(|_| ())
+    ) -> impl Future<Output = Result<()>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut request = pd_request!(cluster_id, pdpb::SetExternalTimestampRequest);
+            request.timestamp = timestamp;
+            request.send(&mut client, timeout).await.map(|_| ())
+        }
     }
 
-    pub async fn get_external_timestamp(&mut self, timeout: Duration) -> Result<u64> {
-        let request = pd_request!(self.id, pdpb::GetExternalTimestampRequest);
-        request
-            .send(&mut self.client, timeout)
-            .await
-            .map(|response: pdpb::GetExternalTimestampResponse| response.timestamp)
+    pub fn get_external_timestamp(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<u64>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let request = pd_request!(cluster_id, pdpb::GetExternalTimestampRequest);
+            request
+                .send(&mut client, timeout)
+                .await
+                .map(|response: pdpb::GetExternalTimestampResponse| response.timestamp)
+        }
     }
 
-    pub async fn update_safepoint(
-        &mut self,
+    pub fn update_safepoint(
+        &self,
         safepoint: u64,
         timeout: Duration,
-    ) -> Result<pdpb::UpdateGcSafePointResponse> {
-        let mut req = pd_request!(self.id, pdpb::UpdateGcSafePointRequest);
-        req.safe_point = safepoint;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::UpdateGcSafePointResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::UpdateGcSafePointRequest);
+            req.safe_point = safepoint;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn get_gc_state(
-        &mut self,
+    pub fn get_gc_state(
+        &self,
         keyspace_id: u32,
         timeout: Duration,
-    ) -> Result<pdpb::GetGcStateResponse> {
-        let mut req = pd_request!(self.id, pdpb::GetGcStateRequest);
-        req.keyspace_scope = Some(keyspace_scope(keyspace_id));
-        req.exclude_gc_barriers = true;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::GetGcStateResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::GetGcStateRequest);
+            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
+            req.exclude_gc_barriers = true;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn advance_txn_safe_point(
-        &mut self,
-        keyspace_id: u32,
-        target: u64,
-        timeout: Duration,
-    ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
-        let mut req = pd_request!(self.id, pdpb::AdvanceTxnSafePointRequest);
-        req.keyspace_scope = Some(keyspace_scope(keyspace_id));
-        req.target = target;
-        req.send(&mut self.client, timeout).await
-    }
-
-    pub async fn advance_gc_safe_point(
-        &mut self,
+    pub fn advance_txn_safe_point(
+        &self,
         keyspace_id: u32,
         target: u64,
         timeout: Duration,
-    ) -> Result<pdpb::AdvanceGcSafePointResponse> {
-        let mut req = pd_request!(self.id, pdpb::AdvanceGcSafePointRequest);
-        req.keyspace_scope = Some(keyspace_scope(keyspace_id));
-        req.target = target;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::AdvanceTxnSafePointResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::AdvanceTxnSafePointRequest);
+            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
+            req.target = target;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn scatter_regions(
-        &mut self,
+    pub fn advance_gc_safe_point(
+        &self,
+        keyspace_id: u32,
+        target: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::AdvanceGcSafePointResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::AdvanceGcSafePointRequest);
+            req.keyspace_scope = Some(keyspace_scope(keyspace_id));
+            req.target = target;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    pub fn scatter_regions(
+        &self,
         region_ids: Vec<u64>,
         group: String,
         timeout: Duration,
-    ) -> Result<pdpb::ScatterRegionResponse> {
-        let mut req = pd_request!(self.id, pdpb::ScatterRegionRequest);
-        req.regions_id = region_ids;
-        req.group = group;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::ScatterRegionResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::ScatterRegionRequest);
+            req.regions_id = region_ids;
+            req.group = group;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn get_operator(
-        &mut self,
+    pub fn get_operator(
+        &self,
         region_id: u64,
         timeout: Duration,
-    ) -> Result<pdpb::GetOperatorResponse> {
-        let mut req = pd_request!(self.id, pdpb::GetOperatorRequest);
-        req.region_id = region_id;
-        req.send(&mut self.client, timeout).await
+    ) -> impl Future<Output = Result<pdpb::GetOperatorResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.client.clone();
+        async move {
+            let mut req = pd_request!(cluster_id, pdpb::GetOperatorRequest);
+            req.region_id = region_id;
+            req.send(&mut client, timeout).await
+        }
     }
 
-    pub async fn load_keyspace(
-        &mut self,
+    pub fn load_keyspace(
+        &self,
         keyspace: &str,
         timeout: Duration,
-    ) -> Result<keyspacepb::KeyspaceMeta> {
-        let mut req = pd_request!(self.id, keyspacepb::LoadKeyspaceRequest);
-        req.name = keyspace.to_string();
-        let resp = req.send(&mut self.keyspace_client, timeout).await?;
-        let keyspace = resp
-            .keyspace
-            .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))?;
-        Ok(keyspace)
+    ) -> impl Future<Output = Result<keyspacepb::KeyspaceMeta>> + Send + 'static {
+        let cluster_id = self.id;
+        let mut client = self.keyspace_client.clone();
+        let keyspace = keyspace.to_owned();
+        async move {
+            let mut req = pd_request!(cluster_id, keyspacepb::LoadKeyspaceRequest);
+            req.name = keyspace.to_string();
+            let resp = req.send(&mut client, timeout).await?;
+            let keyspace = resp
+                .keyspace
+                .ok_or_else(|| Error::KeyspaceNotFound(keyspace.to_owned()))?;
+            Ok(keyspace)
+        }
+    }
+}
+
+impl Cluster {
+    pub(crate) fn install_leader(
+        &mut self,
+        (client, keyspace_client, members, url): LeaderConnection,
+        timeout: Duration,
+    ) -> Result<impl Future<Output = ()> + Send + 'static> {
+        let previous = self.tso.randomly_pick();
+        let reuse = previous.as_ref().is_some_and(|connection| {
+            connection.stream_url == url && !connection.ctx.is_cancelled()
+        });
+        let mut rejected = None;
+        if !reuse {
+            let candidate = tso_connection(self.id, &client, url.clone(), timeout)?;
+            // Go's dispatcher releases canceled contexts before reconnecting.
+            // A canceled same-URL entry must not reject its replacement.
+            self.tso.release(&url);
+            if !self.tso.clean_all_and_store(&candidate) {
+                candidate.cancel();
+                rejected = Some(candidate);
+            }
+        }
+        self.client = client;
+        self.keyspace_client = keyspace_client;
+        self.members = members;
+        let retired = if reuse { None } else { previous };
+        Ok(async move {
+            if let Some(rejected) = rejected {
+                rejected.stream.close().await;
+            }
+            if let Some(previous) = retired {
+                // The context stays alive through the join, without a cluster lock.
+                previous.stream.close().await;
+            }
+        })
     }
 }
 
@@ -328,6 +450,13 @@ fn keyspace_scope(keyspace_id: u32) -> pdpb::KeyspaceScope {
         keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(keyspace_id)),
     }
 }
+
+pub(crate) type LeaderConnection = (
+    pdpb::pd_client::PdClient<Channel>,
+    keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+    pdpb::GetMembersResponse,
+    String,
+);
 
 /// An object for connecting and reconnecting to a PD cluster.
 pub struct Connection {
@@ -365,34 +494,23 @@ impl Connection {
         warn!("updating pd client");
         let start = Instant::now();
         let (client, keyspace_client, members, url) =
-            self.try_connect_leader(&cluster.members, timeout).await?;
-        let previous = cluster.tso.randomly_pick();
-        let reuse = previous.as_ref().is_some_and(|connection| {
-            connection.stream_url == url && !connection.ctx.is_cancelled()
-        });
-        if !reuse {
-            let candidate = tso_connection(cluster.id, &client, url.clone(), timeout)?;
-            // Go's dispatcher releases canceled contexts before reconnecting.
-            // A canceled same-URL entry must not reject its replacement.
-            cluster.tso.release(&url);
-            if !cluster.tso.clean_all_and_store(&candidate) {
-                candidate.cancel();
-                candidate.stream.close().await;
-            }
-        }
-        cluster.client = client;
-        cluster.keyspace_client = keyspace_client;
-        cluster.members = members;
-        if !reuse {
-            if let Some(previous) = previous {
-                // Retain the retired worker through its join. No manager lock
-                // is held while awaiting stream/deadline cleanup.
-                previous.stream.close().await;
-            }
-        }
+            self.prepare_reconnect(cluster, timeout).await?;
+        cluster
+            .install_leader((client, keyspace_client, members, url), timeout)?
+            .await;
 
         info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
+    }
+
+    pub(crate) fn prepare_reconnect(
+        &self,
+        cluster: &Cluster,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
+        let connection = Self::new(self.security_mgr.clone());
+        let members = cluster.members.clone();
+        async move { connection.try_connect_leader(&members, timeout).await }
     }
 
     async fn validate_endpoints(

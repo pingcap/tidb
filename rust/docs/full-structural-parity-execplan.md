@@ -2338,3 +2338,25 @@ receipt records lint and required locked publication builds. T04 is repaired;
 T02 and whole internal/locate acceptance remain open. The current register is
 85 tracked, 74 unresolved (68 open, six partial), eleven repaired. Earlier
 review snapshots preserve their historical source hashes and counts.
+
+### Native PD request connection ownership, 2026-10-02
+
+The [PD request-ownership continuation](pd-request-ownership-execplan.md)
+repairs P07 in the existing native owner and synchronizes published client-rust
+952013279bc64e590f17c18b9c9222fdaf5a3604. Every existing request constructs an
+owned future under a short read lock, then awaits without retaining the guard.
+The write-locking retry_mut helper is removed. Reconnect preparation and TSO joins
+also run outside the publication lock, while a separate guard serializes
+refreshes and preserves leader publication and healthy same-URL stream reuse.
+
+Four native transport tests fail before repair and pass afterward, including
+metadata/TSO overlap and requests during discovery/replacement. All 151 native
+PD, 89 cache and 1,528 library cases pass (two library cases ignored), as do
+strict library Clippy and formatting. Original Go client cases and the retained
+metadata oracle pass under race/leak checks. The focused plan records exact
+commands, downstream validation and required publication gates.
+
+The current register is 85 tracked, 73 unresolved (67 open, six partial), twelve
+repaired. This does not accept the complete PD parent packages; service-mode,
+public shutdown and other P03/P06 obligations remain. Removed serialization is
+proven through controlled transport, not a measured workload speedup.

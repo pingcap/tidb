@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 85,
-    "unresolved": 74,
-    "repaired": 11
+    "unresolved": 73,
+    "repaired": 12
   },
   "findings": [
     {
@@ -586,17 +586,17 @@
       "group": "Protocol and PD owners",
       "finding": "**P2; partially repaired:** native TSO now has batch deadlines, cancellation and joined stream retirement; shared connectionctx, batch, retry, opt, metrics, circuitbreaker and errs prerequisites have published receipts. Healthy same-URL refresh preserves streams. Public PdRpcClient.close still closes region/TiKV owners without retiring the PD/TSO owner. Complete root/discovery/TSO lifecycle, options and package acceptance remain open. grpcutil experiments are isolated and unaccepted; Go default pick_first reconnects on demand after an established Ready connection becomes Idle, so that demand-driven behavior is not itself a mismatch.",
       "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`",
-      "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; they do not accept parent packages or close P03/P06/P07. Preserve source-dependent Idle/demand reconnection, setup/readiness, TLS, pending-request completion and joined public shutdown. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
+      "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; those prerequisites alone did not accept parent packages or close P03/P06/P07. P07's subsequent owned-request repair is recorded separately; P03/P06 remain open/partial. Preserve source-dependent Idle/demand reconnection, setup/readiness, TLS, pending-request completion and joined public shutdown. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
       "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: Native public close still stops region/TiKV owners without retiring its PD/TSO owner. Published deadline/batch/retry prerequisites and isolated grpcutil experiments do not close it. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
     },
     {
       "id": "P07",
-      "status": "open",
+      "status": "repaired",
       "group": "Protocol and PD owners",
-      "finding": "**P2; source-confirmed:** native PD metadata RPCs hold the one `RetryClient.cluster` write lock over the network await. Region/store/scan calls serialize, and their exclusive lock conflicts with TSO's read lock and reconnect. Go obtains the service connection then sends independent requests without a client-wide RPC-duration write lock.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/retry.rs::retry_mut`, `get_region`, `get_all_stores`, `retry`; `src/pd/cluster.rs` mutable tonic client calls",
-      "go_owner": "Pinned PD client `client.go::GetRegion`/`GetAllStores`/`ScanRegions`, `inner_client.go` service discovery: clone a request connection under short metadata synchronization and let each request retain its own timeout/context. Preserve synchronized leader replacement; throughput impact has not been measured.",
-      "review_basis": "Review at integration cfc6a174bb, unchanged Go/native pins: retry_mut still holds cluster.write() across call.await; metadata RPCs serialize and conflict with TSO read-side ownership. Throughput was not measured. See worker-followup-structural-review.md and worker-followup-recheck/source-continuity.json."
+      "finding": "**Contract repaired:** existing native PD metadata and TSO attempts retain their connection in owned futures, releasing cluster synchronization before network waits. One retry lifecycle reacquires the current connection for each attempt. Reconnect discovery and stream retirement run outside the publication lock, with refreshes serialized separately and leader replacement published under a short write lock.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/retry.rs::retry`; `src/pd/cluster.rs` owned request constructors and `install_leader`; native `9520132`; [repair receipt](../../pd-request-ownership-execplan.md)",
+      "go_owner": "Pinned PD `client.go::GetRegion`/`GetAllStores`/`ScanRegions`, `inner_client.go::getServiceClient` and service discovery retain the selected service connection outside network waits. Four native transport regressions fail before repair and pass afterward; the actual Go metadata methods pass a retained-connection oracle under -race/leak checks. This closes P07, not P03/P06 or complete parent-package acceptance.",
+      "review_basis": "Follow-up from integration 130502f912 against unchanged Go master 93a01d31f6 and pinned PD client: native 9520132 removes retry_mut and all RPC/discovery/retirement-duration cluster guards. Tests cover metadata/TSO overlap, replacement during a retained request and progress during stalled discovery. Native PD/cache/full library and strict library Clippy pass. See ../../pd-request-ownership-execplan.md for downstream gates and limits."
     },
     {
       "id": "P05",
@@ -781,9 +781,9 @@
   ],
   "review_receipt": "worker-followup-structural-review.md",
   "latest_repair": {
-    "id": "T04",
-    "integration_start": "1e5b7e65a494111a4a044f1ec162a66a174171a3",
-    "client_rust": "c97dafb89883312deb526dc8d8f36cc7f7001f47",
-    "receipt": "../../health-feedback-publication-execplan.md"
+    "id": "P07",
+    "integration_start": "130502f91290243a675232165f46dda09798f59d",
+    "client_rust": "952013279bc64e590f17c18b9c9222fdaf5a3604",
+    "receipt": "../../pd-request-ownership-execplan.md"
   }
 }

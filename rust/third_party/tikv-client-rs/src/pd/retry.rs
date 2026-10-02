@@ -8,6 +8,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 
@@ -204,6 +205,7 @@ pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
     cluster: RwLock<(Cl, Instant)>,
     connection: Connection,
+    reconnect: tokio::sync::Mutex<()>,
     timeout: Duration,
 }
 
@@ -217,6 +219,7 @@ impl<Cl> RetryClient<Cl> {
         RetryClient {
             cluster: RwLock::new((cluster, Instant::now())),
             connection,
+            reconnect: tokio::sync::Mutex::new(()),
             timeout,
         }
     }
@@ -257,24 +260,17 @@ macro_rules! retry_core {
     }};
 }
 
-macro_rules! retry_mut {
-    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
-        retry_core!($self, $tag, {
-            // use the block here to drop the guard of the lock,
-            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
-            let $cluster = &mut $self.cluster.write().await.0;
-            $call.await
-        })
-    }};
-}
-
 macro_rules! retry {
     ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
         retry_core!($self, $tag, {
-            // use the block here to drop the guard of the lock,
-            // otherwise `reconnect` will try to acquire the write lock and results in a deadlock
-            let $cluster = &$self.cluster.read().await.0;
-            $call.await
+            let request = {
+                let guard = $self.cluster.read().await;
+                let $cluster = &guard.0;
+                $call
+            };
+            // The future owns its connection; neither requests nor reconnect
+            // wait for an RPC-duration cluster guard.
+            request.await
         })
     }};
 }
@@ -317,8 +313,14 @@ impl RetryClient<Cluster> {
         Ok(RetryClient {
             cluster,
             connection,
+            reconnect: tokio::sync::Mutex::new(()),
             timeout,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn reconnect_for_test(&self) -> Result<()> {
+        self.reconnect(0).await
     }
 
     pub async fn cluster_id(&self) -> u64 {
@@ -331,44 +333,41 @@ impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_region", |cluster| {
+        retry!(self, "get_region", |cluster| {
             let key = key.clone();
-            async {
-                cluster
-                    .get_region(key.clone(), self.timeout)
-                    .await
-                    .and_then(|resp| {
+            cluster
+                .get_region(key.clone(), self.timeout)
+                .map(move |result| {
+                    result.and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
-            }
+                })
         })
     }
 
     async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_region_with_buckets", |cluster| {
+        retry!(self, "get_region_with_buckets", |cluster| {
             let key = key.clone();
-            async {
-                cluster
-                    .get_region_with_buckets(key.clone(), self.timeout, true)
-                    .await
-                    .and_then(|resp| {
+            cluster
+                .get_region_with_buckets(key.clone(), self.timeout, true)
+                .map(move |result| {
+                    result.and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
-            }
+                })
         })
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_prev_region", |cluster| {
+        retry!(self, "get_prev_region", |cluster| {
             let key = key.clone();
-            async {
-                cluster
-                    .get_prev_region(key.clone(), self.timeout)
-                    .await
-                    .and_then(|resp| {
+            cluster
+                .get_prev_region(key.clone(), self.timeout)
+                .map(move |result| {
+                    result.and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
-            }
+                })
         })
     }
 
@@ -376,26 +375,26 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         key: Vec<u8>,
     ) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_prev_region_with_buckets", |cluster| {
+        retry!(self, "get_prev_region_with_buckets", |cluster| {
             let key = key.clone();
-            async {
-                cluster
-                    .get_prev_region_with_buckets(key.clone(), self.timeout, true)
-                    .await
-                    .and_then(|resp| {
+            cluster
+                .get_prev_region_with_buckets(key.clone(), self.timeout, true)
+                .map(move |result| {
+                    result.and_then(|resp| {
                         region_from_response(resp, || Error::RegionForKeyNotFound { key })
                     })
-            }
+                })
         })
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_region_by_id", |cluster| async {
+        retry!(self, "get_region_by_id", |cluster| {
             cluster
                 .get_region_by_id(region_id, self.timeout)
-                .await
-                .and_then(|resp| {
-                    region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                .map(move |result| {
+                    result.and_then(|resp| {
+                        region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                    })
                 })
         })
     }
@@ -404,12 +403,13 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         region_id: RegionId,
     ) -> Result<RegionWithLeader> {
-        retry_mut!(self, "get_region_by_id_with_buckets", |cluster| async {
+        retry!(self, "get_region_by_id_with_buckets", |cluster| {
             cluster
                 .get_region_by_id_with_buckets(region_id, self.timeout, true)
-                .await
-                .and_then(|resp| {
-                    region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                .map(move |result| {
+                    result.and_then(|resp| {
+                        region_from_response(resp, || Error::RegionNotFoundInResponse { region_id })
+                    })
                 })
         })
     }
@@ -420,15 +420,10 @@ impl RetryClientTrait for RetryClient<Cluster> {
         end_key: Vec<u8>,
         limit: usize,
     ) -> Result<Vec<RegionWithLeader>> {
-        retry_mut!(self, "scan_regions", |cluster| {
-            let start_key = start_key.clone();
-            let end_key = end_key.clone();
-            async {
-                cluster
-                    .scan_regions(start_key, end_key, limit, self.timeout)
-                    .await
-                    .and_then(regions_from_scan_response)
-            }
+        retry!(self, "scan_regions", |cluster| {
+            cluster
+                .scan_regions(start_key.clone(), end_key.clone(), limit, self.timeout)
+                .map(|result| result.and_then(regions_from_scan_response))
         })
     }
 
@@ -438,14 +433,10 @@ impl RetryClientTrait for RetryClient<Cluster> {
         limit: usize,
         options: RegionScanOptions,
     ) -> Result<Vec<RegionWithLeader>> {
-        retry_mut!(self, "batch_scan_regions", |cluster| {
-            let ranges = ranges.clone();
-            async {
-                cluster
-                    .batch_scan_regions(ranges, limit, options, self.timeout)
-                    .await
-                    .and_then(regions_from_batch_scan_response)
-            }
+        retry!(self, "batch_scan_regions", |cluster| {
+            cluster
+                .batch_scan_regions(ranges.clone(), limit, options, self.timeout)
+                .map(|result| result.and_then(regions_from_batch_scan_response))
         })
     }
 
@@ -454,27 +445,25 @@ impl RetryClientTrait for RetryClient<Cluster> {
         split_keys: Vec<Vec<u8>>,
         retry_limit: u64,
     ) -> Result<pdpb::SplitRegionsResponse> {
-        retry_mut!(self, "split_regions", |cluster| {
+        retry!(self, "split_regions", |cluster| {
             let split_keys = split_keys.clone();
             cluster.split_regions(split_keys, retry_limit, self.timeout)
         })
     }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
-        retry_mut!(self, "get_store", |cluster| async {
+        retry!(self, "get_store", |cluster| {
             cluster
                 .get_store(id, self.timeout)
-                .await
-                .map(|resp| resp.store)
+                .map(|result| result.map(|resp| resp.store))
         })
     }
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
-        retry_mut!(self, "get_all_stores", |cluster| async {
+        retry!(self, "get_all_stores", |cluster| {
             cluster
                 .get_all_stores(self.timeout)
-                .await
-                .map(|resp| resp.stores)
+                .map(|result| result.map(|resp| resp.stores))
         })
     }
 
@@ -483,19 +472,19 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        retry_mut!(self, "get_min_timestamp", |cluster| {
+        retry!(self, "get_min_timestamp", |cluster| {
             cluster.get_min_timestamp(self.timeout)
         })
     }
 
     async fn set_external_timestamp(self: Arc<Self>, timestamp: u64) -> Result<()> {
-        retry_mut!(self, "set_external_timestamp", |cluster| {
+        retry!(self, "set_external_timestamp", |cluster| {
             cluster.set_external_timestamp(timestamp, self.timeout)
         })
     }
 
     async fn get_external_timestamp(self: Arc<Self>) -> Result<u64> {
-        retry_mut!(self, "get_external_timestamp", |cluster| {
+        retry!(self, "get_external_timestamp", |cluster| {
             cluster.get_external_timestamp(self.timeout)
         })
     }
@@ -505,16 +494,15 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn update_safepoint_value(self: Arc<Self>, safepoint: u64) -> Result<u64> {
-        retry_mut!(self, "update_gc_safepoint", |cluster| async {
+        retry!(self, "update_gc_safepoint", |cluster| {
             cluster
                 .update_safepoint(safepoint, self.timeout)
-                .await
-                .map(|resp| resp.new_safe_point)
+                .map(|result| result.map(|resp| resp.new_safe_point))
         })
     }
 
     async fn get_gc_state(self: Arc<Self>, keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
-        retry_mut!(self, "get_gc_state", |cluster| {
+        retry!(self, "get_gc_state", |cluster| {
             cluster.get_gc_state(keyspace_id, self.timeout)
         })
     }
@@ -524,7 +512,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         keyspace_id: u32,
         target: u64,
     ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
-        retry_mut!(self, "advance_txn_safe_point", |cluster| {
+        retry!(self, "advance_txn_safe_point", |cluster| {
             cluster.advance_txn_safe_point(keyspace_id, target, self.timeout)
         })
     }
@@ -534,7 +522,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         keyspace_id: u32,
         target: u64,
     ) -> Result<pdpb::AdvanceGcSafePointResponse> {
-        retry_mut!(self, "advance_gc_safe_point", |cluster| {
+        retry!(self, "advance_gc_safe_point", |cluster| {
             cluster.advance_gc_safe_point(keyspace_id, target, self.timeout)
         })
     }
@@ -544,20 +532,20 @@ impl RetryClientTrait for RetryClient<Cluster> {
         region_ids: Vec<u64>,
         group: String,
     ) -> Result<pdpb::ScatterRegionResponse> {
-        retry_mut!(self, "scatter_regions", |cluster| {
+        retry!(self, "scatter_regions", |cluster| {
             cluster.scatter_regions(region_ids.clone(), group.clone(), self.timeout)
         })
     }
 
     async fn get_operator(self: Arc<Self>, region_id: u64) -> Result<pdpb::GetOperatorResponse> {
-        retry_mut!(self, "get_operator", |cluster| {
+        retry!(self, "get_operator", |cluster| {
             cluster.get_operator(region_id, self.timeout)
         })
     }
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
-        retry_mut!(self, "load_keyspace", |cluster| async {
-            cluster.load_keyspace(keyspace, self.timeout).await
+        retry!(self, "load_keyspace", |cluster| {
+            cluster.load_keyspace(keyspace, self.timeout)
         })
     }
 }
@@ -643,15 +631,28 @@ impl Reconnect for RetryClient<Cluster> {
 
     async fn reconnect(&self, interval_sec: u64) -> Result<()> {
         let reconnect_begin = Instant::now();
-        let mut lock = self.cluster.write().await;
-        let (cluster, last_connected) = &mut *lock;
-        // If `last_connected + interval_sec` is larger or equal than reconnect_begin,
-        // a concurrent reconnect is just succeed when this thread trying to get write lock
-        let should_connect = reconnect_begin > *last_connected + Duration::from_secs(interval_sec);
-        if should_connect {
-            self.connection.reconnect(cluster, self.timeout).await?;
-            *last_connected = Instant::now();
-        }
+        // Serialize refreshes, not requests. An in-flight RPC retains its own
+        // handle and cannot delay discovery or publication of a new leader.
+        let _refresh = self.reconnect.lock().await;
+        let prepare = {
+            let guard = self.cluster.read().await;
+            if reconnect_begin <= guard.1 + Duration::from_secs(interval_sec) {
+                return Ok(());
+            }
+            self.connection.prepare_reconnect(&guard.0, self.timeout)
+        };
+        log::warn!("updating pd client");
+        let leader = prepare.await?;
+        let retire = {
+            let mut guard = self.cluster.write().await;
+            guard.0.install_leader(leader, self.timeout)?
+        };
+        retire.await;
+        self.cluster.write().await.1 = Instant::now();
+        log::info!(
+            "updating PD client done, spent {:?}",
+            reconnect_begin.elapsed()
+        );
         Ok(())
     }
 }
@@ -727,7 +728,7 @@ mod test {
             }
         }
         async fn lookup(client: Arc<MockClient>) -> Result<()> {
-            retry_mut!(client, "test", |_cluster| ready(Err(
+            retry!(client, "test", |_cluster| ready(Err(
                 Error::RegionForKeyNotFound { key: b"a".to_vec() }
             )))
         }
@@ -760,7 +761,7 @@ mod test {
         }
 
         async fn retry_err(client: Arc<MockClient>) -> Result<()> {
-            retry_mut!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
+            retry!(client, "test", |_c| ready(Err(internal_err!("whoops"))))
         }
 
         async fn retry_ok(client: Arc<MockClient>) -> Result<()> {
@@ -813,7 +814,7 @@ mod test {
             client: Arc<MockClient>,
             max_retries: Arc<AtomicUsize>,
         ) -> Result<()> {
-            retry_mut!(client, "test", |c| {
+            retry!(client, "test", |c| {
                 c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                 let max_retries = max_retries.fetch_sub(1, Ordering::SeqCst) - 1;

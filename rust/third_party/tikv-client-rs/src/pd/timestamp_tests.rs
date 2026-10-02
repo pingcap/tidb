@@ -12,7 +12,8 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
 use super::*;
-use crate::pd::Connection;
+use crate::pd::{Connection, RetryClient, RetryClientTrait};
+use crate::proto::{metapb, pdpb};
 use crate::SecurityManager;
 
 #[derive(Clone, Copy)]
@@ -30,6 +31,9 @@ struct PdServer {
     member_failures: Arc<AtomicUsize>,
     member_requests: Arc<AtomicUsize>,
     stall_members: Arc<std::sync::atomic::AtomicBool>,
+    region_entered: Arc<tokio::sync::Semaphore>,
+    region_release: Arc<tokio::sync::Semaphore>,
+    region_id: Arc<AtomicUsize>,
     reply: Reply,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -63,11 +67,36 @@ where
         let service = self.clone();
         match request.uri().path() {
             "/pdpb.PD/GetMembers" => Box::pin(async move {
-                Ok(
-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
-                        .unary(service, request)
-                        .await,
-                )
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetMembersResponse,
+                    pdpb::GetMembersRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
+            "/pdpb.PD/GetRegion" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetRegionResponse,
+                    pdpb::GetRegionRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
+            "/pdpb.PD/GetAllStores" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetAllStoresResponse,
+                    pdpb::GetAllStoresRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
+            "/pdpb.PD/ScanRegions" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::ScanRegionsResponse,
+                    pdpb::ScanRegionsRequest,
+                >::default())
+                .unary(service, request)
+                .await)
             }),
             "/pdpb.PD/Tso" => Box::pin(async move {
                 Ok(
@@ -128,6 +157,85 @@ impl tonic::server::UnaryService<GetMembersRequest> for PdServer {
                 }),
                 members: vec![member.clone()],
                 leader: Some(leader),
+                ..Default::default()
+            }))
+        })
+    }
+}
+
+impl tonic::server::UnaryService<pdpb::GetRegionRequest> for PdServer {
+    type Response = pdpb::GetRegionResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+    fn call(&mut self, request: tonic::Request<pdpb::GetRegionRequest>) -> Self::Future {
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        let request = request.into_inner();
+        assert_eq!(request.header.unwrap().cluster_id, 42);
+        let service = self.clone();
+        Box::pin(async move {
+            if request.region_key == b"blocked" {
+                service.region_entered.add_permits(1);
+                service.region_release.acquire().await.unwrap().forget();
+            }
+            Ok(tonic::Response::new(pdpb::GetRegionResponse {
+                header: Some(ResponseHeader {
+                    cluster_id: 42,
+                    ..Default::default()
+                }),
+                region: Some(metapb::Region {
+                    id: service.region_id.load(Ordering::SeqCst) as u64,
+                    region_epoch: Some(metapb::RegionEpoch::default()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        })
+    }
+}
+
+impl tonic::server::UnaryService<pdpb::GetAllStoresRequest> for PdServer {
+    type Response = pdpb::GetAllStoresResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+    fn call(&mut self, request: tonic::Request<pdpb::GetAllStoresRequest>) -> Self::Future {
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
+        Box::pin(async {
+            Ok(tonic::Response::new(pdpb::GetAllStoresResponse {
+                header: Some(ResponseHeader {
+                    cluster_id: 42,
+                    ..Default::default()
+                }),
+                stores: vec![metapb::Store {
+                    id: 9,
+                    ..Default::default()
+                }],
+            }))
+        })
+    }
+}
+
+impl tonic::server::UnaryService<pdpb::ScanRegionsRequest> for PdServer {
+    type Response = pdpb::ScanRegionsResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+    fn call(&mut self, request: tonic::Request<pdpb::ScanRegionsRequest>) -> Self::Future {
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
+        let request = request.into_inner();
+        Box::pin(async move {
+            Ok(tonic::Response::new(pdpb::ScanRegionsResponse {
+                header: Some(ResponseHeader {
+                    cluster_id: 42,
+                    ..Default::default()
+                }),
+                region_metas: vec![metapb::Region {
+                    id: 7,
+                    start_key: request.start_key,
+                    end_key: request.end_key,
+                    region_epoch: Some(metapb::RegionEpoch::default()),
+                    ..Default::default()
+                }],
                 ..Default::default()
             }))
         })
@@ -220,6 +328,9 @@ impl Server {
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
             stall_members: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            region_entered: Arc::new(tokio::sync::Semaphore::new(0)),
+            region_release: Arc::new(tokio::sync::Semaphore::new(0)),
+            region_id: Arc::new(AtomicUsize::new(1)),
             reply,
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
@@ -241,6 +352,150 @@ impl Server {
             .await
             .unwrap()
     }
+}
+
+async fn metadata_client(server: &Server) -> Arc<RetryClient> {
+    let timeout = Duration::from_secs(10);
+    Arc::new(RetryClient::new_with_cluster(
+        Arc::new(SecurityManager::default()),
+        timeout,
+        server.cluster(timeout).await,
+    ))
+}
+
+async fn wait_region_entered(server: &Server) {
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        server.service.region_entered.acquire(),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .forget();
+}
+
+#[tokio::test]
+async fn source_pd_concurrency_metadata_requests_overlap() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&server).await;
+    let blocked = tokio::spawn(client.clone().get_region(b"blocked".to_vec()));
+    wait_region_entered(&server).await;
+    let others = tokio::time::timeout(Duration::from_millis(500), async {
+        tokio::try_join!(
+            client.clone().get_region(b"free".to_vec()),
+            client.clone().get_all_stores(),
+            client.clone().scan_regions(b"a".to_vec(), b"z".to_vec(), 1),
+            client.clone().get_timestamp(),
+        )
+    })
+    .await;
+    server.service.region_release.add_permits(1);
+    blocked.await.unwrap().unwrap();
+    let (region, stores, scan, ts) = others
+        .expect("Go does not serialize metadata RPCs")
+        .unwrap();
+    assert_eq!(region.region.id, 1);
+    assert_eq!(stores[0].id, 9);
+    assert_eq!(scan[0].region.start_key, b"a");
+    assert_eq!(scan[0].region.end_key, b"z");
+    assert_eq!(ts.physical, 100);
+}
+
+#[tokio::test]
+async fn source_pd_concurrency_timestamp_wait_releases_cluster() {
+    let server = Server::start(Reply::StallBody).await;
+    let client = metadata_client(&server).await;
+    let timestamp = tokio::spawn(client.clone().get_timestamp());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.received.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let metadata =
+        tokio::time::timeout(Duration::from_millis(500), client.clone().get_all_stores()).await;
+    timestamp.abort();
+    assert!(timestamp.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        metadata
+            .expect("a pending TSO must not block metadata")
+            .unwrap()[0]
+            .id,
+        9
+    );
+}
+
+#[tokio::test]
+async fn source_pd_concurrency_replacement_during_metadata_request() {
+    let first = Server::start(Reply::Timestamp).await;
+    let second = Server::start(Reply::Timestamp).await;
+    second.service.region_id.store(2, Ordering::SeqCst);
+    let client = metadata_client(&first).await;
+    client.clone().get_timestamp().await.unwrap();
+    let blocked = tokio::spawn(client.clone().get_region(b"blocked".to_vec()));
+    wait_region_entered(&first).await;
+    *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
+    let refresh = tokio::time::timeout(Duration::from_secs(1), client.reconnect_for_test()).await;
+    first.service.region_release.add_permits(1);
+    let old = blocked.await.unwrap().unwrap();
+    refresh
+        .expect("a retained request must not prevent leader replacement")
+        .unwrap();
+    assert_eq!(old.region.id, 1);
+    assert_eq!(
+        client
+            .clone()
+            .get_region(b"new".to_vec())
+            .await
+            .unwrap()
+            .region
+            .id,
+        2
+    );
+    client.clone().get_timestamp().await.unwrap();
+    assert_eq!(second.service.received.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while first.service.dropped.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("replacement must still retire the previous TSO stream");
+}
+
+#[tokio::test]
+async fn source_pd_concurrency_discovery_does_not_block_requests() {
+    let server = Server::start(Reply::Timestamp).await;
+    let client = metadata_client(&server).await;
+    let first = client.clone().get_timestamp().await.unwrap();
+    let members_before = server.service.member_requests.load(Ordering::SeqCst);
+    server.service.stall_members.store(true, Ordering::SeqCst);
+    let refreshing = client.clone();
+    let refresh = tokio::spawn(async move { refreshing.reconnect_for_test().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.member_requests.load(Ordering::SeqCst) == members_before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let metadata =
+        tokio::time::timeout(Duration::from_millis(500), client.clone().get_all_stores()).await;
+    refresh.abort();
+    assert!(refresh.await.unwrap_err().is_cancelled());
+    server.service.stall_members.store(false, Ordering::SeqCst);
+    assert_eq!(
+        metadata
+            .expect("discovery must not hold the request publication lock")
+            .unwrap()[0]
+            .id,
+        9
+    );
+    assert_eq!(
+        client.clone().get_timestamp().await.unwrap().logical,
+        first.logical + 1
+    );
 }
 
 #[tokio::test]

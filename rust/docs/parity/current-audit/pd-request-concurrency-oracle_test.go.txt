@@ -1,0 +1,150 @@
+// Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
+// Test overlay for the pinned github.com/tikv/pd/client module; not a production port.
+package pd
+
+import (
+	"context"
+	"net"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/utils/grpcutil"
+	sd "github.com/tikv/pd/client/servicediscovery"
+)
+
+type ownershipOracleServer struct {
+	pdpb.UnimplementedPDServer
+	id      uint64
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *ownershipOracleServer) GetRegion(ctx context.Context, req *pdpb.GetRegionRequest) (*pdpb.GetRegionResponse, error) {
+	if string(req.RegionKey) == "blocked" {
+		close(s.entered)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return &pdpb.GetRegionResponse{Header: &pdpb.ResponseHeader{}, Region: &metapb.Region{Id: s.id}}, nil
+}
+
+func (*ownershipOracleServer) GetAllStores(context.Context, *pdpb.GetAllStoresRequest) (*pdpb.GetAllStoresResponse, error) {
+	return &pdpb.GetAllStoresResponse{Header: &pdpb.ResponseHeader{}, Stores: []*metapb.Store{{Id: 9}}}, nil
+}
+
+func (*ownershipOracleServer) ScanRegions(_ context.Context, req *pdpb.ScanRegionsRequest) (*pdpb.ScanRegionsResponse, error) {
+	return &pdpb.ScanRegionsResponse{Header: &pdpb.ResponseHeader{}, RegionMetas: []*metapb.Region{{Id: 7, StartKey: req.StartKey, EndKey: req.EndKey}}}, nil
+}
+
+type ownershipOracleService struct {
+	url  string
+	conn *grpc.ClientConn
+}
+
+func (s *ownershipOracleService) GetURL() string                  { return s.url }
+func (s *ownershipOracleService) GetClientConn() *grpc.ClientConn { return s.conn }
+func (*ownershipOracleService) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+	return ctx
+}
+func (*ownershipOracleService) IsConnectedToLeader() bool         { return true }
+func (*ownershipOracleService) Available() bool                   { return true }
+func (*ownershipOracleService) NeedRetry(*pdpb.Error, error) bool { return false }
+
+type ownershipOracleDiscovery struct {
+	*testServiceDiscovery
+	current atomic.Pointer[ownershipOracleService]
+}
+
+func (s *ownershipOracleDiscovery) GetServiceClient() sd.ServiceClient { return s.current.Load() }
+func (s *ownershipOracleDiscovery) GetServiceClientByKind(sd.APIKind) sd.ServiceClient {
+	return s.current.Load()
+}
+
+func startOwnershipOracle(t *testing.T, id uint64) (*ownershipOracleServer, *ownershipOracleService) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	service := &ownershipOracleServer{id: id, entered: make(chan struct{}), release: make(chan struct{})}
+	server := grpc.NewServer()
+	pdpb.RegisterPDServer(server, service)
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); <-stopped })
+	url := "http://" + listener.Addr().String()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := grpcutil.GetClientConn(ctx, url, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	return service, &ownershipOracleService{url: url, conn: conn}
+}
+
+func TestRequestOwnershipOracle(t *testing.T) {
+	first, firstConn := startOwnershipOracle(t, 1)
+	_, secondConn := startOwnershipOracle(t, 2)
+	discovery := &ownershipOracleDiscovery{testServiceDiscovery: newTestServiceDiscovery(firstConn.url, firstConn.conn)}
+	discovery.current.Store(firstConn)
+	option := opt.NewOption()
+	option.InitMetrics = false
+	option.Timeout = 5 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &client{inner: &innerClient{serviceDiscovery: discovery, ctx: ctx, option: option}}
+	type response struct {
+		id  uint64
+		err error
+	}
+	done := make(chan response, 1)
+	go func() {
+		region, err := c.GetRegion(ctx, []byte("blocked"))
+		if err != nil {
+			done <- response{err: err}
+			return
+		}
+		done <- response{id: region.Meta.Id}
+	}()
+	defer close(first.release)
+	select {
+	case <-first.entered:
+	case <-time.After(time.Second):
+		t.Fatal("blocked request did not reach PD")
+	}
+	independent, stop := context.WithTimeout(ctx, time.Second)
+	defer stop()
+	region, err := c.GetRegion(independent, []byte("free"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), region.Meta.Id)
+	stores, err := c.GetAllStores(independent)
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), stores[0].Id)
+	regions, err := c.ScanRegions(independent, []byte("a"), []byte("z"), 1)
+	require.NoError(t, err)
+	require.Equal(t, []byte("a"), regions[0].Meta.StartKey)
+	require.Equal(t, []byte("z"), regions[0].Meta.EndKey)
+	discovery.current.Store(secondConn)
+	region, err = c.GetRegion(independent, []byte("new"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), region.Meta.Id)
+	select {
+	case first.release <- struct{}{}:
+	case <-time.After(time.Second):
+		t.Fatal("first request stopped waiting before release")
+	}
+	select {
+	case result := <-done:
+		require.NoError(t, result.err)
+		require.Equal(t, uint64(1), result.id)
+	case <-time.After(time.Second):
+		t.Fatal("retained first connection did not finish")
+	}
+}
