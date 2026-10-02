@@ -16,7 +16,7 @@
 //! existing table's columns and options in place.
 //!
 //! Inside: [`run_alter_table_in`], which applies the statement's actions in
-//! source order so a failing action leaves the earlier ones applied;
+//! source order on a staged catalog and publishes only after they all succeed;
 //! [`add_column_action`], [`modify_column_action`] and
 //! [`drop_column_action`], the three column changes, including the read-time
 //! `OriginDefaultValue` fill that gives already-written rows a new column's
@@ -61,54 +61,39 @@ pub fn run_alter_table_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    // Go submits one ALTER TABLE job for the whole action list and rolls the
-    // job back if any action fails. Stage statements carrying foreign-key
-    // actions on a catalog clone so earlier adds/column changes cannot leak
-    // when a later FK fails validation. Single-action ALTERs retain the
-    // existing fast path.
     let stmt = ctx.parse(sql)?;
-    let atomic_foreign_key_actions = match &stmt {
-        Stmt::Ddl(ddl) => match &**ddl {
-            DdlStmt::AlterTable(alter) => {
-                // Online repartition requires Go's durable reorganization
-                // owner. Refuse the entire statement before any other action
-                // can mutate the table while that owner is unavailable.
-                if alter.actions.iter().any(|action| {
-                    matches!(
-                        action,
-                        tidb_ast::AlterTableAction::Partition(
-                            tidb_ast::AlterPartitionAction::Repartition(_)
-                        )
-                    )
-                }) {
-                    return Err(DriverError::unsupported(
-                        "ALTER TABLE ... PARTITION BY requires durable partition reorganization",
-                    ));
-                }
-                alter.actions.len() > 1
-                    && alter.actions.iter().any(|action| match action {
-                        tidb_ast::AlterTableAction::AddForeignKey(_) => true,
-                        tidb_ast::AlterTableAction::AddColumns { constraints, .. } => {
-                            constraints.iter().any(|constraint| {
-                                matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_))
-                            })
-                        }
-                        _ => false,
-                    })
-            }
-            _ => false,
-        },
-        _ => false,
+    let Stmt::Ddl(ddl) = &stmt else {
+        return Err(DriverError::unsupported(
+            "only ALTER TABLE is supported here",
+        ));
     };
-    if atomic_foreign_key_actions {
-        let mut staged = catalog.clone();
-        let result = run_alter_table_in_inner(sql, &mut staged, current_db, ctx);
-        if result.is_ok() {
-            *catalog = staged;
-        }
-        return result;
+    let DdlStmt::AlterTable(alter) = &**ddl else {
+        return Err(DriverError::unsupported(
+            "only ALTER TABLE is supported here",
+        ));
+    };
+    // Online repartition requires Go's durable reorganization owner. Refuse
+    // before applying any action while that owner is unavailable.
+    if alter.actions.iter().any(|action| {
+        matches!(
+            action,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Repartition(_))
+        )
+    }) {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE ... PARTITION BY requires durable partition reorganization",
+        ));
     }
-    run_alter_table_in_inner(sql, catalog, current_db, ctx)
+    // Go owns rollback for the entire multi-schema job. In this synchronous
+    // owner, stage the catalog and its copy-on-write row/index storage for
+    // every ALTER, including grouped specifications within a single action.
+    // Warnings still belong to the statement context on either outcome.
+    // Shared auto-ID reservations are outside catalog transaction semantics;
+    // this is not a replacement for Go's durable DDL job lifecycle.
+    let mut staged = catalog.clone();
+    run_alter_table_in_inner(alter, &mut staged, current_db, ctx)?;
+    *catalog = staged;
+    Ok(())
 }
 
 /// Mirrors Go `checkOperateSameColAndIdx` for one multi-spec ALTER.
@@ -403,27 +388,11 @@ fn collect_expression_columns(expression: &tidb_ast::Expr, output: &mut Vec<Stri
 }
 
 fn run_alter_table_in_inner(
-    sql: &str,
+    alter: &tidb_ast::AlterTableStmt,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let stmt = ctx.parse(sql)?;
-    let alter = match &stmt {
-        Stmt::Ddl(ddl) => match &**ddl {
-            DdlStmt::AlterTable(alter) => alter,
-            _ => {
-                return Err(DriverError::unsupported(
-                    "only ALTER TABLE is supported here",
-                ))
-            }
-        },
-        _ => {
-            return Err(DriverError::unsupported(
-                "only ALTER TABLE is supported here",
-            ))
-        }
-    };
     let (database, name) = crate::driver::split_table_path_pub(&alter.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     if catalog.table_in(&database, &name).is_none() {

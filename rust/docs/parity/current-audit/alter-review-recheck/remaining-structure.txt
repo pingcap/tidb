@@ -1,0 +1,16 @@
+SET GLOBAL tidb_enable_stmt_summary=ON
+  Ok(Affected(0))
+SET GLOBAL tidb_stmt_summary_internal_query=ON
+  Ok(Affected(0))
+CREATE TABLE structure_audit_summary (id INT PRIMARY KEY, value INT)
+  Ok(Done(true))
+INSERT INTO structure_audit_summary VALUES (1, 2)
+  Ok(Affected(1))
+SELECT value FROM structure_audit_summary WHERE id=1
+  Ok(Rows([[Int(2)]]))
+SELECT COUNT(*) FROM information_schema.tidb_statements_stats
+  Ok(Rows([[Int(0)]]))
+SELECT @@GLOBAL.tidb_enable_stmt_summary, @@GLOBAL.tidb_stmt_summary_internal_query
+  Ok(Rows([[Int(1), Int(1)]]))
+SET tidb_opt_range_max_count=1000
+  Err(Var(UnknownSystemVariable("tidb_opt_range_max_count")))

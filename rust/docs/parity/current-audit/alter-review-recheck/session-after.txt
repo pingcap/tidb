@@ -1,0 +1,92 @@
+CREATE TABLE alias_merge (id INT PRIMARY KEY, x INT, y INT)
+  Ok(Done(true))
+INSERT INTO alias_merge VALUES (1,10,20)
+  Ok(Affected(1))
+UPDATE alias_merge a JOIN alias_merge b ON a.id=b.id SET a.x=11,b.y=21
+  Ok(Affected(2))
+SELECT * FROM alias_merge
+  Ok(Rows([[Int(1), Int(11), Int(21)]]))
+CREATE TABLE using_left (id INT PRIMARY KEY, x INT)
+  Ok(Done(true))
+CREATE TABLE using_right (id INT PRIMARY KEY, y INT)
+  Ok(Done(true))
+INSERT INTO using_left VALUES (1,10)
+  Ok(Affected(1))
+INSERT INTO using_right VALUES (1,20)
+  Ok(Affected(1))
+UPDATE using_left a JOIN using_right b USING (id) SET a.x=11,b.y=21
+  Ok(Affected(2))
+SELECT * FROM using_left
+  Ok(Rows([[Int(1), Int(11)]]))
+SELECT * FROM using_right
+  Ok(Rows([[Int(1), Int(21)]]))
+CREATE TABLE fk_parent (id INT PRIMARY KEY)
+  Ok(Done(true))
+CREATE TABLE fk_child (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES fk_parent(id))
+  Ok(Done(true))
+INSERT INTO fk_parent VALUES (1)
+  Ok(Affected(1))
+INSERT INTO fk_child VALUES (1,1)
+  Ok(Affected(1))
+UPDATE fk_child SET pid=999 WHERE id=1
+  Err(ForeignKeyNoReferencedRow { table: "`test`.`fk_child`", constraint: "CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `fk_parent` (`id`)" })
+UPDATE fk_child c JOIN fk_parent p ON c.pid=p.id SET c.pid=999
+  Err(ForeignKeyNoReferencedRow { table: "`test`.`fk_child`", constraint: "CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `fk_parent` (`id`)" })
+SELECT * FROM fk_child
+  Ok(Rows([[Int(1), Int(1)]]))
+UPDATE fk_child SET pid=1 WHERE id=1
+  Ok(Affected(0))
+DELETE p FROM fk_parent p JOIN fk_child c ON c.pid=p.id
+  Err(ForeignKeyRowIsReferenced { table: "`test`.`fk_child`", constraint: "CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `fk_parent` (`id`)" })
+CREATE TABLE alter_atomic (id INT)
+  Ok(Done(true))
+ALTER TABLE alter_atomic ADD COLUMN added INT, ADD COLUMN id INT
+  Err(DuplicateColumnName("id"))
+SHOW COLUMNS FROM alter_atomic
+  Ok(Rows([[Bytes([105, 100]), Bytes([105, 110, 116]), Bytes([89, 69, 83]), Bytes([]), Null, Bytes([])]]))
+CREATE SEQUENCE audit_sequence START WITH 7
+  Ok(Affected(0))
+SELECT NEXTVAL(audit_sequence)
+  Ok(Rows([[Int(7)]]))
+SELECT SEQUENCE_NAME FROM information_schema.SEQUENCES WHERE SEQUENCE_NAME='audit_sequence'
+  Ok(Rows([]))
+SELECT INSTANCE, VALUE FROM information_schema.CLUSTER_CONFIG WHERE `KEY`='port'
+  Err(Unsupported("CLUSTER_CONFIG live retrieval is not supported yet"))
+SHOW WARNINGS
+  Ok(Rows([[Bytes([69, 114, 114, 111, 114]), Int(1105), Bytes([67, 76, 85, 83, 84, 69, 82, 95, 67, 79, 78, 70, 73, 71, 32, 108, 105, 118, 101, 32, 114, 101, 116, 114, 105, 101, 118, 97, 108, 32, 105, 115, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 121, 101, 116])]]))
+SELECT * FROM information_schema.CLUSTER_LOG WHERE TIME > '2026-01-01 00:00:00' AND TIME < '2026-01-02 00:00:00' AND MESSAGE LIKE '%' LIMIT 1
+  Err(Exec(Eval(Unsupported("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`"))))
+SET tidb_enable_non_prepared_plan_cache=OFF
+  Ok(Affected(0))
+SET tidb_enable_prepared_plan_cache=ON
+  Ok(Affected(0))
+SET tidb_session_plan_cache_size=1
+  Ok(Affected(0))
+CREATE TABLE cache_owner (id INT PRIMARY KEY, v INT)
+  Ok(Done(true))
+INSERT INTO cache_owner VALUES (1,10),(2,20)
+  Ok(Affected(2))
+PREPARE first_query FROM 'SELECT v FROM cache_owner WHERE id=?'
+  Ok(Affected(0))
+PREPARE second_query FROM 'SELECT v+1 FROM cache_owner WHERE id=?'
+  Ok(Affected(0))
+SET @id=1
+  Ok(Affected(0))
+EXECUTE first_query USING @id
+  Ok(Rows([[Int(10)]]))
+SELECT @@last_plan_from_cache
+  Ok(Rows([[Int(0)]]))
+EXECUTE second_query USING @id
+  Ok(Rows([[Int(11)]]))
+SELECT @@last_plan_from_cache
+  Ok(Rows([[Int(0)]]))
+EXECUTE first_query USING @id
+  Ok(Rows([[Int(10)]]))
+SELECT @@last_plan_from_cache
+  Ok(Rows([[Int(0)]]))
+ADMIN FLUSH SESSION PLAN_CACHE
+  Ok(Done(true))
+EXECUTE first_query USING @id
+  Ok(Rows([[Int(10)]]))
+SELECT @@last_plan_from_cache
+  Ok(Rows([[Int(0)]]))

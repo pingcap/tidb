@@ -37,6 +37,33 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn failed_alter_keeps_rows_and_prepared_schema() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1, 2), (2, 1)").unwrap();
+    session
+        .run("PREPARE stmt FROM 'SELECT * FROM t ORDER BY a'")
+        .unwrap();
+    let original = row_text(session.run("EXECUTE stmt"));
+    let error = session
+        .run("ALTER TABLE t ADD COLUMN c INT DEFAULT 10, ADD INDEX idx1((a+b)), ADD UNIQUE INDEX idx2((a+b))")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1062);
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t ORDER BY a")),
+        original
+    );
+    assert_eq!(row_text(session.run("EXECUTE stmt")), original);
+    session
+        .run("ALTER TABLE t ADD COLUMN c INT DEFAULT 10, ADD INDEX idx1((a+b))")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("EXECUTE stmt")),
+        vec![["1", "2", "10"], ["2", "1", "10"]]
+    );
+}
+
 /// Go `pkg/statistics/integration_test.go::TestIssue44369`: renaming a column
 /// covered by a composite index must not leave the loaded statistics bound to
 /// stale schema metadata during the next range-estimation query.

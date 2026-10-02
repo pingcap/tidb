@@ -584,13 +584,19 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
         &mut catalog,
         "alter table t drop column a, rename index t to x",
     )
-    .expect_err("Go: the rename silently no-ops (index already gone with the column)");
+    // Go treats the rename as a no-op after dropping the covering column.
+    // That admission difference remains; a Rust refusal must still roll back
+    // the whole statement rather than publish the earlier column removal.
+    .expect_err("the local dispatcher still refuses the now-missing index");
     assert_eq!(
         code_of(&error),
         1176,
         "sequential: 't' went with the column"
     );
-    assert_eq!(text_rows(&catalog, "select * from t"), vec![["2", "3"]]);
+    assert_eq!(
+        text_rows(&catalog, "select * from t"),
+        vec![["1", "2", "3"]]
+    );
 }
 
 /// Go `multi_schema_change_test.go:579-638::TestMultiSchemaChangeAlterIndex`
@@ -810,7 +816,7 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
 /// expression-index dependencies now participate in the same preflight as
 /// ordinary index columns. Go refuses the two dependency conflicts at job
 /// build with 8200, atomically; the duplicate-entry arm remains a later
-/// 1062 backfill error and keeps its successful earlier column/index changes.
+/// 1062 backfill error and rolls back the earlier column/index changes.
 #[test]
 fn multi_schema_change_expression_index_combinations_measured() {
     // drop column a, add unique index idx((a + b))
@@ -847,6 +853,7 @@ fn multi_schema_change_expression_index_combinations_measured() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
     run_insert_on("insert into t values (1, 2), (2, 1)", &mut catalog, &ctx()).unwrap();
+    let original = catalog.clone();
     let error = alter(
         &mut catalog,
         "alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b))",
@@ -859,8 +866,99 @@ fn multi_schema_change_expression_index_combinations_measured() {
     );
     assert_eq!(
         text_rows(&catalog, "select * from t"),
-        vec![["1", "2", "10"], ["2", "1", "10"]]
+        vec![["1", "2"], ["2", "1"]]
     );
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+fn stored_keys(catalog: &Catalog, name: &str) -> Vec<Vec<u8>> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
+        panic!("table {name} missing");
+    };
+    // Clone the table handle so observing storage does not bump the catalog.
+    table.as_ref().clone().stored_keys().unwrap()
+}
+
+fn assert_unchanged_table(catalog: &Catalog, original: &Catalog, name: &str) {
+    assert_eq!(column_order(catalog, name), column_order(original, name));
+    assert_eq!(index_names(catalog, name), index_names(original, name));
+    assert_eq!(stored_keys(catalog, name), stored_keys(original, name));
+    assert_eq!(catalog.version(), original.version());
+    assert_eq!(catalog.metadata_version(), original.metadata_version());
+}
+
+#[test]
+fn multi_schema_change_failed_column_preserves_statement_image() {
+    for sql in [
+        "alter table t add column added int default 3, add column a int",
+        "alter table t add column (added int default 3, a int)",
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "create table t (a int, b int, index b_idx(b))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on("insert into t values (1, 2)", &mut catalog, &ctx()).unwrap();
+        let original = catalog.clone();
+        assert_eq!(code_of(&alter(&mut catalog, sql).unwrap_err()), 1060);
+        assert_unchanged_table(&catalog, &original, "t");
+        assert_eq!(text_rows(&catalog, "select * from t"), vec![["1", "2"]]);
+    }
+}
+
+#[test]
+fn multi_schema_change_failed_action_restores_dropped_index_entries() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t (a int, b int, index b_idx(b))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on("insert into t values (1, 2)", &mut catalog, &ctx()).unwrap();
+    let original = catalog.clone();
+    let error = alter(
+        &mut catalog,
+        "alter table t drop index b_idx, add column a int",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 1060);
+    assert_unchanged_table(&catalog, &original, "t");
+    assert_eq!(
+        text_rows(&catalog, "select * from t force index(b_idx) where b = 2"),
+        vec![["1", "2"]]
+    );
+}
+
+#[test]
+fn multi_schema_change_failed_action_restores_referencing_table_metadata() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table parent (a int primary key, b int)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_create_table_on(
+        "create table child (a int, foreign key (a) references parent(a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on("insert into parent values (1, 2)", &mut catalog, &ctx()).unwrap();
+    run_insert_on("insert into child values (1)", &mut catalog, &ctx()).unwrap();
+    let original = catalog.clone();
+    let error = alter(
+        &mut catalog,
+        "alter table parent rename column a to renamed, add column b int",
+    )
+    .unwrap_err();
+    assert_eq!(code_of(&error), 1060);
+    assert_unchanged_table(&catalog, &original, "parent");
+    assert_unchanged_table(&catalog, &original, "child");
+    let Some(crate::TableEntry::Kv(child)) = catalog.table_in("test", "child") else {
+        panic!("child missing");
+    };
+    assert_eq!(child.foreign_keys()[0].ref_cols, vec!["a"]);
+    run_insert_on("insert into child values (1)", &mut catalog, &ctx()).unwrap();
 }
 
 /// Go `multi_schema_change_test.go:725-737::TestMultiSchemaChangeWithExpressionIndex`

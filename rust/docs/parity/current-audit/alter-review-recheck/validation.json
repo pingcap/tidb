@@ -1,0 +1,142 @@
+[
+  {
+    "command": "cargo test --locked -p tidb-executor --lib tests_ddl -- --nocapture",
+    "cwd": "rust",
+    "exit": 0,
+    "log": "/private/tmp/alter-review-validation-0.log",
+    "summaries": [
+      "test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 1472 filtered out; finished in 0.40s"
+    ],
+    "failed_tests": []
+  },
+  {
+    "command": "cargo test --locked -p tidb-session --lib tests_alter_column -- --nocapture",
+    "cwd": "rust",
+    "exit": 0,
+    "log": "/private/tmp/alter-review-validation-1.log",
+    "summaries": [
+      "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 2102 filtered out; finished in 0.06s"
+    ],
+    "failed_tests": []
+  },
+  {
+    "command": "cargo test --locked -p tidb-exec --test cluster_ddl_source partition -- --nocapture",
+    "cwd": "rust",
+    "exit": 101,
+    "log": "/private/tmp/alter-review-validation-2.log",
+    "summaries": [],
+    "failed_tests": [],
+    "interpretation": "Invalid target; rerun below through declared --test all target."
+  },
+  {
+    "command": "cargo test --locked -p tidb-stats-handle-cache-internal-lfu --lib nonresident_primary_waits_for_admission -- --ignored",
+    "cwd": "rust",
+    "exit": 101,
+    "log": "/private/tmp/alter-review-validation-3.log",
+    "summaries": [
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.50s"
+    ],
+    "failed_tests": [
+      "source_tests::nonresident_primary_waits_for_admission"
+    ],
+    "interpretation": "Expected known C04 gap; not a passing validation gate."
+  },
+  {
+    "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+    "cwd": "rust",
+    "exit": 0,
+    "log": "/private/tmp/alter-review-validation-4.log",
+    "summaries": [],
+    "failed_tests": []
+  },
+  {
+    "label": "executor_regressions_before",
+    "command": "cargo test --locked -p tidb-executor --lib tests_ddl_multi_schema_change_sql -- --nocapture",
+    "cwd": "rust",
+    "exit": 101,
+    "summaries": [
+      "test result: FAILED. 16 passed; 4 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.06s"
+    ],
+    "failed_tests": [
+      "tests_ddl_multi_schema_change_sql::multi_schema_change_failed_column_preserves_statement_image",
+      "tests_ddl_multi_schema_change_sql::multi_schema_change_failed_action_restores_dropped_index_entries",
+      "tests_ddl_multi_schema_change_sql::multi_schema_change_failed_action_restores_referencing_table_metadata",
+      "tests_ddl_multi_schema_change_sql::multi_schema_change_expression_index_combinations_measured"
+    ],
+    "production_baseline": "b52dbfef7f9a0076500132bc63b276617440aa89"
+  },
+  {
+    "label": "session_regression_before",
+    "command": "cargo test --locked -p tidb-session --lib failed_alter_keeps_rows_and_prepared_schema -- --nocapture",
+    "cwd": "rust",
+    "exit": 101,
+    "summaries": [
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2115 filtered out; finished in 0.05s"
+    ],
+    "failed_tests": [
+      "tests_alter_column::failed_alter_keeps_rows_and_prepared_schema"
+    ],
+    "production_baseline": "b52dbfef7f9a0076500132bc63b276617440aa89"
+  },
+  {
+    "label": "cluster_ddl_after",
+    "command": "cargo test --locked -p tidb-exec --test all cluster_ddl_source:: -- --nocapture",
+    "cwd": "rust",
+    "exit": 101,
+    "summaries": [
+      "test result: FAILED. 105 passed; 5 failed; 0 ignored; 0 measured; 723 filtered out; finished in 0.57s"
+    ],
+    "failed_tests": [
+      "cluster_ddl_source::a_created_database_persists_its_resolved_charset_and_collation",
+      "cluster_ddl_source::a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+      "cluster_ddl_source::a_modify_column_reorganizes_exactly_where_go_says_it_must",
+      "cluster_ddl_source::completed_check_schema_stays_active_until_schema_sync",
+      "cluster_ddl_source::check_job_submission_precedes_every_schema_transition"
+    ],
+    "production_baseline": null
+  },
+  {
+    "label": "cluster_ddl_baseline_control",
+    "command": "cargo test --locked -p tidb-exec --test all cluster_ddl_source:: -- --nocapture",
+    "cwd": "rust",
+    "exit": 101,
+    "summaries": [
+      "test result: FAILED. 105 passed; 5 failed; 0 ignored; 0 measured; 723 filtered out; finished in 0.58s"
+    ],
+    "failed_tests": [
+      "cluster_ddl_source::a_created_database_persists_its_resolved_charset_and_collation",
+      "cluster_ddl_source::a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+      "cluster_ddl_source::a_modify_column_reorganizes_exactly_where_go_says_it_must",
+      "cluster_ddl_source::completed_check_schema_stays_active_until_schema_sync",
+      "cluster_ddl_source::check_job_submission_precedes_every_schema_transition"
+    ],
+    "production_baseline": "b52dbfef7f9a0076500132bc63b276617440aa89"
+  },
+  {
+    "command": "GOTOOLCHAIN=go1.25.14 make lint",
+    "cwd": "repository root",
+    "exit": 0
+  },
+  {
+    "label": "rebased_session",
+    "command": "cargo test --locked -p tidb-session --lib tests_alter_column -- --nocapture",
+    "cwd": "rust",
+    "exit": 0,
+    "passed": 14,
+    "base": "c510669484"
+  },
+  {
+    "label": "rebased_all_targets",
+    "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+    "cwd": "rust",
+    "exit": 0,
+    "base": "c510669484"
+  },
+  {
+    "label": "rebased_lint",
+    "command": "GOTOOLCHAIN=go1.25.14 make lint",
+    "cwd": "repository root",
+    "exit": 0,
+    "base": "c510669484"
+  }
+]
