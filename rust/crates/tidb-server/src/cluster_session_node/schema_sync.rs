@@ -50,6 +50,11 @@ use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 
+/// A schema watch can be observed before the corresponding MDL row is
+/// visible to a fresh snapshot. Retry empty reads so a node cannot miss the
+/// only notification for a DDL job and block the owner forever.
+const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
+
 /// The tables live local work still reads at older schema versions.
 ///
 /// Go's shape, ported from `RemoveLockDDLJobs`
@@ -389,6 +394,7 @@ fn run_ack_loop<C, L, P>(
     let mut scanned_version: Option<i64> = None;
     let mut reported_loaded_version: Option<(bool, i64)> = None;
     let mut owed = false;
+    let mut next_mdl_scan = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
         // the etcd session that registered this node is gone, so the owner
@@ -429,10 +435,17 @@ fn run_ack_loop<C, L, P>(
         // The non-MDL syncer would write an old job's version over the newer
         // loaded self-version above. The table is otherwise re-read only
         // when the loaded version moved or an acknowledgement is still owed.
-        if mdl_enabled && (scanned_version != Some(loaded) || owed) {
+        if mdl_enabled
+            && (scanned_version != Some(loaded) || owed || Instant::now() >= next_mdl_scan)
+        {
             match load_mdl_jobs(opener, timeout, &catalog.load()) {
                 Ok(jobs) => {
                     scanned_version = Some(loaded);
+                    next_mdl_scan = if jobs.is_empty() {
+                        Instant::now() + EMPTY_MDL_RETRY
+                    } else {
+                        Instant::now() + Duration::from_secs(3600)
+                    };
                     // The owner deletes a finished job's row; forgetting its
                     // cache entry with it keeps the cache from growing for
                     // the process's life.
