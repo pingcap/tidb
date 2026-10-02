@@ -1221,7 +1221,17 @@ fn coalesce_partition_action(
     };
     std::sync::Arc::make_mut(table)
         .rehash_hash_partitions(&new_ids, ctx)
-        .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))
+        .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))?;
+    // Go `CoalescePartitions` DELEGATES to `ReorganizePartitions`
+    // (ddl_api.go:4431), whose success arm appends the statistics-outdated
+    // warning (ddl_api.go:4303) — a coalesce warns exactly like a
+    // reorganize (oracle m24: ALTER TABLE ... COALESCE PARTITION 2 answers
+    // (ok) with the warning, not a bare ok).
+    ctx.append_warning_parts(
+        1105,
+        "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
+    );
+    Ok(())
 }
 
 fn drop_partition_action(

@@ -2968,11 +2968,30 @@ impl Catalog {
 
     /// Allocates the next table id (a monotone counter standing in for the
     /// global autoid allocator, like KvTable's handle counter).
+    ///
+    /// Go's autoid allocator is monotone for the PROCESS lifetime: ids are
+    /// never re-issued across connections, even after DROP DATABASE/DROP
+    /// TABLE removed the metadata. This tier's counter is per-catalog
+    /// (catalogs rebuild from the store's surviving tables), so after a
+    /// dropped database the counter restarts LOW and re-issues ids whose
+    /// key prefixes still hold the dropped tables' unpurged rows — the new
+    /// table then reads another table's ghosts (oracle m24: TRUNCATE
+    /// PARTITION on an empty table answered (1,NULL),(3,NULL), the
+    /// previous run's hash-partition rows, and the COALESCE over the same
+    /// keys failed with a DuplicateEntry). The process-wide high-water
+    /// keeps every issued id unique for the server's lifetime.
     pub fn allocate_table_id(&mut self) -> i64 {
-        self.next_table_id += 1;
-        self.next_table_id
+        let id = TABLE_ID_HIGHWATER.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        self.next_table_id = id;
+        id
     }
 }
+
+/// The process-wide table-id high-water. The unistore cluster store is
+/// in-memory, so a process restart wipes its data and the counter restarts
+/// with it — matching go, whose allocator state lives exactly as long as
+/// the data it names.
+static TABLE_ID_HIGHWATER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 impl crate::keydecoder::KeyInfoCatalog for Catalog {
     fn resolve_physical_table(
