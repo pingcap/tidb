@@ -260,10 +260,10 @@
       "id": "E05",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "**P1; reproduced:** IMPORT INTO runs a private local-CSV parser and nested SQL INSERT loop, ignoring parsed import options and assignments. With `skip_rows=1`, a two-row file imports both rows. It has no import-job/task submit, status, detached/cancel/recovery owner and returns affected rows instead of file-import job info.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:2586`, `:3169`; `expanded-ownership-probe.txt`",
+      "finding": "**P1; complete import owner still open:** the unsafe private IMPORT INTO file/SELECT execution pipeline is withdrawn. Its local CSV parser, nested precheck/INSERT loop and SELECT-to-INSERT rewrite are removed; execution now explicitly refuses before reading files or modifying tables. The prior skip_rows/assignment omissions are historical observations of the removed pipeline. Go supports both forms through its import controller, with durable job/task lifecycle for file imports; that complete owner and runtime integration remain absent.",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::DmlStmt::ImportInto`; `src/tests_core/dml.rs::import_into_refusal_preserves_file_targets_and_options`; `::import_into_refusal_preserves_select_targets_and_transaction`; receipt `../../import-shortcut-removal-execplan.md`; historical `expanded-ownership-probe.txt`",
       "go_owner": "`pkg/executor/import_into.go::ImportIntoExec.Next`/`submitTask`, `pkg/executor/importer` controller and `pkg/dxf/importinto` (including standalone tasks). Replace the complete import lifecycle and option/encoding ownership; SELECT import has its own Go path and is not used to infer file-import result shape.",
-      "review_basis": "2026-10-01 follow-up at integration 313b3cfea3: Retain the earlier receipt and status. No intervening owner integration closes this finding. See structural-review-followup.md and structural-recheck/source-continuity.json. Fresh diagnostics: expanded-ownership."
+      "review_basis": "2026-10-01 removal at integration bca8a743b7: both file and SELECT regressions fail before removal. E05 remains open because explicit refusal is containment, not Go import parity. Test inputs require successful parsing and cover file options/assignments, missing files, populated targets, SELECT forms and surrounding transaction rollback. See ../../import-shortcut-removal-execplan.md for exact validation and the unrelated baseline DML diagnostic failure."
     },
     {
       "id": "S01",

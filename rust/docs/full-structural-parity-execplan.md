@@ -2167,3 +2167,16 @@ The old eight-pass/two-fail accessor remains reproducible. This completes the
 preface feasibility milestone only; the whole grpcutil package still requires
 its remaining transport and integration gates before replacing native owners.
 No partial production package, dependency update or structural closure follows.
+
+
+## Revision note — 2026-10-01 remove private import execution
+
+
+The [import removal ExecPlan](import-shortcut-removal-execplan.md) withdraws the
+entire private IMPORT INTO runtime: local CSV parsing, nested COUNT/INSERT
+execution and the SELECT-to-INSERT rewrite. The incomplete adapter ignored
+options and assignments and did not own Go's import lifecycle. File/SELECT
+containment regressions fail before removal and preserve target/source data,
+schema and surrounding transaction rollback afterward. Go supports these forms;
+refusal does not close E05 or accept part of the executor/importer/DXF packages.
+Original source fixtures and the historical audit evidence remain intact.

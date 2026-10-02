@@ -1236,38 +1236,113 @@ fn an_assignment_cast_reports_cast_values_own_error() {
     );
 }
 
-/// Go's IMPORT INTO local-file path, pinned at the data level: the CSV is
-/// read server-side and applied through the ordinary INSERT semantics, and a
-/// non-empty target is refused by the pre-check (Go
-/// `pkg/dxf/importinto/scheduler.go` fails the pre-check with the recorded
-/// "target table is not empty" text). The full dist-task job surface
-/// (mysql.tidb_import_jobs row + the 20-column job result set) is future
-/// work; this tier returns the imported row count as the affected count.
+/// Containment until the complete Go import controller and task owner exist.
+/// Go supports these statements; a private INSERT loop must not execute them.
 #[test]
-fn import_into_a_local_csv_applies_rows_and_the_pre_check_guards_the_target() {
-    let mut session = Session::new();
-    session
-        .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c DECIMAL(6,2))")
-        .unwrap();
+fn import_into_refusal_preserves_file_targets_and_options() {
+    struct RemoveFile(std::path::PathBuf);
+    impl Drop for RemoveFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let file = RemoveFile(std::env::temp_dir().join(format!(
+        "tidb-import-refusal-{}-{}.csv",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )));
+    std::fs::write(&file.0, "1,alpha\n2,beta\n").unwrap();
+    let path = file.0.display();
+    for sql in [
+        format!("IMPORT INTO t (id, v) FROM '{path}' WITH skip_rows=1"),
+        format!("IMPORT INTO t (id, v) FROM '{path}' WITH detached"),
+        format!("IMPORT INTO t (id, v) SET v=CONCAT(v, 'x') FROM '{path}'"),
+        format!("IMPORT INTO t (id, @value) SET v=@value FROM '{path}'"),
+        format!("IMPORT INTO t (id, v) FROM '{path}'"),
+        format!("IMPORT INTO t FROM '{path}.missing'"),
+    ] {
+        tidb_parser::parse(&sql).expect("containment must exercise parsed IMPORT INTO");
+        for populated in [false, true] {
+            let mut session = Session::new();
+            session
+                .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(20))")
+                .unwrap();
+            if populated {
+                session.run("INSERT INTO t VALUES (9, 'retained')").unwrap();
+            }
+            let rows = row_text(session.run("SELECT * FROM t ORDER BY id"));
+            let schema = row_text(session.run("SHOW CREATE TABLE t"));
+            let result = session.run(&sql);
+            assert_eq!(
+                row_text(session.run("SELECT * FROM t ORDER BY id")),
+                rows,
+                "{sql}"
+            );
+            assert_eq!(
+                row_text(session.run("SHOW CREATE TABLE t")),
+                schema,
+                "{sql}"
+            );
+            let error = result.expect_err("partial import execution must be withdrawn");
+            assert!(
+                error
+                    .to_string()
+                    .contains("IMPORT INTO is not supported yet"),
+                "{sql}: {error}"
+            );
+            session.run("INSERT INTO t VALUES (3, 'ordinary')").unwrap();
+            assert_eq!(
+                row_text(session.run("SELECT v FROM t WHERE id=3")),
+                [["ordinary"]]
+            );
+        }
+    }
+}
 
-    let path =
-        std::env::temp_dir().join(format!("tidb-import-into-test-{}.csv", std::process::id()));
-    std::fs::write(&path, "1,alpha,10.50\n2,beta,20.00\n").unwrap();
+#[test]
+fn import_into_refusal_preserves_select_targets_and_transaction() {
+    for sql in [
+        "IMPORT INTO t FROM SELECT id, v FROM source",
+        "IMPORT INTO t (id, v) FROM (SELECT id, v FROM source)",
+        "IMPORT INTO t (id, v) FROM SELECT id + 10, v FROM source",
+    ] {
+        tidb_parser::parse(sql).expect("containment must exercise parsed IMPORT INTO SELECT");
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(20))")
+            .unwrap();
+        session
+            .run("CREATE TABLE source (id BIGINT PRIMARY KEY, v VARCHAR(20))")
+            .unwrap();
+        session
+            .run("INSERT INTO source VALUES (1, 'alpha'), (2, 'beta')")
+            .unwrap();
+        let schema = row_text(session.run("SHOW CREATE TABLE t"));
+        let result = session.run(sql);
+        assert!(row_text(session.run("SELECT * FROM t")).is_empty(), "{sql}");
+        assert_eq!(row_text(session.run("SHOW CREATE TABLE t")), schema);
+        assert!(result
+            .expect_err("private INSERT SELECT rewrite must be withdrawn")
+            .to_string()
+            .contains("IMPORT INTO is not supported yet"));
+        assert_eq!(
+            row_text(session.run("SELECT * FROM source ORDER BY id")),
+            [["1", "alpha"], ["2", "beta"]]
+        );
 
-    let sql = format!("IMPORT INTO t (a, b, c) FROM '{}'", path.display());
-    let imported = session.run(&sql).unwrap();
-    assert!(matches!(imported, StmtResult::Affected(2)));
-    assert_eq!(
-        row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
-        [["1", "alpha", "10.50"], ["2", "beta", "20.00"],]
-    );
-    std::fs::remove_file(&path).unwrap();
-
-    // Go's pre-check refuses a second import into the now-populated target.
-    assert!(session
-        .run(&format!(
-            "IMPORT INTO t (a, b, c) FROM '{}'",
-            path.display()
-        ))
-        .is_err());
+        session.run("BEGIN").unwrap();
+        session
+            .run("INSERT INTO source VALUES (3, 'pending')")
+            .unwrap();
+        assert!(session.run(sql).is_err());
+        session.run("ROLLBACK").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM source ORDER BY id")),
+            [["1", "alpha"], ["2", "beta"]]
+        );
+        assert!(row_text(session.run("SELECT * FROM t")).is_empty());
+    }
 }

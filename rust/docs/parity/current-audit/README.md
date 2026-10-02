@@ -49,6 +49,13 @@ existing rows/schema; ordinary ADD/DROP/TRUNCATE work on fresh threads again.
 Go's supported online repartition still requires the complete durable owner.
 D01 remains open, and all 77 unresolved structural IDs retain their status.
 
+The [IMPORT shortcut removal](../../import-shortcut-removal-execplan.md) also
+withdraws the private CSV parser, nested SQL precheck/row INSERT loop and SELECT
+rewrite. Both source forms now refuse before file access or data mutation; syntax
+and source-derived helpers remain. Go's import controller, durable file-import
+jobs/tasks and SELECT importer still require complete runtime integration. E05
+remains open, with the prior ignored-option observations retained as history.
+
 The [PD preface ownership experiment](pd-grpcutil-contract/h2-preface-review.md)
 subsequently resolves the isolated candidate's two HTTP/2 readiness failures.
 Opt-in validation inside the protocol decoder passes 14 tests and the extended
