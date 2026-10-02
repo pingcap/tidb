@@ -118,6 +118,18 @@ The entries below preserve earlier completed work and still-open obligations.
 - [ ] Audit all remaining package source, variants, original tests, fixtures and integration paths; retain unreviewed status until complete.
 - [ ] Run scope-specific validation, root lint, commit hook locked server build, fresh pre-push locked build; commit and push each reviewed package repair.
 
+### Review after removals at 68d6de685a
+
+
+The [latest complete known-register review](parity/current-audit/post-removal-structural-review.md)
+retains 77 unresolved IDs. Six fresh diagnostics confirm removed repartition,
+IMPORT and cluster fixtures no longer produce their old misleading behavior;
+partial multi-action ALTER, ignored password history, generated-value truncation,
+Latin-1 corruption and absent live summary data still reproduce. Complete owners
+remain missing after withdrawal. Every unresolved ID has one primary workstream
+and a current evidence disposition; no package acceptance or benchmark result
+is claimed by this review. The audit ExecPlan records validation/publication.
+
 ## System ownership and repair order
 
 

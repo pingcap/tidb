@@ -1,5 +1,9 @@
 # Review of the 77 unresolved structural findings
 
+> Historical review at 313b3cfea3. For current behavior after repartition,
+> IMPORT and cluster-fixture removal, see the [latest review](post-removal-structural-review.md).
+> The reproduction outputs below are preserved at their original baseline.
+
 All **77 known unresolved entries remain unresolved: 72 open and five partial**.
 Eight repaired entries retain their status, for 85 tracked entries. The five
 partial entries are A01, C04, E02, T02 and P06. This review changes no production

@@ -5,7 +5,15 @@ This is the current work map for the [living ExecPlan](../../full-structural-par
 ## Baseline and scope
 
 
-Planning starts at TiDB integration `4285385fad20855487ec1d8ff113290d48f949a5`, freshly fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, and native client-rust `6f663b396552eec6d1bfad76b65f813e317884a4`. The normative pins come from that Go master's go.mod: client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, PD client `v0.0.0-20260805103528-afa43111d149`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, TiPB `v0.0.0-20260908093239-fed7bc47c39d`, etcd API `v3.5.15`, and Ristretto `v0.1.1`.
+Original planning started at TiDB integration `4285385fad20855487ec1d8ff113290d48f949a5`, freshly fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, and native client-rust `6f663b396552eec6d1bfad76b65f813e317884a4`. The normative pins come from that Go master's go.mod: client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, PD client `v0.0.0-20260805103528-afa43111d149`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, TiPB `v0.0.0-20260908093239-fed7bc47c39d`, etcd API `v3.5.15`, and Ristretto `v0.1.1`.
+
+Current reconciliation: [review after removals](post-removal-structural-review.md)
+at integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60`, unchanged Go master and
+native master `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`. All 77 IDs below remain
+open/partial. The old repartition, IMPORT and cluster-fixture implementations
+are retired; their complete Go owners remain acceptance obligations. Use this
+current review for live-versus-historical behavior and repair priorities.
+
 
 The inventories currently enumerate 856 TiDB, 41 client-go, 41 kvproto, 24 PD-client and seven etcd-API package directories, plus 83 Rust crates. All 969 directories remain in the coverage process, including packages without a listed finding. Other external modules need the same inventory before acceptance. There is no claim that 77 is every possible semantic defect. The separate fresh-master range-count-variable delta belongs in the affected whole-package scopes even though it is not a new structural ID.
 
@@ -40,7 +48,7 @@ The eight repaired register entries remain outside this queue: C01, E01, O12, P0
 
 **Migration and removal:** Native `src/pd/client.rs`, `retry.rs`, `timestamp.rs`: own service discovery, request deadlines, bounded synchronization and retained/joined workers. Preserve Go fallback and reconnection contracts; remove network-duration global write locking and discarded worker ownership.
 
-Current status is reconciled in the [full-register follow-up](structural-review-followup.md):
+Current status is reconciled in the [post-removal review](post-removal-structural-review.md):
 native timestamp deadlines and retained/joined stream retirement are implemented.
 Keep those owners; public PD shutdown and complete parent ownership remain open.
 Go default pick_first reconnects on demand after an established connection becomes
@@ -127,7 +135,7 @@ The concurrent configured-TopN commit 0b2cf64069 leaves two exact tie-order test
 
 **Complete source owners to scope:** TiDB `pkg/ttl/ttlworker`, resource/runaway dependencies, `pkg/domain`/`crossks`, statistics owners, `pkg/dxf/framework` managers, `pkg/executor/importer`, `pkg/dxf/importinto`, BR and native PD resource control.
 
-**Migration and removal:** Compose existing source lifecycle owners for TTL, resource control/runaway, RU history, statistics GC, DXF and cross-keyspace runtimes. Replace private CSV/INSERT IMPORT and empty BRIE job surfaces with complete task, option, progress, cancellation/recovery ownership.
+**Migration and removal:** Compose existing source lifecycle owners for TTL, resource control/runaway, RU history, statistics GC, DXF and cross-keyspace runtimes. The private CSV/INSERT IMPORT pipeline is already withdrawn; implement the complete import and BRIE task, option, progress and cancellation/recovery owners before exposing those operations.
 
 **Integration gate:** Role/configuration gates, periodic work, owner transfer, recovery, task cancellation and joined shutdown work through production startup. Reuse repaired BR protocol/range helpers. RU history consumes the resource controller; cross-keyspace runtime requires W04 protection per runtime; IMPORT/reorganization consume DXF where Go does.
 
@@ -136,7 +144,7 @@ The concurrent configured-TopN commit 0b2cf64069 leaves two exact tie-order test
 
 **Complete source owners to scope:** TiDB `pkg/infoschema`, peer retrievers/executors, `pkg/domain`, plan-replayer owners, `pkg/util/topsql`, `pkg/workloadlearning`, `pkg/telemetry`, statement-summary v1/v2, statistics load and `pkg/metrics`.
 
-**Migration and removal:** Replace runtime fixture/constant providers with the source retrievers and cluster fanout. Wire statement-summary and metrics producers, plan replay, profiling/reporting, learning, telemetry and AZ adjustment through their actual owners and lifetimes. Keep genuine static metadata definitions.
+**Migration and removal:** Replace remaining runtime constant providers with the source retrievers and cluster fanout. The captured cluster config/topology paths are already withdrawn; their missing retrievers remain open. Wire statement-summary and metrics producers, plan replay, profiling/reporting, learning, telemetry and AZ adjustment through their actual owners and lifetimes. Keep genuine static metadata definitions.
 
 **Integration gate:** Real SQL produces summary records in both modes and readers see them; runtime rows reflect peers and errors propagate; load events update the existing registry; replay archives and background tasks have complete lifetimes. Keep the existing workload-repository worker distinct from workload learning. Go telemetry currently logs; do not introduce an uploader.
 

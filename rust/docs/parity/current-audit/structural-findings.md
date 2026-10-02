@@ -1,9 +1,9 @@
 # Remaining structural mismatches, 2026-10-01
 
-Latest follow-up compared integration `313b3cfea3500e3026a862d2be11a7fbb3d65481` with freshly fetched
+Latest follow-up compared integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60` with freshly fetched
 TiDB master `93a01d31f6da205ae4bf376825293903a6899fdb`. Both implementation
 branches were already current; native client-rust is `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
-The [current follow-up](structural-review-followup.md) reviews every unresolved ID, retains six fresh diagnostics, and corrects stale PD lifecycle claims.
+The [current follow-up](post-removal-structural-review.md) reviews every unresolved ID, retains six fresh diagnostics, and separates retired unsafe shortcuts from their still-missing Go owners.
 Go means this master, including its selected external modules:
 client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
 `v0.0.0-20260820070758-623e58e60fa9`, PD client
@@ -46,13 +46,14 @@ reproductions in [the session/executor review](session-ownership-review.md):
 D11, C01, E01, E02 and I01. The other seven are source-confirmed design or
 integration differences with unmeasured runtime consequences.
 
-The [current review receipt](remaining-structure-review.md) reconciles all 74
+The [earlier register expansion](remaining-structure-review.md) reconciles all 74
 older entries and adds 11 source-confirmed boundaries: T04, P06–P07, O14–O19,
 X02 and M05. The [machine-readable register](structural-findings.json) lists
 every entry and status. The old source locations below retain historical line
-numbers; [source continuity](structural-source-continuity.json) records exact
-current file blobs and changes since the earlier register. Previous SQL
-reproductions are historical evidence, not tests rerun in this review.
+numbers; [source continuity](post-removal-recheck/source-continuity.json) records exact
+reviewed file blobs and changes since the previous review. Six retained SQL/wire
+diagnostics were rerun as described in the current follow-up; other reproductions
+remain historical evidence.
 
 The [PD deadline prerequisite repair](pd-deadline-owner-repair.md) advances P06
 to partial with real stalled-stream and cancellation regressions. Public PD close

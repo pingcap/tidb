@@ -3,7 +3,7 @@
 Current reviewed baseline: TiDB Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, client-go
 `v2.0.8-0.20260928031501-8edb23f6c7ee`, client-rust
 `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665` (published PD errors prerequisite).
-The current review starts at integration `313b3cfea3500e3026a862d2be11a7fbb3d65481`.
+The current review starts at integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60`.
 
 This is the list of **currently confirmed findings and explicit review gaps**.
 It is not a claim that every semantic mismatch has been discovered or removed.
@@ -37,10 +37,21 @@ and [source continuity](structural-source-continuity.json) retain every ID and c
 No production code was repaired by that review. The subsequent
 [review of every unresolved finding](structural-review-followup.md) retains
 all 77 statuses, corrects stale PD lifetime claims, and records six fresh SQL/wire
-diagnostics. Accepted repartition makes existing rows invisible in both tested
-shapes; this strengthens D01 without counting its missing DDL owner twice.
-[Current per-ID continuity](structural-recheck/source-continuity.json) preserves
+diagnostics. At that historical baseline, accepted repartition made existing rows
+invisible in both tested shapes; this strengthened D01 without counting its
+missing DDL owner twice.
+[That review's per-ID continuity](structural-recheck/source-continuity.json) preserves
 the previous source evidence separately from those new observations.
+
+The latest [review after removals](post-removal-structural-review.md) reconciles
+all 77 unresolved findings again at 68d6de685a, with six fresh diagnostics and
+[per-ID source continuity](post-removal-recheck/source-continuity.json).
+Password history, partial multi-action ALTER, generated-column conversion and
+Latin-1 byte corruption still reproduce. Repartition and IMPORT now refuse
+without mutation; fabricated cluster config/topology have been removed. Their
+complete Go owners remain absent, so counts do not fall. The review gives each
+finding's replacement/migration prerequisite and keeps source-only risks distinct
+from reproduced failures. No production code is changed by the review.
 
 The [partition shortcut removal](../../partition-owner-removal-execplan.md)
 subsequently withdraws unsafe local repartition and cluster direct planning,
@@ -55,6 +66,11 @@ rewrite. Both source forms now refuse before file access or data mutation; synta
 and source-derived helpers remain. Go's import controller, durable file-import
 jobs/tasks and SELECT importer still require complete runtime integration. E05
 remains open, with the prior ignored-option observations retained as history.
+
+The [cluster fixture removal](../../cluster-fixture-removal-execplan.md)
+withdraws captured configuration and the fake store1 row, and propagates
+server-discovery errors. CLUSTER_CONFIG explicitly refuses until live retrieval
+exists. I01/I02 remain open for full runtime ownership and missing discovery.
 
 The [PD preface ownership experiment](pd-grpcutil-contract/h2-preface-review.md)
 subsequently resolves the isolated candidate's two HTTP/2 readiness failures.

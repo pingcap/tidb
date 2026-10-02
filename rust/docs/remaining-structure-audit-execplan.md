@@ -50,6 +50,32 @@ acceptance and must not be silently upgraded by an inventory refresh.
 - [x] Validate all IDs, assignments, source blobs, links and output cleanup; check diagnostic formatting, run git diff --check and make lint.
 - [x] Confirm the actual commit hook and post-commit locked build pass. The final receipt amendment repeats both gates before the normal branch push; its remote revision is recorded in the completion message.
 
+### Review after removals at integration 68d6de685a
+
+
+- [x] Fetch integration, Go master and native master; all are current. Native
+  remains 6163ecfc and Go remains 93a01d31; no dependency update is required.
+- [x] Read all 77 unresolved entries and eight repaired entries. Compare all
+  138 prior literal source references and every intervening production change;
+  21 references changed, with no native or upstream source change.
+- [x] Rerun six retained SQL/wire diagnostics into separate outputs; confirm
+  removed shortcuts now refuse while current correctness defects still occur.
+- [x] Publish per-ID source continuity and a complete owner/prerequisite review;
+  reconcile obsolete live-path wording without closing missing-owner findings.
+- [x] Validate counts, assignment, source evidence, links and temporary cleanup
+  with python3 /private/tmp/check-post-removal-review.py; git diff --check passes.
+- [x] Pass the actual locked-build hook and a fresh post-commit build. Repeat
+  both gates for the final receipt amendment; publication and remote verification
+  are recorded in the final task result.
+
+This follow-up is a review only. No production source, original fixture or
+package acceptance is changed. Preserve the older reproduction files as history;
+current observations live under parity/current-audit/post-removal-recheck.
+Use the prior review's diagnostic runner with post_removal_ example names, and
+keep known passing controls and source-only limits. The review should make clear
+which code is already retired, which needs replacement before retirement, and
+which useful owner merely lacks production construction/callers.
+
 ## Plan of Work and Milestones
 
 
@@ -184,3 +210,31 @@ amendment must repeat the hook and then the post-commit build before push;
 those final gate logs use the same names with a -final suffix. The completion
 message records the final remote revision without embedding a self-referential
 commit hash in the receipt. Native client-rust is unchanged by the review.
+
+
+At the 68d6de685a post-removal review, all six retained diagnostics completed.
+Repartition refusal preserves existing rows; IMPORT refuses without writing;
+CLUSTER_CONFIG refuses instead of returning its capture. D11, A04, K03 and N01
+still reproduce their active correctness failures. Source-only GC/cache/account
+risks remain explicitly untested in a distributed deployment. No production
+code changed; all 77 unresolved and eight repaired statuses are retained.
+The new report, source continuity and six outputs are under current-audit;
+README, register headings and repair sequence now distinguish live from retired
+behavior. This is a review milestone, not completion of the parity goal.
+
+
+The post-removal evidence checker passes all 85 status comparisons, all 77
+workstream assignments, 138 current/prior source references (21 changed), six
+fresh outputs, report links and temporary cleanup. Only rust/docs files changed.
+The shared persisted-job function remains byte-identical for D04/D05/D07.
+No new production/test code requires a fresh make lint run; the prior runtime
+change's lint and regression receipt is retained, not represented as rerun here.
+
+
+The post-removal review's actual hook passed cd rust && cargo build --locked
+-p tidb-server in 0.29 seconds. The separate post-commit locked build passed in
+12.93 seconds. Logs: /private/tmp/tidb-post-removal-review-commit.log and
+/private/tmp/tidb-post-removal-review-prepush.log. The final receipt amendment
+reruns both gates, recorded with -commit-final.log and -prepush-final.log, before
+git push origin HEAD:hparser-integration. No production or native-client change
+is included in this review commit.
