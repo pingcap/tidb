@@ -109,6 +109,15 @@ impl From<ComputeError> for AnalyzeError {
     }
 }
 
+impl From<AnalyzeError> for tidb_executor::DriverError {
+    fn from(error: AnalyzeError) -> Self {
+        match error {
+            AnalyzeError::Compute(error) => error.into(),
+            AnalyzeError::Read(error) => Self::unsupported(error.to_string()),
+        }
+    }
+}
+
 /// What one `ANALYZE TABLE` produced, plus the receipt of how it got there.
 #[derive(Clone, Debug)]
 pub struct AnalyzeReport {

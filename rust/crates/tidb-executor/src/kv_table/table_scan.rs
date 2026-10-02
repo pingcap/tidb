@@ -4403,11 +4403,7 @@ impl TableScanExec {
             match next {
                 Ok(Some((row, handle))) => {
                     let row = match &self.remote_materialization {
-                        Some(projection) => projection.project_row(row).map_err(|error| {
-                            ExecError::unsupported(format!(
-                                "remote row evaluation failed: {error:?}"
-                            ))
-                        })?,
+                        Some(projection) => projection.project_row(row).map_err(ExecError::from)?,
                         None => row,
                     };
                     let row = match (self.extra_handle_slot, handle) {

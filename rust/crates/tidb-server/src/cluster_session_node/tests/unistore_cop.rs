@@ -9404,3 +9404,54 @@ fn generated_read_policy_reaches_cluster_point_and_scan_readers() {
         );
     }
 }
+
+#[test]
+fn analyze_preserves_generated_execution_error() {
+    use crate::resultset_source::ResultSetSource;
+
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(992)).unwrap();
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE analyze_error (a DOUBLE)");
+    rows(&mut session, "INSERT INTO analyze_error VALUES (0)");
+    rows(
+        &mut session,
+        "ALTER TABLE analyze_error ADD COLUMN b DOUBLE AS (cot(a)) VIRTUAL",
+    );
+    let (original_code, original_state, original_message) =
+        match session.execute("SELECT b FROM analyze_error") {
+            Err(error) => (error.code, error.state, error.message),
+            Ok(mut result) => {
+                let error = result
+                    .source()
+                    .next_batch(8)
+                    .expect_err("invalid expression");
+                result.source().close().unwrap();
+                (error.code, error.state, error.message)
+            }
+        };
+    assert_eq!((original_code, original_state), (1690, *b"22003"));
+    let error = session
+        .execute_write("ANALYZE TABLE analyze_error")
+        .expect_err("invalid virtual sample");
+    assert_eq!((error.code, error.state), (1690, *b"22003"));
+    assert_eq!(error.message, original_message);
+    assert_eq!(displayed(rows(&mut session, "SELECT 1")), [["1"]]);
+    assert!(rows(
+        &mut session,
+        "SHOW STATS_HISTOGRAMS WHERE table_name = 'analyze_error'"
+    )
+    .is_empty());
+    assert_eq!(displayed(rows(&mut session,
+        "SELECT state, process_id IS NULL, fail_reason FROM mysql.analyze_jobs \
+         IGNORE INDEX (PRIMARY, update_time, idx_schema_table_state, idx_schema_table_partition_state) \
+         WHERE table_name = 'analyze_error'")),
+        vec![vec!["failed".to_owned(), "1".to_owned(), original_message]]);
+    rows(&mut session, "ALTER TABLE analyze_error DROP COLUMN b");
+    rows(&mut session, "ANALYZE TABLE analyze_error");
+    assert!(!rows(
+        &mut session,
+        "SHOW STATS_HISTOGRAMS WHERE table_name = 'analyze_error'"
+    )
+    .is_empty());
+}

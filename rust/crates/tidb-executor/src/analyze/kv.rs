@@ -107,12 +107,7 @@ pub fn analyze_kv_table_columns(
         kv_analyze_plan(table, &decode_context, selected_column_ids)?;
     let rows = table
         .scan_rows_with_handles_with_context(&decode_context)
-        .map_err(|error| {
-            AnalyzeError::Unsupported(format!(
-                "this node could not read `{}` to analyze it: {error:?}",
-                table.name
-            ))
-        })?;
+        .map_err(AnalyzeError::from)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     for (_, row) in &rows {
         let selected = source_positions
@@ -209,7 +204,7 @@ pub fn analyze_kv_table_independent_index(
     );
     for entry in table
         .index_entry_records_for_check(index.id)
-        .map_err(|error| AnalyzeError::Unsupported(format!("{error:?}")))?
+        .map_err(AnalyzeError::from)?
     {
         let (encoded_columns, _) =
             tidb_tablecodec::cut_index_key(&entry.key, index.column_offsets.len())

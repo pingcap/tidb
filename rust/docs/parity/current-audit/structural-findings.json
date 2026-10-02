@@ -674,10 +674,10 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; partial repair:** generated writes, reads and ANALYZE now share the column-cast owner. Fixed-flags/raw conversion bypasses and storage reevaluation are removed; table/point readers retain Go virtual-fill NULL/unsigned rules separately from rowDecoder/reorg. Remaining gaps concern lower datatype error/value identities, legacy ENUM/SET collation override and end-to-end ANALYZE diagnostic transport.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `generated_column.rs::fill_virtual_column_values`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `rust/crates/tidb-exec/src/cluster_analyze/virtual_samples.rs`; `../../generated-read-ownership-execplan.md`",
-      "go_owner": "`pkg/table/column.go::castColumnValue` and `FillVirtualColumnValue`; `pkg/util/rowDecoder/decoder.go::EvalRemainedExprColumnMap`; executor fillRow/updateRecord. HandleTruncate precedes forceIgnoreTruncate; temporal early errors survive. Virtual filling has extra unsigned clipping and NULL substitution; general row decoding does not.",
-      "review_basis": "At integration 3397692ddd, eight new regressions and two strengthened existing checks fail under unchanged production and pass with the read-owner repair. Full controls retain the same 36 executor and 19 session failures. Earlier mutation coverage is retained; see generated-read-validation.json and ../../generated-read-ownership-execplan.md. Concurrent loader c4552c8757 is integrated before publication; this grants no complete package acceptance."
+      "finding": "**P1; partial repair:** generated writes, reads and ANALYZE share the column-cast owner. Fixed-flags/raw conversion bypasses and storage reevaluation are removed; virtual-fill NULL/unsigned rules remain distinct from rowDecoder/reorg. ANALYZE and remote virtual-row projection now retain shared execution errors through SQL delivery and job-history rendering. Remaining gaps concern lower datatype error/value identities, generated-expression diagnostic context and legacy ENUM/SET collation override; other ANALYZE storage/build diagnostics still use generic adapters.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `generated_column.rs::fill_virtual_column_values`; `analyze.rs::AnalyzeError`; `kv_table/table_scan.rs::TableScanExec::next_source_row`; `rust/crates/tidb-exec/src/real_tikv_analyze.rs::ClusterAnalyzeError`; `rust/crates/tidb-server/src/sql_node.rs::cluster_analyze_error`; `../../analyze-error-ownership-execplan.md`",
+      "go_owner": "`pkg/table/column.go::castColumnValue` and `FillVirtualColumnValue`; `pkg/util/rowDecoder/decoder.go::EvalRemainedExprColumnMap`; `pkg/executor/analyze_col_sampling.go::decodeSampleDataWithVirtualColumn` and `analyze.go::handleResultsErrorWithConcurrency`. Sample evaluation retains its error through worker results; history renders its message without replacing the SQL failure. Lower conversion and expression producers still require complete-owner review.",
+      "review_basis": "Existing-owner repair from integration 62cc7ab3e3 against unchanged master 93a01d31f6 and native 19a56cc. Local and cop-backed ANALYZE reproduced 1105/HY000 replacing 1690/22003; remote virtual projection reproduced the same erasure. The linked receipt records red/green cases and unchanged-production controls. K03 remains partial; no complete package acceptance is granted."
     },
     {
       "id": "I04",
@@ -792,9 +792,9 @@
   "latest_repair": {
     "id": "K03",
     "status": "partial",
-    "scope": "Shared generated-read column conversion, caller-specific virtual filling and typed decoder/DDL/executor diagnostics; broader datatype and ANALYZE transport remain unresolved",
-    "integration_start": "3397692dddc212fd6bfa9104d0268466ef2c41fc",
+    "scope": "Typed generated execution errors through local/cluster ANALYZE and remote virtual-row projection; lower producers remain unresolved",
+    "integration_start": "62cc7ab3e39786ea6a6fe1591f090ac85e5e1077",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "../../generated-read-ownership-execplan.md"
+    "receipt": "../../analyze-error-ownership-execplan.md"
   }
 }

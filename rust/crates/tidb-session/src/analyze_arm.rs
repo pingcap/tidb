@@ -645,8 +645,8 @@ impl Session {
         &mut self,
         admin: &tidb_ast::AdminStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        let Some(tables) = lower_analyze_admin(admin, &self.current_db)
-            .map_err(|error| DriverError::unsupported(error.to_string()))?
+        let Some(tables) =
+            lower_analyze_admin(admin, &self.current_db).map_err(DriverError::from)?
         else {
             return Ok(None);
         };
@@ -874,7 +874,7 @@ impl Session {
                             &ctx,
                             selected.as_ref(),
                         )
-                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                        .map_err(DriverError::from)?;
                         #[cfg(test)]
                         inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
                         let statistics = merge_partial_statistics(
@@ -905,7 +905,7 @@ impl Session {
                                 &ctx,
                                 selected.as_ref(),
                             )
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                            .map_err(DriverError::from)?;
                             let statistics = merge_partial_statistics(
                                 catalog.table_statistics(physical_id),
                                 statistics,
@@ -973,7 +973,7 @@ impl Session {
                     let mut index_table = (*table).clone();
                     let statistics =
                         analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
-                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                            .map_err(DriverError::from)?;
                     let statistics = merge_independent_index_statistics(
                         analyzed
                             .get(&table_id)

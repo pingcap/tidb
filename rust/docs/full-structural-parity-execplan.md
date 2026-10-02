@@ -2476,3 +2476,20 @@ context and ANALYZE diagnostic transport. Counts remain 86 tracked, 71 unresolve
 (64 open/seven partial), 15 repaired. No complete package acceptance or measured
 workload speedup is claimed. Native client-rust and its dependency are current
 and unchanged at 19a56cc.
+
+
+## Generated execution error ownership through ANALYZE (2026-10-02)
+
+
+The [ANALYZE error receipt](analyze-error-ownership-execplan.md) removes the string
+adapters from generated sample evaluation, local ANALYZE scans, cluster results
+and remote virtual-row projection. Existing DriverError/ExecError retain code,
+SQLSTATE and diagnostic until delivery. Failed jobs retain the rendered error;
+failed samples do not publish histograms, and the session can analyze again.
+
+K03 remains partial for lower conversion identities, generated-expression
+context and legacy ENUM/SET policy. Other ANALYZE storage/build diagnostics are
+still generic. The receipt records regressions, affected checks, baseline
+controls and publication gates. Counts remain 86 tracked, 71 unresolved (64 open,
+seven partial), 15 repaired. Native client-rust remains current and unchanged at
+19a56cc. No complete Go package or workload-performance acceptance is claimed.

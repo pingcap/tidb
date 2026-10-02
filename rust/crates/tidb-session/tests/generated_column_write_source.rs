@@ -334,3 +334,31 @@ fn generated_read_policy_virtual_fill_substitutes_null_and_clips_unsigned() {
         "0"
     );
 }
+
+#[test]
+fn analyze_preserves_generated_execution_error() {
+    let mut session = Session::new();
+    session.run("create table t (a double)").unwrap();
+    session.run("insert into t values (0)").unwrap();
+    session
+        .run("alter table t add column b double as (cot(a)) virtual")
+        .unwrap();
+    let original = session
+        .run("select b from t")
+        .expect_err("invalid virtual column")
+        .to_mysql_error();
+    let error = session
+        .run("analyze table t")
+        .expect_err("invalid virtual sample")
+        .to_mysql_error();
+    assert_eq!((error.code, error.state), (1690, *b"22003"));
+    assert_eq!(error.message, original.message);
+    assert_eq!(rows(&mut session, "select 1"), "1");
+    assert_eq!(
+        rows(&mut session, "show stats_histograms where table_name = 't'"),
+        ""
+    );
+    session.run("alter table t drop column b").unwrap();
+    session.run("analyze table t").unwrap();
+    assert!(!rows(&mut session, "show stats_histograms where table_name = 't'").is_empty());
+}

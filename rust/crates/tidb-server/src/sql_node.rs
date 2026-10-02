@@ -358,6 +358,10 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
 
 pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {
+        ClusterAnalyzeError::Analyze(error) => {
+            let error = tidb_executor::DriverError::from(error).to_mysql_error();
+            SqlQueryError::new(error.code, error.state, error.message)
+        }
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
         ClusterAnalyzeError::Killed(error) => SqlQueryError::new(

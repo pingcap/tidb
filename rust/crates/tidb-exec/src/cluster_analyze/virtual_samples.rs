@@ -131,11 +131,6 @@ impl VirtualSamples {
             &mut row[..self.columns.len()],
             context,
         )
-        .map_err(|error| {
-            tidb_executor::analyze::AnalyzeError::Unsupported(format!(
-                "ANALYZE virtual column: {}",
-                error.to_mysql_error().message
-            ))
-        })
+        .map_err(tidb_executor::analyze::AnalyzeError::from)
     }
 }

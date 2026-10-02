@@ -5710,7 +5710,9 @@ impl ClusterServerSession {
                     Ok(_) => Err(SqlQueryError::unknown(
                         "this node runs ANALYZE TABLE for a named table only",
                     )),
-                    Err(refusal) => Err(SqlQueryError::unknown(refusal.to_string())),
+                    Err(error) => Err(crate::sql_node::cluster_analyze_error(
+                        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
+                    )),
                 }
             }
             StoredStateChange::StatsLock => {

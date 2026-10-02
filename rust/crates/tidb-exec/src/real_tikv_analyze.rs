@@ -966,6 +966,8 @@ fn find_statement_table<'catalog>(
 /// Why an `ANALYZE TABLE` transaction did not produce a committed report.
 #[derive(Debug)]
 pub enum ClusterAnalyzeError {
+    /// A sampling/computation failure retaining its execution error owner.
+    Analyze(AnalyzeError),
     /// The commit may have landed, so the server must not report failure.
     Undetermined(String),
     /// A determinate commit failure with its driver error code and SQLSTATE.
@@ -988,6 +990,7 @@ pub enum ClusterAnalyzeError {
 impl fmt::Display for ClusterAnalyzeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Analyze(error) => write!(formatter, "{error}"),
             Self::Undetermined(detail) => {
                 write!(formatter, "execution result undetermined: {detail}")
             }
@@ -2271,7 +2274,7 @@ fn commit_cluster_analyze_target<
             resource_group,
             progress,
         )
-        .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
+        .map_err(ClusterAnalyzeError::Analyze)?;
         (report, cleanup, base_count, base_modify_count)
     };
     let (mut report, cleanup, base_count, base_modify_count) = sampled;
@@ -2451,7 +2454,7 @@ fn commit_cluster_independent_index<
             start_ts,
             progress,
         )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        .map_err(ClusterAnalyzeError::Analyze)?;
         let (write, inserted_meta) = plan_independent_index_stats_write(
             &mut snapshot,
             &catalog,

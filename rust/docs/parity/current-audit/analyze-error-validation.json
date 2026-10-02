@@ -1,0 +1,261 @@
+{
+  "baseline": "62cc7ab3e39786ea6a6fe1591f090ac85e5e1077",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Existing generated execution-error ownership through local/cluster ANALYZE and remote virtual projection. Not complete Go package acceptance.",
+  "initial_regressions": [
+    {
+      "label": "session-red",
+      "command": "cargo test --locked -p tidb-session --test all analyze_preserves_generated_execution_error -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 349 filtered out; finished in 0.02s"
+      ],
+      "observation": "1105/HY000 instead of 1690/22003",
+      "log_sha256": "041b4433a87fbdfe21542b91afc0d416f82c4a65a5363a682bbb6a37a6c0c6ed"
+    },
+    {
+      "label": "server-red",
+      "command": "cargo test --locked -p tidb-server --lib analyze_preserves_generated_execution_error -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 491 filtered out; finished in 1.26s"
+      ],
+      "observation": "1105/HY000 instead of 1690/22003",
+      "log_sha256": "94a675ff8c6f1ae19a524f748977c4fcc516b93c8f3c158ecacad7cb88346ef9"
+    },
+    {
+      "label": "remote-read-red",
+      "command": "cargo test --locked -p tidb-server --lib analyze_preserves_generated_execution_error -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 491 filtered out; finished in 1.26s"
+      ],
+      "observation": "1105/HY000 instead of 1690/22003",
+      "log_sha256": "239ff723b9433ec2dc0d43090131bfc863f950f19845b8c84a2294fff80dfef8"
+    }
+  ],
+  "affected_checks": [
+    {
+      "label": "executor",
+      "command": "cargo test --locked -p tidb-executor --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 26 passed; 2 failed; 0 ignored; 0 measured; 1478 filtered out; finished in 0.18s"
+      ],
+      "failed_tests": [
+        "tests_analyze_suite_source::analyze_numeric_generated_column_with_index_succeeds",
+        "tests_analyze_suite_source::analyze_partition_publishes_per_partition_then_partition_scoped_statistics"
+      ],
+      "log_sha256": "5465d31180e7aae7586f563b51abdd25f45d57ed4c375b5109424fce692dd478"
+    },
+    {
+      "label": "decoder",
+      "command": "cargo test --locked -p tidb-executor --test all row_decoder_source -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 516 filtered out; finished in 0.01s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "ca20175471d0874e65fbd8f6da8e3d5b6135fe0276a5a37a0d4c2f569757642c"
+    },
+    {
+      "label": "exec",
+      "command": "cargo test --locked -p tidb-exec --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 325 filtered out; finished in 0.17s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "ea0ef192b78442f3995d872772950bc5df580aeb30d97f7df83ae30c83c7c3b7"
+    },
+    {
+      "label": "session",
+      "command": "cargo test --locked -p tidb-session --test all analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 348 filtered out; finished in 0.05s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "2e1a4da0252ed81def324bec09ce26841042ae387563f479c148c2015c096be8"
+    },
+    {
+      "label": "session-lib",
+      "command": "cargo test --locked -p tidb-session --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 52 passed; 2 failed; 6 ignored; 0 measured; 2055 filtered out; finished in 1.02s"
+      ],
+      "failed_tests": [
+        "tests_explain::determinate_objective_uses_analyzed_row_count_after_inserts",
+        "tests_explain::explain_est_rows_on_an_unanalyzed_table"
+      ],
+      "log_sha256": "ffe271e7e1c4615c25e2ff7a1ea4caa384a45ef0a72f2ac9d57cb3cee84414f3"
+    },
+    {
+      "label": "server",
+      "command": "cargo test --locked -p tidb-server --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 32 passed; 1 failed; 0 ignored; 0 measured; 459 filtered out; finished in 38.09s"
+      ],
+      "failed_tests": [
+        "cluster_session_node::tests::unistore_cop::partition_scoped_analyze_refreshes_global_count_and_modify_count"
+      ],
+      "log_sha256": "a39ea1ac26705f6af18ad814c368dd85a307fb8ef0195b25a2607f79498cddaf"
+    },
+    {
+      "label": "server-read",
+      "command": "cargo test --locked -p tidb-server --lib generated_read_policy -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 491 filtered out; finished in 1.24s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "de254a7be8acad5b4f9e25f39095fe1dc41b9def204e6d0d3e410c0f659a85e9"
+    },
+    {
+      "label": "check",
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [],
+      "failed_tests": [],
+      "log_sha256": "faacdddd9cf1be09c6ed6d2b8a12c575f13f1c65824d2f6682d01c2ef3ef32f5"
+    }
+  ],
+  "baseline_controls": [
+    {
+      "label": "executor",
+      "command": "cargo test --locked -p tidb-executor --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 25 passed; 2 failed; 0 ignored; 0 measured; 1478 filtered out; finished in 0.17s"
+      ],
+      "failed_tests": [
+        "tests_analyze_suite_source::analyze_numeric_generated_column_with_index_succeeds",
+        "tests_analyze_suite_source::analyze_partition_publishes_per_partition_then_partition_scoped_statistics"
+      ],
+      "log_sha256": "31d36c69c5d576ef2bdbf2b5b7296e195989930d9fb6241373ca18205f9d501e"
+    },
+    {
+      "label": "session-lib",
+      "command": "cargo test --locked -p tidb-session --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 52 passed; 2 failed; 6 ignored; 0 measured; 2055 filtered out; finished in 1.02s"
+      ],
+      "failed_tests": [
+        "tests_explain::determinate_objective_uses_analyzed_row_count_after_inserts",
+        "tests_explain::explain_est_rows_on_an_unanalyzed_table"
+      ],
+      "log_sha256": "37ff5733b9833e622eb8d0a1fdedbf8096117df4d1b4a234db640b195b7c96ad"
+    },
+    {
+      "label": "session",
+      "command": "cargo test --locked -p tidb-session --test all analyze_preserves_generated_execution_error -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 349 filtered out; finished in 0.03s"
+      ],
+      "failed_tests": [
+        "generated_column_write_source::analyze_preserves_generated_execution_error"
+      ],
+      "log_sha256": "fdbf14d3e6df4e4c4f2314dd9e37f168759d7e59467d3fc6a8ef8632be6e62d4"
+    },
+    {
+      "label": "server",
+      "command": "cargo test --locked -p tidb-server --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 31 passed; 2 failed; 0 ignored; 0 measured; 459 filtered out; finished in 37.86s"
+      ],
+      "failed_tests": [
+        "cluster_session_node::tests::unistore_cop::analyze_preserves_generated_execution_error",
+        "cluster_session_node::tests::unistore_cop::partition_scoped_analyze_refreshes_global_count_and_modify_count"
+      ],
+      "log_sha256": "de5e202af418ccfd856e1169182a26a827b5e4774fee22a745c3fed68823fec1"
+    }
+  ],
+  "baseline_restoration": "All nine production files restored byte-for-byte. New SQL regressions retained; the new shared-owner unit test is absent in baseline analyze.rs.",
+  "final_checks": [
+    {
+      "label": "execution",
+      "command": "cargo test --locked -p tidb-executor --lib analyze::tests::execution_errors_retain_column_and_storage_identity -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1505 filtered out; finished in 0.00s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "5d6225677690ad63108bc1606ae4b2baeea7698e7704c73b251ae47d9ce0ff97"
+    },
+    {
+      "label": "session",
+      "command": "cargo test --locked -p tidb-session --test all analyze_preserves_generated_execution_error -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 349 filtered out; finished in 0.04s"
+      ],
+      "failed_tests": [],
+      "log_sha256": "51d22eb291806b9752707545341dc12207dfca980dcdb218545c54b1eda750c4"
+    },
+    {
+      "label": "server",
+      "command": "cargo test --locked -p tidb-server --lib analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 101,
+      "results": [
+        "test result: FAILED. 32 passed; 1 failed; 0 ignored; 0 measured; 459 filtered out; finished in 37.89s"
+      ],
+      "failed_tests": [
+        "cluster_session_node::tests::unistore_cop::partition_scoped_analyze_refreshes_global_count_and_modify_count"
+      ],
+      "log_sha256": "4172f366e3b0433c7e19e7c1808ea445280d1855f4d8e872395f03f7977c0296"
+    },
+    {
+      "label": "check",
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "results": [],
+      "failed_tests": [],
+      "log_sha256": "d013c661c7c9bb2069db7e3e61a6c95a6b3459f440844a098296bec4ac9e19ea"
+    },
+    {
+      "label": "lint",
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": ".",
+      "exit_code": 0,
+      "log_sha256": "459a8db98d229c47478ab66cb3e654d5d9e5e90a0671bf053db4b74ba8892f5f"
+    }
+  ],
+  "result": "172 affected cases pass, five failures also occur in unchanged production, six existing tests ignored. No new failing test IDs. The final server suite still has the same baseline partition-name failure.",
+  "not_verified": [
+    "Original Go package tests",
+    "Live TiKV/TiFlash",
+    "Full workspace tests",
+    "Workload benchmarks"
+  ],
+  "remaining_limits": [
+    "Lower datatype error/value identities",
+    "Generated expression diagnostic context (COT lacks its argument)",
+    "Legacy ENUM/SET collation context",
+    "Other ANALYZE storage/default/build diagnostics remain generic"
+  ]
+}

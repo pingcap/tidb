@@ -30,7 +30,7 @@
 //!
 //! Both drive the SAME [`AnalyzePlan`] and the SAME [`AnalyzeRun`], so
 //! neither can drift into estimating differently from the other. The Go
-//! source of truth is `pkg/executor/analyze_col_v2.go` (the sampling) and
+//! source of truth is `pkg/executor/analyze_col_sampling.go` (the sampling) and
 //! `pkg/statistics/builder.go` (the histogram), reached through
 //! [`tidb_stats::row_sample_collector`] and [`tidb_stats::builder`].
 //!
@@ -39,8 +39,8 @@
 //! The row source, and the storage. A caller opens the scan, hands each row's
 //! analyzed-column values to [`AnalyzeRun::push`], and decides what to do
 //! with the [`AnalyzedTable`] that [`AnalyzeRun::finish`] returns. Its own
-//! read failures never enter [`AnalyzeError`], which is why this module needs
-//! no error type from either tier.
+//! transport failures retain their tier-specific owner. Expression evaluation
+//! and local table-read errors retain the shared execution error until SQL delivery.
 //!
 //! # What is refused, and why refusing is the honest answer
 //!
@@ -81,10 +81,12 @@ const CMSKETCH_SIZE_LIMIT: u64 = tidb_txnkv::DEFAULT_TXN_ENTRY_SIZE_LIMIT / 5;
 
 /// Why one `ANALYZE TABLE` could not be computed.
 ///
-/// A caller's own read failure is NOT here -- it drives the scan and keeps
-/// its own error type (see the module doc).
+/// Execution errors retain their shared owner; cluster transport errors remain
+/// in the caller's error type (see the module doc).
 #[derive(Debug)]
 pub enum AnalyzeError {
+    /// A sampled expression or table read failed with its original SQL identity.
+    Execution(Box<crate::DriverError>),
     /// A sampled value could not be encoded into the domain the builder
     /// compares in.
     Encode(String),
@@ -98,6 +100,7 @@ pub enum AnalyzeError {
 impl std::fmt::Display for AnalyzeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Execution(error) => write!(formatter, "{error}"),
             Self::Encode(detail) => write!(formatter, "a sampled value did not encode: {detail}"),
             Self::Unsupported(detail) => formatter.write_str(detail),
             Self::MemoryQuota(exceeded) => write!(formatter, "{exceeded}"),
@@ -106,6 +109,29 @@ impl std::fmt::Display for AnalyzeError {
 }
 
 impl std::error::Error for AnalyzeError {}
+
+impl From<crate::DriverError> for AnalyzeError {
+    fn from(error: crate::DriverError) -> Self {
+        Self::Execution(Box::new(error))
+    }
+}
+
+impl From<crate::kv_table::KvTableError> for AnalyzeError {
+    fn from(error: crate::kv_table::KvTableError) -> Self {
+        crate::DriverError::from(crate::ExecError::from(error)).into()
+    }
+}
+
+impl From<AnalyzeError> for crate::DriverError {
+    fn from(error: AnalyzeError) -> Self {
+        match error {
+            AnalyzeError::Execution(error) => *error,
+            other @ (AnalyzeError::Encode(_)
+            | AnalyzeError::Unsupported(_)
+            | AnalyzeError::MemoryQuota(_)) => Self::unsupported(other.to_string()),
+        }
+    }
+}
 
 /// The knobs one `ANALYZE TABLE ... WITH ...` statement set.
 ///
@@ -1196,6 +1222,34 @@ fn encode_key_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_errors_retain_column_and_storage_identity() {
+        let original = crate::MysqlError::new(1292, "Truncated incorrect date value: '0000-00-00'")
+            .from_evaluation();
+        for error in [
+            crate::kv_table::KvTableError::ColumnCast(original.clone()),
+            crate::kv_table::KvTableError::Storage(crate::storage::StorageError::Sql(
+                original.clone(),
+            )),
+        ] {
+            let error = AnalyzeError::from(error);
+            assert_eq!(error.to_string(), original.message);
+            let delivered = crate::DriverError::from(error).to_mysql_error();
+            assert_eq!(delivered, original);
+            assert!(delivered.is_from_evaluation());
+        }
+        for error in [
+            AnalyzeError::Unsupported("unsupported table shape".to_owned()),
+            AnalyzeError::Encode("invalid key".to_owned()),
+            AnalyzeError::MemoryQuota(SampleMemoryExceeded),
+        ] {
+            let message = error.to_string();
+            let delivered = crate::DriverError::from(error).to_mysql_error();
+            assert_eq!((delivered.code, delivered.state), (1105, *b"HY000"));
+            assert_eq!(delivered.message, message);
+        }
+    }
 
     fn one_int_column_plan() -> AnalyzePlan {
         AnalyzePlan::new(
