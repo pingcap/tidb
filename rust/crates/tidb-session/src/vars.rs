@@ -869,6 +869,9 @@ impl GlobalSysvars {
                 self.publish_schema_cache_size(&value);
             }
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT) {
+            self.publish_ddl_error_count_limit();
+        }
         if is_auto_analyze_setting(name) {
             self.publish_auto_analyze_setting(name);
         }
@@ -1112,6 +1115,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(&stored_value);
         }
+        if key == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT {
+            self.publish_ddl_error_count_limit();
+        }
         if is_auto_analyze_setting(&key) {
             self.publish_auto_analyze_setting(&key);
         }
@@ -1268,6 +1274,28 @@ impl GlobalSysvars {
                     .store(value, std::sync::atomic::Ordering::SeqCst);
             }
             _ => {}
+        }
+    }
+
+    // Like Go's SetGlobal hook, publish only when this setting changes or
+    // is loaded. Unrelated SETs must not overwrite the worker's fresh value.
+    fn publish_ddl_error_count_limit(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        if let Some(value) = get_sys_var(tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT)
+            .and_then(|def| {
+                self.store(def)
+                    .lock()
+                    .ok()
+                    .and_then(|values| values.get(def.name).cloned())
+            })
+        {
+            tidb_vardef::set_ddl_error_count_limit(
+                value
+                    .parse::<i64>()
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT),
+            );
         }
     }
 
@@ -1521,6 +1549,13 @@ impl GlobalSysvars {
                 std::sync::atomic::Ordering::SeqCst,
             );
         }
+        if key == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT
+            && self.publishes_runtime_settings
+        {
+            tidb_vardef::set_ddl_error_count_limit(
+                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
+            );
+        }
         self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
@@ -1589,6 +1624,7 @@ impl GlobalSysvars {
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
         let mut loaded_circuit_breaker_ratio = false;
+        let mut loaded_ddl_error_count_limit = false;
         let mut loaded_resource_control = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
@@ -1606,6 +1642,8 @@ impl GlobalSysvars {
                 loaded_auto_analyze |= is_auto_analyze_setting(&key);
                 loaded_circuit_breaker_ratio |= key
                     == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO;
+                loaded_ddl_error_count_limit |=
+                    key == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT;
                 loaded_resource_control |= is_resource_control_setting(&key);
                 self.store(def)
                     .lock()
@@ -1657,6 +1695,9 @@ impl GlobalSysvars {
         }
         if loaded_circuit_breaker_ratio {
             self.publish_circuit_breaker_ratio();
+        }
+        if loaded_ddl_error_count_limit {
+            self.publish_ddl_error_count_limit();
         }
         if loaded_resource_control {
             for name in [
@@ -1723,6 +1764,7 @@ impl GlobalSysvars {
             self.publish_auto_analyze_setting(name);
         }
         self.publish_circuit_breaker_ratio_if_carried();
+        self.publish_ddl_error_count_limit();
         self.publish_resource_control_setting(tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL);
         self.publish_resource_control_setting(
             tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,

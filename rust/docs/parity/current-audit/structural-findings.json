@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 85,
-    "unresolved": 77,
-    "repaired": 8
+    "unresolved": 75,
+    "repaired": 10
   },
   "findings": [
     {
@@ -36,7 +36,7 @@
       "status": "open",
       "group": "Privilege and account policy owners",
       "finding": "**P2; partially reproduced:** MySQL TLS always uses `with_no_client_auth`; authentication receives only a TLS boolean. X509/specified requirements are refused, configured certificates are loaded once, and CA/min-version/reload policy has no corresponding transport lifecycle.",
-      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs:118`, `:161`; `configured_user_store.rs:479`; `rust/crates/tidb-session/src/privilege/privs.rs:127`. `CREATE USER \u2026 REQUIRE X509` refusal reproduced.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs:118`, `:161`; `configured_user_store.rs:479`; `rust/crates/tidb-session/src/privilege/privs.rs:127`. `CREATE USER … REQUIRE X509` refusal reproduced.",
       "go_owner": "`pkg/util/misc.go::LoadTLSCertificates` loads CA/client verification, minimum TLS version and reloadable certificates; `pkg/privilege/privileges/privileges.go::checkSSL` checks verified chains/cipher/issuer/subject/SAN. Preserve that state through the TLS/account boundary. This is separate from A02 losing stored policies.",
       "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
     },
@@ -123,30 +123,30 @@
     },
     {
       "id": "D04",
-      "status": "partial",
+      "status": "repaired",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "**Partially repaired:** the common worker checkpoints PAUSING as PAUSED before action dispatch, preserves raw arguments/prior errors, recovers preceding MDL barriers and releases paused jobs without SQL completion. CANCELLING is still overwritten with RUNNING; Go's action-specific cancellation conversion and associated error-budget handling remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::plan_persisted_ddl_job_with`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::run_persisted_ddl_job`; `rust/crates/tidb-server/src/cluster_session_node/ddl.rs::PersistedDdlScheduler::run_loop`; receipt `../../ddl-pause-lifecycle-execplan.md`",
-      "go_owner": "`pkg/ddl/job_worker.go::processJobPausingRequest`, `runOneJobStep` and `transitOneJobStep`; `pkg/ddl/rollingback.go::convertJob2RollbackJob`. Pause handling is repaired for the existing shared worker. Complete cancellation conversion and D05's error owner before claiming the control lifecycle complete.",
-      "review_basis": "Subsequent maintenance at integration c3c31d98ec2b8081074f3f58f109df64650c2a47, unchanged Go/native pins. Both planner and embedded-worker pause regressions failed before and passed after the repair. All nine integrated action kinds preserve pause state; owner loss, MDL recovery, repeated pause, independent worker progress and resume are covered. No whole-package acceptance; D04 remains unresolved."
+      "finding": "**Recorded control-gate mismatch repaired:** all nine integrated action kinds dispatch CANCELLING through Go-derived conversion before any forward action. Reversible DROP cancels; irreversible DROP resumes on the next step; CHECK rollback preserves schema barriers, raw arguments and the original error. PAUSING/PAUSED remain shared worker outcomes. The detached CHECK rollback transaction is removed, so a concurrent pause/cancel conflicts with the original action transaction instead of being overwritten. Missing action/scheduler owners remain D01/D03; this is not complete pkg/ddl acceptance.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::plan_persisted_ddl_job_with`, `plan_cancel_persisted_ddl_job`, `plan_persisted_ddl_job_error`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::run_persisted_ddl_job`; receipts `../../ddl-pause-lifecycle-execplan.md`, `../../ddl-cancellation-lifecycle-execplan.md`",
+      "go_owner": "`pkg/ddl/job_worker.go::processJobPausingRequest`, `runOneJobStep`, `transitOneJobStep`; `pkg/ddl/rollingback.go::convertJob2RollbackJob`. Existing live control paths now use one checkpoint/commit owner. External error handling and complete runtime ownership remain D05 and D03.",
+      "review_basis": "Maintenance after 7a7c756a390008771fb327942e95ff8a826a25c2 against unchanged Go/native pins. Cancelling CREATE and the detached validation/pause race fail before and pass after. Tests cover all live action conversions, physical DROP state, CHECK schema publication before history, raw arguments, error preservation, budgets and owner loss. The earlier pause receipt remains valid. No upstream package acceptance."
     },
     {
       "id": "D05",
-      "status": "open",
+      "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "A non-cancelling action error returns before shared job persistence; error count, global retry limit and transition to CANCELLING are missing. The last repair covers fresh cancellation and explicit handled errors, not this path.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs:3257`",
-      "go_owner": "`pkg/ddl/job_worker.go::countForError` and `transitOneJobStep`: discard action mutations as required, retain the error/update transaction, enforce the owner's limit.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "finding": "**Partially repaired:** planner and staged validation failures persist Job.Error/ErrorCount before reporting the error. The shared owner reads the current global limit independently of the action snapshot, selects CANCELLING only for rollbackable RUNNING jobs and preserves handled rollback state. External placement/label delivery failures still return before this checkpoint; full rollback-transaction error classification, panic handling and retry timing remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::count_ddl_action_error`, `record_ddl_cancellation_error`, `plan_persisted_ddl_job_error`; `rust/crates/tidb-exec/src/real_tikv_ddl.rs::refresh_ddl_error_count_limit`, `commit_cluster_ddl_with_backfill_once`; `rust/crates/tidb-session/src/vars.rs::publish_ddl_error_count_limit`; receipt `../../ddl-cancellation-lifecycle-execplan.md`",
+      "go_owner": "`pkg/ddl/job_worker.go::countForError`, `countForPanic`, `loadGlobalVars`, `transitOneJobStep` and `isRollbackTxnError`. Complete every action error source and source retry policy under the same owner; do not add detached checkpoint transactions.",
+      "review_basis": "Maintenance after 7a7c756a390008771fb327942e95ff8a826a25c2. Error-checkpoint and global-publication regressions fail before and pass after. Embedded tests verify durable counts, a peer-updated limit, owner loss before commit and CHECK rollback below an exhausted limit. External delivery and panic/retry policies were reviewed but not repaired; D05 remains unresolved."
     },
     {
       "id": "D06",
-      "status": "open",
+      "status": "repaired",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Some CHECK missing-table/missing-constraint paths return errors without selecting CANCELLED. Repeated scheduler passes cannot reproduce Go's terminal outcome.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::plan_persisted_check_constraint_job_step`",
-      "go_owner": "`pkg/ddl/constraint.go`: decode/object validation and action state jointly determine cancellation. Correct the complete action validation, not only message strings.",
-      "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. Changed-file edits retire other shortcuts; the recorded owner boundary remains. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."
+      "finding": "**Recorded object-validation mismatch repaired:** CHECK missing database/table/constraint, renamed-table and non-public-table failures select CANCELLED before shared history persistence. ADD constraint duplicate/name checks run before cancellation conversion, and its submitted argument shares the initial metadata pointer as Go does. This closes the recorded terminal-outcome gap, not complete CHECK expression/reorganization parity.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_ddl.rs::checked_job_table`, `plan_persisted_check_constraint_job_step`; `rust/crates/tidb-exec/tests/cluster_ddl_source.rs::persisted_check_lookup_failures_cancel_before_retry`; receipt `../../ddl-cancellation-lifecycle-execplan.md`",
+      "go_owner": "`pkg/ddl/constraint.go::checkAddCheckConstraint`, `checkDropCheckConstraint`, `checkAlterCheckConstraint`; `pkg/ddl/table.go::GetTableInfoAndCancelFaultJob`. Object validation, action state and the common worker jointly own cancellation and terminal history.",
+      "review_basis": "Maintenance after 7a7c756a390008771fb327942e95ff8a826a25c2. The original CHECK lookup path fails the terminal-history regression. The final matrix covers all three CHECK actions for table failures and DROP/ALTER for absent constraints, with source error codes and one durable error count. Full pkg/ddl and dependency acceptance remain open."
     },
     {
       "id": "D07",
@@ -548,7 +548,7 @@
       "id": "M05",
       "status": "open",
       "group": "TiFlash and MPP",
-      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01\u2013F03.",
+      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01–F03.",
       "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::watch_disaggregated_tiflash`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
       "go_owner": "`pkg/util/tiflashcompute`, startup topology initialization and `pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHash`: integrate configured topology discovery, fixed-pool cache, recovery and dispatch selection with the complete MPP owner. Do not add unsupported Go provider modes.",
       "review_basis": "Review at integration 68d6de685a, unchanged Go/native pins: Retain unresolved status. Source continuity and all changed runtime paths were reconciled; no complete replacement/caller integration closes the recorded Go contract. See post-removal-structural-review.md and post-removal-recheck/source-continuity.json."

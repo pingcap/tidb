@@ -2930,6 +2930,8 @@ pub struct PersistedDdlJobStep {
     pub write: DdlWrite,
     /// Whether this transaction removes the job from the active table.
     pub terminal: bool,
+    /// Action error to report only after committing this checkpoint.
+    pub run_error: Option<DdlPlanError>,
 }
 
 // Action handlers only plan metadata and update the in-memory job. The worker
@@ -3162,12 +3164,14 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     ddl_job_id: i64,
     start_ts: u64,
     previously_synced_version: Option<i64>,
+    load_error_count_limit: &dyn Fn() -> i64,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
         start_ts,
         previously_synced_version,
+        load_error_count_limit,
         supports_persisted_ddl_job,
         |_snapshot, catalog, active| {
             let action = active.job.type_;
@@ -3208,6 +3212,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     ddl_job_id: i64,
     start_ts: u64,
     previously_synced_version: Option<i64>,
+    load_error_count_limit: &dyn Fn() -> i64,
     supports_action: impl FnOnce(ActionType) -> bool,
     plan_action: impl FnOnce(
         &mut S,
@@ -3267,45 +3272,51 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             .append_update(&mut active, false, &mut mutations)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
-            write: DdlWrite {
-                ddl_job_id,
-                mutations,
-                schema_version: 0,
-                diff: SchemaDiff::default(),
-                created_id: None,
-                backfill: Vec::new(),
-                auto_pre_split: false,
-                exchange_partition_validation: None,
-                check_constraint_validation: None,
-                mdl_info_update: None,
-                exchange_partition_label_swap: None,
-                warnings: Vec::new(),
-                placement_bundles: Vec::new(),
-                placement_rollback_bundles: Vec::new(),
-            },
+            write: job_only_write(ddl_job_id, mutations),
             terminal: false,
+            run_error: None,
         }));
     }
-    if active.job.state != JobState::ROLLINGBACK {
-        active.job.state = JobState::RUNNING;
-    }
-    let mut step = match plan_action(snapshot, &catalog, &mut active) {
-        Ok(step) => step,
-        Err(error) if active.job.state == JobState::CANCELLED => {
-            record_ddl_plan_error(&mut active.job, &error);
-            return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts)
-                .map(PersistedDdlJobPlan::Step);
+    let cancelling = active.job.is_cancelling();
+    let was_rollingback = active.job.is_rollingback();
+    let outcome = if cancelling {
+        plan_cancel_persisted_ddl_job(&catalog, &mut active, start_ts)
+    } else {
+        if !active.job.is_rollingback() {
+            active.job.state = JobState::RUNNING;
         }
-        Err(error) => return Err(error),
+        plan_action(snapshot, &catalog, &mut active)
     };
+    let mut step = match outcome {
+        Ok(step) => step,
+        Err(error) => PersistedDdlActionStep {
+            write: job_only_write(ddl_job_id, Vec::new()),
+            update_raw_args: !was_rollingback && active.job.is_rollingback(),
+            run_error: Some(error),
+        },
+    };
+    if cancelling {
+        step.update_raw_args = active.job.is_rollingback();
+    } else {
+        active.job.last_schema_version = step.write.diff.version;
+    }
     if let Some(error) = &step.run_error {
-        record_ddl_plan_error(&mut active.job, error);
+        if cancelling {
+            record_ddl_cancellation_error(&mut active.job, error, load_error_count_limit);
+        } else {
+            count_ddl_action_error(&mut active.job, error, load_error_count_limit);
+        }
     }
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
         return finish_persisted_ddl_job(snapshot, &catalog, &job_table, &mut active, start_ts)
             .map(PersistedDdlJobPlan::Step);
+    }
+    // Go transitOneJobStep discards failed forward metadata, but keeps a
+    // handled rollback's mutations. The job/error checkpoint survives both.
+    if step.run_error.is_some() && !active.job.is_rollingback() && !active.job.is_rollback_done() {
+        step.write = job_only_write(ddl_job_id, Vec::new());
     }
     job_table
         .append_update(&mut active, step.update_raw_args, &mut step.write.mutations)
@@ -3319,6 +3330,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
         write: step.write,
         terminal: false,
+        run_error: step.run_error,
     }))
 }
 
@@ -3358,23 +3370,9 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .append_delete(active, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     Ok(PersistedDdlJobStep {
-        write: DdlWrite {
-            ddl_job_id: active.job.id,
-            mutations,
-            schema_version: 0,
-            diff: SchemaDiff::default(),
-            created_id: None,
-            backfill: Vec::new(),
-            auto_pre_split: false,
-            exchange_partition_validation: None,
-            check_constraint_validation: None,
-            mdl_info_update: None,
-            exchange_partition_label_swap: None,
-            warnings: Vec::new(),
-            placement_bundles: Vec::new(),
-            placement_rollback_bundles: Vec::new(),
-        },
+        write: job_only_write(active.job.id, mutations),
         terminal: true,
+        run_error: None,
     })
 }
 
@@ -3392,19 +3390,13 @@ fn plan_persisted_check_constraint_job_step(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
+    let stored = checked_job_table(catalog, active, true)?;
     let database = catalog
         .databases
         .iter()
-        .find(|database| database.info.id == active.job.schema_id)
-        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
-    let stored = database
-        .tables
-        .iter()
-        .find(|table| table.id == active.job.table_id)
-        .ok_or_else(|| DdlPlanError::TableNotExists {
-            schema: database.info.name.original().to_owned(),
-            table: active.job.table_name.to_string(),
-        })?;
+        .find(|db| db.info.id == active.job.schema_id)
+        .expect("checked_job_table checked the database");
+    let cancelling = active.job.is_cancelling();
     let mut info = stored.clone_like_go();
     let mut validation = None;
     let mut terminal = false;
@@ -3430,7 +3422,37 @@ fn plan_persisted_check_constraint_job_step(
                 .iter_deref()
                 .position(|constraint| constraint.read().name.lowercase() == wanted);
 
-            if active.job.state == JobState::ROLLINGBACK {
+            if let Some(position) = position {
+                if info.constraints.get(position).unwrap().read().state == SchemaState::PUBLIC {
+                    return Err(cancel_ddl_job(
+                        active,
+                        DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrDupFieldName,
+                            format!("Duplicate column name '{}'", constraint_handle.read().name),
+                        ),
+                    ));
+                }
+            }
+            // Go checkConstraintNamesNotExists skips the submitted pointer
+            // after its first WRITE_ONLY publication, not based on the current
+            // metadata state. This also governs cancellation conversion.
+            if constraint_handle.read().state != SchemaState::WRITE_ONLY
+                && database.tables.iter().any(|table| {
+                    table
+                        .constraints
+                        .iter_deref()
+                        .any(|constraint| constraint.read().name.lowercase() == wanted)
+                })
+            {
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                        format!("Duplicate check constraint name '{wanted}'."),
+                    ),
+                ));
+            }
+            if cancelling || active.job.state == JobState::ROLLINGBACK {
                 if let Some(position) = position {
                     info.constraints = info
                         .constraints
@@ -3441,12 +3463,12 @@ fn plan_persisted_check_constraint_job_step(
                         })
                         .collect::<Vec<_>>()
                         .into();
-                    active.job.state = JobState::ROLLBACK_DONE;
-                    terminal = true;
+                    if !cancelling {
+                        active.job.state = JobState::ROLLBACK_DONE;
+                        terminal = true;
+                    }
                 } else {
-                    active.job.state = JobState::CANCELLED;
-                    terminal = true;
-                    schema_changed = false;
+                    return Err(cancelled_ddl_job(active));
                 }
             } else {
                 if position.is_none() {
@@ -3497,7 +3519,11 @@ fn plan_persisted_check_constraint_job_step(
                         }
                     }
                     *constraint_handle.write() = constraint.clone();
-                    info.constraints.push_go(constraint);
+                    // Go puts the same ConstraintInfo pointer in job.Args and
+                    // TableInfo. Its initial WRITE_ONLY state must survive
+                    // argument encoding for subsequent validation/rollback.
+                    info.constraints
+                        .push_handle_go(Some(constraint_handle.clone()));
                     position = Some(info.constraints.len() - 1);
                 }
                 let position = position.expect("ADD created or found its constraint");
@@ -3555,10 +3581,13 @@ fn plan_persisted_check_constraint_job_step(
                 .iter_deref()
                 .position(|constraint| constraint.read().name.lowercase() == wanted)
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrConstraintNotFound,
-                        format!("Constraint '{wanted}' does not exist."),
-                    ))
+                    cancel_ddl_job(
+                        active,
+                        DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrConstraintNotFound,
+                            format!("Constraint '{wanted}' does not exist."),
+                        ),
+                    )
                 })?;
             let state = info
                 .constraints
@@ -3566,6 +3595,13 @@ fn plan_persisted_check_constraint_job_step(
                 .expect("DROP constraint position exists")
                 .read()
                 .state;
+            if cancelling {
+                if state == SchemaState::PUBLIC {
+                    return Err(cancelled_ddl_job(active));
+                }
+                active.job.state = JobState::RUNNING;
+                return Ok(job_control_step(&active.job));
+            }
             if active.job.state == JobState::ROLLINGBACK && state == SchemaState::PUBLIC {
                 active.job.state = JobState::CANCELLED;
                 terminal = true;
@@ -3619,26 +3655,29 @@ fn plan_persisted_check_constraint_job_step(
                 .iter_deref()
                 .position(|constraint| constraint.read().name.lowercase() == wanted)
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrConstraintNotFound,
-                        format!("Constraint '{wanted}' does not exist."),
-                    ))
+                    cancel_ddl_job(
+                        active,
+                        DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrConstraintNotFound,
+                            format!("Constraint '{wanted}' does not exist."),
+                        ),
+                    )
                 })?;
             let handle = info
                 .constraints
                 .get(position)
                 .expect("ALTER constraint position exists");
             let mut constraint = handle.write();
-            if active.job.state == JobState::ROLLINGBACK {
+            if cancelling || active.job.state == JobState::ROLLINGBACK {
                 if constraint.state == SchemaState::PUBLIC {
-                    active.job.state = JobState::CANCELLED;
-                    terminal = true;
-                    schema_changed = false;
+                    return Err(cancelled_ddl_job(active));
                 } else {
                     constraint.enforced = !enforced;
                     constraint.state = SchemaState::PUBLIC;
-                    active.job.state = JobState::ROLLBACK_DONE;
-                    terminal = true;
+                    if !cancelling {
+                        active.job.state = JobState::ROLLBACK_DONE;
+                        terminal = true;
+                    }
                 }
             } else if constraint.state == SchemaState::PUBLIC && constraint.enforced == enforced {
                 terminal = true;
@@ -4568,38 +4607,12 @@ fn plan_persisted_drop_table_job_step(
     let schema_version = catalog.schema_version;
     let mut mutations = Vec::new();
 
-    let Some(database) = catalog
+    let mut table = checked_job_table(catalog, active, false)?.clone_like_go();
+    let database = catalog
         .databases
         .iter()
-        .find(|database| database.info.id == active.job.schema_id)
-        .cloned()
-    else {
-        return Err(cancel_ddl_job(
-            active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrBadDB,
-                format!("Unknown database '(Schema ID {})'", active.job.schema_id),
-            ),
-        ));
-    };
-
-    let Some(mut table) = database
-        .tables
-        .iter()
-        .find(|table| table.id == active.job.table_id)
-        .cloned()
-    else {
-        return Err(cancel_ddl_job(
-            active,
-            DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrNoSuchTable,
-                format!(
-                    "Table '(Schema ID {}).(Table ID {})' doesn't exist",
-                    active.job.schema_id, active.job.table_id
-                ),
-            ),
-        ));
-    };
+        .find(|db| db.info.id == active.job.schema_id)
+        .expect("checked_job_table checked the database");
 
     let schema_version = schema_version + 1;
     match table.state {
@@ -4684,6 +4697,7 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         ddl_job_id,
         start_ts,
         previously_synced_version,
+        &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
         |snapshot, catalog, active| {
             plan_materialized_view_log_action(snapshot, catalog, active, start_ts)
@@ -5030,6 +5044,201 @@ fn cancel_ddl_job(
     DdlPlanError::Admission(error)
 }
 
+fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
+    DdlWrite {
+        ddl_job_id,
+        mutations,
+        schema_version: 0,
+        diff: SchemaDiff::default(),
+        created_id: None,
+        backfill: Vec::new(),
+        auto_pre_split: false,
+        exchange_partition_validation: None,
+        check_constraint_validation: None,
+        mdl_info_update: None,
+        exchange_partition_label_swap: None,
+        warnings: Vec::new(),
+        placement_bundles: Vec::new(),
+        placement_rollback_bundles: Vec::new(),
+    }
+}
+
+fn job_control_step(job: &Job) -> PersistedDdlActionStep {
+    PersistedDdlActionStep {
+        write: job_only_write(job.id, Vec::new()),
+        update_raw_args: false,
+        run_error: None,
+    }
+}
+
+fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlanError {
+    cancel_ddl_job(
+        active,
+        DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrCancelledDDLJob,
+            tidb_error::tidb::errname::ErrCancelledDDLJob.raw,
+        ),
+    )
+}
+
+// Go convertJob2RollbackJob, restricted to the actions integrated into this
+// worker. Conversion is its own step; an irreversible DROP resumes next time.
+fn plan_cancel_persisted_ddl_job(
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let cancel = match active.job.type_ {
+        ActionType::ACTION_CREATE_SCHEMA
+        | ActionType::ACTION_CREATE_TABLE
+        | ActionType::ACTION_CREATE_TABLES => true,
+        ActionType::ACTION_RENAME_TABLES => active.job.schema_state == SchemaState::NONE,
+        ActionType::ACTION_DROP_SCHEMA => {
+            let database = catalog
+                .databases
+                .iter()
+                .find(|db| db.info.id == active.job.schema_id)
+                .ok_or_else(|| {
+                    cancel_ddl_job(
+                        active,
+                        DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrDBDropExists,
+                            "Can't drop database ''; database doesn't exist",
+                        ),
+                    )
+                })?;
+            database.info.state == SchemaState::PUBLIC
+        }
+        ActionType::ACTION_DROP_TABLE => {
+            let table = checked_job_table(catalog, active, false)?;
+            table.state == SchemaState::PUBLIC
+        }
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+            return plan_persisted_check_constraint_job_step(catalog, active, start_ts);
+        }
+        _ => {
+            return Err(DdlPlanError::Encode(format!(
+                "cancellation for disabled action {} is not integrated",
+                active.job.type_
+            )))
+        }
+    };
+    if cancel {
+        return Err(cancelled_ddl_job(active));
+    }
+    active.job.state = JobState::RUNNING;
+    Ok(job_control_step(&active.job))
+}
+
+// Go GetTableInfoAndCancelFaultJob/checkTableExistAndCancelNonExistJob. Keep
+// the same object checks on forward CHECK and cancellation paths.
+fn checked_job_table<'a>(
+    catalog: &'a ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    require_public: bool,
+) -> Result<&'a TableInfo, DdlPlanError> {
+    let database = catalog
+        .databases
+        .iter()
+        .find(|db| db.info.id == active.job.schema_id)
+        .ok_or_else(|| {
+            cancel_ddl_job(
+                active,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrBadDB,
+                    format!("Unknown database '(Schema ID {})'", active.job.schema_id),
+                ),
+            )
+        })?;
+    let table = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id)
+        .ok_or_else(|| {
+            cancel_ddl_job(
+                active,
+                DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrNoSuchTable,
+                    format!(
+                        "Table '(Schema ID {}).(Table ID {})' doesn't exist",
+                        active.job.schema_id, active.job.table_id
+                    ),
+                ),
+            )
+        })?;
+    if !active.job.table_name.is_empty()
+        && table.name.lowercase() != active.job.table_name.to_string()
+    {
+        return Err(cancel_ddl_job(
+            active,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrNoSuchTable,
+                format!(
+                    "Table '{}.{}' doesn't exist",
+                    active.job.schema_name, active.job.table_name
+                ),
+            ),
+        ));
+    }
+    if require_public && table.state != SchemaState::PUBLIC {
+        return Err(cancel_ddl_job(
+            active,
+            DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLState,
+                format!("table {} is not in public, but {}", table.name, table.state),
+            ),
+        ));
+    }
+    Ok(table)
+}
+
+fn record_ddl_cancellation_error(
+    job: &mut Job,
+    error: &DdlPlanError,
+    load_limit: &dyn Fn() -> i64,
+) {
+    if job.error.is_none() {
+        record_ddl_plan_error(job, error);
+    } else {
+        job.error_count += 1;
+    }
+    if matches!(error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCancelledDDLJob)
+    {
+        let original = job.error.as_ref().unwrap().read().clone();
+        if original.code().value() != tidb_error::tidb::errcode::ErrCancelledDDLJob as isize {
+            job.error = Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
+                original.class(),
+                original.code(),
+                format!("DDL job rollback, error msg: {}", original.message()),
+            )));
+        }
+    } else {
+        let limit = load_limit();
+        if job.error_count > limit {
+            let message =
+                format!("rollback DDL job error count exceed the limit {limit}, cancelled it now");
+            // Replacing the diagnostic must not count the same failure twice.
+            job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
+                tidb_error::terror::TerrorCode::new(GENERIC_ERROR_CODE as isize),
+                message,
+            )));
+            job.state = JobState::CANCELLED;
+        }
+    }
+}
+
+fn count_ddl_action_error(job: &mut Job, error: &DdlPlanError, load_limit: &dyn Fn() -> i64) {
+    record_ddl_plan_error(job, error);
+    if !job.is_cancelled() {
+        let limit = load_limit();
+        if job.error_count > limit && job.is_running() && job.is_rollbackable() {
+            job.state = JobState::CANCELLING;
+        }
+    }
+}
+
 fn record_ddl_plan_error(job: &mut Job, error: &DdlPlanError) {
     match error {
         DdlPlanError::Admission(error) => record_ddl_job_error(job, error.code, &error.reason),
@@ -5208,6 +5417,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
         ddl_job_id,
         start_ts,
         previously_synced_version,
+        &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         |action| action == ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
         |snapshot, catalog, active| {
             plan_materialized_view_create_action(snapshot, catalog, active, start_ts, build)
@@ -5852,16 +6062,16 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
     })
 }
 
-/// Persists Go's `Running -> Rollingback` transition after CHECK validation
-/// returns 3819. No schema metadata changes in this transaction; the next
-/// ordinary worker step reads this state and performs the action-specific
-/// rollback.
-pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
+/// Plans an external action error against the ORIGINAL action snapshot. The
+/// caller commits this job-only write using that same transaction, so a racing
+/// pause/cancel causes a write conflict instead of being overwritten.
+pub fn plan_persisted_ddl_job_error<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
-    error_code: u16,
-    error_message: &str,
-) -> Result<Vec<BufferMutation>, DdlPlanError> {
+    start_ts: u64,
+    error: DdlPlanError,
+    load_error_count_limit: &dyn Fn() -> i64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -5869,18 +6079,30 @@ pub fn plan_check_constraint_job_rollingback<S: MetaSnapshot>(
         .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-    active.job.state = JobState::ROLLINGBACK;
-    record_ddl_job_error(&mut active.job, error_code, error_message);
+    if active.job.real_start_ts == 0 {
+        active.job.real_start_ts = start_ts;
+    }
+    if !active.job.is_rollingback() {
+        active.job.state = JobState::RUNNING;
+    }
+    if matches!(
+        active.job.type_,
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+    ) && matches!(&error, DdlPlanError::Admission(error) if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated)
+    {
+        active.job.state = JobState::ROLLINGBACK;
+    }
+    active.job.last_schema_version = 0;
+    count_ddl_action_error(&mut active.job, &error, load_error_count_limit);
     let mut mutations = Vec::new();
     job_table
-        // This is a separate transaction after the validation step. The job
-        // was freshly decoded from `job_meta`, so its private decoded-args
-        // cache is intentionally empty; refreshing raw args here would erase
-        // the durable action arguments. Go's `countForError` retains the raw
-        // arguments when it persists this envelope-only state transition.
         .append_update(&mut active, false, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    Ok(mutations)
+    Ok(PersistedDdlJobStep {
+        write: job_only_write(ddl_job_id, mutations),
+        terminal: false,
+        run_error: Some(error),
+    })
 }
 
 /// One catalog change's complete write set.

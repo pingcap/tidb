@@ -2206,3 +2206,24 @@ all nine integrated actions, owner loss, MDL recovery and resume are covered.
 D04 remains partial because cancellation conversion is still absent; D05's
 global error-budget owner also remains open. No partial Go package is accepted,
 no disabled action is activated and the unresolved count stays 77.
+
+
+### Shared cancellation and error checkpoints, 2026-10-01
+
+
+Starting at 7a7c756a390008771fb327942e95ff8a826a25c2 with unchanged Go master
+93a01d31f6da205ae4bf376825293903a6899fdb and native 6163ecfc, the live worker
+now dispatches cancellation before forward action, persists action error counts
+and reads the current global limit. CHECK errors use the original transaction;
+the detached rollback transaction/retry implementation is removed. A concurrent
+pause remains authoritative through write-conflict retry. Object lookup failures
+cancel with source errors, and CHECK argument/metadata pointer identity survives
+publication. See ddl-cancellation-lifecycle-execplan.md for red/green evidence,
+source owners, 115 passing scoped cases and publication gates.
+
+The current register closes the recorded D04/D06 gaps and advances D05 to partial:
+75 unresolved (69 open, six partial), ten repaired, 85 total. This supersedes the
+counts in older review snapshots without rewriting them. D05 still needs external
+error delivery, panic and retry policy. D01/D03 still own the larger durable SQL
+and scheduler migration; disabled actions remain disabled. No upstream Go package
+is accepted by this maintenance repair, and no benchmark improvement is claimed.

@@ -42,6 +42,18 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
 static ENABLE_MDL: AtomicBool = AtomicBool::new(false);
 
+static DDL_ERROR_COUNT_LIMIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT);
+
+/// Go `GetDDLErrorCountLimit`, retained when a worker cannot refresh globals.
+pub fn ddl_error_count_limit() -> i64 {
+    DDL_ERROR_COUNT_LIMIT.load(Ordering::SeqCst)
+}
+
+/// Go `SetDDLErrorCountLimit`; validation belongs to the sysvar registry.
+pub fn set_ddl_error_count_limit(limit: i64) {
+    DDL_ERROR_COUNT_LIMIT.store(limit, Ordering::SeqCst);
+}
+
 /// Go `vardef.AnalyzeDefaultNumBuckets`.
 pub static ANALYZE_DEFAULT_NUM_BUCKETS: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64);

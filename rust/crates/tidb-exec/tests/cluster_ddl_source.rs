@@ -29,10 +29,11 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_ddl::{
-    lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_ddl_with_collation, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission,
-    prepare_materialized_view_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
-    DdlStatement, MdlInfoUpdate, PersistedDdlJobPlan, PersistedDdlJobStep,
+    lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation,
+    plan_persisted_ddl_job_error, plan_persisted_ddl_job_step,
+    prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
+    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate, PersistedDdlJobPlan,
+    PersistedDdlJobStep,
 };
 
 use tidb_exec::ddl_history_table::DdlHistoryTable;
@@ -55,7 +56,9 @@ fn plan_worker_step(
     job_id: i64,
     ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    match plan_persisted_ddl_job_step(store, job_id, ts, None)? {
+    match plan_persisted_ddl_job_step(store, job_id, ts, None, &|| {
+        tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+    })? {
         PersistedDdlJobPlan::Step(step) => Ok(step),
         PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
         PersistedDdlJobPlan::SchemaSync { .. } => panic!("a previous MDL barrier is still pending"),
@@ -608,7 +611,11 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             )
             .unwrap();
             apply_mutations(store, &registration);
-            match plan_persisted_ddl_job_step(store, job.id, 11_000, None).unwrap() {
+            match plan_persisted_ddl_job_step(store, job.id, 11_000, None, &|| {
+                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+            })
+            .unwrap()
+            {
                 PersistedDdlJobPlan::SchemaSync { version, .. } => {
                     assert_eq!(version, step.write.schema_version)
                 }
@@ -762,6 +769,453 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
 }
 
 #[test]
+fn persisted_cancellation_precedes_forward_action() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    for (offset, action) in [
+        ActionType::ACTION_CREATE_SCHEMA,
+        ActionType::ACTION_CREATE_TABLE,
+        ActionType::ACTION_CREATE_TABLES,
+        ActionType::ACTION_RENAME_TABLES,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut job = Job::default();
+        job.id = 900 + offset as i64;
+        job.schema_id = 112;
+        job.type_ = action;
+        job.state = JobState::CANCELLING;
+        job.version = JobVersion::V2;
+        // Conversion must not decode forward CREATE/RENAME arguments.
+        job.fill_v2_arg(serde_json::from_str("123").unwrap());
+        job.error_count = 2;
+        let mut mutations = Vec::new();
+        queue
+            .append_insert(&mut job, false, "112", "0", true, &mut mutations)
+            .unwrap();
+        apply_mutations(&mut store, &mutations);
+        let raw = queue
+            .load_by_id(&mut store, job.id)
+            .unwrap()
+            .unwrap()
+            .job
+            .raw_args;
+        let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+        assert!(step.terminal);
+        assert_eq!(step.write.schema_version, 0);
+        apply(&mut store, &step.write);
+        let history = DdlHistoryTable::locate(&catalog)
+            .unwrap()
+            .load(&mut store)
+            .unwrap();
+        let job = history.iter().find(|j| j.id == job.id).unwrap();
+        assert_eq!(job.state, JobState::CANCELLED);
+        assert_eq!(job.error_count, 3);
+        assert_eq!(
+            job.error.as_ref().unwrap().read().code().value(),
+            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize,
+            "{action}"
+        );
+        assert_eq!(job.raw_args, raw);
+    }
+}
+
+#[test]
+fn persisted_action_error_is_checkpointed_before_retry() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let mut job = Job::default();
+    job.id = 990;
+    job.schema_id = 991;
+    job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+    job.version = JobVersion::V2;
+    // Existing planner rejects a missing db_info without cancelling; the
+    // shared worker must still persist its error and untouched raw arguments.
+    job.fill_v2_arg(serde_json::from_str("{}").unwrap());
+    let mut mutations = Vec::new();
+    queue
+        .append_insert(&mut job, false, "991", "0", true, &mut mutations)
+        .unwrap();
+    apply_mutations(&mut store, &mutations);
+    let raw = queue
+        .load_by_id(&mut store, job.id)
+        .unwrap()
+        .unwrap()
+        .job
+        .raw_args;
+    for count in 1..=2 {
+        let step = plan_worker_step(&mut store, job.id, 10_000 + count).unwrap();
+        assert!(!step.terminal);
+        assert_eq!(step.write.schema_version, 0);
+        apply(&mut store, &step.write);
+        let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        assert_eq!(active.job.error_count, count as i64);
+        assert_eq!(active.job.state, JobState::RUNNING);
+        assert_eq!(active.job.raw_args, raw);
+        assert!(active.job.error.is_some());
+    }
+    let PersistedDdlJobPlan::Step(step) =
+        plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 2).unwrap()
+    else {
+        panic!("error must checkpoint")
+    };
+    assert!(step.run_error.is_some());
+    apply(&mut store, &step.write);
+    let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+    assert_eq!(active.job.error_count, 3);
+    assert_eq!(active.job.state, JobState::CANCELLING);
+    let original = active
+        .job
+        .error
+        .as_ref()
+        .unwrap()
+        .read()
+        .message()
+        .to_owned();
+    let PersistedDdlJobPlan::Step(step) =
+        plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None, &|| {
+            panic!("normal cancellation must not reload the limit")
+        })
+        .unwrap()
+    else {
+        panic!("cancellation must reach history")
+    };
+    assert!(step.terminal);
+    apply(&mut store, &step.write);
+    let history = DdlHistoryTable::locate(&catalog)
+        .unwrap()
+        .load(&mut store)
+        .unwrap();
+    let history = history.iter().find(|j| j.id == job.id).unwrap();
+    assert_eq!(history.error_count, 4);
+    assert_eq!(history.state, JobState::CANCELLED);
+    assert_eq!(
+        history.error.as_ref().unwrap().read().message(),
+        format!("DDL job rollback, error msg: {original}")
+    );
+    assert_eq!(history.raw_args, raw);
+}
+
+#[test]
+fn persisted_cancel_uses_physical_drop_state() {
+    for action in [
+        ActionType::ACTION_DROP_SCHEMA,
+        ActionType::ACTION_DROP_TABLE,
+    ] {
+        for state in [
+            SchemaState::PUBLIC,
+            SchemaState::WRITE_ONLY,
+            SchemaState::DELETE_ONLY,
+        ] {
+            let mut store = bootstrapped();
+            let create = plan(&mut store, "CREATE TABLE cancel_drop (a INT)", 1_000);
+            let id = create.created_id.unwrap();
+            apply(&mut store, &create);
+            let catalog = load_cluster_catalog(&mut store).unwrap();
+            let (db, table) = catalog.find_table("u6", "cancel_drop").unwrap();
+            if action == ActionType::ACTION_DROP_SCHEMA {
+                let mut db = db.clone();
+                db.state = state;
+                store.put(
+                    key::database_kv_key(db.id),
+                    value::serialize_db_info(&db).unwrap(),
+                );
+            } else {
+                let mut table = table.clone_like_go();
+                table.state = state;
+                store.put(
+                    key::table_kv_key(db.id, id),
+                    value::serialize_table_info(&table).unwrap(),
+                );
+            }
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut job = Job::default();
+            job.id = 990;
+            job.schema_id = 112;
+            job.table_id = id;
+            job.type_ = action;
+            job.state = JobState::CANCELLING;
+            // Stale job state must not override the actual schema object.
+            job.schema_state = SchemaState::NONE;
+            let mut mutations = Vec::new();
+            queue
+                .append_insert(
+                    &mut job,
+                    false,
+                    "112",
+                    &id.to_string(),
+                    true,
+                    &mut mutations,
+                )
+                .unwrap();
+            apply_mutations(&mut store, &mutations);
+            let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+            assert_eq!(step.terminal, state == SchemaState::PUBLIC);
+            assert_eq!(step.write.schema_version, 0);
+            apply(&mut store, &step.write);
+            if !step.terminal {
+                let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                assert_eq!(active.job.state, JobState::RUNNING);
+                assert_eq!(active.job.error_count, 0);
+                assert!(active.job.error.is_none());
+            }
+            let after = load_cluster_catalog(&mut store).unwrap();
+            assert_eq!(after.schema_version, catalog.schema_version);
+            assert!(after.find_table("u6", "cancel_drop").is_some());
+        }
+    }
+}
+
+#[test]
+fn persisted_check_cancellation_restores_metadata_before_history() {
+    for action in [
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+    ] {
+        for state in [
+            SchemaState::NONE,
+            SchemaState::PUBLIC,
+            SchemaState::WRITE_ONLY,
+            SchemaState::WRITE_REORGANIZATION,
+        ] {
+            let mut store = bootstrapped();
+            let create = plan(&mut store, "CREATE TABLE cancel_check (a INT)", 1_000);
+            let table_id = create.created_id.unwrap();
+            apply(&mut store, &create);
+            let catalog = load_cluster_catalog(&mut store).unwrap();
+            let mut table = catalog
+                .find_table("u6", "cancel_check")
+                .unwrap()
+                .1
+                .clone_like_go();
+            let constraint = tidb_model::table::ConstraintInfo {
+                name: tidb_ast::CiString::new("c_positive"),
+                expr_string: "`a` > 0".into(),
+                state,
+                enforced: true,
+                ..Default::default()
+            };
+            if state != SchemaState::NONE {
+                table.constraints = vec![constraint.clone()].into();
+            }
+            store.put(
+                key::table_kv_key(112, table_id),
+                value::serialize_table_info(&table).unwrap(),
+            );
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut job = Job::default();
+            job.id = 990;
+            job.schema_id = 112;
+            job.table_id = table_id;
+            job.type_ = action;
+            job.version = JobVersion::V2;
+            job.state = JobState::CANCELLING;
+            job.schema_state = state;
+            if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+                let mut submitted = constraint;
+                submitted.state = SchemaState::WRITE_ONLY;
+                job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
+                    constraint: tidb_model::GoField::new(Some(GoShared::new(submitted))),
+                })));
+            } else {
+                job.fill_args(Some(GoShared::new(tidb_model::CheckConstraintArgs {
+                    constraint_name: tidb_model::GoField::new(tidb_ast::CiString::new(
+                        "c_positive",
+                    )),
+                    enforced: tidb_model::GoField::new(true),
+                })));
+            }
+            let mut mutations = Vec::new();
+            queue
+                .append_insert(
+                    &mut job,
+                    false,
+                    "112",
+                    &table_id.to_string(),
+                    true,
+                    &mut mutations,
+                )
+                .unwrap();
+            apply_mutations(&mut store, &mutations);
+            let raw = queue
+                .load_by_id(&mut store, job.id)
+                .unwrap()
+                .unwrap()
+                .job
+                .raw_args;
+            let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+            apply(&mut store, &step.write);
+            if state == SchemaState::PUBLIC || state == SchemaState::NONE {
+                assert!(step.terminal);
+                assert_eq!(step.write.schema_version, 0);
+            } else if action == ActionType::ACTION_DROP_CHECK_CONSTRAINT {
+                assert!(!step.terminal);
+                assert_eq!(step.write.schema_version, 0);
+                assert_eq!(
+                    queue
+                        .load_by_id(&mut store, job.id)
+                        .unwrap()
+                        .unwrap()
+                        .job
+                        .state,
+                    JobState::RUNNING
+                );
+                if state == SchemaState::WRITE_REORGANIZATION {
+                    let PersistedDdlJobPlan::Step(retry) =
+                        plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 0)
+                            .unwrap()
+                    else {
+                        panic!("invalid forward state must checkpoint")
+                    };
+                    assert!(retry.run_error.is_some());
+                    apply(&mut store, &retry.write);
+                    let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                    assert_eq!(active.job.error_count, 1);
+                    assert_eq!(
+                        active.job.state,
+                        JobState::RUNNING,
+                        "a non-rollbackable action must not cross into CANCELLING"
+                    );
+                }
+            } else {
+                assert!(!step.terminal);
+                assert_eq!(step.write.schema_version, catalog.schema_version + 1);
+                let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                assert_eq!(active.job.state, JobState::CANCELLING);
+                assert_eq!(active.job.raw_args, raw);
+                let after = load_cluster_catalog(&mut store).unwrap();
+                let table = after.find_table("u6", "cancel_check").unwrap().1;
+                if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+                    assert!(table.constraints.is_empty());
+                } else {
+                    assert!(!table.constraints.get(0).unwrap().read().enforced);
+                    assert_eq!(
+                        table.constraints.get(0).unwrap().read().state,
+                        SchemaState::PUBLIC
+                    );
+                }
+                let mdl = step.write.mdl_info_update.unwrap();
+                let mut mutations = Vec::new();
+                mdl.append_mutations(job.id, step.write.schema_version, "owner", &mut mutations)
+                    .unwrap();
+                apply_mutations(&mut store, &mutations);
+                assert!(matches!(
+                    plan_persisted_ddl_job_step(&mut store, job.id, 20_000, None, &|| 512).unwrap(),
+                    PersistedDdlJobPlan::SchemaSync { .. }
+                ));
+                let PersistedDdlJobPlan::Step(done) = plan_persisted_ddl_job_step(
+                    &mut store,
+                    job.id,
+                    30_000,
+                    Some(step.write.schema_version),
+                    &|| 512,
+                )
+                .unwrap() else {
+                    panic!("cancel after sync")
+                };
+                assert!(done.terminal);
+                apply(&mut store, &done.write);
+                let history = DdlHistoryTable::locate(&after)
+                    .unwrap()
+                    .load(&mut store)
+                    .unwrap();
+                let history = history.iter().find(|j| j.id == job.id).unwrap();
+                assert_eq!(history.state, JobState::CANCELLED);
+                assert_eq!(
+                    history.error.as_ref().unwrap().read().code().value(),
+                    tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn persisted_check_lookup_failures_cancel_before_retry() {
+    for action in [
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+        ActionType::ACTION_DROP_CHECK_CONSTRAINT,
+        ActionType::ACTION_ALTER_CHECK_CONSTRAINT,
+    ] {
+        for invalid in ["missing", "missingdb", "renamed", "nonpublic", "constraint"] {
+            if invalid == "constraint" && action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+                continue;
+            }
+            let mut store = bootstrapped();
+            let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
+            let id = create.created_id.unwrap();
+            apply(&mut store, &create);
+            let catalog = load_cluster_catalog(&mut store).unwrap();
+            if invalid == "nonpublic" {
+                let mut table = catalog
+                    .find_table("u6", "checked_table")
+                    .unwrap()
+                    .1
+                    .clone_like_go();
+                table.state = SchemaState::WRITE_ONLY;
+                store.put(
+                    key::table_kv_key(112, id),
+                    value::serialize_table_info(&table).unwrap(),
+                );
+            }
+            let mut job = Job::default();
+            job.id = 990;
+            job.schema_id = if invalid == "missingdb" { 998 } else { 112 };
+            job.table_id = if invalid == "missing" { 999 } else { id };
+            job.table_name = if invalid == "renamed" {
+                "old_name"
+            } else {
+                "checked_table"
+            }
+            .into();
+            job.type_ = action;
+            job.state = JobState::RUNNING;
+            if invalid == "constraint" {
+                job.version = JobVersion::V2;
+                job.fill_args(Some(GoShared::new(tidb_model::CheckConstraintArgs {
+                    constraint_name: tidb_model::GoField::new(tidb_ast::CiString::new("absent")),
+                    enforced: tidb_model::GoField::new(true),
+                })));
+            }
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut mutations = Vec::new();
+            let table_ids = job.table_id.to_string();
+            queue
+                .append_insert(&mut job, false, "112", &table_ids, true, &mut mutations)
+                .unwrap();
+            apply_mutations(&mut store, &mutations);
+            let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+            assert!(
+                step.terminal,
+                "{action} {invalid}: object validation must cancel"
+            );
+            assert_eq!(step.write.schema_version, 0);
+            apply(&mut store, &step.write);
+            let history = DdlHistoryTable::locate(&catalog)
+                .unwrap()
+                .load(&mut store)
+                .unwrap();
+            let history = history.iter().find(|j| j.id == job.id).unwrap();
+            assert_eq!(history.error_count, 1);
+            assert_eq!(history.state, JobState::CANCELLED);
+            assert_eq!(
+                history.error.as_ref().unwrap().read().code().value(),
+                match invalid {
+                    "nonpublic" => tidb_error::tidb::errcode::ErrInvalidDDLState as isize,
+                    "missingdb" => tidb_error::tidb::errcode::ErrBadDB as isize,
+                    "constraint" => tidb_error::tidb::errcode::ErrConstraintNotFound as isize,
+                    _ => tidb_error::tidb::errcode::ErrNoSuchTable as isize,
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn persisted_pausing_jobs_checkpoint_only_control_state() {
     for action in [
         ActionType::ACTION_ADD_CHECK_CONSTRAINT,
@@ -818,14 +1272,17 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         let before = store.pairs.clone();
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, None, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: acknowledge the previous publication before pausing"
         );
         assert_eq!(store.pairs, before);
         let PersistedDdlJobPlan::Step(step) =
-            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, Some(version)).unwrap()
+            plan_persisted_ddl_job_step(&mut store, job.id, 10_000, Some(version), &|| {
+                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+            })
+            .unwrap()
         else {
             panic!("{action}: an acknowledged pause must checkpoint")
         };
@@ -865,7 +1322,10 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         assert_eq!(store.pairs, expected_store.pairs, "{action}");
         let before = store.pairs.clone();
         assert!(matches!(
-            plan_persisted_ddl_job_step(&mut store, job.id, 20_000, Some(version)).unwrap(),
+            plan_persisted_ddl_job_step(&mut store, job.id, 20_000, Some(version), &|| {
+                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+            })
+            .unwrap(),
             PersistedDdlJobPlan::Paused
         ));
         assert_eq!(
@@ -874,7 +1334,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         );
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, None, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: replacement owner must recover an uncleaned MDL row"
@@ -885,7 +1345,10 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         apply_mutations(&mut store, &cleanup);
         let before = store.pairs.clone();
         assert!(matches!(
-            plan_persisted_ddl_job_step(&mut store, job.id, 40_000, None).unwrap(),
+            plan_persisted_ddl_job_step(&mut store, job.id, 40_000, None, &|| {
+                tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+            })
+            .unwrap(),
             PersistedDdlJobPlan::Paused
         ));
         assert_eq!(store.pairs, before);
@@ -1494,14 +1957,18 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     apply(&mut store, &reorganization.write);
 
     let validation_message = "Check constraint 'c_positive' is violated.";
-    let rollingback = plan_check_constraint_job_rollingback(
+    let rollingback = plan_persisted_ddl_job_error(
         &mut store,
         job_id,
-        tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-        validation_message,
+        10_000,
+        DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+            validation_message,
+        )),
+        &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )
     .expect("countForError persists Running to Rollingback");
-    apply_mutations(&mut store, &rollingback);
+    apply(&mut store, &rollingback.write);
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads after error");
     let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     let mut active = table.load(&mut store).expect("new owner sees Rollingback");
@@ -1803,14 +2270,18 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     apply(&mut store, &write_only.write);
 
     let validation_message = "Check constraint 'c_positive' is violated.";
-    let rollingback = plan_check_constraint_job_rollingback(
+    let rollingback = plan_persisted_ddl_job_error(
         &mut store,
         job_id,
-        tidb_error::tidb::errcode::ErrCheckConstraintViolated,
-        validation_message,
+        10_000,
+        DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+            validation_message,
+        )),
+        &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
     )
     .expect("countForError persists ALTER Rollingback");
-    apply_mutations(&mut store, &rollingback);
+    apply(&mut store, &rollingback.write);
     let rollback = plan_worker_step(&mut store, job_id, 5_004)
         .expect("a restarted owner restores the old constraint");
     assert!(!rollback.terminal);
@@ -6657,7 +7128,12 @@ fn acknowledge_mview_schema(store: &mut MetaStore, step: &PersistedDdlJobStep) {
     assert!(!tidb_exec::cluster_ddl::supports_persisted_ddl_job(
         active.job.type_
     ));
-    assert!(plan_persisted_ddl_job_step(store, job_id, 20_000, None).is_err());
+    assert!(
+        plan_persisted_ddl_job_step(store, job_id, 20_000, None, &|| {
+            tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+        })
+        .is_err()
+    );
     let mut cleanup = Vec::new();
     mdl_info
         .append_delete_mutations(store, job_id, "owner", &mut cleanup)

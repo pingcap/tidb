@@ -32,6 +32,55 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
 }
 
 #[test]
+fn ddl_error_count_limit_publishes_set_load_and_reset() {
+    let _serialised = process_switch_tests();
+    struct Restore(i64);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_vardef::set_ddl_error_count_limit(self.0);
+        }
+    }
+    let _restore = Restore(tidb_vardef::ddl_error_count_limit());
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_ddl_error_count_limit = 7")
+        .unwrap();
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 7);
+    // A DDL worker can load a peer's committed limit before this registry
+    // refreshes. An unrelated SET must not republish its stale copy.
+    tidb_vardef::set_ddl_error_count_limit(3);
+    session
+        .run("SET GLOBAL max_allowed_packet = 67108864")
+        .unwrap();
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 3);
+    globals.load_from_cluster(vec![(
+        "tidb_ddl_error_count_limit".to_owned(),
+        "0".to_owned(),
+    )]);
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
+    assert!(session
+        .run("SET GLOBAL tidb_ddl_error_count_limit = 'invalid'")
+        .is_err());
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
+    let scratch = vars::GlobalSysvars::from_cluster_rows(vec![(
+        "tidb_ddl_error_count_limit".to_owned(),
+        "9".to_owned(),
+    )]);
+    assert_eq!(
+        tidb_vardef::ddl_error_count_limit(),
+        0,
+        "staged globals are private"
+    );
+    globals.replace_from(&scratch);
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 9);
+    globals.reset("tidb_ddl_error_count_limit").unwrap();
+    assert_eq!(
+        tidb_vardef::ddl_error_count_limit(),
+        tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+    );
+}
+
+#[test]
 fn ttl_job_enable_global_hook_updates_the_process_switch() {
     let _serialised = process_switch_tests();
     struct RestoreTtlJobEnable(bool);

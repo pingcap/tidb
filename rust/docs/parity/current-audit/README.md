@@ -20,7 +20,7 @@ unreviewed packages. Other external dependencies still require complete inventor
 before acceptance.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 85 tracked ownership/contract findings (77 unresolved, eight repaired), review candidates and the
+consolidates 85 tracked ownership/contract findings (75 unresolved, ten repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -575,3 +575,13 @@ repairs pause checkpoints and scheduler release in the existing shared worker.
 D04 is partial: cancellation conversion and D05 error budgets remain open.
 There are still 77 unresolved findings (71 open, six partial); no additional
 package is accepted. Earlier continuity files are historical snapshots.
+
+The [shared cancellation and error-checkpoint repair](../../ddl-cancellation-lifecycle-execplan.md)
+subsequently closes D04/D06's recorded live control/object-validation gaps and
+advances D05 to partial. It removes the detached CHECK rollback transaction,
+preserves concurrent administrative state through the original transaction and
+connects error checkpoints to the current global retry limit. The current register
+has 75 unresolved findings (69 open, six partial) and ten repaired findings.
+These are maintained live-path contracts, not complete pkg/ddl acceptance; external
+error/panic/retry policy, durable SQL submission and scheduler ownership remain open.
+Earlier reviews above retain their historical counts and pins.

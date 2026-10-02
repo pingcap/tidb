@@ -43,10 +43,10 @@ use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoa
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_check_constraint_job_rollingback, plan_ddl,
-    plan_persisted_ddl_job_step, prepare_check_constraint_job_submission,
-    CheckConstraintValidation, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite,
-    ExchangePartitionValidation, IndexBackfill, MdlInfoUpdate, PersistedDdlJobPlan,
+    lower_ddl_with_context, plan_ddl, plan_persisted_ddl_job_error, plan_persisted_ddl_job_step,
+    prepare_check_constraint_job_submission, CheckConstraintValidation, DdlAdmissionError, DdlPlan,
+    DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, IndexBackfill,
+    MdlInfoUpdate, PersistedDdlJobPlan,
 };
 
 use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
@@ -679,6 +679,47 @@ enum DdlPhase<'statement> {
 struct CommittedDdlPhase {
     report: ClusterDdlReport,
     persisted_job_terminal: bool,
+    run_error: Option<DdlPlanError>,
+}
+
+// Go worker.loadGlobalVars uses an independent session: a SET GLOBAL committed
+// after the action snapshot must affect this error. Failed refresh retains the
+// process value published by the previous refresh or local SET GLOBAL.
+fn refresh_ddl_error_count_limit<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+) -> i64 {
+    let refreshed = (|| -> Result<_, String> {
+        let mut tx = opener
+            .begin_read_only()
+            .map_err(|error| error.to_string())?;
+        let result = (|| {
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            crate::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
+                .map_err(|error| error.to_string())
+        })();
+        let finished = tx
+            .finish_without_writes()
+            .map_err(|error| error.to_string());
+        let vars = result?;
+        finished?;
+        Ok(vars
+            .into_iter()
+            .find(|(name, _)| name == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT)
+            .map(|(_, value)| {
+                value
+                    .parse::<i64>()
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT)
+            }))
+    })();
+    match refreshed {
+        Ok(Some(limit)) => tidb_vardef::set_ddl_error_count_limit(limit),
+        Ok(None) => {}
+        Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_global_variable_refresh_failed\",\"error\":{}}}",
+            serde_json::to_string(&error).unwrap_or_default()),
+    }
+    tidb_vardef::ddl_error_count_limit()
 }
 
 enum DdlPhaseOutcome {
@@ -779,7 +820,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     let mut validation_failure = None;
     let mut previously_synced_version = None;
     loop {
-        let outcome = match commit_cluster_ddl_phase_with_retry(
+        let outcome = commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
             DdlPhase::Persisted {
                 ddl_job_id,
@@ -792,23 +833,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             exchange_validator,
             check_constraint_validator,
             schema_sync.owner_id(),
-        ) {
-            Err(ClusterDdlError::CheckConstraintValidation(error))
-                if error.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated =>
-            {
-                check_owner().map_err(ClusterDdlError::SchemaSync)?;
-                mark_check_constraint_job_rollingback_with_retry(
-                    Arc::clone(&opener),
-                    ddl_job_id,
-                    &error,
-                    timeout,
-                    check_owner,
-                )?;
-                validation_failure = Some(error);
-                continue;
-            }
-            outcome => outcome?,
-        };
+        )?;
         match outcome {
             DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
             DdlPhaseOutcome::SchemaSync { version, mdl_info } => {
@@ -842,7 +867,23 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                     Err(ClusterDdlError::CheckConstraintValidation(error))
                 });
             }
-            DdlPhaseOutcome::Committed(_) => {}
+            DdlPhaseOutcome::Committed(committed) => {
+                if let Some(error) = committed.run_error {
+                    if let DdlPlanError::Admission(failure) = &error {
+                        if failure.code == tidb_error::tidb::errcode::ErrCheckConstraintViolated {
+                            validation_failure = Some(LockSqlError {
+                                code: failure.code,
+                                state: *b"HY000",
+                                message: failure.reason.clone(),
+                            });
+                            continue;
+                        }
+                    }
+                    // The retry belongs to a new job step. Returning before
+                    // this checkpoint committed would lose the error budget.
+                    return Err(ClusterDdlError::Plan(error));
+                }
+            }
             DdlPhaseOutcome::AlreadySatisfied(_) => {
                 unreachable!("persisted actions always write their state")
             }
@@ -1175,66 +1216,6 @@ pub fn load_history_persisted_ddl_job<
     Ok(history)
 }
 
-fn mark_check_constraint_job_rollingback_with_retry<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    ddl_job_id: i64,
-    validation_error: &LockSqlError,
-    timeout: Duration,
-    check_owner: &dyn Fn() -> Result<(), String>,
-) -> Result<(), ClusterDdlError> {
-    let mut attempt = 0_u32;
-    loop {
-        let transaction = SessionTransaction::begin(
-            Arc::clone(&opener),
-            timeout,
-            crate::session_commit_protocol::bootstrap_commit_protocol(),
-        )?;
-        let mutations = {
-            let mut snapshot = SnapshotMetaSnapshot::new(
-                transaction
-                    .snapshot()
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-            );
-            plan_check_constraint_job_rollingback(
-                &mut snapshot,
-                ddl_job_id,
-                validation_error.code,
-                &validation_error.message,
-            )
-        };
-        let mutations = match mutations {
-            Ok(mutations) => mutations,
-            Err(error) => {
-                let _ = transaction.rollback();
-                return Err(error.into());
-            }
-        };
-        if let Err(error) = check_owner() {
-            let _ = transaction.rollback();
-            return Err(ClusterDdlError::SchemaSync(error));
-        }
-        let buffer = MutationBuffer::new();
-        match transaction.commit_with(&buffer, mutations) {
-            Ok(_) => return Ok(()),
-            Err(error) => {
-                let cause = classify_session_ddl_commit_error(0, error);
-                if matches!(cause, ClusterDdlError::ConcurrentSchemaChange { .. })
-                    && attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT
-                {
-                    std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
-                    attempt += 1;
-                    continue;
-                }
-                return Err(cause);
-            }
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn commit_cluster_ddl_phase_with_retry<
     C: StoreWriteClient,
@@ -1304,7 +1285,7 @@ fn commit_cluster_ddl_with_backfill_once<
         );
         match phase {
             DdlPhase::Initial(statement) => {
-                plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false))
+                plan_ddl(&mut snapshot, statement, start_ts).map(|plan| (plan, false, None))
             }
             DdlPhase::Persisted {
                 ddl_job_id,
@@ -1316,6 +1297,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     ddl_job_id,
                     start_ts,
                     previously_synced_version,
+                    &|| refresh_ddl_error_count_limit(&opener, timeout),
                 ) {
                     Ok(PersistedDdlJobPlan::Paused) => {
                         transaction
@@ -1329,22 +1311,24 @@ fn commit_cluster_ddl_with_backfill_once<
                             .map_err(ClusterDdlError::NotCommitted)?;
                         return Ok(DdlPhaseOutcome::SchemaSync { version, mdl_info });
                     }
-                    Ok(PersistedDdlJobPlan::Step(step)) => {
-                        Ok((DdlPlan::Write(Box::new(step.write)), step.terminal))
-                    }
+                    Ok(PersistedDdlJobPlan::Step(step)) => Ok((
+                        DdlPlan::Write(Box::new(step.write)),
+                        step.terminal,
+                        step.run_error,
+                    )),
                     Err(error) => Err(error),
                 }
             }
         }
     };
-    let (plan, persisted_job_terminal) = match plan {
+    let (plan, persisted_job_terminal, mut run_error) = match plan {
         Ok(plan) => plan,
         Err(error) => {
             let _ = transaction.rollback();
             return Err(error.into());
         }
     };
-    let write = match plan {
+    let mut write = match plan {
         DdlPlan::AlreadySatisfied { detail, warnings } => {
             transaction
                 .rollback()
@@ -1355,7 +1339,7 @@ fn commit_cluster_ddl_with_backfill_once<
         }
         DdlPlan::Write(write) => *write,
     };
-    let buffer = MutationBuffer::new();
+    let mut buffer = MutationBuffer::new();
     if !write.backfill.is_empty()
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
@@ -1387,11 +1371,41 @@ fn commit_cluster_ddl_with_backfill_once<
                 Ok(())
             });
         if let Err(error) = staged {
-            // Nothing has been published: the entries only ever existed in this
-            // process's buffer, so a failed backfill leaves the cluster exactly
-            // as it was, index and rows both.
-            let _ = transaction.rollback();
-            return Err(error);
+            let DdlPhase::Persisted { ddl_job_id, .. } = phase else {
+                let _ = transaction.rollback();
+                return Err(error);
+            };
+            let job_error = match error {
+                ClusterDdlError::CheckConstraintValidation(error) => {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+                }
+                error => DdlPlanError::Encode(error.to_string()),
+            };
+            let checkpoint = transaction
+                .snapshot()
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))
+                .and_then(|snapshot| {
+                    plan_persisted_ddl_job_error(
+                        &mut SnapshotMetaSnapshot::new(snapshot),
+                        ddl_job_id,
+                        start_ts,
+                        job_error,
+                        &|| refresh_ddl_error_count_limit(&opener, timeout),
+                    )
+                });
+            let checkpoint = match checkpoint {
+                Ok(checkpoint) => checkpoint,
+                Err(error) => {
+                    let _ = transaction.rollback();
+                    return Err(error.into());
+                }
+            };
+            // Rust's planned metadata and staged rows are not applied until
+            // commit. Discard both, as Go resets failed action mutations, but
+            // keep this transaction's snapshot and conflict protection.
+            buffer = MutationBuffer::new();
+            write = checkpoint.write;
+            run_error = checkpoint.run_error;
         }
     }
     let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
@@ -1426,7 +1440,6 @@ fn commit_cluster_ddl_with_backfill_once<
     } else {
         None
     };
-    let mut write = write;
     if let Some(mdl_info) = &write.mdl_info_update {
         if let Err(error) = mdl_info.append_mutations(
             write.ddl_job_id,
@@ -1468,6 +1481,7 @@ fn commit_cluster_ddl_with_backfill_once<
                     warnings: write.warnings.clone(),
                 },
                 persisted_job_terminal,
+                run_error,
             }))
         }
         Err(error) => {

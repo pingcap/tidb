@@ -984,6 +984,274 @@ mod schema_sync_tests {
         assert_eq!(history.error_count, 0);
         assert_eq!(barrier.waits.lock().unwrap().len(), wait_count + 2);
         assert_eq!(barrier.cleaned.lock().unwrap().len(), clean_count + 2);
+
+        // A cancelling CREATE must never reach its valid forward arguments.
+        let mut cancelled = paused_job.clone();
+        cancelled.id = 600;
+        cancelled.schema_id = 601;
+        cancelled.schema_name = "never_created".into();
+        cancelled.state = JobState::CANCELLING;
+        cancelled.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: 601,
+                name: tidb_ast::CiString::new("never_created"),
+                ..Default::default()
+            }))),
+        })));
+        seed(&mut cancelled);
+        run(600, Some(&FailedNotifier), &|| Ok(())).unwrap();
+        let history = load_history_persisted_ddl_job(opener.clone(), 600, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, 1);
+        assert_eq!(
+            history.error.as_ref().unwrap().read().code().value(),
+            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+        );
+        assert!(
+            !tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
+                .unwrap()
+                .databases
+                .iter()
+                .any(|db| db.info.id == 601)
+        );
+
+        let set_limit = |limit: i64| {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let mut vars =
+                tidb_exec::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
+                    .unwrap()
+                    .into_iter()
+                    .collect::<std::collections::BTreeMap<_, _>>();
+            vars.insert("tidb_ddl_error_count_limit".into(), limit.to_string());
+            let plan = tidb_exec::cluster_sysvar_write::plan_sysvar_write(
+                &mut snapshot,
+                &catalog,
+                &vars,
+                tidb_datatype::Time::from_date_checked(
+                    2026,
+                    10,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    tidb_datatype::TimeType::Timestamp,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert!(matches!(
+                tx.commit(
+                    plan.mutations,
+                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+                )
+                .unwrap(),
+                OptimisticCommitOutcome::Committed(_)
+            ));
+        };
+        set_limit(1);
+        let mut failed = Job::default();
+        failed.id = 602;
+        failed.schema_id = 603;
+        failed.version = JobVersion::V2;
+        failed.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        failed.state = JobState::QUEUEING;
+        failed.fill_v2_arg(serde_json::from_str("{}").unwrap());
+        seed(&mut failed);
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let lost_before_error_commit = || {
+            if checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                Ok(())
+            } else {
+                Err("owner lost".into())
+            }
+        };
+        assert!(run(602, None, &lost_before_error_commit).is_err());
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].error_count, 0);
+        assert_eq!(active[0].state, JobState::QUEUEING);
+        assert!(matches!(
+            run(602, None, &|| Ok(())),
+            Err(ClusterDdlError::Plan(_))
+        ));
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].error_count, 1);
+        assert_eq!(active[0].state, JobState::RUNNING);
+        // A peer changes the persisted limit; the next error refresh must
+        // override even a different cached value, without restarting the node.
+        set_limit(0);
+        tidb_vardef::set_ddl_error_count_limit(100);
+        assert!(matches!(
+            run(602, None, &|| Ok(())),
+            Err(ClusterDdlError::Plan(_))
+        ));
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].error_count, 2);
+        assert_eq!(active[0].state, JobState::CANCELLING);
+        assert_eq!(tidb_vardef::ddl_error_count_limit(), 0);
+        run(602, None, &|| Ok(())).unwrap();
+        let history = load_history_persisted_ddl_job(opener.clone(), 602, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::CANCELLED);
+        assert_eq!(history.error_count, 3);
+        assert!(history
+            .error
+            .as_ref()
+            .unwrap()
+            .read()
+            .message()
+            .starts_with("DDL job rollback, error msg:"));
+
+        // An ADMIN pause committed during validation must win over a stale
+        // validation error. A detached checkpoint would overwrite PAUSING.
+        struct PauseDuringValidation<F>(F);
+        impl<F: Fn()> CheckConstraintValidator for PauseDuringValidation<F> {
+            fn validate(
+                &self,
+                _: &CheckConstraintValidation,
+                _: Arc<Mutex<dyn ClusterSnapshot>>,
+                _: &MutationBuffer,
+            ) -> Result<(), LockSqlError> {
+                (self.0)();
+                Err(LockSqlError {
+                    code: tidb_error::tidb::errcode::ErrCheckConstraintViolated,
+                    state: *b"HY000",
+                    message: "Check constraint 'c' is violated.".into(),
+                })
+            }
+        }
+        let constraint = tidb_model::table::ConstraintInfo {
+            name: tidb_ast::CiString::new("c"),
+            state: SchemaState::WRITE_REORGANIZATION,
+            enforced: true,
+            ..Default::default()
+        };
+        let table = tidb_model::TableInfo {
+            id: 701,
+            name: tidb_ast::CiString::new("pause_during_validation"),
+            state: SchemaState::PUBLIC,
+            constraints: vec![constraint.clone()].into(),
+            ..Default::default()
+        };
+        let mut tx = opener.begin().unwrap();
+        assert!(matches!(
+            tx.commit(
+                vec![tidb_txnkv::transaction::BufferMutation::set(
+                    tidb_meta::key::table_kv_key(505, 701),
+                    tidb_meta::value::serialize_table_info(&table).unwrap(),
+                )
+                .unwrap()],
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        let mut check_job = Job::default();
+        check_job.id = 700;
+        check_job.schema_id = 505;
+        check_job.table_id = 701;
+        check_job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
+        check_job.state = JobState::RUNNING;
+        check_job.schema_state = SchemaState::WRITE_REORGANIZATION;
+        check_job.version = JobVersion::V2;
+        check_job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        let mut submitted = constraint;
+        submitted.state = SchemaState::WRITE_ONLY;
+        check_job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
+            constraint: GoField::new(Some(GoShared::new(submitted))),
+        })));
+        seed(&mut check_job);
+        let validator = PauseDuringValidation(|| {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let queue = DdlJobTable::locate(&catalog).unwrap();
+            let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
+            active.job.state = JobState::PAUSING;
+            let mut mutations = Vec::new();
+            queue
+                .append_update(&mut active, false, &mut mutations)
+                .unwrap();
+            assert!(matches!(
+                tx.commit(
+                    mutations,
+                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+                )
+                .unwrap(),
+                OptimisticCommitOutcome::Committed(_)
+            ));
+        });
+        let result = run_persisted_ddl_job(
+            opener.clone(),
+            700,
+            timeout,
+            None,
+            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
+            &validator,
+            &barrier,
+            &|| Ok(()),
+        );
+        assert_eq!(result.unwrap(), PersistedDdlJobOutcome::Paused);
+        let active = load_active_persisted_ddl_jobs(opener.clone(), timeout, 0).unwrap();
+        assert_eq!(active[0].state, JobState::PAUSED);
+        assert_eq!(
+            active[0].error_count, 0,
+            "the losing error transaction must not count"
+        );
+        assert!(load_history_persisted_ddl_job(opener.clone(), 700, timeout)
+            .unwrap()
+            .is_none());
+        let mut tx = opener.begin().unwrap();
+        let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+        let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let queue = DdlJobTable::locate(&catalog).unwrap();
+        let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
+        active.job.state = JobState::QUEUEING;
+        let mut mutations = Vec::new();
+        queue
+            .append_update(&mut active, false, &mut mutations)
+            .unwrap();
+        assert!(matches!(
+            tx.commit(
+                mutations,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+            )
+            .unwrap(),
+            OptimisticCommitOutcome::Committed(_)
+        ));
+        // Without a racing control command, the very same error checkpoint
+        // drives ordinary rollback and history, even with the retry limit 0.
+        let result = run_persisted_ddl_job(
+            opener.clone(),
+            700,
+            timeout,
+            None,
+            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller,
+            &PauseDuringValidation(|| {}),
+            &barrier,
+            &|| Ok(()),
+        );
+        assert!(matches!(
+            result,
+            Err(ClusterDdlError::CheckConstraintValidation(_))
+        ));
+        let history = load_history_persisted_ddl_job(opener.clone(), 700, timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.state, JobState::ROLLBACK_DONE);
+        assert_eq!(history.error_count, 1);
+        assert_eq!(
+            history.error.as_ref().unwrap().read().code().value(),
+            tidb_error::tidb::errcode::ErrCheckConstraintViolated as isize
+        );
     }
 
     #[test]
