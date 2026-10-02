@@ -20,7 +20,6 @@ use super::{indexes, Catalog, DriverError};
 use tidb_ast::{AlterTableAction, IndexConstraintDefinition};
 
 pub(super) enum PreparedIndexChange<'a> {
-    Note(DriverError),
     Add {
         name: String,
         definition: &'a IndexConstraintDefinition,
@@ -137,7 +136,10 @@ pub(super) fn prepare<'a>(
                     indexes::IndexAdmission::Change(()) => {
                         PreparedIndexChange::Add { name, definition }
                     }
-                    indexes::IndexAdmission::Note(note) => PreparedIndexChange::Note(note),
+                    indexes::IndexAdmission::Note(note) => {
+                        ctx.append_suppressed(&note);
+                        return Ok(None);
+                    }
                 },
             ))
         }
@@ -147,7 +149,10 @@ pub(super) fn prepare<'a>(
                     name: name.clone(),
                     id,
                 },
-                indexes::IndexAdmission::Note(note) => PreparedIndexChange::Note(note),
+                indexes::IndexAdmission::Note(note) => {
+                    ctx.append_suppressed(&note);
+                    return Ok(None);
+                }
             },
         )),
         AlterTableAction::RenameIndex(rename) => {
@@ -212,10 +217,6 @@ impl PreparedIndexChange<'_> {
         ctx: &crate::StmtContext,
     ) -> Result<(), DriverError> {
         match self {
-            Self::Note(note) => {
-                ctx.append_suppressed(&note);
-                Ok(())
-            }
             Self::Add { name, definition } => {
                 let max_index_length = catalog.max_index_length();
                 indexes::add_index_to_table(

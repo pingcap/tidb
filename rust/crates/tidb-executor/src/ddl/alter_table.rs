@@ -16,9 +16,10 @@
 //! existing table's columns and options in place.
 //!
 //! Inside: [`run_alter_table_in`], which applies the statement's actions in
-//! source order on a staged catalog and publishes only after they all succeed;
-//! [`add_column_action`], [`modify_column_action`] and
-//! [`drop_column_action`], the three column changes, including the read-time
+//! source order on a staged catalog after column/index admission and publishes
+//! only after they all succeed;
+//! [`prepare_add_column`], [`prepare_modify_column`] and
+//! [`prepare_drop_column`], the three column changes, including the read-time
 //! `OriginDefaultValue` fill that gives already-written rows a new column's
 //! DEFAULT without rewriting their bytes; [`add_foreign_key_action`] and
 //! [`drop_foreign_key_action`], which let a constraint be declared and
@@ -28,13 +29,14 @@
 //! column actions share. Each doc comment records the captured TiDB error
 //! code (1060, 1090, 1091, 8200).
 //!
-//! Mirrors Go `pkg/ddl/column.go` (`AddColumn`, `ModifyColumn`, `DropColumn`)
-//! reached through `pkg/ddl/ddl_api.go`'s `AlterTable` action loop. The index
-//! actions an ALTER can also carry are in the sibling `indexes` module, and
-//! the type/charset resolution both share lives in the parent.
+//! Follows Go `pkg/ddl/executor.go`'s column job admission and
+//! `multi_schema_change.go`'s combination checks. Column and index application
+//! live in `column_changes` and `index_changes`; their builders reuse the
+//! existing type/charset, default, generated-column and storage owners.
 
 use std::collections::HashSet;
 
+use super::column_changes::{self, PreparedColumnChange};
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::index_changes::{self, PreparedIndexChange};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
@@ -47,8 +49,8 @@ use tidb_hack::GoToLower;
 /// Go's worker reaches the revertible AUTO_RANDOM checks before executing
 /// non-revertible rebase jobs. Keep both phases outside catalog preparation.
 #[derive(Default)]
-struct PreparedAllocatorChanges {
-    layouts: Vec<crate::kv_table::PreparedAutoRandomChange>,
+pub(super) struct PreparedAllocatorChanges {
+    pub(super) layouts: Vec<crate::kv_table::PreparedAutoRandomChange>,
     rebases: Vec<PreparedAllocatorRebase>,
 }
 
@@ -144,6 +146,24 @@ pub fn run_alter_table_in(
     Ok(())
 }
 
+enum PreparedAlterChange<'a> {
+    Column(PreparedColumnChange),
+    Index(PreparedIndexChange<'a>),
+}
+
+struct PreparedAlterAction<'a> {
+    change: Result<Option<PreparedAlterChange<'a>>, DriverError>,
+    warnings: Vec<(crate::WarnLevel, u16, String)>,
+}
+
+impl PreparedAlterAction<'_> {
+    fn publish_warnings(&mut self, ctx: &crate::StmtContext) {
+        for (level, code, message) in self.warnings.drain(..) {
+            ctx.append_leveled(level, code, &message);
+        }
+    }
+}
+
 /// Mirrors Go `checkOperateSameColAndIdx` for one multi-spec ALTER.
 ///
 /// Go turns every specification into a sub-job, collects the affected names
@@ -156,7 +176,7 @@ pub fn run_alter_table_in(
 /// are stable.
 fn reject_multi_schema_same_column_or_index(
     actions: &[tidb_ast::AlterTableAction],
-    index_changes: &[Result<Option<PreparedIndexChange<'_>>, DriverError>],
+    changes: &[PreparedAlterAction<'_>],
 ) -> Result<(), DriverError> {
     let mut add_columns = Vec::new();
     let mut drop_columns = Vec::new();
@@ -167,108 +187,77 @@ fn reject_multi_schema_same_column_or_index(
     let mut drop_indexes = Vec::new();
     let mut alter_indexes = Vec::new();
 
-    fn add_column_spec(
-        column: &tidb_ast::ColumnDef,
-        position: &tidb_ast::ColumnPosition,
-        add_columns: &mut Vec<String>,
-        position_columns: &mut Vec<String>,
-        relative_columns: &mut Vec<String>,
-    ) {
-        add_columns.push(column.name.clone());
-        if let tidb_ast::ColumnPosition::After(name) = position {
-            position_columns.push(name.clone());
-        }
-        // `fillMultiSchemaInfo` records generated-column dependencies as
-        // RelativeColumns. Defaults and ON UPDATE expressions do not name
-        // table columns in Go's dependency map, so only GENERATED is walked.
-        for option in &column.options {
-            let tidb_ast::ColumnOption::Generated { expression, .. } = option else {
-                continue;
-            };
-            collect_expression_columns(expression, relative_columns);
-        }
-    }
-
-    for (action, change) in actions.iter().zip(index_changes) {
-        match change
+    for (action, prepared) in actions.iter().zip(changes) {
+        match prepared
+            .change
             .as_ref()
             .expect("admission errors checked before conflicts")
         {
-            Some(PreparedIndexChange::Add { name, definition }) => {
-                add_indexes.push(name.clone());
-                for part in &definition.parts {
-                    match part {
-                        tidb_ast::IndexPart::Column { name, .. } => {
-                            relative_columns.push(name.clone())
-                        }
-                        tidb_ast::IndexPart::Expr { expr, .. } => {
-                            collect_expression_columns(expr, &mut relative_columns)
+            Some(PreparedAlterChange::Index(change)) => match change {
+                PreparedIndexChange::Add { name, definition } => {
+                    add_indexes.push(name.clone());
+                    for part in &definition.parts {
+                        match part {
+                            tidb_ast::IndexPart::Column { name, .. } => {
+                                relative_columns.push(name.clone())
+                            }
+                            tidb_ast::IndexPart::Expr { expr, .. } => {
+                                collect_expression_columns(expr, &mut relative_columns)
+                            }
                         }
                     }
                 }
+                PreparedIndexChange::Drop { name, .. } => drop_indexes.push(name.clone()),
+                PreparedIndexChange::Rename { from, to, .. } => {
+                    add_indexes.push(from.clone());
+                    drop_indexes.push(to.clone());
+                }
+                PreparedIndexChange::Visibility { name, .. } => alter_indexes.push(name.clone()),
+            },
+            Some(PreparedAlterChange::Column(change)) => {
+                let mut position = None;
+                match change {
+                    PreparedColumnChange::Add {
+                        column,
+                        position: requested,
+                    } => {
+                        add_columns.push(column.name.clone());
+                        if let Some(generated) = &column.generated {
+                            relative_columns.extend(generated.dependencies.iter().cloned());
+                        }
+                        position = Some(requested);
+                    }
+                    PreparedColumnChange::Drop { name, .. } => drop_columns.push(name.clone()),
+                    PreparedColumnChange::Modify {
+                        old_name,
+                        column,
+                        position: requested,
+                        ..
+                    } => {
+                        if old_name.go_to_lower() == column.name.go_to_lower() {
+                            modify_columns.push(column.name.clone());
+                        } else {
+                            add_columns.push(column.name.clone());
+                            drop_columns.push(old_name.clone());
+                        }
+                        position = Some(requested);
+                    }
+                    PreparedColumnChange::Rename { from, to, .. } => {
+                        add_columns.push(to.clone());
+                        drop_columns.push(from.clone());
+                    }
+                    PreparedColumnChange::Default { column } => {
+                        modify_columns.push(column.name.clone())
+                    }
+                }
+                if let Some(tidb_ast::ColumnPosition::After(name)) = position {
+                    position_columns.push(name.clone());
+                }
             }
-            Some(PreparedIndexChange::Drop { name, .. }) => drop_indexes.push(name.clone()),
-            Some(PreparedIndexChange::Rename { from, to, .. }) => {
-                add_indexes.push(from.clone());
-                drop_indexes.push(to.clone());
-            }
-            Some(PreparedIndexChange::Visibility { name, .. }) => alter_indexes.push(name.clone()),
-            None | Some(PreparedIndexChange::Note(_)) => {}
+            None => {}
         }
-        match action {
-            tidb_ast::AlterTableAction::AddColumn {
-                column, position, ..
-            } => add_column_spec(
-                column,
-                position,
-                &mut add_columns,
-                &mut position_columns,
-                &mut relative_columns,
-            ),
-            tidb_ast::AlterTableAction::DropColumn { name, .. } => drop_columns.push(name.clone()),
-            tidb_ast::AlterTableAction::DropPrimaryKey(_) => {
-                drop_indexes.push("PRIMARY".to_owned())
-            }
-            tidb_ast::AlterTableAction::ModifyColumn {
-                column, position, ..
-            } => {
-                modify_columns.push(column.name.clone());
-                if let tidb_ast::ColumnPosition::After(name) = position {
-                    position_columns.push(name.clone());
-                }
-            }
-            tidb_ast::AlterTableAction::ChangeColumn {
-                old_name,
-                column,
-                position,
-                ..
-            } => {
-                let old_name = old_name.last().cloned().unwrap_or_default();
-                if old_name.eq_ignore_ascii_case(&column.name) {
-                    modify_columns.push(column.name.clone());
-                } else {
-                    add_columns.push(column.name.clone());
-                    drop_columns.push(old_name);
-                }
-                if let tidb_ast::ColumnPosition::After(name) = position {
-                    position_columns.push(name.clone());
-                }
-            }
-            tidb_ast::AlterTableAction::RenameColumn(rename) => {
-                // Go RenameColumn returns before creating a sub-job for a
-                // same-name rename. The action still validates the column
-                // below, but contributes no multi-schema name conflicts.
-                if rename.from.go_to_lower() != rename.to.go_to_lower() {
-                    add_columns.push(rename.to.clone());
-                    drop_columns.push(rename.from.clone());
-                }
-            }
-            tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
-                if let Some(name) = alter.name.last() {
-                    modify_columns.push(name.clone());
-                }
-            }
-            _ => {}
+        if matches!(action, tidb_ast::AlterTableAction::DropPrimaryKey(_)) {
+            drop_indexes.push("PRIMARY".to_owned());
         }
     }
 
@@ -309,8 +298,59 @@ fn reject_multi_schema_same_column_or_index(
     Ok(())
 }
 
-/// Collects the leaf column names from an expression, as Go's generated
-/// column/index dependency map does while filling a multi-schema job.
+/// Go checkMultiSchemaInfo validates the final size from admitted jobs.
+fn check_prepared_column_count(
+    changes: &[PreparedAlterAction<'_>],
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+) -> Result<(), DriverError> {
+    let mut added = 0;
+    let mut dropped = 0;
+    for prepared in changes {
+        match prepared.change.as_ref().expect("admission succeeded") {
+            Some(PreparedAlterChange::Column(PreparedColumnChange::Add { .. })) => added += 1,
+            Some(PreparedAlterChange::Column(PreparedColumnChange::Drop { .. })) => dropped += 1,
+            _ => {}
+        }
+    }
+    let table = column_changes::table_of(catalog, database, name)?;
+    check_visible_column_count(table, added, dropped)?;
+    if table.columns().len() + added - dropped > catalog.table_column_count_limit() {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: "Too many columns".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn check_visible_column_count(
+    table: &crate::KvTable,
+    added: usize,
+    dropped: usize,
+) -> Result<(), DriverError> {
+    if table.visible_column_count() + added > dropped {
+        return Ok(());
+    }
+    let (errno, message) = if table.visible_column_count() < table.columns().len() {
+        (
+            tidb_error::mysql::errcode::ErrTableMustHaveColumns,
+            tidb_error::mysql::errname::ErrTableMustHaveColumns.raw,
+        )
+    } else {
+        (
+            tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+            tidb_error::mysql::errname::ErrCantRemoveAllFields.raw,
+        )
+    };
+    Err(DriverError::DdlCoded {
+        errno,
+        message: message.to_owned(),
+    })
+}
+
+/// Collects dependencies while filling multi-schema index jobs.
 fn collect_expression_columns(expression: &tidb_ast::Expr, output: &mut Vec<String>) {
     use std::any::Any;
     use tidb_ast::{Visitable, Visitor};
@@ -414,114 +454,66 @@ fn run_alter_table_in_inner(
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
     let actions = resolve_grouped_actions(&alter.actions);
-    let index_changes = actions
-        .iter()
-        .map(|action| {
-            index_changes::prepare(action, catalog, &database, &name, ctx, actions.len() > 1)
-        })
-        .collect::<Vec<_>>();
-    let admission_failed = index_changes.iter().any(Result::is_err);
-    if !admission_failed && actions.len() > 1 {
-        reject_multi_schema_same_column_or_index(&actions, &index_changes)?;
+    let preparation_ctx = ctx.with_isolated_warnings();
+    let mut admission_failed = false;
+    let mut changes = Vec::with_capacity(actions.len());
+    for action in actions.iter() {
+        let change = if admission_failed {
+            // Go stops building jobs at the first admission error. The
+            // traversal below delivers that error after any earlier action.
+            Ok(None)
+        } else if index_changes::is_index_change(action) {
+            index_changes::prepare(
+                action,
+                catalog,
+                &database,
+                &name,
+                &preparation_ctx,
+                actions.len() > 1,
+            )
+            .map(|change| change.map(PreparedAlterChange::Index))
+        } else {
+            column_changes::prepare(action, catalog, &database, &name, &preparation_ctx)
+                .map(|change| change.map(PreparedAlterChange::Column))
+        };
+        admission_failed |= change.is_err();
+        changes.push(PreparedAlterAction {
+            change,
+            warnings: preparation_ctx.take_local_warnings(),
+        });
     }
-
-    // A constraint names its columns and its referenced table. DROP COLUMN
-    // remains refused rather than corrupted; table and column renames are
-    // handled by the metadata rewrites below.
-    //
-    // ADD COLUMN is NOT in this set: Go's `AddColumn` asks nothing about
-    // foreign keys, and a constraint that resolves its names at every use
-    // (`KvTable::foreign_key_offsets`) survives the offsets moving.
-    // MODIFY/CHANGE is not in it either -- it asks Go's own question in
-    // `modify_column_action` below, which is narrower AND stricter than this
-    // blanket refusal was: it lets a nullability change through and refuses
-    // an incompatible type with Go's 3780/1832/1833 instead of 1105.
-    let participates = crate::foreign_key::participates(catalog, &database, &name);
     if !admission_failed {
+        // Go emits admission notes before combination checks or execution.
+        for prepared in &mut changes {
+            prepared.publish_warnings(ctx);
+        }
+        if actions.len() > 1 {
+            reject_multi_schema_same_column_or_index(&actions, &changes)?;
+            check_prepared_column_count(&changes, catalog, &database, &name)?;
+        }
         reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &actions)?;
     }
-    for (action, index_change) in actions.iter().zip(index_changes) {
-        if index_changes::is_index_change(action) {
-            // Retain source-order errors/notes while the other action kinds
-            // still perform their own admission in this loop. An inadmissible
-            // statement must never run an earlier index backfill or mutation.
-            if let Some(change) = index_change? {
-                if !admission_failed || matches!(&change, PreparedIndexChange::Note(_)) {
-                    change.execute(catalog, &database, &name, ctx)?;
+    for (action, mut prepared) in actions.iter().zip(changes) {
+        prepared.publish_warnings(ctx);
+        if index_changes::is_index_change(action) || column_changes::is_column_change(action) {
+            if let Some(change) = prepared.change? {
+                if !admission_failed {
+                    match change {
+                        PreparedAlterChange::Index(change) => {
+                            change.execute(catalog, &database, &name, ctx)?
+                        }
+                        PreparedAlterChange::Column(change) => {
+                            change.execute(catalog, &database, &name, ctx, allocators)?
+                        }
+                    }
                 }
             }
             continue;
-        }
-        if participates && matches!(action, tidb_ast::AlterTableAction::DropColumn { .. }) {
-            return Err(DriverError::unsupported(
-                "changing the columns of a table involved in a FOREIGN KEY is not supported yet",
-            ));
         }
         match action {
             tidb_ast::AlterTableAction::Cache(mode) => {
                 super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
             }
-            tidb_ast::AlterTableAction::AddColumn {
-                if_not_exists,
-                column,
-                position,
-            } => {
-                add_column_action(
-                    catalog,
-                    &database,
-                    &name,
-                    column,
-                    position,
-                    *if_not_exists,
-                    ctx,
-                )?;
-            }
-            tidb_ast::AlterTableAction::ModifyColumn {
-                if_exists,
-                column,
-                position,
-            } => modify_column_action(
-                catalog,
-                &ModifyColumnRequest {
-                    database: &database,
-                    table_name: &name,
-                    old_name: &column.name,
-                    def: column,
-                    position,
-                    if_exists: *if_exists,
-                    allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
-                },
-                ctx,
-                allocators,
-            )?,
-            tidb_ast::AlterTableAction::ChangeColumn {
-                if_exists,
-                old_name,
-                column,
-                position,
-            } => {
-                let old = old_name
-                    .last()
-                    .ok_or(DriverError::unsupported("empty CHANGE COLUMN name"))?;
-                modify_column_action(
-                    catalog,
-                    &ModifyColumnRequest {
-                        database: &database,
-                        table_name: &name,
-                        old_name: old,
-                        def: column,
-                        position,
-                        if_exists: *if_exists,
-                        allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
-                    },
-                    ctx,
-                    allocators,
-                )?;
-            }
-            tidb_ast::AlterTableAction::DropColumn {
-                if_exists,
-                name: column_name,
-            } => drop_column_action(catalog, &database, &name, column_name, *if_exists, ctx)?,
             // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
             // table's TTL config; a table without one is a no-op.
             tidb_ast::AlterTableAction::RemoveTtl(_) => {
@@ -597,32 +589,6 @@ fn run_alter_table_in_inner(
                 ..
             }) => {
                 reorganize_partition_action(catalog, &database, &name, names, definitions, ctx)?
-            }
-            // The four metadata-only actions: a name or a flag changes while
-            // every column id, column offset and index entry stays put. See
-            // the `alter_metadata` module doc for why they belong together.
-            tidb_ast::AlterTableAction::RenameColumn(rename) => {
-                super::alter_metadata::rename_column_action(
-                    catalog,
-                    &database,
-                    &name,
-                    &rename.from,
-                    &rename.to,
-                )?;
-            }
-            tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
-                let column = alter
-                    .name
-                    .last()
-                    .ok_or(DriverError::unsupported("empty ALTER COLUMN name"))?;
-                super::alter_metadata::alter_column_default_action(
-                    catalog,
-                    &database,
-                    &name,
-                    column,
-                    alter.default_value.as_ref(),
-                    ctx,
-                )?;
             }
             tidb_ast::AlterTableAction::AddCheck(definition) => {
                 if ctx.enable_check_constraint() {
@@ -768,7 +734,7 @@ fn install_check_constraint_infos(
     }
 }
 
-fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
+pub(super) fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
         crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
             DriverError::CheckConstraintViolated(name)
@@ -3204,24 +3170,23 @@ fn partition_column_change_allowed(
 /// facts it is decided against. Grouped because the old column's own
 /// definition is only half the input: the rest is what the STATEMENT says and
 /// what the SESSION allows.
-struct ModifyColumnRequest<'a> {
-    database: &'a str,
-    table_name: &'a str,
+pub(super) struct ModifyColumnRequest<'a> {
+    pub(super) database: &'a str,
+    pub(super) table_name: &'a str,
     /// The column being modified, which `CHANGE COLUMN` may rename.
-    old_name: &'a str,
-    def: &'a ColumnDef,
-    position: &'a tidb_ast::ColumnPosition,
-    if_exists: bool,
+    pub(super) old_name: &'a str,
+    pub(super) def: &'a ColumnDef,
+    pub(super) position: &'a tidb_ast::ColumnPosition,
+    pub(super) if_exists: bool,
     /// `@@tidb_allow_remove_auto_inc`.
-    allow_remove_auto_inc: bool,
+    pub(super) allow_remove_auto_inc: bool,
 }
 
-fn modify_column_action(
+pub(super) fn prepare_modify_column(
     catalog: &mut Catalog,
     request: &ModifyColumnRequest<'_>,
     ctx: &crate::StmtContext,
-    allocators: &mut PreparedAllocatorChanges,
-) -> Result<(), DriverError> {
+) -> Result<Option<PreparedColumnChange>, DriverError> {
     let &ModifyColumnRequest {
         database,
         table_name,
@@ -3305,10 +3270,9 @@ fn modify_column_action(
         _ => None,
     });
 
-    // Phase one reads only, because the foreign-key question below is asked
-    // of the WHOLE catalog -- a constraint's other side lives in another table,
-    // and often another schema. The mutable borrow is taken once every check
-    // has passed, at the point the column is actually replaced.
+    // Admission reads the whole original catalog: foreign-key counterparts
+    // may live in another table or schema. Only the NULL cursor below needs
+    // a mutable table borrow; metadata and row rewrites belong to execution.
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -3331,7 +3295,7 @@ fn modify_column_action(
             return Err(missing);
         }
         ctx.append_suppressed(&missing);
-        return Ok(());
+        return Ok(None);
     };
     let partition_column = table.partition().is_some_and(|partition| {
         partition
@@ -3713,23 +3677,7 @@ fn modify_column_action(
     // for MODIFY any more than it does for RENAME.
     let preserve_origin_default = table.columns[offset].field_type == field_type;
     let previous_origin_default = table.columns[offset].origin_default.clone();
-    let new_position = match position {
-        tidb_ast::ColumnPosition::Default => None,
-        tidb_ast::ColumnPosition::First => Some(0),
-        tidb_ast::ColumnPosition::After(after) => {
-            let target = table
-                .columns
-                .iter()
-                .position(|column| column.name.eq_ignore_ascii_case(after))
-                .ok_or_else(|| DriverError::UnknownColumnInTable {
-                    column: after.clone(),
-                    table: table_name.to_owned(),
-                })?;
-            // Moving forward, the column lands right after the target once the
-            // target has closed the gap the move opened.
-            Some(if target > offset { target } else { target + 1 })
-        }
-    };
+    let new_position = column_changes::position(table, position, Some(offset), table_name)?;
     let generated =
         super::generated_modify::build(table, offset, def, &field_type, new_position, ctx)?;
     if let Some(dependent) = dependent {
@@ -3768,25 +3716,9 @@ fn modify_column_action(
     };
     let has_default_value = prepared_default.has_default;
     super::set_no_default_value_flag(&mut field_type, has_default_value);
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        unreachable!("the table was found above and nothing here removes it");
-    };
-    if let Some(layout) = std::sync::Arc::make_mut(table)
-        .prepare_alter_auto_random_spec(new_auto_random, offset, &def.name)
-        .map_err(super::auto_random::rebase_error)?
-    {
-        allocators.layouts.push(layout);
-    }
-    // Go `updateFKInfoWhenModifyColumn` +
-    // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
-    // renames carries every constraint over the old name onto the new one,
-    // on this table AND on every child that refers to it. Done before the
-    // column itself is replaced, so `referring` still sees the old name.
-    crate::foreign_key::rewrite_column_name(catalog, database, table_name, old_name, &def.name);
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        unreachable!("the table was found above and nothing here removes it");
-    };
-    let table = std::sync::Arc::make_mut(table);
+    table
+        .validate_alter_auto_random_spec(new_auto_random, offset)
+        .map_err(super::auto_random::rebase_error)?;
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
@@ -3803,39 +3735,31 @@ fn modify_column_action(
         default_value: prepared_default.default,
         origin_default: prepared_default.origin,
     };
-    if drop_auto_increment {
-        table.clear_auto_increment_offset();
-    }
-    table
-        .modify_column_with_context(offset, column, new_position, ctx)
-        .map_err(|e| match e {
-            crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
-                DriverError::TruncatedIncorrectValue {
-                    kind: kind.to_owned(),
-                    value,
-                }
-            }
-            crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
-                DriverError::DataTruncatedValue { column, value }
-            }
-            crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::InvalidUseOfNull,
-            crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
-            crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                DriverError::DuplicateEntry { value, key }
-            }
-            other => DriverError::Parse(format!("column modification failed: {other:?}")),
-        })
+    Ok(Some(PreparedColumnChange::Modify {
+        old_name: old_name.to_owned(),
+        column,
+        position: position.clone(),
+        new_auto_random,
+        drop_auto_increment,
+    }))
 }
 
-fn add_column_action(
-    catalog: &mut Catalog,
+pub(super) fn prepare_add_column(
+    catalog: &Catalog,
     database: &str,
     table_name: &str,
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
     if_not_exists: bool,
     ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
+) -> Result<Option<PreparedColumnChange>, DriverError> {
+    let table = column_changes::table_of(catalog, database, table_name)?;
+    if table.columns().len() >= catalog.table_column_count_limit() {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
+        });
+    }
     let zone = &ctx.session_zone();
     let mut field_type = field_type_of(
         def,
@@ -3919,13 +3843,11 @@ fn add_column_action(
         tidb_ast::ColumnOption::Generated { expression, .. } => Some(expression),
         _ => None,
     });
-    let column_limit = catalog.table_column_count_limit();
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
-    let table = std::sync::Arc::make_mut(table);
     if table
         .columns
         .iter()
@@ -3938,26 +3860,12 @@ fn add_column_action(
         let duplicate = DriverError::DuplicateColumnName(def.name.clone());
         if if_not_exists {
             ctx.append_suppressed(&duplicate);
-            return Ok(());
+            return Ok(None);
         }
         return Err(duplicate);
     }
-    if table.columns.len() >= column_limit {
-        return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyFields,
-            message: "Too many columns".to_owned(),
-        });
-    }
-    let index = match position {
-        tidb_ast::ColumnPosition::Default => table.columns.len(),
-        tidb_ast::ColumnPosition::First => 0,
-        tidb_ast::ColumnPosition::After(after) => table
-            .columns
-            .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(after))
-            .map(|offset| offset + 1)
-            .ok_or_else(|| DriverError::UnknownColumnInAlter(after.clone()))?,
-    };
+    let index = column_changes::position(table, position, None, table_name)?
+        .unwrap_or(table.visible_column_count());
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
@@ -4039,52 +3947,50 @@ fn add_column_action(
         }
         None => None,
     };
-    let id = table.next_column_id();
     let field_type_for_origin = field_type.clone();
-    table.add_column(
-        index,
-        KvColumn {
-            name: def.name.clone(),
-            id,
-            field_type,
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-            // A column being ADDED has no prior comment to keep.
-            comment: super::column_comment_option(&def.options).unwrap_or_default(),
-            generated,
-            default_value: prepared_default.default,
-            // Rows written before this column existed read back the default.
-            // A NOT NULL column with NO default reads back the TYPE's zero
-            // instead of NULL: Go fills the backfill value through
-            // `GetColOriginDefaultValueWithoutStrictSQLMode`, whose
-            // `getColDefaultValueFromNil` takes the non-strict arm by
-            // construction and returns `GetZeroValue`. Captured: after
-            // `ALTER TABLE q1 ADD COLUMN cc SET('a','b','c','d') NOT NULL`
-            // the pre-existing rows read `''`, and `dd INT NOT NULL` reads
-            // `0` -- not NULL, which is why an ordinary UPDATE of such a row
-            // does not trip the NOT NULL check.
-            origin_default: prepared_default
-                .origin
-                .or_else(|| not_null.then(|| crate::bad_null::zero_value(&field_type_for_origin))),
-        },
-    );
-    Ok(())
+    let column = KvColumn {
+        name: def.name.clone(),
+        id: 0,
+        field_type,
+        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        // A column being ADDED has no prior comment to keep.
+        comment: super::column_comment_option(&def.options).unwrap_or_default(),
+        generated,
+        default_value: prepared_default.default,
+        // Rows written before this column existed read back the default.
+        // A NOT NULL column with NO default reads back the TYPE's zero
+        // instead of NULL: Go fills the backfill value through
+        // `GetColOriginDefaultValueWithoutStrictSQLMode`, whose
+        // `getColDefaultValueFromNil` takes the non-strict arm by
+        // construction and returns `GetZeroValue`. Captured: after
+        // `ALTER TABLE q1 ADD COLUMN cc SET('a','b','c','d') NOT NULL`
+        // the pre-existing rows read `''`, and `dd INT NOT NULL` reads
+        // `0` -- not NULL, which is why an ordinary UPDATE of such a row
+        // does not trip the NOT NULL check.
+        origin_default: prepared_default
+            .origin
+            .or_else(|| not_null.then(|| crate::bad_null::zero_value(&field_type_for_origin))),
+    };
+    Ok(Some(PreparedColumnChange::Add {
+        column,
+        position: position.clone(),
+    }))
 }
 
 /// One `DROP COLUMN`.
-fn drop_column_action(
-    catalog: &mut Catalog,
+pub(super) fn prepare_drop_column(
+    catalog: &Catalog,
     database: &str,
     table_name: &str,
     column_name: &str,
     if_exists: bool,
     ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+) -> Result<Option<PreparedColumnChange>, DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
-    let table = std::sync::Arc::make_mut(table);
     let Some(offset) = table
         .columns
         .iter()
@@ -4099,10 +4005,11 @@ fn drop_column_action(
             return Err(missing);
         }
         ctx.append_suppressed(&missing);
-        return Ok(());
+        return Ok(None);
     };
-    // Captured: dropping the only column is 1090.
-    if table.columns.len() == 1 {
+    // Go isDroppableColumn retains this action-specific diagnostic before
+    // the later combined visible-column count check.
+    if table.columns().len() == 1 {
         return Err(DriverError::CannotDropOnlyColumn {
             column: column_name.to_owned(),
             table: table_name.to_owned(),
@@ -4171,30 +4078,12 @@ fn drop_column_action(
             &index_name,
         ));
     }
-    let covering: Vec<String> = table
-        .indexes()
-        .iter()
-        .filter(|index| index.column_offsets == [offset])
-        .map(|index| index.name.clone())
-        .collect();
-    for index_name in covering {
-        table
-            .drop_index_with_context(&index_name, ctx)
-            .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
-    }
-    table.drop_column(offset);
-    if !invalid_constraint_ids.is_empty() {
-        let infos = table
-            .check_constraint_infos()
-            .iter()
-            .filter(|info| !invalid_constraint_ids.contains(&info.id))
-            .cloned()
-            .collect();
-        table
-            .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
-            .map_err(check_constraint_table_error)?;
-    }
-    Ok(())
+    check_visible_column_count(table, 0, 1)?;
+    Ok(Some(PreparedColumnChange::Drop {
+        id: table.columns[offset].id,
+        name: column_name.to_owned(),
+        invalid_constraint_ids,
+    }))
 }
 
 /// Go `AlterTableTTLInfoOrEnable` (`pkg/ddl/executor.go:3851-3903`) plus the

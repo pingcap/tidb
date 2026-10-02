@@ -318,6 +318,7 @@ mod alter_table;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
 pub mod check_constraint;
+mod column_changes;
 pub mod column_field_type;
 mod column_types;
 mod generated_modify;

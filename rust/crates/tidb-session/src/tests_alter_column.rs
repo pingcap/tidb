@@ -462,7 +462,7 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
 /// scan rather than during it).
 ///
 /// MUTATION PROBE: comment out the `check_type_change_supported` call in
-/// `tidb-executor`'s `modify_column_action` (`ddl/alter_table.rs`) and only
+/// `tidb-executor`'s `prepare_modify_column` (`ddl/alter_table.rs`) and only
 /// the five `*_on_empty_table_is_refused` assertions below flip from `Err`
 /// to `Ok`; the five `_control_conversion_is_accepted` and
 /// `_on_populated_table_is_also_refused` assertions are unaffected, because
@@ -622,4 +622,24 @@ fn alter_readded_column_does_not_read_retired_column_bytes() {
             vec![["1", "7"], ["3", "7"]]
         );
     }
+}
+
+#[test]
+fn alter_column_noops_share_original_schema_admission() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1,2)").unwrap();
+    session
+        .run("ALTER TABLE t ADD COLUMN IF NOT EXISTS a INT, DROP COLUMN a")
+        .unwrap();
+    assert_eq!(row_text(session.run("SELECT * FROM t")), vec![["2"]]);
+    assert_eq!(
+        session
+            .run("ALTER TABLE t ADD COLUMN c INT, MODIFY COLUMN c BIGINT")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1054
+    );
+    assert_eq!(row_text(session.run("SELECT * FROM t")), vec![["2"]]);
 }

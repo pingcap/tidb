@@ -26,7 +26,7 @@ the integration checkout's Go code is older in places and is not the reference.
 - [x] Repair metadata ID high-water ownership and all TableInfo projections; reproduce old-row leakage and sibling index retargeting before fixing them.
 - [x] Run affected tests, all-target checking and lint; update D11 evidence without overstating closure.
 - [x] Commit with the actual locked-build hook (passed in 17.47 seconds); repeat the hook for the receipt amendment.
-- [ ] Publication after the receipt amendment: rerun the locked build immediately before pushing, then verify remote and clean checkout in the thread.
+- [x] Publication: the final locked build passed in 12.38 seconds; a49cc7550206f62eb7c4b09c0cba185deace8152 was pushed to hparser-integration and verified on the remote with a clean checkout.
 
 ## Context and Orientation
 

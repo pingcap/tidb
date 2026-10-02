@@ -199,14 +199,12 @@ impl KvTable {
         Ok(pattern)
     }
 
-    /// Prepares the layout on this catalog image and retains the allocator
-    /// operation for execution after the whole ALTER has passed preparation.
-    pub(crate) fn prepare_alter_auto_random_spec(
-        &mut self,
+    /// Checks layout compatibility without changing metadata or allocators.
+    pub(crate) fn validate_alter_auto_random_spec(
+        &self,
         next: Option<AutoRandomSpec>,
         column_offset: usize,
-        column_name: &str,
-    ) -> Result<Option<PreparedAutoRandomChange>, AutoRandomError> {
+    ) -> Result<(), AutoRandomError> {
         let previous = self.auto_random;
         let Some(next) = next else {
             return if previous.is_some_and(|spec| spec.offset == column_offset) {
@@ -214,7 +212,7 @@ impl KvTable {
                     "adding/dropping/modifying auto_random is not supported".to_owned(),
                 ))
             } else {
-                Ok(None)
+                Ok(())
             };
         };
 
@@ -241,6 +239,22 @@ impl KvTable {
             }
         }
 
+        Ok(())
+    }
+
+    /// Installs the staged layout and retains its allocator effect until the
+    /// complete ALTER succeeds. Admission uses the same compatibility check.
+    pub(crate) fn prepare_alter_auto_random_spec(
+        &mut self,
+        next: Option<AutoRandomSpec>,
+        column_offset: usize,
+        column_name: &str,
+    ) -> Result<Option<PreparedAutoRandomChange>, AutoRandomError> {
+        self.validate_alter_auto_random_spec(next, column_offset)?;
+        let Some(next) = next else {
+            return Ok(None);
+        };
+        let converting = self.auto_random.is_none();
         let source = if converting {
             self.auto_id.clone()
         } else {

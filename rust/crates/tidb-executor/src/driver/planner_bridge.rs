@@ -2074,7 +2074,7 @@ impl InitStats<'_> {
             // the statement's conversion policy while deriving path costs.
             // Go Selectivity consumes built expressions. This AST replay
             // must retain session inputs without replaying build warnings.
-            let rewrite_context = self.context.for_statistics_rewrite();
+            let rewrite_context = self.context.with_isolated_warnings();
             let mut scope = FromScope::for_statement(&rewrite_context);
             scope.tables.push(FromTable {
                 name: visible.to_owned(),

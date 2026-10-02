@@ -15,10 +15,12 @@
 //! The `ALTER TABLE` actions Go runs as a pure `TableInfo` edit: no row is
 //! read, no index entry is rewritten, and no backfill runs.
 //!
-//! Inside: [`rename_column_action`] (Go `executor.RenameColumn`),
+//! Inside: [`prepare_rename_column`] (Go `executor.RenameColumn`),
 //! [`alter_index_visibility_action`] (Go
 //! `executor.AlterIndexVisibility` and its `validateAlterIndexVisibility`),
-//! and [`alter_column_default_action`] (Go `executor.AlterColumn`).
+//! and [`prepare_column_default_change`] (Go `executor.AlterColumn`). Column
+//! helpers return original-schema arguments; `column_changes` applies them
+//! only after admission and combination checks succeed.
 //!
 //! They belong together because they share one invariant that makes them
 //! cheap and safe: a name or a flag changes, while every column ID, column
@@ -32,7 +34,7 @@
 //! expression, the hidden generated column behind an expression index, the
 //! partition expression, and a foreign key's `cols`. Renaming a column is
 //! exactly what invalidates those, which is why
-//! [`rename_column_action`] refuses rather than renames whenever
+//! [`prepare_rename_column`] refuses rather than renames whenever
 //! [`crate::kv_table::KvTable::column_dependent`] reports one of the first
 //! three (Go's 3837 / 3108 / 3855). Foreign-key metadata is handled separately:
 //! a rename rewrites this table's `fk.cols` and every child's `fk.ref_cols`,
@@ -40,7 +42,7 @@
 //! `adjustForeignKeyChildTableInfoAfterModifyColumn`.
 //!
 //! Mirrors Go `pkg/ddl/executor.go`'s `AlterTable` arms
-//! `ast.AlterTableRenameColumn`, `ast.AlterTableRenameIndex`,
+//! `ast.AlterTableRenameColumn`,
 //! `ast.AlterTableIndexInvisible` and `ast.AlterTableAlterColumn`, plus the
 //! two validators in `pkg/ddl/index.go`. Each error code below is TiDB's own,
 //! read off `tests/integrationtest/r/ddl/db_rename.result` and
@@ -76,14 +78,14 @@ fn table_of<'a>(
 /// The rename is a name assignment and nothing else: the column keeps its id
 /// and its offset, so every index over it, every stored row and the handle
 /// stay valid without being rewritten -- which is why Go needs no reorg here.
-pub(crate) fn rename_column_action(
-    catalog: &mut Catalog,
+pub(super) fn prepare_rename_column(
+    catalog: &Catalog,
     database: &str,
     table_name: &str,
     from: &str,
     to: &str,
-) -> Result<(), DriverError> {
-    let table = table_of(catalog, database, table_name)?;
+) -> Result<Option<super::column_changes::PreparedColumnChange>, DriverError> {
+    let table = super::column_changes::table_of(catalog, database, table_name)?;
     let Some(offset) = table
         .columns
         .iter()
@@ -111,7 +113,7 @@ pub(crate) fn rename_column_action(
     // same column, so `rename column c1 to c1` succeeds while
     // `rename column c2 to id` is 1060.
     if from.eq_ignore_ascii_case(to) {
-        return Ok(());
+        return Ok(None);
     }
     if to.eq_ignore_ascii_case("_tidb_rowid") {
         return Err(DriverError::WrongColumnName(to.to_owned()));
@@ -137,10 +139,11 @@ pub(crate) fn rename_column_action(
     if let Some(dependent) = table.column_dependent(offset) {
         return Err(super::column_dependent_error(dependent, from));
     }
-    table.columns_mut()[offset].name = to.to_owned();
-    let _ = table;
-    crate::foreign_key::rewrite_column_name(catalog, database, table_name, from, to);
-    Ok(())
+    Ok(Some(super::column_changes::PreparedColumnChange::Rename {
+        id: table.columns[offset].id,
+        from: from.to_owned(),
+        to: to.to_owned(),
+    }))
 }
 
 /// `ALTER TABLE ... ALTER INDEX name {VISIBLE|INVISIBLE}`.
@@ -215,18 +218,18 @@ fn primary_key_index(table: &crate::kv_table::KvTable) -> Option<&str> {
 /// type, id, offset and every stored row are untouched, and rows already
 /// written keep whatever they hold. A column the table does not have is 1054.
 ///
-pub(crate) fn alter_column_default_action(
-    catalog: &mut Catalog,
+pub(super) fn prepare_column_default_change(
+    catalog: &Catalog,
     database: &str,
     table_name: &str,
     column_name: &str,
     default_value: Option<&tidb_ast::Expr>,
     ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
+) -> Result<KvColumn, DriverError> {
     // Go resolves the table and target column before it examines the new
     // default expression. Preserve that observable error order: a missing
     // target is 1054 even when the DEFAULT itself could not be rewritten.
-    let table = table_of(catalog, database, table_name)?;
+    let table = super::column_changes::table_of(catalog, database, table_name)?;
     let Some(offset) = table
         .columns
         .iter()
@@ -237,13 +240,13 @@ pub(crate) fn alter_column_default_action(
             table: table_name.to_owned(),
         });
     };
+    let mut column = table.columns[offset].clone();
     let Some(expr) = default_value else {
-        let column = &mut table.columns_mut()[offset];
         column.default_value = None;
         column
             .field_type
             .add_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
-        return Ok(());
+        return Ok(column);
     };
     let field_type = table.columns[offset].field_type.clone();
     let column_info_version = table.columns[offset].column_info_version;
@@ -260,12 +263,11 @@ pub(crate) fn alter_column_default_action(
         if table.auto_increment_offset() == Some(offset) {
             return Err(DriverError::InvalidDefault(column_name.to_owned()));
         }
-        let column = &mut table.columns_mut()[offset];
         column.default_value = Some(default);
         column
             .field_type
             .del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
-        return Ok(());
+        return Ok(column);
     };
     let zone = &ctx.session_zone();
     // The session first builds and validates the exact ColumnInfo spelling.
@@ -280,6 +282,18 @@ pub(crate) fn alter_column_default_action(
         zone,
     )?;
 
+    column.default_value = Some(crate::column_default::ColumnDefault::Value(prepared.stored));
+    column
+        .field_type
+        .del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
+    Ok(column)
+}
+
+pub(super) fn validate_default_execution(column: &KvColumn) -> Result<(), DriverError> {
+    let Some(crate::column_default::ColumnDefault::Value(value)) = &column.default_value else {
+        return Ok(());
+    };
+    let column_name = &column.name;
     // Go runs `checkColumnDefaultValue` a SECOND time in the DDL owner under
     // `newReorgExprCtx` (ModeNone/default statement flags), and turns
     // `!hasDefaultValue` into ErrInvalidDefaultValue. That is why
@@ -287,8 +301,8 @@ pub(crate) fn alter_column_default_action(
     // ADD COLUMN's lenient acceptance.
     let reorg_ctx = crate::StmtContext::for_dml(false, false, false);
     let (has_default, _) = super::alter_table::check_column_default_value(
-        prepared.stored.clone(),
-        &field_type,
+        value.clone(),
+        &column.field_type,
         column_name,
         &reorg_ctx,
         &tidb_datatype::SessionTimeZone::utc(),
@@ -300,22 +314,15 @@ pub(crate) fn alter_column_default_action(
     // in that reorg context. The first session validation is not a substitute:
     // the two contexts intentionally have different SQL modes.
     super::alter_table::validate_column_default(
-        &prepared.stored,
-        &field_type,
+        value,
+        &column.field_type,
         column_name,
-        column_info_version,
+        column.column_info_version,
         // `newReorgExprCtx()` is exactly ModeNone + DefaultStmtFlags here,
         // not the SQL-mode-aware reorg context used by row backfill and not
         // CREATE/ALTER default-admission flags.
         tidb_datatype::DEFAULT_STATEMENT_FLAGS,
         &tidb_datatype::SessionTimeZone::utc(),
     )?;
-    let KvColumn {
-        default_value: stored,
-        field_type,
-        ..
-    } = &mut table.columns_mut()[offset];
-    *stored = Some(crate::column_default::ColumnDefault::Value(prepared.stored));
-    field_type.del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     Ok(())
 }

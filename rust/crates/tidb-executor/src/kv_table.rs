@@ -2700,6 +2700,9 @@ impl KvTable {
         if let Some(offset) = self.auto_increment_offset.as_mut() {
             shift(offset);
         }
+        if let Some(spec) = self.auto_random.as_mut() {
+            shift(&mut spec.offset);
+        }
         for index in self.indexes_mut() {
             for offset in &mut index.column_offsets {
                 shift(offset);
@@ -2742,6 +2745,9 @@ impl KvTable {
         }
         if let Some(value) = self.auto_increment_offset.as_mut() {
             shift(value);
+        }
+        if let Some(spec) = self.auto_random.as_mut() {
+            shift(&mut spec.offset);
         }
         for index in self.indexes_mut() {
             for value in &mut index.column_offsets {
@@ -2956,6 +2962,9 @@ impl KvTable {
         }
         if let Some(offset) = self.auto_increment_offset.as_mut() {
             shift(offset);
+        }
+        if let Some(spec) = self.auto_random.as_mut() {
+            shift(&mut spec.offset);
         }
         for index in self.indexes_mut() {
             for offset in &mut index.column_offsets {

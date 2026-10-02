@@ -963,11 +963,6 @@ fn column_order(catalog: &Catalog, table: &str) -> Vec<String> {
         .collect()
 }
 
-// Go `multi_schema_change_test.go:738-748::TestMultiSchemaChangeNoSubJobs`:
-// the `add column if not exists` notes path remains unimplemented: this
-// tier's `add_column_action` matches the parsed `IF NOT EXISTS` flag away at
-// `alter_table.rs:150` and answers 1060 instead of two Note 1060s.
-
 /// Go `multi_schema_change_test.go:364-392::TestMultiSchemaChangeRenameTable`
 /// tail half (the racing rename-under-failpoint is the gap): after the table
 /// is renamed to `t1`, the rename+change ALTER applies there and the data is
@@ -1379,4 +1374,215 @@ fn multi_schema_change_retains_metadata_id_high_water_marks() {
         assert_eq!(table.columns()[1].id, 3, "{name}");
         assert_eq!(table.indexes()[0].id, 2, "{name}");
     }
+}
+
+#[test]
+fn multi_schema_change_column_jobs_exclude_conditional_noops() {
+    for (sql, expected, note) in [
+        (
+            "alter table t add column if not exists a int, drop column a",
+            vec!["b"],
+            1060,
+        ),
+        (
+            "alter table t drop column if exists c, add column c int",
+            vec!["a", "b", "c"],
+            1091,
+        ),
+        (
+            "alter table t modify column if exists c bigint, add column c int",
+            vec!["a", "b", "c"],
+            1054,
+        ),
+        (
+            "alter table t change column if exists missing c bigint, add column c int",
+            vec!["a", "b", "c"],
+            1054,
+        ),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+        let context = ctx();
+        alter_on(&mut catalog, &context, sql).unwrap();
+        assert_eq!(column_order(&catalog, "t"), expected, "{sql}");
+        let notes = context.take_warnings();
+        assert_eq!(notes.len(), 1, "{sql}");
+        assert_eq!(notes[0].1, note, "{sql}");
+    }
+}
+
+#[test]
+fn multi_schema_change_column_admission_uses_original_schema() {
+    for (sql, code) in [
+        ("alter table t add column c int, rename column c to d", 1054),
+        (
+            "alter table t add column c int, modify column c bigint",
+            1054,
+        ),
+        (
+            "alter table t add column c int, alter column c set default 7",
+            1054,
+        ),
+        ("alter table t add column c int, drop column c", 1091),
+        ("alter table t drop column b, rename column a to b", 1060),
+        ("alter table t drop column b, change column a b int", 1060),
+        ("alter table t drop column b, add column b int", 1060),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+        let original = catalog.clone();
+        assert_eq!(
+            code_of(&alter(&mut catalog, sql).unwrap_err()),
+            code,
+            "{sql}"
+        );
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_column_admission_precedes_row_rewrite() {
+    for (sql, code) in [
+        (
+            "alter table t modify column a tinyint, drop column missing",
+            1091,
+        ),
+        (
+            "alter table t change column a c tinyint, rename column missing to d",
+            1054,
+        ),
+        (
+            "alter table t add unique index u(b), drop column missing",
+            1091,
+        ),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+        run_insert_on("insert into t values (300,1),(301,1)", &mut catalog, &ctx()).unwrap();
+        let original = catalog.clone();
+        assert_eq!(
+            code_of(&alter(&mut catalog, sql).unwrap_err()),
+            code,
+            "{sql}"
+        );
+        assert_unchanged_table(&catalog, &original, "t");
+    }
+}
+
+#[test]
+fn multi_schema_change_column_notes_precede_conflict_validation() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+    let context = ctx();
+    assert_eq!(code_of(&alter_on(&mut catalog, &context,
+        "alter table t add column if not exists a int, modify column b bigint, drop column b"
+    ).unwrap_err()), 8200);
+    let notes = context.take_warnings();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].1, 1060);
+}
+
+#[test]
+fn multi_schema_change_column_dependencies_use_original_schema() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t (a int, b int, index expr_i((a+1)))",
+        &mut catalog,
+    )
+    .unwrap();
+    let original = catalog.clone();
+    assert_eq!(
+        code_of(
+            &alter(
+                &mut catalog,
+                "alter table t drop index expr_i, modify column a bigint"
+            )
+            .unwrap_err()
+        ),
+        3106
+    );
+    assert_unchanged_table(&catalog, &original, "t");
+}
+
+#[test]
+fn multi_schema_change_prepared_columns_resolve_current_positions() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, b int, c int)", &mut catalog).unwrap();
+    run_insert_on("insert into t values (1,2,3)", &mut catalog, &ctx()).unwrap();
+    alter(&mut catalog, "alter table t add column x int default 7 first, modify column c bigint after a, add column g int as (b+10)").unwrap();
+    assert_eq!(column_order(&catalog, "t"), vec!["x", "a", "c", "b", "g"]);
+    assert_eq!(
+        text_rows(&catalog, "select * from t"),
+        vec![["7", "1", "3", "2", "12"]]
+    );
+}
+
+#[test]
+fn multi_schema_change_prepared_random_column_tracks_current_offset() {
+    for (definition, sql, expected) in [
+        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t add column c int default 7 first", 1),
+        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t modify column id bigint auto_random(4) after v", 1),
+        ("create table t (c int, id bigint auto_random(3) primary key, v int)", "alter table t drop column c", 0),
+        ("create table t (id bigint auto_random(3) primary key, v int)", "alter table t add column c int default 7 first, modify column id bigint auto_random(4)", 1),
+    ] {
+        let mut catalog = Catalog::default();
+        run_create_table_on(definition, &mut catalog).unwrap();
+        alter(&mut catalog, sql).unwrap();
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else { panic!("table missing"); };
+        assert_eq!(table.auto_random().unwrap().offset, expected, "{sql}");
+        run_insert_on("insert into t(v) values (5)", &mut catalog, &ctx()).unwrap();
+        assert_eq!(text_rows(&catalog, "select v from t"), vec![["5"]]);
+    }
+}
+
+#[test]
+fn multi_schema_change_column_limits_use_original_and_combined_counts() {
+    let mut catalog = Catalog::default();
+    catalog.set_table_column_count_limit(2);
+    run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+    assert_eq!(
+        code_of(
+            &alter(
+                &mut catalog,
+                "alter table t drop column b, add column c int"
+            )
+            .unwrap_err()
+        ),
+        1117
+    );
+    let context = ctx();
+    assert_eq!(
+        code_of(
+            &alter_on(
+                &mut catalog,
+                &context,
+                "alter table t add column if not exists a int"
+            )
+            .unwrap_err()
+        ),
+        1117
+    );
+    assert!(context.take_warnings().is_empty());
+}
+
+#[test]
+fn multi_schema_change_preparation_publishes_notes_before_execution() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
+    run_insert_on("insert into t values (300,1)", &mut catalog, &ctx()).unwrap();
+    let context = ctx();
+    assert_eq!(
+        code_of(
+            &alter_on(
+                &mut catalog,
+                &context,
+                "alter table t modify column a tinyint, add column if not exists b int"
+            )
+            .unwrap_err()
+        ),
+        1265
+    );
+    let notes = context.take_warnings();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].1, 1060);
 }

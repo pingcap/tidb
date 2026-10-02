@@ -2074,10 +2074,10 @@ impl StmtContext {
         self.statement_class
     }
 
-    /// Rebuilding an already-compiled predicate for statistics must not
-    /// publish its construction warnings a second time. Keep evaluation
-    /// inputs intact and isolate only this replay's warning buffer.
-    pub(crate) fn for_statistics_rewrite(&self) -> Self {
+    /// Keeps evaluation inputs and statement effects shared while collecting
+    /// local diagnostics independently. DDL admission publishes these in
+    /// action order; statistics predicate replay discards duplicate warnings.
+    pub(crate) fn with_isolated_warnings(&self) -> Self {
         let mut context = self.clone();
         context.warnings = Arc::default();
         context
@@ -3910,16 +3910,21 @@ impl StmtContext {
         }
     }
 
-    /// Drains this statement's warnings, evaluation's first and the
-    /// coprocessor's after them (see the note above).
+    /// Drains local diagnostics without consuming the shared coprocessor sinks.
     #[must_use]
-    pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
-        let mut warnings = std::mem::take(
+    pub(crate) fn take_local_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+        std::mem::take(
             &mut *self
                 .warnings
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        )
+    }
+
+    /// Drains local and coprocessor warnings for statement delivery.
+    #[must_use]
+    pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
+        let mut warnings = self.take_local_warnings();
         // The coprocessor-equivalent batch next: these are the warnings a
         // pushed filter raised inside a source, reported TiKV-style (one entry
         // per DISTINCT message; see the field's doc).
@@ -3974,7 +3979,7 @@ impl StmtContext {
 
     /// The one push onto the buffer, so its retention limit lives in one
     /// place regardless of which level came through.
-    fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+    pub(crate) fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
         if self.cop_eval_depth.load(Ordering::Relaxed) > 0 {
             let mut batch = self
                 .cop_batch_warnings

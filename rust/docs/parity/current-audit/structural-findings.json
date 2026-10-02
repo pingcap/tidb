@@ -197,10 +197,10 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "**Partially repaired:** local ALTER stages publication and defers shared auto-ID effects. Ordinary/unique index ADD, DROP, RENAME and visibility now prepare against the original schema; admitted changes own resolved names, conditional notes and conflict inputs. Drop-column plus rename succeeds, hidden expression metadata follows renames, and retained MaxColumnID/MaxIndexID prevent retired-identity reuse. Other action admission and complete durable preparation/execution/recovery remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::run_alter_table_in`, `ddl/index_changes.rs::PreparedIndexChange`, shared `ddl/indexes.rs` metadata builder; `kv_table.rs` high-water marks and cluster loaders; [index preparation receipt](alter-index-preparation-repair.md); prior [allocator receipt](alter-allocator-repair.md)",
-      "go_owner": "`pkg/ddl/executor.go::alterTable`, `index.go::ValidateRenameIndex`/`renameHiddenColumns`/`AllocateIndexID`, `column.go::AllocateColumnID`, `multi_schema_change.go::fillMultiSchemaInfo` and durable workers. In-process maintenance is not complete DDL package acceptance.",
-      "review_basis": "Index preparation follow-up from integration 5d9c7433a53c against unchanged master 93a01d31f6 and native 19a56cc: 14 new regressions fail before their respective repair and pass afterward; two former mismatch assertions now expect Go behavior. Removed separate immediate index branches, grouped execution, guessed names and AST-only index validation. 220 selected tests pass, one unrelated FK expectation also fails on baseline, five existing tests stay ignored. Non-index original-schema admission and durable recovery keep D11 partial. Other IDs retain the full review evidence."
+      "finding": "**Partially repaired:** local ALTER stages publication and defers shared auto-ID effects. All existing column spellings and ordinary/unique index actions now prepare against the original schema, then share admitted conflict inputs and ordered diagnostics before row/index execution. Column positions and AUTO_RANDOM metadata retain their identities through sibling changes; retained MaxColumnID/MaxIndexID prevent ID reuse. Foreign-key/CHECK/table-option/partition/table-rename admission and complete durable preparation/execution/recovery remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/ddl/alter_table.rs::PreparedAlterAction`, `ddl/column_changes.rs::PreparedColumnChange`, `ddl/index_changes.rs::PreparedIndexChange`; `kv_table.rs` identity and offset ownership; [column preparation receipt](alter-column-preparation-repair.md); prior [index receipt](alter-index-preparation-repair.md) and [allocator receipt](alter-allocator-repair.md)",
+      "go_owner": "`pkg/ddl/executor.go` column/index admission, `multi_schema_change.go::fillMultiSchemaInfo`/`checkMultiSchemaInfo`, `column.go::LocateOffsetToMove` and default/column worker phases; `modify_column.go::getModifiableColumnJob` includes the read-only NULL precheck. In-process maintenance is not complete DDL package acceptance.",
+      "review_basis": "Column follow-up from integration a49cc75502 against unchanged master 93a01d31f6 and native 19a56cc: nine new regressions reproduce failures before fixes; an additional successful position control and corrected Go TestIssue5092 sequence pass. 293 selected tests pass, two failures reproduce on unchanged production, eight existing tests remain ignored. Removed immediate column action dispatch, AST-derived column conflict inputs and the separate index-note execution variant. Other action admission and durable recovery keep D11 partial. Other IDs retain the preceding full review evidence."
     },
     {
       "id": "C01",
@@ -792,9 +792,9 @@
   "latest_repair": {
     "id": "D11",
     "status": "partial",
-    "scope": "Original-schema index admission, shared conflict inputs and persistent metadata identity counters; non-index admission and durable execution/recovery remain open",
-    "integration_start": "5d9c7433a53c7211f0948a48bd876795103d39ae",
+    "scope": "Shared original-schema column/index admission, admitted conflict/count checks and ordered diagnostics; other actions and durable recovery remain open",
+    "integration_start": "a49cc7550206f62eb7c4b09c0cba185deace8152",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "alter-index-preparation-repair.md"
+    "receipt": "alter-column-preparation-repair.md"
   }
 }

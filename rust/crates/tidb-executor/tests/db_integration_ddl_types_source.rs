@@ -546,8 +546,8 @@ fn issue_4432_bit_default_spellings() {
 // dropping every column (mixed IF EXISTS) = 1090, guarded drops succeed.
 //
 // The mixed `add column if not exists d int, add column d int` form is
-// rejected by Go's multi-schema DDL checker with 8200 before either duplicate
-// column sub-job runs.
+// reports 1060 from the unguarded duplicate during original-schema admission;
+// two additions of the same new name instead conflict with 8200.
 #[test]
 fn issue_5092_add_drop_column_positions_and_guards() {
     let mut catalog = Catalog::default();
@@ -599,11 +599,20 @@ fn issue_5092_add_drop_column_positions_and_guards() {
         "test",
         &ctx,
     )
-    .expect_err("Go: [ddl:8200] operate same column 'd'");
-    assert_eq!(error.clone().to_mysql_error().code, 8200);
+    .expect_err("Go: the second ADD reports the original duplicate");
+    assert_eq!(error.clone().to_mysql_error().code, 1060);
+    assert_eq!(error.to_mysql_error().message, "Duplicate column name 'd'");
     assert_eq!(
-        error.to_mysql_error().message,
-        "Unsupported modify column: operate same column 'd'"
+        ddl::run_alter_table_in(
+            "alter table t_issue_5092 add column dd int, add column if not exists dd int",
+            &mut catalog,
+            "test",
+            &ctx,
+        )
+        .unwrap_err()
+        .to_mysql_error()
+        .code,
+        8200
     );
 
     // The defaults half: every new column settles its default and row order
@@ -655,17 +664,24 @@ fn issue_5092_add_drop_column_positions_and_guards() {
         &ctx,
     )
     .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_issue_5092 drop column b, drop column c",
+        &mut catalog3,
+        "test",
+        &ctx,
+    )
+    .unwrap();
     let error = ddl::run_alter_table_in(
         "alter table t_issue_5092 drop column c, drop column c",
         &mut catalog3,
         "test",
         &ctx,
     )
-    .expect_err("Go: [ddl:8200] operate same column 'c'");
-    assert_eq!(error.clone().to_mysql_error().code, 8200);
+    .unwrap_err()
+    .to_mysql_error();
     assert_eq!(
-        error.to_mysql_error().message,
-        "Unsupported modify column: operate same column 'c'"
+        error.code, 1091,
+        "Go: both original columns are already absent"
     );
     ddl::run_alter_table_in(
         "alter table t_issue_5092 drop column if exists b,drop column if exists c",
@@ -695,15 +711,19 @@ fn issue_5092_add_drop_column_positions_and_guards() {
         &ctx,
     )
     .unwrap();
-    assert!(matches!(
-        ddl::run_alter_table_in(
-            "alter table t_issue_5092 drop column if exists a, drop column b, drop column c",
-            &mut catalog4,
-            "test",
-            &ctx
-        ),
-        Err(tidb_executor::DriverError::CannotDropOnlyColumn { .. })
-    ), "Go: ErrCantRemoveAllFields (1090)");
+    let error = ddl::run_alter_table_in(
+        "alter table t_issue_5092 drop column if exists a, drop column b, drop column c",
+        &mut catalog4,
+        "test",
+        &ctx,
+    )
+    .unwrap_err()
+    .to_mysql_error();
+    assert_eq!(error.code, 1090, "Go: ErrCantRemoveAllFields");
+    assert_eq!(
+        error.message,
+        "You can't delete all columns with ALTER TABLE; use DROP TABLE instead"
+    );
 }
 
 // --- TestTableDDLWithTimeType (pkg/ddl/db_integration_test.go:373) ---

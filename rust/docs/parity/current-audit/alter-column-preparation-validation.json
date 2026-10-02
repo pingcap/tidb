@@ -1,0 +1,306 @@
+{
+  "integration_start": "a49cc7550206f62eb7c4b09c0cba185deace8152",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_ddl_ -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.92s",
+        "test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 1474 filtered out; finished in 0.41s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_alter_column -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.69s",
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 2102 filtered out; finished in 0.07s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_column_defaults -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: FAILED. 33 passed; 1 failed; 0 ignored; 0 measured; 2086 filtered out; finished in 0.13s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_generated_columns -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2095 filtered out; finished in 0.08s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_modify_column_null -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2118 filtered out; finished in 0.04s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_foreign_key -- --nocapture",
+      "exit_code": 101,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s",
+        "test result: FAILED. 56 passed; 1 failed; 0 ignored; 0 measured; 2063 filtered out; finished in 0.15s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all serial_auto_random_source:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.86s",
+        "test result: ok. 8 passed; 0 failed; 3 ignored; 0 measured; 521 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "exit_code": 0,
+      "results": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.14s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib stmt_context::tests -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.05s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1520 filtered out; finished in 0.04s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_core::ddl:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.87s",
+        "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 2088 filtered out; finished in 0.13s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all db_integration_ddl_types_source:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.20s",
+        "test result: ok. 30 passed; 0 failed; 3 ignored; 0 measured; 499 filtered out; finished in 0.08s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all serial_column_flags_and_limits_source:: -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s",
+        "test result: ok. 5 passed; 0 failed; 2 ignored; 0 measured; 525 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": "repository root",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "exit_code": 0
+    }
+  ],
+  "regression_controls": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_column_ -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_jobs_exclude_conditional_noops' (31237266) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1395:47:",
+        "called `Result::unwrap()` on an `Err` value: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same column 'a'\" }",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_admission_uses_original_schema' (31237264) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1417:9:",
+        "assertion `left == right` failed: alter table t add column c int, rename column c to d",
+        "  left: 8200",
+        " right: 1054",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_notes_precede_conflict_validation' (31237267) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1447:5:",
+        "assertion `left == right` failed",
+        "  left: 0",
+        " right: 1",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_notes_precede_conflict_validation ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_jobs_exclude_conditional_noops ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_admission_uses_original_schema ... FAILED",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_admission_precedes_row_rewrite' (31237263) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1433:9:",
+        "assertion `left == right` failed: alter table t modify column a tinyint, drop column missing",
+        "  left: 1265",
+        " right: 1091",
+        "",
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_dependencies_use_original_schema' (31237265) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1456:104:",
+        "called `Result::unwrap_err()` on an `Ok` value: ()",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_admission_precedes_row_rewrite ... FAILED",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_dependencies_use_original_schema ... FAILED",
+        "",
+        "failures:",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 1531 filtered out; finished in 0.02s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib alter_column_noops_share_original_schema_admission -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_alter_column::alter_column_noops_share_original_schema_admission' (31241171) panicked at crates/tidb-session/src/tests_alter_column.rs:632:80:",
+        "called `Result::unwrap()` on an `Err` value: DdlCoded { errno: 8200, message: \"Unsupported modify column: operate same column 'a'\" }",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_alter_column::alter_column_noops_share_original_schema_admission ... FAILED",
+        "",
+        "failures:",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2119 filtered out; finished in 0.03s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_prepared_random_column_tracks_current_offset -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_prepared_random_column_tracks_current_offset' (31278056) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1482:9:",
+        "assertion `left == right` failed: alter table t add column c int default 7 first",
+        "  left: 0",
+        " right: 1",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_prepared_random_column_tracks_current_offset ... FAILED",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1538 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_column_limits_use_original_and_combined_counts -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_column_limits_use_original_and_combined_counts' (31279920) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1495:106:",
+        "called `Result::unwrap_err()` on an `Ok` value: ()",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_column_limits_use_original_and_combined_counts ... FAILED",
+        "",
+        "failures:",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1538 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all db_integration_ddl_types_source::issue_5092_add_drop_column_positions_and_guards -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'db_integration_ddl_types_source::issue_5092_add_drop_column_positions_and_guards' (31319520) panicked at /Users/qiliu/projects/tidb/rust/crates/tidb-executor/tests/db_integration_ddl_types_source.rs:603:5:",
+        "assertion `left == right` failed",
+        "  left: 8200",
+        " right: 1060",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test db_integration_ddl_types_source::issue_5092_add_drop_column_positions_and_guards ... FAILED",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 531 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib multi_schema_change_preparation_publishes_notes_before_execution -- --nocapture",
+      "exit_code": 101,
+      "evidence": [
+        "thread 'tests_ddl_multi_schema_change_sql::multi_schema_change_preparation_publishes_notes_before_execution' (31297281) panicked at crates/tidb-executor/src/tests_ddl_multi_schema_change_sql.rs:1591:5:",
+        "assertion `left == right` failed",
+        "  left: 0",
+        " right: 1",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "test tests_ddl_multi_schema_change_sql::multi_schema_change_preparation_publishes_notes_before_execution ... FAILED",
+        "",
+        "failures:",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1538 filtered out; finished in 0.01s"
+      ]
+    }
+  ],
+  "baseline_comparison": {
+    "restored_production": [
+      "rust/crates/tidb-executor/src/ddl.rs",
+      "rust/crates/tidb-executor/src/ddl/alter_metadata.rs",
+      "rust/crates/tidb-executor/src/ddl/alter_table.rs",
+      "rust/crates/tidb-executor/src/ddl/index_changes.rs",
+      "rust/crates/tidb-executor/src/driver/planner_bridge.rs",
+      "rust/crates/tidb-executor/src/kv_table.rs",
+      "rust/crates/tidb-executor/src/kv_table/auto_random.rs",
+      "rust/crates/tidb-executor/src/stmt_context.rs"
+    ],
+    "commands": [
+      {
+        "command": "cargo test --locked -p tidb-session --lib a_folded_default_stays_a_settled_literal -- --nocapture",
+        "exit_code": 101,
+        "evidence": [
+          "thread 'tests_column_defaults::a_folded_default_stays_a_settled_literal' (31296209) panicked at crates/tidb-session/src/tests_column_defaults.rs:579:10:",
+          "called `Result::unwrap()` on an `Err` value: Parse(\"line 1 column 41 near \\\"+1))\\\" \")",
+          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+          "test tests_column_defaults::a_folded_default_stays_a_settled_literal ... FAILED",
+          "",
+          "failures:",
+          "",
+          "failures:",
+          "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2119 filtered out; finished in 0.02s"
+        ]
+      },
+      {
+        "command": "cargo test --locked -p tidb-session --lib a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name -- --nocapture",
+        "exit_code": 101,
+        "evidence": [
+          "thread 'tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name' (31296245) panicked at crates/tidb-session/src/tests_foreign_key.rs:1379:5:",
+          "CREATE TABLE `c` (",
+          "  `id` int DEFAULT NULL,",
+          "  `pid` int DEFAULT NULL,",
+          "  KEY `fk_1` (`pid`),",
+          "  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`)",
+          ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+          "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+          "test tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name ... FAILED",
+          "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2119 filtered out; finished in 0.02s"
+        ]
+      }
+    ]
+  },
+  "current_baseline_failures": {
+    "folded_default_parser": [
+      "thread 'tests_column_defaults::a_folded_default_stays_a_settled_literal' (31287780) panicked at crates/tidb-session/src/tests_column_defaults.rs:579:10:",
+      "called `Result::unwrap()` on an `Err` value: Parse(\"line 1 column 41 near \\\"+1))\\\" \")",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "test tests_column_defaults::a_function_off_the_whitelist_is_refused_even_when_constant ... ok",
+      "test tests_column_defaults::a_folded_default_stays_a_settled_literal ... FAILED",
+      "test tests_column_defaults::a_clock_default_with_an_fsp_prints_the_marker_with_it ... ok",
+      "test tests_column_defaults::a_bit_default_wider_than_its_column_is_refused ... ok",
+      "test tests_column_defaults::a_column_that_cannot_hold_null_cannot_default_to_it ... ok",
+      "test result: FAILED. 33 passed; 1 failed; 0 ignored; 0 measured; 2086 filtered out; finished in 0.13s"
+    ],
+    "foreign_key_name": [
+      "thread 'tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name' (31288056) panicked at crates/tidb-session/src/tests_foreign_key.rs:1379:5:",
+      "CREATE TABLE `c` (",
+      "  `id` int DEFAULT NULL,",
+      "  `pid` int DEFAULT NULL,",
+      "  KEY `fk_1` (`pid`),",
+      "  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`)",
+      ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+      "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "test tests_foreign_key::a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name ... FAILED",
+      "test result: FAILED. 56 passed; 1 failed; 0 ignored; 0 measured; 2063 filtered out; finished in 0.15s"
+    ]
+  },
+  "publication": {
+    "pre_commit_hook": {
+      "command": "TERM=xterm git -c core.hooksPath=hooks commit -m \"ddl: prepare column actions before ALTER execution\"",
+      "exit_code": 0,
+      "locked_server_build_seconds": 18.75,
+      "receipt_amendment": "Repeats the same actual hook."
+    },
+    "final_gate": "Run cargo build --locked -p tidb-server from rust/ after the receipt amendment, immediately before pushing. Final push, remote SHA and clean checkout are recorded in the task thread.",
+    "acceptance": "Existing-owner maintenance only; no whole-package acceptance."
+  }
+}
