@@ -2034,6 +2034,11 @@ enum StagedColumnDefault {
     /// A temporal marker is computed at row-write time and therefore has no
     /// settled spelling to cast through the final column type.
     TemporalMarker(String),
+    /// Go's computed default whose stored text names a function call or
+    /// other expression: `DEFAULT (json_array())` keeps the spelling and
+    /// re-runs per omitted row (metadata-only — go stores the same text
+    /// with `default_is_expr`).
+    Computed(String),
     /// A literal's exact metadata spelling, including fixed-binary padding.
     Settled(tidb_executor::ddl::SettledColumnDefault),
 }
@@ -2041,7 +2046,7 @@ enum StagedColumnDefault {
 impl StagedColumnDefault {
     fn has_default(&self) -> bool {
         match self {
-            Self::TemporalMarker(_) => true,
+            Self::TemporalMarker(_) | Self::Computed(_) => true,
             Self::Settled(default) => default.has_default,
         }
     }
@@ -2105,12 +2110,11 @@ fn stage_column_default(
     match built {
         tidb_executor::column_default::ColumnDefault::Computed(computed) => {
             if computed.is_expr() {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!(
-                    "column `{name}` uses a computed DEFAULT this catalog writer cannot execute"
-                ),
-                ));
+                // Go stores the expression spelling with `default_is_expr`
+                // and re-runs it per omitted row; the catalog writer carries
+                // the same metadata instead of refusing (oracle m3-catalog:
+                // CREATE TABLE c13(a json DEFAULT (json_array()))).
+                return Ok(StagedColumnDefault::Computed(computed.text));
             }
             Ok(StagedColumnDefault::TemporalMarker(computed.text))
         }
@@ -2136,6 +2140,15 @@ fn persist_column_default(
     match staged {
         StagedColumnDefault::TemporalMarker(text) => {
             info.default_is_expr = false;
+            info.set_default_value(ColumnDefaultValue::str(&text))
+                .map_err(|error| {
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+                })?;
+        }
+        StagedColumnDefault::Computed(text) => {
+            // Go stores the expression spelling with `default_is_expr`; the
+            // per-row evaluation re-runs it for every omitted column.
+            info.default_is_expr = true;
             info.set_default_value(ColumnDefaultValue::str(&text))
                 .map_err(|error| {
                     DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())

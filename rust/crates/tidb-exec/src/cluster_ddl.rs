@@ -1323,14 +1323,15 @@ fn lower_alter_table_catalog(
                     if *if_exists {
                         return Ok(None);
                     }
-                    if column
-                        .options
-                        .iter()
-                        .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
-                    {
+                    if column.options.iter().any(|option| {
+                        !matches!(
+                            option,
+                            tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
+                        )
+                    }) {
                         return Err(DdlAdmissionError::unsupported(
-                            "CHANGE COLUMN with options changes more than the name and type; \
-                     this node serves the option-free form only",
+                            "CHANGE COLUMN with options changes more than the name, type and default; \
+                     this node serves the rename-with-default subset only",
                         ));
                     }
                     let [old] = old_name.as_slice() else {
@@ -1678,14 +1679,15 @@ fn lower_alter_table_catalog(
                 // No AUTO_RANDOM: the ordinary MODIFY. The meta-only subset
                 // takes an option-free redeclaration (an explicit NULL is the
                 // default nullability, so it carries no change).
-                if column
-                    .options
-                    .iter()
-                    .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
-                {
+                if column.options.iter().any(|option| {
+                    !matches!(
+                        option,
+                        tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
+                    )
+                }) {
                     return Err(DdlAdmissionError::unsupported(
-                        "MODIFY COLUMN with options changes more than the type; \
-                         this node serves the option-free widening only",
+                        "MODIFY COLUMN with options changes more than the type and default; \
+                         this node serves the widening-with-default subset only",
                     ));
                 }
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -1725,14 +1727,15 @@ fn lower_alter_table_catalog(
             if *if_exists {
                 return Ok(None);
             }
-            if column
-                .options
-                .iter()
-                .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
-            {
+            if column.options.iter().any(|option| {
+                !matches!(
+                    option,
+                    tidb_ast::ColumnOption::Null | tidb_ast::ColumnOption::Default(_)
+                )
+            }) {
                 return Err(DdlAdmissionError::unsupported(
-                    "CHANGE COLUMN with options changes more than the name and type; \
-                     this node serves the option-free form only",
+                    "CHANGE COLUMN with options changes more than the name, type and default; \
+                     this node serves the rename-with-default subset only",
                 ));
             }
             let [old] = old_name.as_slice() else {
@@ -8870,11 +8873,30 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let refuse =
                 |what: &str| DdlPlanError::Encode(format!("Unsupported modify column: {what}"));
             // Go `types.CheckModifyTypeCompatible`: the change is either
-            // free (metadata only) or needs a data reorganization. This node
-            // runs no reorganization, so a reorg answer is refused, carrying
-            // Go's own reason.
-            if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
-                return Err(refuse(&reason));
+            // free (metadata only) or needs a data reorganization. Go runs
+            // the reorganization; this node applies SAME-FAMILY type
+            // changes as pure metadata instead — the stored bytes decode
+            // under the new type and the row reads carry the new semantics
+            // (go's reorg truncation for over-length data is the
+            // documented divergence). CROSS-family changes and the
+            // element/decimal recomputations still refuse: the stored
+            // bytes would not decode under the new type at all.
+            let both_string =
+                old.field_type.code().is_string() && built.field_type.code().is_string();
+            let both_integer = old
+                .field_type
+                .code()
+                .is_integer_type()
+                && built.field_type.code().is_integer_type();
+            let same_code_simple = old.field_type.code() == built.field_type.code()
+                && !matches!(
+                    old.field_type.code(),
+                    FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::NewDecimal
+                );
+            if !both_string && !both_integer && !same_code_simple {
+                if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
+                    return Err(refuse(&reason));
+                }
             }
             let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
             let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
@@ -8890,11 +8912,26 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     .get(position)
                     .expect("the position was just found");
                 let mut stored_column = handle.write();
-                // The identity, ordering, state, and defaults are the stored
-                // column's own; only the declared type widens.
+                // The identity, ordering, and state are the stored column's
+                // own; the declared type widens, and a MODIFY/CHANGE-carried
+                // DEFAULT restages the column default (go
+                // `updateColumnDefaultValue`, metadata-only alongside the
+                // widen).
                 let mut field_type = built.field_type.clone();
                 field_type.set_flags(stored_column.field_type.flags());
                 stored_column.field_type = field_type;
+                if let Some(default_expr) = column.options.iter().find_map(|option| match option {
+                    tidb_ast::ColumnOption::Default(expr) => Some(expr),
+                    _ => None,
+                }) {
+                    crate::table_info_build::set_column_default(
+                        column.name.as_str(),
+                        &mut stored_column,
+                        Some(default_expr),
+                        &context.0,
+                    )
+                    .map_err(DdlPlanError::Admission)?;
+                }
                 if new_name != wanted {
                     // Go `renameColumnTo`: the column and every index column
                     // naming it take the new name together.
