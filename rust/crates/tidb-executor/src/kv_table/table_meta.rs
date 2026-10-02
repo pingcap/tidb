@@ -39,7 +39,7 @@ use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, Sessi
 /// SQL-mode error levels, and temporal values one statement-owned decision.
 #[derive(Clone)]
 pub struct RowDecodeContext {
-    origin_default_flags: ConversionFlags,
+    type_flags: ConversionFlags,
     zone: SessionTimeZone,
     expression: crate::StmtContext,
 }
@@ -86,13 +86,12 @@ impl RowDecodeContext {
     /// The pre-migration row-decoder contract: caller supplies only a zone,
     /// and origin defaults use `DEFAULT_STATEMENT_FLAGS`.
     ///
-    /// Kept crate-private solely for the legacy compatibility wrappers while
-    /// DML/FK/server callsites await explicit authorization to select their
-    /// statement class. New production code must use a semantic constructor.
+    /// Kept crate-private for zone-only compatibility wrappers. New production
+    /// code must select the caller's semantic constructor.
     #[must_use]
     pub(crate) fn legacy_default(zone: &SessionTimeZone) -> Self {
         Self {
-            origin_default_flags: tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+            type_flags: tidb_datatype::DEFAULT_STATEMENT_FLAGS,
             zone: zone.clone(),
             expression: crate::StmtContext::for_query().with_time_zone(zone.clone()),
         }
@@ -103,7 +102,7 @@ impl RowDecodeContext {
     #[must_use]
     pub fn for_query(ctx: &crate::StmtContext) -> Self {
         Self {
-            origin_default_flags: ctx.query_default_conversion_flags(),
+            type_flags: ctx.query_default_conversion_flags(),
             zone: ctx.session_zone(),
             expression: ctx.clone(),
         }
@@ -114,7 +113,14 @@ impl RowDecodeContext {
     #[must_use]
     pub fn for_write(ctx: &crate::StmtContext) -> Self {
         Self {
-            origin_default_flags: ctx.write_conversion_flags(),
+            type_flags: ctx
+                .write_conversion_flags()
+                .with_ignore_truncate_err(
+                    tidb_expr::Columns::truncate_level(ctx) == tidb_expr::ErrorLevel::Ignore,
+                )
+                .with_truncate_as_warning(
+                    tidb_expr::Columns::truncate_level(ctx) == tidb_expr::ErrorLevel::Warn,
+                ),
             zone: ctx.session_zone(),
             expression: ctx.clone(),
         }
@@ -125,7 +131,7 @@ impl RowDecodeContext {
     #[must_use]
     pub fn for_ddl(ctx: &crate::StmtContext) -> Self {
         Self {
-            origin_default_flags: ctx.reorg_default_conversion_flags(),
+            type_flags: ctx.reorg_default_conversion_flags(),
             zone: ctx.session_zone(),
             expression: ctx.clone(),
         }
@@ -141,7 +147,7 @@ impl RowDecodeContext {
     #[must_use]
     pub fn for_analyze(ctx: &crate::StmtContext) -> Self {
         Self {
-            origin_default_flags: ctx.show_default_conversion_flags(),
+            type_flags: ctx.show_default_conversion_flags(),
             zone: ctx.session_zone(),
             expression: ctx.clone(),
         }
@@ -154,10 +160,10 @@ impl RowDecodeContext {
         &self.zone
     }
 
-    /// The caller-class flags used only for an absent column's origin value.
+    /// The caller's type-context flags for defaults and column conversion.
     #[must_use]
-    pub(crate) fn origin_default_flags(&self) -> ConversionFlags {
-        self.origin_default_flags
+    pub(crate) fn type_flags(&self) -> ConversionFlags {
+        self.type_flags
     }
 
     pub(crate) fn expression(&self) -> &crate::StmtContext {

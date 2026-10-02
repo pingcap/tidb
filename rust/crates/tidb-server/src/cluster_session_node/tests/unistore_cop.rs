@@ -9378,3 +9378,29 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
         [["2000", "127"]]
     );
 }
+
+#[test]
+fn generated_read_policy_reaches_cluster_point_and_scan_readers() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(991)).unwrap();
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET sql_mode=''");
+    rows(
+        &mut session,
+        "CREATE TABLE generated_read (id INT PRIMARY KEY, a VARCHAR(12), b INT AS (a) VIRTUAL)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO generated_read(id,a) VALUES (1,'12x')",
+    );
+    for sql in [
+        "SELECT b FROM generated_read WHERE id=1",
+        "SELECT b FROM generated_read",
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), [["12"]]);
+        assert_eq!(
+            displayed(rows(&mut session, "SHOW WARNINGS")),
+            [["Warning", "1292", "Truncated incorrect DOUBLE value: '12x'"]]
+        );
+    }
+}

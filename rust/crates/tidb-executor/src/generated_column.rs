@@ -63,9 +63,9 @@
 //! use the shared column-cast/error/NULL handlers before storage and constraints
 //! consume the row. Table insert/update do not evaluate it again: warnings and
 //! expression evaluation are observable effects, even when values are unchanged.
-//! Row decoding and ANALYZE still use raw datatype conversion and discard its
-//! events. Their full Go `CastColumnValue` behavior remains unresolved; Go's
-//! deliberate read/backfill truncation suppression is not an INSERT policy.
+//! Row decoding and ANALYZE use the shared raw column cast with their own
+//! type flags. Virtual readers additionally clip unsigned values and replace
+//! constrained NULLs; general row decoding keeps Go's separate contract.
 //! Shared column casting also retains documented datatype/error-identity gaps.
 //!
 //! # What Go refuses, and this refuses with it
@@ -360,52 +360,54 @@ pub struct GenerationError {
     pub eval: Option<tidb_expr::EvalError>,
 }
 
-/// Raw materialization for existing analysis/read callers. Mutation callers
-/// use `materialize_with` with their statement's column-cast/error/NULL policy.
-///
-/// `only_virtual` restores only the columns the row bytes never held; `false`
-/// recomputes all generated values. This wrapper does not complete Go's
-/// `CastColumnValue` warning and error handling.
-///
-/// Left-to-right is the whole of the dependency order: DDL has already
-/// refused a generated column that reads a generated column defined at or
-/// after it (3107), so by the time offset `i` is evaluated every generated
-/// input it may legally name is final.
-pub fn materialize<S: GeneratedColumnSlot>(
+/// Go FillVirtualColumnValue: cast with the caller's context, then apply
+/// the virtual reader's unsigned clipping and NULL substitution rules.
+pub fn fill_virtual_column_values<S: GeneratedColumnSlot>(
     columns: &[S],
     row: &mut [Datum],
-    only_virtual: bool,
-    ctx: &impl tidb_expr::Columns,
-) -> Result<(), GenerationError> {
-    materialize_with_conversion_flags(
-        columns,
-        row,
-        only_virtual,
-        ctx,
-        tidb_datatype::DEFAULT_STATEMENT_FLAGS,
-    )
+    ctx: &crate::StmtContext,
+) -> Result<(), crate::DriverError> {
+    let flags = tidb_expr::Columns::type_flags(ctx);
+    materialize_with(columns, row, true, ctx, |column, value| {
+        cast_virtual_column_value(
+            value,
+            column.column_type(),
+            column.column_name(),
+            ctx,
+            flags,
+        )
+    })
 }
 
-pub(crate) fn materialize_with_conversion_flags<S: GeneratedColumnSlot>(
-    columns: &[S],
-    row: &mut [Datum],
-    only_virtual: bool,
-    ctx: &impl tidb_expr::Columns,
-    conversion_flags: tidb_datatype::ConversionFlags,
-) -> Result<(), GenerationError> {
-    materialize_with(columns, row, only_virtual, ctx, |column, value| {
-        if value.is_null() {
-            return Ok(Datum::Null);
-        }
-        value
-            .convert_to_in(column.column_type(), conversion_flags, &ctx.time_zone())
-            .map(|converted| converted.value)
-            .map_err(|error| GenerationError {
-                column: column.column_name().to_owned(),
-                detail: format!("{error:?}"),
-                eval: None,
-            })
-    })
+pub(crate) fn cast_virtual_column_value(
+    value: Datum,
+    field_type: &FieldType,
+    name: &str,
+    ctx: &crate::StmtContext,
+    flags: tidb_datatype::ConversionFlags,
+) -> Result<Datum, crate::DriverError> {
+    let negative = match &value {
+        Datum::Int(value) => *value < 0,
+        Datum::Real(value) | Datum::Float32(value) => tidb_datatype::round_float(*value) < 0.0,
+        Datum::Decimal(value) => value.is_negative(),
+        _ => false,
+    };
+    let mut cast =
+        crate::driver::cast_table_value_with_flags(value, field_type, name, ctx, flags, true)?;
+    let column_flags = field_type.flags();
+    if (!cast.is_null()
+        && column_flags & tidb_datatype::FieldTypeFlags::UNSIGNED != 0
+        && flags.allow_negative_to_unsigned()
+        && negative)
+        || (cast.is_null()
+            && column_flags
+                & (tidb_datatype::FieldTypeFlags::NOT_NULL
+                    | tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT)
+                != 0)
+    {
+        cast = crate::bad_null::zero_value(field_type);
+    }
+    Ok(cast)
 }
 
 /// Evaluates each expression, then applies its caller's conversion/NULL policy
@@ -884,6 +886,23 @@ mod tests {
     use super::*;
     use tidb_datatype::FieldTypeCode;
 
+    fn materialize<S: GeneratedColumnSlot>(
+        columns: &[S],
+        row: &mut [Datum],
+        only_virtual: bool,
+    ) -> Result<(), crate::DriverError> {
+        let ctx = crate::StmtContext::for_query();
+        materialize_with(columns, row, only_virtual, &ctx, |column, value| {
+            crate::driver::cast_table_value(
+                value,
+                column.column_type(),
+                column.column_name(),
+                &ctx,
+                true,
+            )
+        })
+    }
+
     struct Slot {
         name: String,
         generation: Option<GeneratedColumn>,
@@ -969,20 +988,19 @@ mod tests {
     fn a_chain_of_generated_columns_is_computed_left_to_right() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, false).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 
-    /// The property every write path depends on: recomputing an already
-    /// computed row changes nothing, so no caller has to know whether some
-    /// earlier caller already did it.
+    /// Pure dependency evaluation retains the same values on a second pass;
+    /// statement-owned warning effects must still be evaluated only once.
     #[test]
     fn materializing_twice_gives_the_same_row() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(4), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, false).unwrap();
         let once = row.clone();
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, false).unwrap();
         assert_eq!(row, once);
     }
 
@@ -993,7 +1011,7 @@ mod tests {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)];
         row[0] = Datum::Int(10);
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, false).unwrap();
         assert_eq!(row, vec![Datum::Int(10), Datum::Int(11), Datum::Int(12)]);
     }
 
@@ -1002,7 +1020,7 @@ mod tests {
     fn only_virtual_leaves_a_stored_column_as_decoded() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)];
-        materialize(&columns, &mut row, true, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, true).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)]);
     }
 
@@ -1010,7 +1028,7 @@ mod tests {
     fn only_virtual_recomputes_a_virtual_column() {
         let columns = chain(false);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, true, &tidb_expr::NoColumns).unwrap();
+        materialize(&columns, &mut row, true).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 

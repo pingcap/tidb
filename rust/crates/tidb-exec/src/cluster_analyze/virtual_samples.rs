@@ -126,12 +126,16 @@ impl VirtualSamples {
         }
         // Extra handle slots follow the selected sample columns. Expressions
         // resolve against the physical sample schema, never the handle suffix.
-        generated_column::materialize(&self.columns, &mut row[..self.columns.len()], true, context)
-            .map_err(|error| {
-                tidb_executor::analyze::AnalyzeError::Unsupported(format!(
-                    "ANALYZE virtual column {}: {}",
-                    error.column, error.detail
-                ))
-            })
+        generated_column::fill_virtual_column_values(
+            &self.columns,
+            &mut row[..self.columns.len()],
+            context,
+        )
+        .map_err(|error| {
+            tidb_executor::analyze::AnalyzeError::Unsupported(format!(
+                "ANALYZE virtual column: {}",
+                error.to_mysql_error().message
+            ))
+        })
     }
 }

@@ -106,7 +106,7 @@ pub fn analyze_kv_table_columns(
     let (plan, source_positions, source_indexes) =
         kv_analyze_plan(table, &decode_context, selected_column_ids)?;
     let rows = table
-        .scan_rows_with_handles_recomputed(&decode_context)
+        .scan_rows_with_handles_with_context(&decode_context)
         .map_err(|error| {
             AnalyzeError::Unsupported(format!(
                 "this node could not read `{}` to analyze it: {error:?}",
@@ -328,7 +328,7 @@ fn kv_analyze_plan(
             // sampler missing -- but the plan carries it anyway, because what
             // an absent value IS belongs to the shared core.
             absent_value: column
-                .origin_default_value(context.origin_default_flags(), context.zone())
+                .origin_default_value(context.type_flags(), context.zone())
                 .map_err(|error| {
                     AnalyzeError::Unsupported(format!(
                         "this node could not materialize `{qualified}`'s origin default: {error}"

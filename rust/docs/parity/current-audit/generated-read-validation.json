@@ -1,0 +1,326 @@
+{
+  "integration_baseline": "3397692dddc212fd6bfa9104d0268466ef2c41fc",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Existing generated read/column-cast owner maintenance, not complete Go package acceptance.",
+  "control_method": "Restore changed executor production and cluster virtual_samples sources to integration baseline; retain the new raw-cast test in its existing test module and all integration/ANALYZE/server regressions. Run controls sequentially; restore saved production bytes in finally and verify exact equality.",
+  "comparisons": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib -- --test-threads=1",
+      "baseline": {
+        "label": "executor",
+        "command": "cargo test --locked -p tidb-executor --lib -- --test-threads=1",
+        "exit_code": 101,
+        "result": [
+          "test result: FAILED. 1468 passed; 37 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.72s"
+        ],
+        "failures": [
+          "ddl_sequence::tests::a_missing_sequence_is_4139_for_drop_and_1146_for_alter",
+          "ddl_sequence::tests::alter_sequence_keeps_unnamed_options_and_discards_the_cache",
+          "ddl_sequence::tests::an_alter_into_a_conflicting_state_is_4136_and_changes_nothing",
+          "ddl_sequence::tests::restart_is_an_alter_only_option",
+          "ddl_sequence::tests::show_create_sequence_round_trips_the_captured_text",
+          "driver::catalog::statistics_request_tests::original_collect_histogram_needed_columns_cases_match",
+          "driver::errors::exec::tests::an_error_with_a_code_of_its_own_never_renders_an_empty_message",
+          "driver::planner_bridge::statistics_initialization_tests::statistics_collection_preserves_estimation_validity",
+          "driver::planner_bridge::statistics_initialization_tests::unfiltered_table_path_count_uses_realtime_row_count",
+          "driver::tests::aggregates::global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader",
+          "driver::tests::column_defaults::named_and_nested_defaults_use_the_referenced_column",
+          "driver::tests::column_defaults::on_duplicate_defaults_cover_conflict_and_no_conflict",
+          "driver::tests::index_prefix_reads::index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls",
+          "driver::tests::index_prefix_reads::partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters",
+          "driver::tests::index_ranges::ordered_limit_adjusts_the_common_handle_scan_estimate",
+          "driver::tests::point_get::prepared_in_predicate_uses_filtered_stats_for_cache_admission",
+          "driver::tests::set_operations::single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize",
+          "driver::write_cast::source_tests::generated_read_policy_raw_cast_honors_flags_before_force_ignore",
+          "kv_table::auto_id::tests::test_in_memory_alloc",
+          "kv_table::auto_id::tests::test_issue40584",
+          "sort::tests::a_single_chunk_input_sorts_without_a_pool_lane_under_parallelism",
+          "sort::tests::a_single_chunk_parallel_input_over_quota_spills_like_the_unparallel_path",
+          "sort::tests::parallel_sort_spills_worker_rounds_and_final_batches",
+          "sort::tests::parallel_sort_workers_share_input_and_heap_merge_their_runs",
+          "tests_analyze_suite_source::analyze_numeric_generated_column_with_index_succeeds",
+          "tests_analyze_suite_source::analyze_partition_publishes_per_partition_then_partition_scoped_statistics",
+          "tests_fktest_b134_source::foreign_key_on_update_parent_table_check",
+          "tests_fktest_source::foreign_key_on_insert_on_duplicate_parent_table_check",
+          "tests_jointest_hashjoin_b135_source::outer_table_build_hash_table_row_semantics",
+          "tests_pkg_nested_loop_apply_source::move_info_schema_to_front_source",
+          "tests_required_rows_source::topn_required_rows",
+          "topn::spill_tests::a_spilled_topn_with_an_offset_drops_the_same_rows",
+          "topn::spill_tests::an_over_quota_topn_returns_exactly_what_the_unspilled_one_returns",
+          "topn::spill_tests::spilled_topn_uses_parallel_workers_and_preserves_the_answer",
+          "topn::tests::the_heap_retains_the_rows_gos_heap_retains",
+          "topn::tests::topn_keeps_candidates_beyond_the_limit_in_the_first_child_chunk",
+          "topn::tests::topn_returns_what_sort_then_limit_returns"
+        ]
+      },
+      "repair": {
+        "label": "executor-full",
+        "command": "cargo test --locked -p tidb-executor --lib -- --test-threads=1",
+        "exit_code": 101,
+        "result": [
+          "test result: FAILED. 1469 passed; 36 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.88s"
+        ],
+        "failures": [
+          "ddl_sequence::tests::a_missing_sequence_is_4139_for_drop_and_1146_for_alter",
+          "ddl_sequence::tests::alter_sequence_keeps_unnamed_options_and_discards_the_cache",
+          "ddl_sequence::tests::an_alter_into_a_conflicting_state_is_4136_and_changes_nothing",
+          "ddl_sequence::tests::restart_is_an_alter_only_option",
+          "ddl_sequence::tests::show_create_sequence_round_trips_the_captured_text",
+          "driver::catalog::statistics_request_tests::original_collect_histogram_needed_columns_cases_match",
+          "driver::errors::exec::tests::an_error_with_a_code_of_its_own_never_renders_an_empty_message",
+          "driver::planner_bridge::statistics_initialization_tests::statistics_collection_preserves_estimation_validity",
+          "driver::planner_bridge::statistics_initialization_tests::unfiltered_table_path_count_uses_realtime_row_count",
+          "driver::tests::aggregates::global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader",
+          "driver::tests::column_defaults::named_and_nested_defaults_use_the_referenced_column",
+          "driver::tests::column_defaults::on_duplicate_defaults_cover_conflict_and_no_conflict",
+          "driver::tests::index_prefix_reads::index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls",
+          "driver::tests::index_prefix_reads::partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters",
+          "driver::tests::index_ranges::ordered_limit_adjusts_the_common_handle_scan_estimate",
+          "driver::tests::point_get::prepared_in_predicate_uses_filtered_stats_for_cache_admission",
+          "driver::tests::set_operations::single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize",
+          "kv_table::auto_id::tests::test_in_memory_alloc",
+          "kv_table::auto_id::tests::test_issue40584",
+          "sort::tests::a_single_chunk_input_sorts_without_a_pool_lane_under_parallelism",
+          "sort::tests::a_single_chunk_parallel_input_over_quota_spills_like_the_unparallel_path",
+          "sort::tests::parallel_sort_spills_worker_rounds_and_final_batches",
+          "sort::tests::parallel_sort_workers_share_input_and_heap_merge_their_runs",
+          "tests_analyze_suite_source::analyze_numeric_generated_column_with_index_succeeds",
+          "tests_analyze_suite_source::analyze_partition_publishes_per_partition_then_partition_scoped_statistics",
+          "tests_fktest_b134_source::foreign_key_on_update_parent_table_check",
+          "tests_fktest_source::foreign_key_on_insert_on_duplicate_parent_table_check",
+          "tests_jointest_hashjoin_b135_source::outer_table_build_hash_table_row_semantics",
+          "tests_pkg_nested_loop_apply_source::move_info_schema_to_front_source",
+          "tests_required_rows_source::topn_required_rows",
+          "topn::spill_tests::a_spilled_topn_with_an_offset_drops_the_same_rows",
+          "topn::spill_tests::an_over_quota_topn_returns_exactly_what_the_unspilled_one_returns",
+          "topn::spill_tests::spilled_topn_uses_parallel_workers_and_preserves_the_answer",
+          "topn::tests::the_heap_retains_the_rows_gos_heap_retains",
+          "topn::tests::topn_keeps_candidates_beyond_the_limit_in_the_first_child_chunk",
+          "topn::tests::topn_returns_what_sort_then_limit_returns"
+        ]
+      },
+      "new_failures": [],
+      "fixed_regressions": [
+        "driver::write_cast::source_tests::generated_read_policy_raw_cast_honors_flags_before_force_ignore"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --test all -- --test-threads=1",
+      "baseline": {
+        "label": "session",
+        "command": "cargo test --locked -p tidb-session --test all -- --test-threads=1",
+        "exit_code": 101,
+        "result": [
+          "test result: FAILED. 328 passed; 21 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.34s"
+        ],
+        "failures": [
+          "alter_sequence_increment_source::alter_sequence_changes_the_step",
+          "auto_inc_show_create_source::alter_auto_increment_rebases_and_shows",
+          "expression_default_fold_source::non_function_expression_default_folds",
+          "fractional_unix_source::fractional_timestamp_scale",
+          "generated_column_write_source::generated_read_policy_uses_column_cast_and_raw_warning_shape",
+          "generated_column_write_source::generated_read_policy_virtual_fill_substitutes_null_and_clips_unsigned",
+          "json_array_append_insert_source::append_insert_and_wildcard_refusal",
+          "json_arrow_bitwise_source::json_arrows_and_bitwise_family",
+          "json_arrow_operators_source::arrow_operators_quote_semantics",
+          "json_construct_extract_source::json_construct_extract_validate",
+          "json_extract_multi_source::multi_path_extraction",
+          "json_introspection_source::json_introspection_and_unquote",
+          "json_merge_preserve_source::preserve_concatenates_and_deep_merges",
+          "json_mutation_source::mutation_family",
+          "limit_edge_source::limit_bound_edges",
+          "right_join_source::right_join_preserves_the_right_side",
+          "sequence_functions_source::sequence_function_family",
+          "sequence_lastval_setval_source::lastval_setval_and_arity",
+          "show_filters_source::show_filters",
+          "show_warnings_truncate_source::truncation_warning_is_visible_through_show_warnings",
+          "theta_self_join_source::inequality_self_join_pairs"
+        ]
+      },
+      "repair": {
+        "label": "session-full",
+        "command": "cargo test --locked -p tidb-session --test all -- --test-threads=1",
+        "exit_code": 101,
+        "result": [
+          "test result: FAILED. 330 passed; 19 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.10s"
+        ],
+        "failures": [
+          "alter_sequence_increment_source::alter_sequence_changes_the_step",
+          "auto_inc_show_create_source::alter_auto_increment_rebases_and_shows",
+          "expression_default_fold_source::non_function_expression_default_folds",
+          "fractional_unix_source::fractional_timestamp_scale",
+          "json_array_append_insert_source::append_insert_and_wildcard_refusal",
+          "json_arrow_bitwise_source::json_arrows_and_bitwise_family",
+          "json_arrow_operators_source::arrow_operators_quote_semantics",
+          "json_construct_extract_source::json_construct_extract_validate",
+          "json_extract_multi_source::multi_path_extraction",
+          "json_introspection_source::json_introspection_and_unquote",
+          "json_merge_preserve_source::preserve_concatenates_and_deep_merges",
+          "json_mutation_source::mutation_family",
+          "limit_edge_source::limit_bound_edges",
+          "right_join_source::right_join_preserves_the_right_side",
+          "sequence_functions_source::sequence_function_family",
+          "sequence_lastval_setval_source::lastval_setval_and_arity",
+          "show_filters_source::show_filters",
+          "show_warnings_truncate_source::truncation_warning_is_visible_through_show_warnings",
+          "theta_self_join_source::inequality_self_join_pairs"
+        ]
+      },
+      "new_failures": [],
+      "fixed_regressions": [
+        "generated_column_write_source::generated_read_policy_uses_column_cast_and_raw_warning_shape",
+        "generated_column_write_source::generated_read_policy_virtual_fill_substitutes_null_and_clips_unsigned"
+      ]
+    }
+  ],
+  "focused_controls": [
+    {
+      "label": "decoder",
+      "command": "cargo test --locked -p tidb-executor --test all row_decoder_source -- --test-threads=1",
+      "exit_code": 101,
+      "result": [
+        "test result: FAILED. 11 passed; 5 failed; 0 ignored; 0 measured; 516 filtered out; finished in 0.01s"
+      ],
+      "failures": [
+        "row_decoder_source::changing_column_cast_uses_the_statement_error_level",
+        "row_decoder_source::full_decode_recomputes_stored_values_and_retains_cast_warnings",
+        "row_decoder_source::generated_read_policy_preserves_query_warnings_before_forced_suppression",
+        "row_decoder_source::generated_read_policy_trims_char_before_dependent_evaluation",
+        "row_decoder_source::generated_read_policy_zero_date_errors_survive_decoder_transport"
+      ]
+    },
+    {
+      "label": "analyze",
+      "command": "cargo test --locked -p tidb-exec --lib generated_read_policy -- --test-threads=1",
+      "exit_code": 101,
+      "result": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 367 filtered out; finished in 0.01s"
+      ],
+      "failures": [
+        "cluster_analyze::tests::generated_read_policy_virtual_samples_use_shared_column_conversion"
+      ]
+    },
+    {
+      "label": "server",
+      "command": "cargo test --locked -p tidb-server --lib generated_read_policy -- --test-threads=1",
+      "exit_code": 101,
+      "result": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 490 filtered out; finished in 1.25s"
+      ],
+      "failures": [
+        "cluster_session_node::tests::unistore_cop::generated_read_policy_reaches_cluster_point_and_scan_readers"
+      ]
+    }
+  ],
+  "affected_checks": [
+    {
+      "label": "analyze-suite",
+      "command": "cargo test --locked -p tidb-exec --lib cluster_analyze -- --test-threads=1",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.01s"
+      ],
+      "failures": []
+    },
+    {
+      "label": "union-suite",
+      "command": "cargo test --locked -p tidb-executor union_scan -- --test-threads=1",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1497 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 531 filtered out; finished in 0.02s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s"
+      ],
+      "failures": []
+    },
+    {
+      "label": "server-suite",
+      "command": "cargo test --locked -p tidb-server --lib generated_ -- --test-threads=1",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 488 filtered out; finished in 2.53s"
+      ],
+      "failures": []
+    },
+    {
+      "label": "check",
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "exit_code": 0,
+      "result": [],
+      "failures": []
+    }
+  ],
+  "publication_base": "c4552c87577606215d9f5d26ffcfc0b7b26104fb",
+  "final_gates": [
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [],
+      "log_sha256": "7720edd5e97570be6db12df555f14be4bd034c847285f640cc12282e06a23067"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::write_cast -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1501 filtered out; finished in 0.01s"
+      ],
+      "log_sha256": "b93caed5f0adcad2e0ccb64443cd12f810d7ef1228100d0db9e299128aec7289"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all row_decoder_source -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 516 filtered out; finished in 0.02s"
+      ],
+      "log_sha256": "dbd61e41d23b55d45479eec9db17b2ef5413f26b0ec1bff6c458fe429bce7b3a"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --test all generated -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 317 filtered out; finished in 0.85s"
+      ],
+      "log_sha256": "ba65431318693bf26e045964dba1aea80746c30adb2102210898e31311dd573f"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib cluster_analyze -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 353 filtered out; finished in 0.01s"
+      ],
+      "log_sha256": "3179342d69144b56bef37a6be10cc71c2e66592716d8f7ca79558a761c5c4d2a"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor union_scan -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1497 filtered out; finished in 0.01s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 531 filtered out; finished in 0.02s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "05d85239a3a47485c02db60ed7179990888335ea5cd11cf184807dbccdaab20d"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib generated_ -- --test-threads=1",
+      "cwd": "rust/",
+      "exit_code": 0,
+      "result": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 488 filtered out; finished in 2.52s"
+      ],
+      "log_sha256": "ef40cfd5e455df1cd7b797f7cd3ba9b9634de292254ef044759ed15ed5c226f7"
+    },
+    {
+      "command": "GOTOOLCHAIN=go1.25.14 make lint",
+      "cwd": ".",
+      "exit_code": 0,
+      "result": [],
+      "log_sha256": "459a8db98d229c47478ab66cb3e654d5d9e5e90a0671bf053db4b74ba8892f5f"
+    }
+  ]
+}

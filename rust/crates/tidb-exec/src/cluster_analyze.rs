@@ -768,6 +768,39 @@ mod tests {
     }
 
     #[test]
+    fn generated_read_policy_virtual_samples_use_shared_column_conversion() {
+        let table = virtual_sample_table();
+        table.columns.get(0).unwrap().write().field_type = FieldType::new(FieldTypeCode::Varchar);
+        {
+            let column = table.columns.get(1).unwrap();
+            let mut column = column.write();
+            column.field_type = FieldType::new(FieldTypeCode::String).with_flen(4);
+            column.generated_expr_string = "a".to_owned();
+        }
+        let context = tidb_executor::StmtContext::for_query();
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let samples = super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
+        let mut row = vec![Datum::new_string("a  "), Datum::Null];
+        samples.materialize(&mut row, &context).unwrap();
+        assert_eq!(row[1], Datum::new_string("a"));
+        {
+            let column = table.columns.get(1).unwrap();
+            let mut column = column.write();
+            column.field_type = FieldType::new(FieldTypeCode::LongLong).with_flags(
+                tidb_datatype::FieldTypeFlags::UNSIGNED | tidb_datatype::FieldTypeFlags::NOT_NULL,
+            );
+        }
+        table.columns.get(0).unwrap().write().field_type = FieldType::new(FieldTypeCode::LongLong);
+        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let samples = super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
+        for input in [Datum::Int(-1), Datum::Null] {
+            let mut row = vec![input, Datum::Null];
+            samples.materialize(&mut row, &context).unwrap();
+            assert_eq!(row[1], Datum::UInt(0));
+        }
+    }
+
+    #[test]
     fn sampling_request_keeps_common_handle_order_and_index_slots() {
         let table = TableInfo {
             is_common_handle: true,

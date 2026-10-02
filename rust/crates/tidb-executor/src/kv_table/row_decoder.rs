@@ -83,6 +83,8 @@ pub struct RowDecoder {
     use_new_collation: bool,
     keep: Option<Vec<ProjectedColumn>>,
     context: RowDecodeContext,
+    /// Table/point readers use FillVirtualColumnValue; reorg uses RowDecoder.
+    fill_virtual_values: bool,
     /// Row V2 metadata built once per cursor rather than once per row.
     v2_columns: Vec<tidb_codec::ColumnInfo>,
     /// Column IDs supplied by the clustered handle in Row V2.
@@ -379,6 +381,16 @@ impl PreparedPointGetRowDecoder {
     }
 }
 
+impl From<crate::generated_column::GenerationError> for KvTableError {
+    fn from(error: crate::generated_column::GenerationError) -> Self {
+        Self::Generation {
+            column: error.column,
+            detail: error.detail,
+            eval: error.eval,
+        }
+    }
+}
+
 impl RowDecoder {
     /// Builds a full-schema decoder, equivalent to Go `NewRowDecoder` with
     /// `BuildFullDecodeColMap` when `generated` is [`GeneratedColumnSelection::All`].
@@ -436,7 +448,7 @@ impl RowDecoder {
         use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
-        Self::build(
+        let mut decoder = Self::build(
             columns,
             pk_handle_offset,
             common_handle_offsets,
@@ -445,7 +457,9 @@ impl RowDecoder {
             keep,
             use_new_collation,
             context,
-        )
+        )?;
+        decoder.fill_virtual_values = true;
+        Ok(decoder)
     }
 
     pub(crate) fn for_recomputed_read(
@@ -613,6 +627,7 @@ impl RowDecoder {
             use_new_collation,
             keep: keep.map(projection_columns),
             context,
+            fill_virtual_values: false,
             v2_columns,
             v2_handle_column_ids,
             v2_fast_path,
@@ -790,7 +805,7 @@ impl RowDecoder {
             return Err(KvTableError::Decode("Miss column".to_owned()));
         }
         column
-            .origin_default_value(self.context.origin_default_flags(), self.context.zone())
+            .origin_default_value(self.context.type_flags(), self.context.zone())
             .map_err(|error| KvTableError::Decode(error.to_string()))
     }
 
@@ -804,14 +819,15 @@ impl RowDecoder {
         let Some(source) = row.get(&dependency_id) else {
             return self.origin_default(target_offset);
         };
-        crate::driver::cast_table_value(
+        crate::driver::cast_table_value_with_flags(
             source.clone(),
             &self.columns[target_offset].field_type,
             &self.columns[target_offset].name,
             self.context.expression(),
+            self.context.type_flags(),
             false,
         )
-        .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+        .map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))
     }
 
     /// Updates both row representations before [`Self::eval_remaining`].
@@ -839,20 +855,33 @@ impl RowDecoder {
             // already final, so there is nothing left to evaluate.
             return Ok(());
         };
-        crate::generated_column::materialize_with_conversion_flags(
+        crate::generated_column::materialize_with(
             evaluation_columns,
             &mut row.values,
             false,
             self.context.expression(),
-            self.context
-                .origin_default_flags()
-                .with_ignore_truncate_err(true),
-        )
-        .map_err(|error| KvTableError::Generation {
-            column: error.column,
-            detail: error.detail,
-            eval: error.eval,
-        })?;
+            |column, value| {
+                let cast = if self.fill_virtual_values {
+                    crate::generated_column::cast_virtual_column_value(
+                        value,
+                        &column.field_type,
+                        &column.name,
+                        self.context.expression(),
+                        self.context.type_flags(),
+                    )
+                } else {
+                    crate::driver::cast_table_value_with_flags(
+                        value,
+                        &column.field_type,
+                        &column.name,
+                        self.context.expression(),
+                        self.context.type_flags(),
+                        true,
+                    )
+                };
+                cast.map_err(|error| KvTableError::ColumnCast(error.to_mysql_error()))
+            },
+        )?;
         for offset in &self.generated_offsets {
             row.by_id
                 .insert(self.columns[*offset].id, row.values[*offset].clone());

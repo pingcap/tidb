@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `table.CastValue`: converting ONE written value into its column's type,
-//! and naming the failure the way the statement that wrote it does.
+//! Go `table.CastValue`: converting a value into its column's type under the
+//! caller's type context. Mutation callers complete the raw cast diagnostics.
 //!
 //! The conversion is shared; the NAMING is not, and that is why this is its
 //! own module. Go decorates a failed cast differently at each write site --
@@ -189,11 +189,8 @@ pub(crate) fn cast_value_for_column(
 /// completes its error, including the exceptional `forceIgnoreTruncate`
 /// switch used by virtual-column and union-scan materialization.
 ///
-/// The production write paths use [`cast_value_for_column`].  Virtual-column
-/// and union-scan consumers have not been transcreated yet, but keeping their
-/// source-level entry point here prevents their raw error shape from being
-/// conflated with the completed INSERT form.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Reads and union scan retain the caller's type flags and raw error shape;
+/// mutation callers complete diagnostics with their own column/row metadata.
 pub(crate) fn cast_table_value(
     value: Datum,
     field_type: &FieldType,
@@ -201,7 +198,27 @@ pub(crate) fn cast_table_value(
     ctx: &crate::StmtContext,
     force_ignore_truncate: bool,
 ) -> Result<Datum, DriverError> {
-    cast_value_shaped(
+    cast_table_value_with_flags(
+        value,
+        field_type,
+        column,
+        ctx,
+        tidb_expr::Columns::type_flags(ctx),
+        force_ignore_truncate,
+    )
+}
+
+/// Go CastColumnValue for a caller with explicit type-context flags, including
+/// reorganization contexts whose flags differ from session expression flags.
+pub(crate) fn cast_table_value_with_flags(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    ctx: &crate::StmtContext,
+    flags: tidb_datatype::ConversionFlags,
+    force_ignore_truncate: bool,
+) -> Result<Datum, DriverError> {
+    cast_value_with_flags(
         value,
         field_type,
         column,
@@ -209,7 +226,36 @@ pub(crate) fn cast_table_value(
         ctx,
         CastShape::RawTable,
         force_ignore_truncate,
+        flags,
     )
+}
+
+/// HandleTruncate runs before forceIgnoreTruncate; warnings already appended
+/// by the type context survive suppression of the remaining error.
+fn handle_raw_cast_error(
+    error: DriverError,
+    ctx: &crate::StmtContext,
+    flags: tidb_datatype::ConversionFlags,
+    force_ignore_truncate: bool,
+) -> Result<(), DriverError> {
+    let reported = error.clone().to_mysql_error();
+    let pending = tidb_datatype::TruncationPolicy::new(
+        flags.ignore_truncate_err(),
+        flags.truncate_as_warning(),
+    )
+    .handle(
+        Some(tidb_error::mysql::SqlError {
+            code: reported.code,
+            state: tidb_error::mysql::mysql_state(reported.code),
+            message: reported.message,
+        }),
+        |warning| ctx.append_warning_parts(warning.code, &warning.message),
+    );
+    if pending.is_some() && !force_ignore_truncate {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 /// Which source call site names the failure of one cast.
@@ -226,7 +272,7 @@ pub(crate) enum CastShape {
 }
 
 fn cast_value_shaped(
-    mut value: Datum,
+    value: Datum,
     field_type: &FieldType,
     column: &str,
     row_index: usize,
@@ -234,10 +280,37 @@ fn cast_value_shaped(
     shape: CastShape,
     force_ignore_truncate: bool,
 ) -> Result<Datum, DriverError> {
+    let flags = ctx.write_conversion_flags();
+    cast_value_with_flags(
+        value,
+        field_type,
+        column,
+        row_index,
+        ctx,
+        shape,
+        force_ignore_truncate,
+        flags,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cast_value_with_flags(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    row_index: usize,
+    ctx: &crate::StmtContext,
+    shape: CastShape,
+    force_ignore_truncate: bool,
+    flags: tidb_datatype::ConversionFlags,
+) -> Result<Datum, DriverError> {
     if value.is_null() {
         return Ok(value);
     }
-    let source = value.clone();
+    // Go copies the Datum header, not its string payload. Keep the original
+    // for diagnostics without cloning bytes on every generated-column read.
+    let source = value;
+    let mut value = std::borrow::Cow::Borrowed(&source);
     let incorrect_value = || DriverError::IncorrectValue {
         type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
         value: datum_error_text(&source),
@@ -245,9 +318,24 @@ fn cast_value_shaped(
         row: row_index + 1,
     };
     if let Some((converted_bytes, invalid_bytes)) =
-        invalid_string_conversion(&value, field_type, ctx.write_conversion_flags())
+        invalid_string_conversion(&value, field_type, flags)
     {
-        if !force_ignore_truncate {
+        if shape == CastShape::RawTable {
+            handle_raw_cast_error(
+                DriverError::IncorrectValue {
+                    type_name: "string".to_owned(),
+                    value: invalid_bytes
+                        .iter()
+                        .map(|byte| format!("\\x{byte:02X}"))
+                        .collect(),
+                    column: column.to_owned(),
+                    row: 0,
+                },
+                ctx,
+                flags,
+                force_ignore_truncate,
+            )?;
+        } else if !force_ignore_truncate {
             let value = invalid_bytes
                 .iter()
                 .map(|byte| format!("\\x{byte:02X}"))
@@ -270,29 +358,30 @@ fn cast_value_shaped(
         // go keeps the bytes beside the error; with the downgrade switch on
         // (INSERT IGNORE) the error becomes a 1366 warning and the '?'
         // substitution is what lands in the row.
-        ctx.append_warning_parts(
-            1366,
-            &format!(
-                "Incorrect string value '{}' for column '{}'",
-                invalid_bytes
-                    .iter()
-                    .map(|byte| format!("\\x{byte:02X}"))
-                    .collect::<String>(),
-                column
-            ),
-        );
+        if shape != CastShape::RawTable {
+            ctx.append_warning_parts(
+                1366,
+                &format!(
+                    "Incorrect string value '{}' for column '{}'",
+                    invalid_bytes
+                        .iter()
+                        .map(|byte| format!("\\x{byte:02X}"))
+                        .collect::<String>(),
+                    column
+                ),
+            );
+        }
         // Go keeps the bytes returned beside the charset error, clears that
         // error, and then still applies the target width/collation rules.
-        value = Datum::new_collation_string(converted_bytes, field_type.collation());
+        value = std::borrow::Cow::Owned(Datum::new_collation_string(
+            converted_bytes,
+            field_type.collation(),
+        ));
     }
     // Go `table.CastValue` passes `sctx.GetSessionVars().StmtCtx.TypeCtx()`,
     // whose location is the session's. A TIMESTAMP column's admissible range
     // is expressed in wall-clock time, so it MOVES with that zone.
-    let mut converted = match value.convert_to_in(
-        field_type,
-        ctx.write_conversion_flags(),
-        &ctx.session_zone(),
-    ) {
+    let mut converted = match value.convert_to_in(field_type, flags, &ctx.session_zone()) {
         Ok(converted) => converted,
         // Go returns the value BESIDE the error here, and the temporal seam
         // is the one place the write path needs it: without `NO_ZERO_DATE`
@@ -362,11 +451,15 @@ fn cast_value_shaped(
                     timezone: ctx.session_zone().dag_zone().0,
                 }
             };
-            if ctx.strict() {
-                return Err(error);
+            if shape == CastShape::RawTable {
+                handle_raw_cast_error(error, ctx, flags, force_ignore_truncate)?;
+            } else {
+                if ctx.strict() {
+                    return Err(error);
+                }
+                let reported = error.to_mysql_error();
+                ctx.append_warning_parts(reported.code, &reported.message);
             }
-            let reported = error.to_mysql_error();
-            ctx.append_warning_parts(reported.code, &reported.message);
         }
         return Ok(stored);
     }
@@ -385,6 +478,15 @@ fn cast_value_shaped(
         tidb_datatype::ScalarConversionEvent::RoundedToScale
     ) && field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal;
     if decimal_rounded {
+        if shape == CastShape::RawTable {
+            let error = DriverError::TruncatedIncorrectValue {
+                kind: "DECIMAL".to_owned(),
+                value: datum_error_text(&source),
+            }
+            .to_mysql_error();
+            ctx.append_warning_parts(error.code, &error.message);
+            return Ok(converted.value);
+        }
         ctx.append_warning_parts(
             1366,
             &format!(
@@ -448,6 +550,10 @@ fn cast_value_shaped(
         }
     };
     let error = shape.name(error, &source, field_type);
+    if shape == CastShape::RawTable {
+        handle_raw_cast_error(error, ctx, flags, force_ignore_truncate)?;
+        return Ok(converted.value);
+    }
     // Go `ErrCtx.HandleError` (`datum.go:1311` reaches it via
     // `HandleTruncate`): the error survives only when STRICT mode is on AND
     // the statement is not IGNORE — `INSERT IGNORE`/`UPDATE IGNORE` downgrade
@@ -625,7 +731,7 @@ impl CastShape {
     /// makes it fatal.
     fn name(self, error: DriverError, source: &Datum, field_type: &FieldType) -> DriverError {
         match self {
-            Self::RawTable => error,
+            Self::RawTable => raw_assignment_error(error, source, field_type),
             Self::InsertRow => error,
             Self::UpdateAssignment => match error {
                 // Go's `handleUpdateError` re-titles exactly these two.
@@ -1005,6 +1111,35 @@ mod source_tests {
             &char_two,
             Datum::new_string("a"),
             false,
+        );
+    }
+    #[test]
+    fn generated_read_policy_raw_cast_honors_flags_before_force_ignore() {
+        let field = FieldType::new(FieldTypeCode::Tiny);
+        for (level, force, should_fail, warning_count) in [
+            (tidb_expr::ErrorLevel::Error, false, true, 0),
+            (tidb_expr::ErrorLevel::Error, true, false, 0),
+            (tidb_expr::ErrorLevel::Warn, true, false, 1),
+            (tidb_expr::ErrorLevel::Ignore, true, false, 0),
+        ] {
+            let ctx = crate::StmtContext::for_dml(false, true, false).with_truncate_level(level);
+            let value = cast_table_value(Datum::Int(300), &field, "b", &ctx, force);
+            assert_eq!(value.is_err(), should_fail, "{level:?}, force={force}");
+            if !should_fail {
+                assert_eq!(value.unwrap(), Datum::Int(127));
+            }
+            assert_eq!(ctx.warning_count(), warning_count);
+        }
+        let ctx = crate::StmtContext::for_query();
+        let decimal = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(5)
+            .with_decimal(1);
+        let value = cast_table_value(Datum::new_string("1.25"), &decimal, "b", &ctx, true).unwrap();
+        assert_eq!(datum_error_text(&value), "1.3");
+        let warnings = ctx.take_warnings();
+        assert_eq!(
+            (warnings[0].1, warnings[0].2.as_str()),
+            (1292, "Truncated incorrect DECIMAL value: '1.25'")
         );
     }
 }

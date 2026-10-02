@@ -729,7 +729,7 @@ impl PointRowDecoder {
             };
             let default_datum = |index: usize| {
                 table.columns[index]
-                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .origin_default_value(context.type_flags(), context.zone())
                     .map_err(|error| error.to_string())
             };
             return tidb_codec::decode_row_to_datums(
@@ -955,6 +955,8 @@ impl From<crate::storage::StorageError> for KvTableError {
 /// A failure while encoding or decoding table bytes.
 #[derive(Debug)]
 pub enum KvTableError {
+    /// A column cast failed with its original MySQL diagnostic.
+    ColumnCast(crate::MysqlError),
     /// A row failed to encode.
     Encode(String),
     /// Go `ErrDupKeyName` (1061).

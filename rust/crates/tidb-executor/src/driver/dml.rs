@@ -1433,6 +1433,9 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
         crate::kv_table::KvTableError::Storage(error) => error.into(),
+        crate::kv_table::KvTableError::ColumnCast(error) => {
+            DriverError::Exec(crate::ExecError::Mysql(error))
+        }
         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
             DriverError::DuplicateEntry { value, key }
         }

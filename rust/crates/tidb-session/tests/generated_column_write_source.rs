@@ -300,3 +300,37 @@ fn generated_write_policy_uses_the_ordinary_column_cast_for_all_types() {
         }
     }
 }
+
+#[test]
+fn generated_read_policy_uses_column_cast_and_raw_warning_shape() {
+    let mut session = Session::new();
+    session.run("set sql_mode=''").unwrap();
+    session
+        .run("create table t (id int primary key, a varchar(12), b int as (a) virtual)")
+        .unwrap();
+    session.run("insert into t(id,a) values (1,'12x')").unwrap();
+    assert_eq!(rows(&mut session, "select b from t where id=1"), "12");
+    let tidb_session::StmtResult::Rows(warnings) = session.run("show warnings").unwrap() else {
+        panic!("warnings")
+    };
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        warnings[0][2],
+        tidb_datatype::Datum::new_bytes(b"Truncated incorrect DOUBLE value: '12x'".to_vec())
+    );
+}
+
+#[test]
+fn generated_read_policy_virtual_fill_substitutes_null_and_clips_unsigned() {
+    let mut session = Session::new();
+    session.run("set sql_mode=''").unwrap();
+    session.run("create table t (id int primary key, a bigint, b bigint unsigned as (a) virtual, c int as (a) virtual not null, d int as (c+1) virtual)").unwrap();
+    session
+        .run("insert ignore into t(id,a) values (1,null),(2,-5)")
+        .unwrap();
+    assert_eq!(rows(&mut session, "select c,d from t where id=1"), "0|1");
+    assert_eq!(
+        rows(&mut session, "select cast(b as signed) from t where id=2"),
+        "0"
+    );
+}

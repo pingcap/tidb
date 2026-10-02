@@ -615,11 +615,8 @@ impl<C: Columns> UnionScanExec<C> {
             })?;
             // :167. Go passes `returnErr=false, forceIgnoreTruncate=true`.
             let mut cast_datum =
-                cast_table_value(datum, &info.field_type, &info.name, &self.stmt, true).map_err(
-                    |error| {
-                        ExecError::internal(format!("union scan virtual column cast: {error:?}"))
-                    },
-                )?;
+                cast_table_value(datum, &info.field_type, &info.name, &self.stmt, true)
+                    .map_err(|error| ExecError::Mysql(error.to_mysql_error()))?;
             // :172-174. A NOT NULL (or PreventNullInsert) column that cast to
             // NULL takes its type's zero value instead.
             let flags = info.field_type.flags();

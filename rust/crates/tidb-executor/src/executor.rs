@@ -102,6 +102,10 @@ impl From<crate::kv_table::KvTableError> for ExecError {
     fn from(error: crate::kv_table::KvTableError) -> Self {
         match error {
             crate::kv_table::KvTableError::Storage(error) => error.into(),
+            crate::kv_table::KvTableError::ColumnCast(error) => Self::Mysql(error),
+            crate::kv_table::KvTableError::Generation {
+                eval: Some(error), ..
+            } => Self::Eval(error),
             other => Self::unsupported(format!("table bytes failed to decode: {other:?}")),
         }
     }

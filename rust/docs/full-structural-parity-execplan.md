@@ -2455,3 +2455,24 @@ and error-identity gaps. The register remains 86 tracked/71 unresolved/15 repair
 now 64 open and seven partial. Native client-rust is current and unchanged at
 19a56cc. This is existing-owner maintenance, with no complete Go package
 acceptance or measured sysbench/TPC-C/TPC-H/YCSB gain.
+
+
+## Generated read and backfill conversion ownership (2026-10-02)
+
+
+The [generated-read receipt](generated-read-ownership-execplan.md) removes the
+remaining generated-column fixed-flags/raw conversion wrappers. Row decoding,
+virtual table/point reads and ANALYZE use the shared column cast and complete
+caller type flags. Go's virtual-fill clipping/NULL policy is separate from
+rowDecoder/reorg. Cast and evaluation diagnostics survive decoder, DDL and
+executor boundaries; union scan retains typed cast errors too.
+
+Eight new regressions and two strengthened existing checks fail on unchanged
+production and pass with the repair. Full controls retain the same 36 executor
+and 19 session failures. The receipt records focused tests, lint, all-target
+checking and publication gates, including the concurrent loader integration.
+K03 remains partial for lower datatype error/value identities, legacy ENUM/SET
+context and ANALYZE diagnostic transport. Counts remain 86 tracked, 71 unresolved
+(64 open/seven partial), 15 repaired. No complete package acceptance or measured
+workload speedup is claimed. Native client-rust and its dependency are current
+and unchanged at 19a56cc.

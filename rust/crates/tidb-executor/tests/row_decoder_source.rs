@@ -622,7 +622,7 @@ fn split_phase_defers_changing_and_generated_columns() {
 }
 
 #[test]
-fn full_decode_recomputes_stored_generated_values_and_ignores_cast_truncation() {
+fn full_decode_recomputes_stored_values_and_retains_cast_warnings() {
     let zone = SessionTimeZone::utc();
     let mut columns = vec![column(1, "a", FieldType::new(FieldTypeCode::Varchar))];
     let mut generated = column(2, "b", FieldType::new(FieldTypeCode::LongLong));
@@ -648,7 +648,7 @@ fn full_decode_recomputes_stored_generated_values_and_ignores_cast_truncation() 
     .unwrap();
     assert_eq!(recomputed.values()[1], Datum::Int(12));
     assert_eq!(recomputed.by_id().get(&2), Some(&Datum::Int(12)));
-    assert_eq!(statement.warning_count(), 0);
+    assert_eq!(statement.warning_count(), 1);
 
     let stored = RowDecoder::new(
         columns,
@@ -701,7 +701,9 @@ fn changing_column_cast_uses_the_statement_error_level() {
     .unwrap()
     .decode_and_eval(&TableHandle::Int(1), &bytes)
     .unwrap_err();
-    assert!(format!("{error:?}").contains("DataOutOfRange"));
+    let error =
+        tidb_executor::DriverError::from(tidb_executor::ExecError::from(error)).to_mysql_error();
+    assert_eq!(error.code, 1264);
 }
 
 #[test]
@@ -833,4 +835,140 @@ fn a_missing_not_null_column_reports_the_source_error() {
         .decode_and_eval(&TableHandle::Int(1), &bytes)
         .unwrap_err();
     assert!(format!("{error:?}").contains("Miss column"));
+}
+
+#[test]
+fn generated_read_policy_trims_char_before_dependent_evaluation() {
+    let zone = SessionTimeZone::utc();
+    let mut columns = vec![column(1, "a", FieldType::new(FieldTypeCode::Varchar))];
+    let mut b = column(2, "b", FieldType::new(FieldTypeCode::String).with_flen(4));
+    b.generated = Some(generated_column("a", false, &columns, &zone));
+    columns.push(b);
+    let mut c = column(3, "c", FieldType::new(FieldTypeCode::LongLong));
+    c.generated = Some(generated_column("length(b)", false, &columns, &zone));
+    columns.push(c);
+    for new_format in [false, true] {
+        let bytes = encode(&[1], &[Datum::new_string("a  ")], new_format, &zone);
+        let decoder = RowDecoder::projected(
+            columns.clone(),
+            None,
+            Vec::new(),
+            GeneratedColumnSelection::All,
+            &[2],
+            query_context(&zone),
+        )
+        .unwrap();
+        let decoded = decoder
+            .decode_and_eval(&TableHandle::Int(1), &bytes)
+            .unwrap();
+        assert_eq!(decoded.values()[2], Datum::Int(1));
+    }
+}
+
+#[test]
+fn generated_read_policy_preserves_query_warnings_before_forced_suppression() {
+    let zone = SessionTimeZone::utc();
+    let mut columns = vec![column(1, "a", FieldType::new(FieldTypeCode::Varchar))];
+    let mut b = column(2, "b", FieldType::new(FieldTypeCode::LongLong));
+    b.generated = Some(generated_column("a", false, &columns, &zone));
+    columns.push(b);
+    for class in 0..3 {
+        let ctx = if class == 2 {
+            StmtContext::for_dml(false, true, false)
+        } else {
+            StmtContext::for_query()
+        };
+        let context = match class {
+            0 => RowDecodeContext::for_query(&ctx),
+            1 => RowDecodeContext::for_analyze(&ctx),
+            _ => RowDecodeContext::for_ddl(&ctx),
+        };
+        let decoder = RowDecoder::new(
+            columns.clone(),
+            None,
+            Vec::new(),
+            GeneratedColumnSelection::All,
+            context,
+        )
+        .unwrap();
+        let bytes = encode(&[1], &[Datum::new_string("12x")], true, &zone);
+        let decoded = decoder
+            .decode_and_eval(&TableHandle::Int(1), &bytes)
+            .unwrap();
+        assert_eq!(decoded.values()[1], Datum::Int(12));
+        let warnings = ctx.take_warnings();
+        assert_eq!(
+            warnings.len(),
+            usize::from(class == 0),
+            "caller {class}: {warnings:?}"
+        );
+        if class == 0 {
+            assert_eq!(warnings[0].1, 1292);
+            assert_eq!(warnings[0].2, "Truncated incorrect DOUBLE value: '12x'");
+        }
+    }
+}
+
+#[test]
+fn generated_read_policy_zero_date_errors_survive_decoder_transport() {
+    let zone = SessionTimeZone::utc();
+    let mut columns = vec![column(1, "a", FieldType::new(FieldTypeCode::Varchar))];
+    let mut b = column(2, "b", FieldType::new(FieldTypeCode::Date));
+    b.generated = Some(generated_column("a", false, &columns, &zone));
+    columns.push(b);
+    let ctx = StmtContext::for_dml(false, true, false).with_date_modes(tidb_datatype::DateModes {
+        no_zero_date: true,
+        ..Default::default()
+    });
+    let decoder = RowDecoder::new(
+        columns,
+        None,
+        Vec::new(),
+        GeneratedColumnSelection::All,
+        RowDecodeContext::for_ddl(&ctx),
+    )
+    .unwrap();
+    let bytes = encode(&[1], &[Datum::new_string("0000-00-00")], true, &zone);
+    let error = decoder
+        .decode_and_eval(&TableHandle::Int(1), &bytes)
+        .expect_err("forceIgnoreTruncate cannot suppress handleZeroDatetime");
+    let error =
+        tidb_executor::DriverError::from(tidb_executor::ExecError::from(error)).to_mysql_error();
+    assert_eq!(error.code, 1292);
+    assert_eq!(error.message, "Incorrect date value: '0000-00-00'");
+}
+
+#[test]
+fn generated_read_policy_general_decoder_does_not_apply_virtual_fill_rules() {
+    let zone = SessionTimeZone::utc();
+    let mut columns = vec![column(1, "a", FieldType::new(FieldTypeCode::LongLong))];
+    let mut b = column(
+        2,
+        "b",
+        FieldType::new(FieldTypeCode::LongLong)
+            .with_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL),
+    );
+    b.generated = Some(generated_column("a", false, &columns, &zone));
+    columns.push(b);
+    let decoder = RowDecoder::new(
+        columns,
+        None,
+        Vec::new(),
+        GeneratedColumnSelection::All,
+        query_context(&zone),
+    )
+    .unwrap();
+    for (input, expected) in [
+        (Datum::Int(-1), Datum::UInt(u64::MAX)),
+        (Datum::Null, Datum::Null),
+    ] {
+        let bytes = encode(&[1], &[input], true, &zone);
+        assert_eq!(
+            decoder
+                .decode_and_eval(&TableHandle::Int(1), &bytes)
+                .unwrap()
+                .values()[1],
+            expected
+        );
+    }
 }
