@@ -139,7 +139,7 @@ struct AccountTable {
 /// One logical row of an account table: its identity and the values this
 /// writer owns.
 type LogicalRows = BTreeMap<Vec<String>, BTreeMap<&'static str, String>>;
-type AccountExpiryValues = BTreeMap<Vec<String>, (Option<i64>, Option<Time>)>;
+type AccountPolicyValues = BTreeMap<Vec<String>, Vec<(&'static str, Datum)>>;
 
 const USER_TABLE: &str = "user";
 const DB_TABLE: &str = "db";
@@ -179,19 +179,94 @@ pub fn plan_account_write<S: MetaSnapshot>(
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
     let mut changed = std::collections::BTreeSet::new();
-    let expiry_values: AccountExpiryValues = desired
+    let mut policy_values: AccountPolicyValues = desired
         .users
         .iter()
         .map(|user| {
-            (
+            let nullable_unsigned = |value: Option<i64>| -> Result<Datum, AccountWriteError> {
+                value
+                    .map(|value| {
+                        u64::try_from(value).map(Datum::UInt).map_err(|_| {
+                            AccountWriteError::Unsupported("negative account policy".into())
+                        })
+                    })
+                    .transpose()
+                    .map(|value| value.unwrap_or(Datum::Null))
+            };
+            let attributes = user
+                .user_attributes
+                .as_deref()
+                .map(|json| {
+                    tidb_datatype::BinaryJSON::parse(json)
+                        .map(Datum::Json)
+                        .map_err(|error| AccountWriteError::Unsupported(error.to_string()))
+                })
+                .transpose()?
+                .unwrap_or(Datum::Null);
+            Ok((
                 vec![user.host.clone(), user.user.clone()],
-                (user.password_lifetime, user.password_last_changed),
-            )
+                vec![
+                    (
+                        "password_lifetime",
+                        nullable_unsigned(user.password_lifetime)?,
+                    ),
+                    (
+                        "password_last_changed",
+                        user.password_last_changed.map_or(Datum::Null, Datum::Time),
+                    ),
+                    (
+                        "password_reuse_history",
+                        nullable_unsigned(user.password_reuse_history)?,
+                    ),
+                    (
+                        "password_reuse_time",
+                        nullable_unsigned(user.password_reuse_time)?,
+                    ),
+                    ("user_attributes", attributes),
+                ],
+            ))
         })
-        .collect();
+        .collect::<Result<_, AccountWriteError>>()?;
+
+    for row in &desired.password_history {
+        policy_values.insert(
+            vec![
+                row.host.clone(),
+                row.user.clone(),
+                row.timestamp.go_raw().to_string(),
+            ],
+            vec![(
+                "password",
+                row.password.as_ref().map_or(Datum::Null, |password| {
+                    Datum::Bytes(password.as_bytes().to_vec())
+                }),
+            )],
+        );
+    }
 
     for (table, desired_rows) in [
         (user_table(), user_rows(desired)),
+        (
+            AccountTable {
+                name: "password_history",
+                key_columns: &["host", "user", "password_timestamp"],
+                value_columns: &[],
+            },
+            desired
+                .password_history
+                .iter()
+                .map(|row| {
+                    (
+                        vec![
+                            row.host.clone(),
+                            row.user.clone(),
+                            row.timestamp.go_raw().to_string(),
+                        ],
+                        BTreeMap::new(),
+                    )
+                })
+                .collect(),
+        ),
         (db_table(), db_rows(desired)),
         (global_grants_table(), dynamic_rows(desired)),
         (role_edges_table(), role_edge_rows(desired)),
@@ -204,7 +279,7 @@ pub fn plan_account_write<S: MetaSnapshot>(
             catalog,
             &table,
             &desired_rows,
-            &expiry_values,
+            &policy_values,
             now,
             &mut plan,
             &mut changed,
@@ -563,6 +638,7 @@ fn stored_text(values: &RowValues, column_id: i64) -> Result<String, AccountWrit
         Some(Datum::String(string)) => string.bytes(),
         Some(Datum::Enum(member, _)) => member.name_bytes(),
         Some(Datum::Set(members, _)) => members.name_bytes(),
+        Some(Datum::Time(time)) => return Ok(time.go_raw().to_string()),
         _ => return Ok(String::new()),
     };
     std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
@@ -592,7 +668,7 @@ fn reconcile<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     account_table: &AccountTable,
     desired: &LogicalRows,
-    expiry_values: &AccountExpiryValues,
+    policy_values: &AccountPolicyValues,
     now: Time,
     plan: &mut AccountWritePlan,
     changed: &mut std::collections::BTreeSet<String>,
@@ -683,11 +759,11 @@ fn reconcile<S: MetaSnapshot>(
                         moved = true;
                     }
                 }
-                moved |= apply_expiry_values(
+                moved |= apply_policy_values(
                     table,
                     account_table,
                     identity,
-                    expiry_values,
+                    policy_values,
                     &mut row.values,
                 )?;
                 if moved {
@@ -703,13 +779,22 @@ fn reconcile<S: MetaSnapshot>(
                 })?;
                 let mut fresh = defaults_row(table, now)?;
                 for (position, id) in key_ids.iter().enumerate() {
-                    fresh.insert(*id, Datum::Bytes(identity[position].clone().into_bytes()));
+                    let value = if account_table.name == "password_history" && position == 2 {
+                        Datum::Time(Time::from_go_raw_like_go(
+                            identity[position].parse().map_err(|_| {
+                                AccountWriteError::Unsupported("invalid history timestamp".into())
+                            })?,
+                        ))
+                    } else {
+                        Datum::Bytes(identity[position].clone().into_bytes())
+                    };
+                    fresh.insert(*id, value);
                 }
                 for (column, id, _) in &value_ids {
                     let wanted = values.get(column).cloned().unwrap_or_default();
                     fresh.insert(*id, Datum::Bytes(wanted.into_bytes()));
                 }
-                apply_expiry_values(table, account_table, identity, expiry_values, &mut fresh)?;
+                apply_policy_values(table, account_table, identity, policy_values, &mut fresh)?;
                 plan.mutations.extend(insert_row(table, row_id, &fresh)?);
                 note_changed(changed, account_table, identity);
             }
@@ -724,53 +809,45 @@ fn reconcile<S: MetaSnapshot>(
     Ok(())
 }
 
-/// The expiry columns are typed rather than text: SQL NULL must not become
-/// zero, and an unchanged timestamp must retain its original epoch.
-fn apply_expiry_values(
+/// Keep policy/history values typed: preserve SQL NULL, JSON and original epochs.
+fn apply_policy_values(
     table: &TableInfo,
     account: &AccountTable,
     identity: &[String],
-    expiry_values: &AccountExpiryValues,
+    policy_values: &AccountPolicyValues,
     row: &mut RowValues,
 ) -> Result<bool, AccountWriteError> {
-    if account.name != USER_TABLE {
+    if account.name != USER_TABLE && account.name != "password_history" {
         return Ok(false);
     }
-    let (lifetime, changed) = expiry_values
+    let values = policy_values
         .get(identity)
-        .expect("desired user row belongs to the account image");
-    let values = [
-        (
-            "password_lifetime",
-            (*lifetime)
-                .map(|value| {
-                    u64::try_from(value).map(Datum::UInt).map_err(|_| {
-                        AccountWriteError::Unsupported("negative password lifetime".to_owned())
-                    })
-                })
-                .transpose()?
-                .unwrap_or(Datum::Null),
-        ),
-        (
-            "password_last_changed",
-            (*changed).map_or(Datum::Null, Datum::Time),
-        ),
-    ];
+        .expect("desired policy row belongs to the account image");
     let mut moved = false;
-    for (name, wanted) in values {
+    for &(name, ref wanted) in values {
         if indexed_columns(table).iter().any(|column| column == name) {
             return Err(AccountWriteError::Unsupported(format!(
-                "mysql.user indexes expiry column {name}"
+                "mysql.{} indexes account policy column {name}",
+                account.name
             )));
         }
         let column = match declared_column(table, name) {
             Ok(column) => column,
-            Err(_) if wanted == Datum::Null => continue,
+            Err(_) if *wanted == Datum::Null => continue,
             Err(error) => return Err(error),
         };
         let id = column.read().id;
-        if row.get(&id) != Some(&wanted) {
-            row.insert(id, wanted);
+        let stored = row.get(&id).unwrap_or(&Datum::Null);
+        let same = match (stored, wanted) {
+            (Datum::Bytes(stored), Datum::Bytes(wanted)) => stored == wanted,
+            (Datum::String(stored), Datum::Bytes(wanted)) => stored.bytes() == *wanted,
+            _ => stored == wanted,
+        };
+        if !same {
+            row.insert(
+                id,
+                crate::system_row_write::typed_value(wanted, &column.read().field_type)?,
+            );
             moved = true;
         }
     }

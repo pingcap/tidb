@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-02",
+  "date": "2026-10-03",
   "baseline": {
     "tidb_integration": "d0f1c371150530fb7b5c37730456c5d56ad11e64",
     "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 66,
-    "repaired": 20
+    "unresolved": 65,
+    "repaired": 21
   },
   "findings": [
     {
@@ -26,10 +26,10 @@
       "id": "A02",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "**P1; partially repaired:** empty accounts and stored password-expiry policy now survive load, registry publication and account writeback. NULL versus NEVER, original password-change epochs and zero timestamps are preserved. The durable image still omits mysql.global_priv, failed-login policy/state and other user attributes, so Go-authored TLS/locking policy remains incomplete. No complete privilege package or live mixed-node security acceptance is claimed.",
+      "finding": "**P1; partially repaired:** empty accounts, expiry, nullable reuse policy, password history and complete raw user attributes now survive load, registry publication and account writeback. Failed-login limits/counts and original lock epochs are preserved, including unrelated metadata and secondary credentials. mysql.global_priv/TLS policy, durable wire-login counter updates and secondary-password authentication consumers and broader cache invalidation remain incomplete. No complete privilege package or live mixed-node security acceptance is claimed.",
       "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs`; `cluster_account_write.rs`; `rust/crates/tidb-server/src/cluster_privileges.rs`; `rust/crates/tidb-session/src/privilege.rs` and `privilege/registry_ops.rs`",
       "go_owner": "`pkg/privilege/privileges/cache.go::LoadAll`, `decodeUserTableRow`, `decodeGlobalPrivTableRow`, and `privileges.go::ConnectionVerification`/`checkSSL`. Carry the complete policy image through read, publication and writeback; preserve expiry/lock epochs. Policy loss is source-confirmed; no live mixed-node authentication exploit was run.",
-      "review_basis": "Cloud expiry batch starting 05ed8bc460 against Go master 93a01d31f6 and unchanged native 19a56cc. Publication regression failed before; storage insertion regression failed with expiry writes withheld. Typed lifetime/timestamp load, shared record ownership, write/reload, original epoch and live-default login tests pass. TLS/locking/user attributes and A04 history remain open; see account-expiry-durability-repair.md."
+      "review_basis": "Cloud account history/locking batch starting cac85ecaab against fresh Go master 93a01d31f6 and native 19a56cc. Real unistore SQL loses locking policy before repair and retains limits/counts/original epoch, metadata and secondary password afterward. Typed storage preserves history microseconds and orphan rows, including nullable Password. A02 stays partial for remaining security/cache/platform contracts. See account-history-locking-repair.md."
     },
     {
       "id": "A03",
@@ -42,12 +42,12 @@
     },
     {
       "id": "A04",
-      "status": "open",
+      "status": "repaired",
       "group": "Privilege and account policy owners",
-      "finding": "**P1; reproduced:** account SQL accepts PASSWORD HISTORY and REUSE options as no-ops. Creating history=3, changing the password, then reusing the first password succeeds; `password_reuse_history` remains NULL.",
-      "rust_evidence": "`rust/crates/tidb-session/src/account.rs:145`; `expanded-ownership-probe.txt`",
-      "go_owner": "`pkg/executor/simple.go::whetherSavePasswordHistory`, `checkPasswordHistoryRule`, `checkPasswordReusePolicy` persist and check `mysql.password_history` and user policy. Move full account policy validation and storage together; parsing or SHOW output alone is insufficient.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained SQL accepts PASSWORD HISTORY 3, reuses the first password and reads NULL policy. Account option handling still ignores the history/reuse fields. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json. Cloud reproduction confirms PASSWORD HISTORY 3 still allows reuse through ALTER USER; credential-history implementation remains pending. See cloud-account-test-review.md."
+      "finding": "**Repaired in the shared account history owner:** CREATE/ALTER/SET PASSWORD persist nullable history/reuse policy and timestamped mysql.password_history rows. Protected credential reuse fails with Go error 3638 before publication; live defaults, explicit zero, count/time union, pruning, salted plugins and plugin-change resets are composed. DROP/RENAME migrate history with the account transaction. This closes the recorded accepted-as-no-op contract; no complete upstream package acceptance is claimed.",
+      "rust_evidence": "`rust/crates/tidb-session/src/privilege/password_history.rs`; `account.rs`; `account_password.rs`; `user_table.rs`; `rust/crates/tidb-exec/src/cluster_privilege_load.rs` and `cluster_account_write.rs`; `rust/crates/tidb-server/src/cluster_privileges.rs`; receipt `account-history-locking-repair.md`",
+      "go_owner": "Fresh master `pkg/executor/simple.go::whetherSavePasswordHistory`, `getUserPasswordLimit`, `passwordVerification`, `checkPasswordReusePolicy`, `deleteHistoricalData` and CREATE/ALTER/SET/DROP/RENAME callers. The shared existing Rust account image carries storage, validation and publication together; no display-only or parsing-only claim.",
+      "review_basis": "Cloud production-path history regression fails before repair and passes after: durable policy/history, rejection with unchanged credentials, multi-account rollback, rename, SET rejection, plugin reset and DROP cleanup. Session tests cover native/SHA-2/SM3, live defaults, count/time windows and Go Local-text/session-zone cutoff behavior. See account-history-locking-repair.md and account-history-locking-validation.json. Full Go suites, multi-node/TLS, platform matrix and performance remain unverified."
     },
     {
       "id": "B01",
@@ -371,7 +371,7 @@
       "finding": "Startup distinguishes only bootstrapped/not bootstrapped: any Bootstrapped version skips work. Partial bootstrap objects are refused. There is no versioned upgrade/recovery owner on this live boot path.",
       "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs:89`, `rust/crates/tidb-exec/src/cluster_privilege_load.rs:334`, `rust/crates/tidb-exec/src/mysql_bootstrap.rs:444`",
       "go_owner": "`pkg/session/session.go::runInBootstrapSession` chooses Bootstrap/Upgrade/Normal under the owner/version checks; `pkg/session/bootstrap.go` and upgrade files execute the required steps. Fresh empty-store tests do not validate upgrades.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Boot still checks already_bootstrapped rather than selecting a versioned upgrade/recovery workflow. A pre-existing bootstrap version skips publication. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Boot still checks already_bootstrapped rather than selecting a versioned upgrade/recovery workflow. A pre-existing bootstrap version skips publication. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json. Cloud history/locking batch changes policy decoding only; Bootstrap/Upgrade/Normal selection and versioned recovery remain missing. See account-history-locking-validation.json."
     },
     {
       "id": "O03",

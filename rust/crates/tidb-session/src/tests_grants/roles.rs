@@ -97,15 +97,15 @@ fn granting_a_role_adds_an_edge_and_a_show_grants_line() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u1'@'%'"],
-            ["GRANT 'r1'@'%', 'r3'@'%' TO 'u1'@'%'"],
+            ["GRANT USAGE ON *.* TO `u1`@`%`"],
+            ["GRANT `r1`@`%`, `r3`@`%` TO `u1`@`%`"],
         ]
     );
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR r1")),
         [
-            ["GRANT USAGE ON *.* TO 'r1'@'%'"],
-            ["GRANT 'r2'@'%', 'r3'@'%' TO 'r1'@'%'"],
+            ["GRANT USAGE ON *.* TO `r1`@`%`"],
+            ["GRANT `r2`@`%`, `r3`@`%` TO `r1`@`%`"],
         ]
     );
 
@@ -142,11 +142,11 @@ fn the_role_line_sits_between_the_table_and_dynamic_lines() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u1'@'%'"],
-            ["GRANT SELECT ON `db1`.* TO 'u1'@'%'"],
-            ["GRANT SELECT ON `db1`.`t1` TO 'u1'@'%'"],
-            ["GRANT 'r1'@'%' TO 'u1'@'%'"],
-            ["GRANT BACKUP_ADMIN ON *.* TO 'u1'@'%'"],
+            ["GRANT USAGE ON *.* TO `u1`@`%`"],
+            ["GRANT SELECT ON `db1`.* TO `u1`@`%`"],
+            ["GRANT SELECT ON `db1`.`t1` TO `u1`@`%`"],
+            ["GRANT `r1`@`%` TO `u1`@`%`"],
+            ["GRANT BACKUP_ADMIN ON *.* TO `u1`@`%`"],
         ]
     );
 }
@@ -317,9 +317,9 @@ fn activation_is_direct_but_inheritance_is_transitive() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'ra'@'%' TO 'u2'@'%'"],
-            ["GRANT RESTORE_ADMIN ON *.* TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `ra`@`%` TO `u2`@`%`"],
+            ["GRANT RESTORE_ADMIN ON *.* TO `u2`@`%`"],
         ]
     );
 
@@ -338,19 +338,19 @@ fn activation_is_direct_but_inheritance_is_transitive() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT SELECT ON `deepdb`.* TO 'u2'@'%'"],
-            ["GRANT 'ra'@'%' TO 'u2'@'%'"],
-            ["GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT SELECT ON `deepdb`.* TO `u2`@`%`"],
+            ["GRANT `ra`@`%` TO `u2`@`%`"],
+            ["GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* TO `u2`@`%`"],
         ]
     );
     // `SHOW GRANTS FOR <someone else>` folds in no roles at all.
     assert_eq!(
         row_text(admin.run("SHOW GRANTS FOR 'u2'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'ra'@'%' TO 'u2'@'%'"],
-            ["GRANT RESTORE_ADMIN ON *.* TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `ra`@`%` TO `u2`@`%`"],
+            ["GRANT RESTORE_ADMIN ON *.* TO `u2`@`%`"],
         ]
     );
 }
@@ -399,8 +399,8 @@ fn revoking_and_dropping_a_role_clean_up_every_edge() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u1'@'%'"],
-            ["GRANT 'r3'@'%' TO 'u1'@'%'"],
+            ["GRANT USAGE ON *.* TO `u1`@`%`"],
+            ["GRANT `r3`@`%` TO `u1`@`%`"],
         ]
     );
 }
@@ -429,14 +429,14 @@ fn a_role_can_be_hosted() {
     session.run("CREATE USER u1").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'r9'@'localhost'")),
-        [["GRANT USAGE ON *.* TO 'r9'@'localhost'"]]
+        [["GRANT USAGE ON *.* TO `r9`@`localhost`"]]
     );
     session.run("GRANT 'r9'@'localhost' TO 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u1'@'%'"],
-            ["GRANT 'r9'@'localhost' TO 'u1'@'%'"],
+            ["GRANT USAGE ON *.* TO `u1`@`%`"],
+            ["GRANT `r9`@`localhost` TO `u1`@`%`"],
         ]
     );
     session
@@ -444,7 +444,7 @@ fn a_role_can_be_hosted() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
-        [["GRANT USAGE ON *.* TO 'u1'@'%'"]]
+        [["GRANT USAGE ON *.* TO `u1`@`%`"]]
     );
 }
 
@@ -534,7 +534,7 @@ fn create_role_and_drop_role_are_privileges_of_their_own() {
     // The grant round-trips through `SHOW GRANTS` under Go's own spelling.
     assert_eq!(
         row_text(boot.run("SHOW GRANTS FOR 'rc'@'%'"))[0][0],
-        "GRANT CREATE ROLE ON *.* TO 'rc'@'%'",
+        "GRANT CREATE ROLE ON *.* TO `rc`@`%`",
     );
 
     let denied = |session: &mut Session, sql: &str| match session.run(sql) {

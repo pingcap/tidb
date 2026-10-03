@@ -169,6 +169,10 @@ fn user(name: &str, host: &str, privileges: &[&'static str]) -> LoadedUser {
         password_expired: false,
         password_lifetime: None,
         password_last_changed: None,
+        password_reuse_history: None,
+        password_reuse_time: None,
+        user_attributes: None,
+        password_locking: None,
         privileges: privileges.to_vec(),
     }
 }
@@ -610,5 +614,68 @@ fn expiry_policy_roundtrips_typed_null_never_and_original_epoch() {
             .unwrap()
             .password_last_changed,
         None
+    );
+}
+
+#[test]
+fn history_policy_attributes_and_microsecond_keys_roundtrip_without_rewrites() {
+    use tidb_exec::cluster_privilege_load::LoadedPasswordHistory;
+    let mut store = bootstrapped();
+    let mut image = store.accounts();
+    let attributes = r#"{"Password_locking":{"failed_login_attempts":3,"password_lock_time_days":-1,"failed_login_count":2,"auto_account_locked":"Y","auto_locked_last_changed":"Sat Feb  3 04:05:06 UTC 2001"},"metadata":{"email":"kept@example.test"},"additional_password":"kept"}"#;
+    let mut account = user("history", "%", &[]);
+    account.password_reuse_history = Some(3);
+    account.password_reuse_time = Some(0);
+    account.user_attributes = Some(attributes.into());
+    account.password_locking =
+        tidb_exec::account_policy::PasswordLocking::from_attributes(Some(attributes)).unwrap();
+    image.users.push(account);
+    let time = |micros| {
+        Time::from_date_checked(2001, 2, 3, 4, 5, 6, micros, TimeType::Timestamp, 6).unwrap()
+    };
+    image.password_history = vec![
+        LoadedPasswordHistory {
+            host: "%".into(),
+            user: "history".into(),
+            timestamp: time(123456),
+            password: Some("first".into()),
+        },
+        LoadedPasswordHistory {
+            host: "%".into(),
+            user: "history".into(),
+            timestamp: time(123457),
+            password: Some("second".into()),
+        },
+        LoadedPasswordHistory {
+            host: "%".into(),
+            user: "orphan".into(),
+            timestamp: time(123458),
+            password: None,
+        },
+    ];
+    let actual = store.write(&image);
+    assert_eq!(actual.password_history, image.password_history);
+    let user = actual
+        .users
+        .iter()
+        .find(|row| row.user == "history")
+        .unwrap();
+    assert_eq!(
+        (user.password_reuse_history, user.password_reuse_time),
+        (Some(3), Some(0))
+    );
+    assert_eq!(
+        user.password_locking,
+        image.users.last().unwrap().password_locking
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(user.user_attributes.as_ref().unwrap()).unwrap(),
+        serde_json::from_str::<serde_json::Value>(attributes).unwrap()
+    );
+    let catalog = store.catalog();
+    assert!(
+        plan_account_write(&mut store, &catalog, &actual, timestamp())
+            .unwrap()
+            .is_empty()
     );
 }

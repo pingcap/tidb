@@ -389,6 +389,180 @@ fn cluster_account_expiry_survives_sql_writes_and_password_changes() {
 }
 
 #[test]
+fn cluster_account_history_rejects_reuse_without_changing_credentials() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(903)).unwrap();
+    session
+        .execute_write("CREATE USER 'history_probe'@'%' IDENTIFIED BY 'first' PASSWORD HISTORY 3")
+        .unwrap();
+    session
+        .execute_write("ALTER USER 'history_probe'@'%' IDENTIFIED BY 'second'")
+        .unwrap();
+    let before = displayed(rows(
+        &mut session,
+        "SELECT authentication_string FROM mysql.user WHERE User='history_probe'",
+    ));
+    let error = session
+        .execute_write("ALTER USER 'history_probe'@'%' IDENTIFIED BY 'first'")
+        .unwrap_err();
+    assert_eq!(error.code, 3638);
+    assert_eq!(error.message, "Cannot use these credentials for 'history_probe@%' because they contradict the password history policy.");
+    session
+        .execute_write("CREATE USER 'history_other'@'%' IDENTIFIED BY 'old' PASSWORD HISTORY 2")
+        .unwrap();
+    let other_before = displayed(rows(
+        &mut session,
+        "SELECT authentication_string FROM mysql.user WHERE User='history_other'",
+    ));
+    assert_eq!(session.execute_write("ALTER USER 'history_other'@'%' IDENTIFIED BY 'new', 'history_probe'@'%' IDENTIFIED BY 'first'").unwrap_err().code, 3638);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT authentication_string FROM mysql.user WHERE User='history_other'"
+        )),
+        other_before
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_other'"
+        )),
+        [["1"]]
+    );
+    // Go ALL includes static role privileges, preserved by the same account image.
+    session
+        .execute_write("GRANT ALL ON *.* TO 'history_other'@'%'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT Create_role_priv, Drop_role_priv FROM mysql.user WHERE User='history_other'"
+        )),
+        [["Y", "Y"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW GRANTS FOR 'history_other'@'%'")),
+        [["GRANT ALL PRIVILEGES ON *.* TO `history_other`@`%`"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT authentication_string FROM mysql.user WHERE User='history_probe'"
+        )),
+        before
+    );
+    assert_eq!(displayed(rows(&mut session, "SELECT Password_reuse_history, Password_reuse_time FROM mysql.user WHERE User='history_probe'")), [["3", "NULL"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_probe'"
+        )),
+        [["2"]]
+    );
+
+    session
+        .execute_write("RENAME USER 'history_probe'@'%' TO 'history_renamed'@'%'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_probe'"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_renamed'"
+        )),
+        [["2"]]
+    );
+    assert_eq!(
+        session
+            .execute_write("SET PASSWORD FOR 'history_renamed'@'%' = 'first'")
+            .unwrap_err()
+            .code,
+        3638
+    );
+    session
+        .execute_write(
+            "ALTER USER 'history_renamed'@'%' IDENTIFIED WITH caching_sha2_password BY 'first'",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_renamed'"
+        )),
+        [["1"]]
+    );
+    session
+        .execute_write("DROP USER 'history_renamed'@'%'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.password_history WHERE User='history_renamed'"
+        )),
+        [["0"]]
+    );
+}
+
+#[test]
+fn cluster_account_locking_policy_survives_unrelated_account_writes() {
+    let (stack, users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(904)).unwrap();
+    session.execute_write("CREATE USER 'locking_probe'@'%' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 7 COMMENT 'keep'").unwrap();
+    session
+        .execute_write("ALTER USER 'locking_probe'@'%' PASSWORD EXPIRE NEVER")
+        .unwrap();
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT User_attributes FROM mysql.user WHERE User='locking_probe'",
+    ));
+    let value: serde_json::Value = serde_json::from_str(&attributes[0][0]).unwrap();
+    assert_eq!(value["Password_locking"]["failed_login_attempts"], 3);
+    assert_eq!(value["Password_locking"]["password_lock_time_days"], 7);
+    assert_eq!(value["metadata"]["comment"], "keep");
+    session.execute_write(r#"UPDATE mysql.user SET User_attributes='{"Password_locking":{"failed_login_attempts":3,"password_lock_time_days":7,"failed_login_count":2,"auto_account_locked":"Y","auto_locked_last_changed":"Sat Feb  3 04:05:06 UTC 2001"},"metadata":{"comment":"keep"},"additional_password":"preserve"}' WHERE User='locking_probe'"#).unwrap();
+    session
+        .execute_write("ALTER USER 'locking_probe'@'%' PASSWORD EXPIRE DEFAULT")
+        .unwrap();
+    let stored = users
+        .accounts()
+        .password_locking("locking_probe", "%")
+        .unwrap();
+    assert_eq!(stored.failed_login_count, 2);
+    assert!(stored.auto_account_locked);
+    assert_eq!(stored.auto_locked_last_changed, 981_173_106);
+    session
+        .execute_write("ALTER USER 'locking_probe'@'%' ACCOUNT UNLOCK")
+        .unwrap();
+    let reset = users
+        .accounts()
+        .password_locking("locking_probe", "%")
+        .unwrap();
+    assert_eq!(reset.failed_login_count, 0);
+    assert!(!reset.auto_account_locked);
+    assert!(reset.auto_locked_last_changed > stored.auto_locked_last_changed);
+    session
+        .execute_write(
+            "ALTER USER 'locking_probe'@'%' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0",
+        )
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(
+        &displayed(rows(
+            &mut session,
+            "SELECT User_attributes FROM mysql.user WHERE User='locking_probe'",
+        ))[0][0],
+    )
+    .unwrap();
+    assert!(value.get("Password_locking").is_none());
+    assert_eq!(value["metadata"]["comment"], "keep");
+    assert_eq!(value["additional_password"], "preserve");
+}
+
+#[test]
 fn cluster_account_drop_persists_through_its_own_transaction() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(901)).unwrap();

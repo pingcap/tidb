@@ -749,6 +749,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
         ("sys", "utf8mb4"),
     ]
     .iter()
+    .filter(|(display, _)| visibility.allows(display, "", ANY_PRIV))
     .map(|(display, charset)| {
         vec![
             text(CATALOG),

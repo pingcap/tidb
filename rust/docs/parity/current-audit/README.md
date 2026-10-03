@@ -1,5 +1,13 @@
 # Structural parity audit: current evidence
 
+The [account history and locking-image repair](account-history-locking-repair.md)
+closes A04 and preserves locking limits/counts/epochs and raw attributes through
+account writes. **65 unresolved (55 open, ten partial), 21 repaired, 86 tracked.**
+A02 remains partial for TLS/global_priv and durable wire-login state. Fresh master
+is unchanged at 93a01d31f6; concurrent schema-acknowledgement commits were preserved.
+
+The entries below retain their historical checkpoint counts.
+
 The [expiry durability repair](account-expiry-durability-repair.md) preserves
 typed lifetime/timestamp values through loading, publication and writeback. A02
 remains partial; the 66-unresolved count is unchanged.
@@ -33,7 +41,7 @@ and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
 this does not accept the complete root/discovery/TSO packages or close P03.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 86 tracked ownership/contract findings (66 unresolved, 20 repaired), review candidates and the
+consolidates 86 tracked ownership/contract findings (65 unresolved, 21 repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.

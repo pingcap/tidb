@@ -70,6 +70,7 @@ use std::sync::{Arc, Mutex};
 
 mod export;
 mod password;
+mod password_history;
 mod password_lock;
 mod privs;
 mod registry_ops;
@@ -138,6 +139,9 @@ struct UserRecord {
     /// `IsAccountAutoLockEnabled`), an all-zero policy can never carry a
     /// nonzero counter, so collapsing it to `None` loses nothing.
     password_locking: Option<PasswordLocking>,
+    user_attributes: Option<String>,
+    password_reuse_history: Option<i64>,
+    password_reuse_time: Option<i64>,
     /// Go's `mysql.user.Password_expired` ENUM('N','Y'): the account must
     /// change its password before it can do anything. `PASSWORD EXPIRE` sets
     /// it; storing a new password clears it (captured both ways).
@@ -177,6 +181,7 @@ struct ColumnPrivRecord {
 #[derive(Clone)]
 pub struct PrivilegeRegistry {
     users: Arc<Mutex<HashMap<(String, String), UserRecord>>>,
+    password_history: Arc<Mutex<Vec<tidb_exec::cluster_privilege_load::LoadedPasswordHistory>>>,
     /// Go `mysql.DB` rows: one bitmask per `(user, host, database)`, keyed
     /// by the database's exact written name (matching Go's case-sensitive
     /// storage of the DB column).
@@ -278,6 +283,9 @@ impl PrivilegeRegistry {
                         is_role: false,
                         plugin: tidb_mysql::consts::AuthNativePassword.to_owned(),
                         password_locking: None,
+                        user_attributes: None,
+                        password_reuse_history: None,
+                        password_reuse_time: None,
                         password_expired: false,
                         password_lifetime: None,
                         password_last_changed: Some(password_change_timestamp(bootstrapped_at)),
@@ -288,6 +296,7 @@ impl PrivilegeRegistry {
             .collect();
         Self {
             users: Arc::new(Mutex::new(users)),
+            password_history: Arc::new(Mutex::new(Vec::new())),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
             column_privs: Arc::new(Mutex::new(Vec::new())),

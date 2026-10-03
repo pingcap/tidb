@@ -201,6 +201,8 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
         registry.set_default_roles(&owner, &roles);
     }
 
+    registry.restore_password_history(loaded.password_history.clone());
+
     LoadedRegistry {
         registry,
         account_count,
@@ -250,6 +252,7 @@ pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
 pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivileges {
     let exported = registry.export();
     ClusterPrivileges {
+        password_history: exported.password_history,
         users: exported
             .users
             .into_iter()
@@ -268,6 +271,13 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
                 password_last_changed: user
                     .password_last_changed
                     .map(tidb_datatype::Time::from_go_raw_like_go),
+                password_reuse_history: user.password_reuse_history,
+                password_reuse_time: user.password_reuse_time,
+                password_locking: tidb_exec::account_policy::PasswordLocking::from_attributes(
+                    user.user_attributes.as_deref(),
+                )
+                .expect("registry produces valid policy"),
+                user_attributes: user.user_attributes,
                 privileges: user.privileges,
             })
             .collect(),
@@ -376,6 +386,14 @@ fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
     };
     registry.create_user_with_plugin(&user.user, &user.host, &user.authentication_string, plugin);
     registry.set_locked(&user.user, &user.host, user.account_locked);
+    registry.restore_account_policy(
+        &user.user,
+        &user.host,
+        user.password_reuse_history,
+        user.password_reuse_time,
+        user.user_attributes.clone(),
+        user.password_locking,
+    );
     registry.restore_password_expiry(
         &user.user,
         &user.host,
@@ -722,6 +740,10 @@ mod tests {
             password_expired: false,
             password_lifetime: None,
             password_last_changed: None,
+            password_reuse_history: None,
+            password_reuse_time: None,
+            user_attributes: None,
+            password_locking: None,
             privileges: privs,
         }
     }

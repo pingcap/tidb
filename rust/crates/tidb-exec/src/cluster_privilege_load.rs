@@ -124,6 +124,9 @@ const USER_COLUMNS: &[&str] = &[
     "password_expired",
     "password_lifetime",
     "password_last_changed",
+    "password_reuse_history",
+    "password_reuse_time",
+    "user_attributes",
     "select_priv",
     "insert_priv",
     "update_priv",
@@ -205,6 +208,14 @@ pub struct LoadedUser {
     pub password_lifetime: Option<i64>,
     /// Stored UTC TIMESTAMP, retained without replacing its epoch on reload.
     pub password_last_changed: Option<tidb_datatype::Time>,
+    /// NULL selects the live global count/time policy; zero disables it.
+    pub password_reuse_history: Option<i64>,
+    /// Nullable password reuse interval in days.
+    pub password_reuse_time: Option<i64>,
+    /// Decoded locking cache; raw JSON is retained separately for writeback.
+    pub password_locking: Option<crate::account_policy::PasswordLocking>,
+    /// Original user attributes, including locking state and unrelated metadata.
+    pub user_attributes: Option<String>,
     /// Printed names of the global privileges whose column reads `Y`.
     pub privileges: Vec<&'static str>,
 }
@@ -293,9 +304,24 @@ pub struct LoadedDefaultRole {
     pub role_user: String,
 }
 
+/// One durable credential-history row, independent of current account existence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedPasswordHistory {
+    /// Account host.
+    pub host: String,
+    /// Account username.
+    pub user: String,
+    /// Stored UTC TIMESTAMP(6), part of the row identity.
+    pub timestamp: tidb_datatype::Time,
+    /// Stored authentication string.
+    pub password: Option<String>,
+}
+
 /// Everything one snapshot of `mysql.*` says about accounts and grants.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClusterPrivileges {
+    /// mysql.password_history, including orphan rows until explicitly removed.
+    pub password_history: Vec<LoadedPasswordHistory>,
     /// `mysql.user`, in stored key order.
     pub users: Vec<LoadedUser>,
     /// `mysql.db`, in stored key order.
@@ -439,6 +465,26 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     let timezone = tidb_datatype::SessionTimeZone::utc();
     for (key, value) in scan_system_table(snapshot, &users)? {
         let row = SystemRow::parse_in_timezone(&users, &key, &value, Some(&timezone))?;
+        let user_attributes = if row.has_column("user_attributes") {
+            match row.datum("user_attributes")? {
+                Some(tidb_datatype::Datum::Json(json)) => Some(json.to_string()),
+                None => None,
+                Some(value) => {
+                    return Err(SystemTableError::Decode {
+                        name: "mysql.user".into(),
+                        detail: format!("user_attributes is not JSON: {value:?}"),
+                    })
+                }
+            }
+        } else {
+            None
+        };
+        let password_locking =
+            crate::account_policy::PasswordLocking::from_attributes(user_attributes.as_deref())
+                .map_err(|detail| SystemTableError::Decode {
+                    name: "mysql.user".into(),
+                    detail,
+                })?;
         loaded.users.push(LoadedUser {
             host: row.text("host")?.unwrap_or_default(),
             user: row.text("user")?.unwrap_or_default(),
@@ -465,8 +511,43 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
             } else {
                 None
             },
+            password_reuse_history: if row.has_column("password_reuse_history") {
+                row.i64("password_reuse_history")?
+            } else {
+                None
+            },
+            password_reuse_time: if row.has_column("password_reuse_time") {
+                row.i64("password_reuse_time")?
+            } else {
+                None
+            },
+            user_attributes,
+            password_locking,
             privileges: granted_names(&row, USER_PRIVILEGE_COLUMNS)?,
         });
+    }
+
+    if let Ok(view) = SystemTableView::locate(
+        catalog,
+        "password_history",
+        &["host", "user", "password_timestamp", "password"],
+    ) {
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))?;
+            let Some(tidb_datatype::Datum::Time(timestamp)) = row.datum("password_timestamp")?
+            else {
+                return Err(SystemTableError::Decode {
+                    name: "mysql.password_history".into(),
+                    detail: "password_timestamp is not a TIMESTAMP".into(),
+                });
+            };
+            loaded.password_history.push(LoadedPasswordHistory {
+                host: row.text("host")?.unwrap_or_default(),
+                user: row.text("user")?.unwrap_or_default(),
+                timestamp: *timestamp,
+                password: row.text("password")?,
+            });
+        }
     }
 
     if let Ok(view) = SystemTableView::locate(catalog, "db", DB_COLUMNS) {

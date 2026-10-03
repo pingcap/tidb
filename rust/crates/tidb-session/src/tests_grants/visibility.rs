@@ -150,13 +150,8 @@ fn information_schema_is_visible_without_any_grant() {
     );
 }
 
-/// A GLOBAL privilege OUTSIDE `globalDBVisible` shows nothing: `PROCESS` on
-/// `*.*` is not schema visibility.
-///
-/// Measured in Go with `GRANT USAGE ON *.* TO 'u3'@'%'` (which stores no
-/// bit): `SHOW DATABASES` = `INFORMATION_SCHEMA` and `SHOW TABLES IN d1` is
-/// 1044. `PROCESS` behaves the same way because it is absent from
-/// `globalDBVisible`.
+/// PROCESS exposes metrics_schema through Go DBIsVisible's explicit exception,
+/// while leaving unrelated application schemas hidden.
 #[test]
 fn a_server_admin_privilege_is_not_schema_visibility() {
     let (privs, mut boot) = world();
@@ -166,7 +161,7 @@ fn a_server_admin_privilege_is_not_schema_visibility() {
 
     assert_eq!(
         names(&mut u3, "SHOW DATABASES"),
-        vec!["INFORMATION_SCHEMA".to_owned()],
+        vec!["INFORMATION_SCHEMA".to_owned(), "METRICS_SCHEMA".to_owned()],
     );
     assert_eq!(denial(&mut u3, "SHOW TABLES IN d1"), db_denied("u3", "d1"));
 
@@ -176,9 +171,12 @@ fn a_server_admin_privilege_is_not_schema_visibility() {
         names(&mut u3, "SHOW DATABASES"),
         vec![
             "INFORMATION_SCHEMA".to_owned(),
+            "METRICS_SCHEMA".to_owned(),
+            "PERFORMANCE_SCHEMA".to_owned(),
             "d1".to_owned(),
             "d2".to_owned(),
             "mysql".to_owned(),
+            "sys".to_owned(),
             "test".to_owned(),
         ],
     );

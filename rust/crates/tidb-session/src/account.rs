@@ -90,6 +90,9 @@ pub(crate) struct PasswordOrLockOptions {
     password_lock_time_days: Option<i64>,
     /// `PASSWORD EXPIRE [DEFAULT | NEVER | INTERVAL n DAY]`.
     pub(crate) expire: Option<privilege::PasswordExpireSetting>,
+    /// Outer None means omitted; inner None means DEFAULT.
+    pub(crate) history: Option<Option<i64>>,
+    pub(crate) reuse_days: Option<Option<i64>>,
 }
 
 /// Go clamps `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` to
@@ -142,16 +145,16 @@ impl PasswordOrLockOptions {
                     }
                     loaded.expire = Some(privilege::PasswordExpireSetting::Interval(*days));
                 }
-                // go stores these in mysql.user's password_history /
-                // password_reuse_interval / password_require_current
-                // columns; nothing on the statement wire reads them back,
-                // and the user-existence answer (1396 for a missing user)
-                // must still fire, so they parse through as accepted no-ops.
-                Option_::History(_)
-                | Option_::HistoryDefault
-                | Option_::ReuseInterval(_)
-                | Option_::ReuseDefault
-                | Option_::RequireCurrentDefault => {}
+                Option_::History(count) => {
+                    loaded.history = Some(Some((*count).min(u16::MAX as i64)))
+                }
+                Option_::HistoryDefault => loaded.history = Some(None),
+                Option_::ReuseInterval(days) => {
+                    loaded.reuse_days = Some(Some((*days).min(u16::MAX as i64)))
+                }
+                Option_::ReuseDefault => loaded.reuse_days = Some(None),
+                // This grammar exposes only DEFAULT, which is the source default.
+                Option_::RequireCurrentDefault => {}
             }
         }
         Ok(loaded)
@@ -164,6 +167,8 @@ impl PasswordOrLockOptions {
             && self.failed_login_attempts.is_none()
             && self.password_lock_time_days.is_none()
             && self.expire.is_none()
+            && self.history.is_none()
+            && self.reuse_days.is_none()
     }
 
     /// Writes this statement's options onto one existing account row.
@@ -175,6 +180,7 @@ impl PasswordOrLockOptions {
     /// `ALTER USER u5 ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3
     /// PASSWORD_LOCK_TIME 6` -> policy 3/6 with count 0.
     pub(crate) fn apply(&self, registry: &privilege::PrivilegeRegistry, user: &str, host: &str) {
+        registry.set_password_reuse_policy(user, host, self.history, self.reuse_days);
         if self.failed_login_attempts.is_some() || self.password_lock_time_days.is_some() {
             registry.set_password_locking_options(
                 user,
@@ -249,6 +255,53 @@ pub(crate) fn ssl_type_of(
 }
 
 impl Session {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn maintain_password_history(
+        &self,
+        registry: &privilege::PrivilegeRegistry,
+        user: &str,
+        host: &str,
+        encoded: &str,
+        plaintext: Option<&str>,
+        plugin: &str,
+        options: &PasswordOrLockOptions,
+        creating: bool,
+        plugin_changed: bool,
+    ) -> Result<(), DriverError> {
+        let (count, days) = registry.password_reuse_policy(user, host);
+        let global = |name| {
+            self.vars
+                .get_global(name)
+                .map_err(crate::variables::var_error)?
+                .parse::<i64>()
+                .map_err(|error| {
+                    DriverError::Exec(tidb_executor::ExecError::internal(format!(
+                        "invalid {name}: {error}"
+                    )))
+                })
+        };
+        let count = options
+            .history
+            .unwrap_or(count)
+            .map_or_else(|| global("password_history"), Ok)?;
+        let days = options
+            .reuse_days
+            .unwrap_or(days)
+            .map_or_else(|| global("password_reuse_interval"), Ok)?;
+        registry.record_password_history(
+            user,
+            host,
+            encoded,
+            plaintext,
+            plugin,
+            count,
+            days,
+            creating,
+            plugin_changed,
+            &self.vars.session_time_zone(),
+        )
+    }
+
     pub(crate) fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
         let globals = SessionPasswordGlobals(&self.vars);
         let enabled = globals
@@ -480,10 +533,10 @@ impl Session {
         let user_attributes_json = match comment_or_attribute {
             None => "{}".to_owned(),
             Some(tidb_ast::CreateUserCommentOrAttribute::Comment(text)) => {
-                format!("{{\"metadata\": {{\"comment\": \"{text}\"}}}}")
+                serde_json::json!({"metadata": {"comment": text}}).to_string()
             }
             Some(tidb_ast::CreateUserCommentOrAttribute::Attribute(json)) => {
-                format!("{{\"metadata\": {json}}}")
+                serde_json::json!({"metadata": serde_json::from_str::<serde_json::Value>(json).map_err(|error| DriverError::unsupported(error.to_string()))?}).to_string()
             }
         };
         // Go validates every statement-level option BEFORE writing any row,
@@ -551,7 +604,24 @@ impl Session {
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
             if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
+                registry.merge_user_attributes(
+                    user,
+                    host,
+                    serde_json::from_str(&user_attributes_json).expect("validated metadata"),
+                    false,
+                );
                 options.apply(&registry, user, host);
+                self.maintain_password_history(
+                    &registry,
+                    user,
+                    host,
+                    &auth_string,
+                    None,
+                    &plugin,
+                    &options,
+                    true,
+                    false,
+                )?;
                 registry.set_ssl_type(user, host, ssl_type);
                 // The `mysql.user` row Go's INSERT writes for this account.
                 // Column values come from the statement's own clauses, the
@@ -573,6 +643,7 @@ impl Session {
                     password_expired,
                     password_lifetime,
                 )?;
+                self.mirror_account_policy_and_history(&registry, &user, &host)?;
             } else if !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
@@ -612,6 +683,7 @@ impl Session {
         for spec in roles {
             let (role, host) = role_identity(spec);
             if registry.create_role(&role, &host) {
+                registry.merge_user_attributes(&role, &host, serde_json::json!({}), false);
                 // The same INSERT as CREATE USER's, with `IsCreateRole`'s
                 // overrides: `Account_locked='Y'`, `Password_expired='Y'`,
                 // empty password, `'{}'` attributes.
@@ -625,6 +697,7 @@ impl Session {
                     true,
                     None,
                 )?;
+                self.mirror_account_policy_and_history(&registry, &role, &host)?;
             } else if !if_not_exists {
                 return Err(DriverError::CannotUserRole {
                     operation: "CREATE ROLE",
@@ -1048,6 +1121,7 @@ impl Session {
             // Go `renameUserHostInSystemTable` on `mysql.user`: the row moves
             // with the account, authentication string included.
             self.mirror_rename_user_row(&old_user, &old_host, &new_user, &new_host)?;
+            self.mirror_rename_password_history(&old_user, &old_host, &new_user, &new_host)?;
         }
         Ok(StmtOutput::Affected(0))
     }
@@ -1125,6 +1199,7 @@ impl Session {
                 // row in the same transaction; a target that never existed
                 // (reachable only under IF EXISTS) deletes nothing.
                 self.mirror_drop_user_row(&spec.user, &spec.host)?;
+                self.mirror_delete_password_history(&spec.user, &spec.host)?;
             }
         }
         // A dropped role stops being active in THIS session too; the edge it
@@ -1645,15 +1720,9 @@ impl Session {
         let mut dynamic = Vec::new();
         for privilege in privileges {
             if privilege.name == "ALL" {
-                // go master carries CREATE ROLE/DROP ROLE as DYNAMIC
-                // privileges (`mysql.global_grants`), and `ALL PRIVILEGES`
-                // expands to the STATIC set only — `GRANT ALL ON *.*` as
-                // root succeeds without touching them. The loader mirrors
-                // that by leaving those two columns out of the registry
-                // mask, so the ALL expansion must not demand them.
-                mask |= privilege::all_privs_mask()
-                    & !privilege::GlobalPriv::CreateRole.bit()
-                    & !privilege::GlobalPriv::DropRole.bit();
+                // Go composeGlobalPrivUpdate expands mysql.AllGlobalPrivs,
+                // including the static CREATE ROLE and DROP ROLE columns.
+                mask |= privilege::all_privs_mask();
                 continue;
             }
             if !privilege.columns.is_empty() {

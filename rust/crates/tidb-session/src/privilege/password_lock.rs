@@ -22,48 +22,7 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-/// Go's `privileges.PasswordLocking`: one account's
-/// `user_attributes -> '$.Password_locking'` object, policy and counter
-/// together, because Go rewrites them as one JSON value on every update.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PasswordLocking {
-    /// `FAILED_LOGIN_ATTEMPTS n`: consecutive wrong passwords that lock the
-    /// account. Zero disables tracking.
-    pub failed_login_attempts: i64,
-    /// `PASSWORD_LOCK_TIME n` in days; `-1` is `UNBOUNDED` (captured), and
-    /// zero disables tracking.
-    pub password_lock_time_days: i64,
-    /// Consecutive wrong passwords seen so far, reset to zero by a
-    /// successful login or `ACCOUNT UNLOCK`.
-    pub failed_login_count: i64,
-    /// Whether the counter reached the limit and auto-locked the account.
-    pub auto_account_locked: bool,
-    /// When the auto-lock happened, in Unix seconds; `0` when it never has.
-    pub auto_locked_last_changed: i64,
-}
-
-impl PasswordLocking {
-    /// Go's `UserPrivileges.IsAccountAutoLockEnabled`: MySQL tracks failed
-    /// logins only when BOTH options are nonzero
-    /// (<https://dev.mysql.com/doc/refman/8.0/en/create-user.html>), so an
-    /// account leaving either at zero authenticates with no counter at all --
-    /// captured, `FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 0` reports the
-    /// plain 1045 and writes no counter.
-    #[must_use]
-    pub const fn tracking_enabled(&self) -> bool {
-        self.failed_login_attempts != 0 && self.password_lock_time_days != 0
-    }
-
-    /// The lock length Go interpolates into the 3955 message: `"unlimited"`
-    /// for `PASSWORD_LOCK_TIME UNBOUNDED`, else the decimal day count.
-    pub(super) fn lock_days_text(&self) -> String {
-        if self.password_lock_time_days == -1 {
-            "unlimited".to_owned()
-        } else {
-            self.password_lock_time_days.to_string()
-        }
-    }
-}
+pub use tidb_exec::account_policy::PasswordLocking;
 
 /// Go's `mysql.user` password-expiry columns for one account, as
 /// `SHOW CREATE USER` and the login path read them.
@@ -174,10 +133,13 @@ impl Clock {
     /// Seconds since the Unix epoch, as Go's `time.Now().Unix()` reports.
     #[must_use]
     pub fn now_unix(&self) -> i64 {
-        let system = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0));
-        system.saturating_add(self.offset_seconds.load(Ordering::Relaxed))
+        self.now_precise().timestamp()
+    }
+
+    /// One clock read for TIMESTAMP(6) history keys and their reuse cutoff.
+    pub(super) fn now_precise(&self) -> chrono::DateTime<chrono::Utc> {
+        let instant: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        instant + chrono::Duration::seconds(self.offset_seconds.load(Ordering::Relaxed))
     }
 
     /// Moves this clock -- and every clone of it -- forward by `seconds`.

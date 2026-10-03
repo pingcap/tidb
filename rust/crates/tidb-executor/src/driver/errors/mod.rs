@@ -1187,6 +1187,19 @@ impl DriverError {
                 }
             ),
         ),
+        DriverError::PasswordInHistory { user, host } => {
+            let message = tidb_error::tidb::errname::ErrExistsInHistoryPassword;
+            let error = tidb_error::mysql::SqlError::new_f(
+                tidb_error::tidb::errcode::ErrExistsInHistoryPassword,
+                message.raw,
+                message.redact_arg_pos,
+                &[
+                    tidb_error::mysql::FormatArg::from(user.as_str()),
+                    tidb_error::mysql::FormatArg::from(host.as_str()),
+                ],
+            );
+            MysqlError::new(error.code, error.message)
+        },
         // Go `ErrPasswordNoMatch` (1133).
         DriverError::SetPasswordNoMatchingRow => MysqlError::new(
             1133,

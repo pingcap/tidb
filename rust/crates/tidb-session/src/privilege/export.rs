@@ -53,6 +53,12 @@ pub struct ExportedUser {
     pub password_lifetime: Option<i64>,
     /// Packed Go temporal representation, retaining NULL and the original epoch.
     pub password_last_changed: Option<u64>,
+    /// Nullable count and time limits; NULL selects the live global default.
+    pub password_reuse_history: Option<i64>,
+    /// Nullable time limit in days.
+    pub password_reuse_time: Option<i64>,
+    /// Complete durable attributes, including current locking policy.
+    pub user_attributes: Option<String>,
     /// Printed names of the global privileges this account holds.
     pub privileges: Vec<&'static str>,
 }
@@ -92,6 +98,8 @@ pub struct ExportedDynamicGrant {
 /// This registry's whole account table, as rows.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RegistryExport {
+    /// Complete credential history, including rows without current users.
+    pub password_history: Vec<tidb_exec::cluster_privilege_load::LoadedPasswordHistory>,
     /// `mysql.user`.
     pub users: Vec<ExportedUser>,
     /// `mysql.db`.

@@ -39,9 +39,9 @@ fn only_the_four_column_privileges_accept_a_column_list() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u`@`%`".to_owned()],
             vec![
-                "GRANT SELECT(a), INSERT(a), UPDATE(a), REFERENCES(a) ON `test`.`t` TO 'u'@'%'"
+                "GRANT SELECT(a), INSERT(a), UPDATE(a), REFERENCES(a) ON `test`.`t` TO `u`@`%`"
                     .to_owned()
             ],
         ]
@@ -53,7 +53,7 @@ fn only_the_four_column_privileges_accept_a_column_list() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u'@'%'"))[1],
         vec![
-            "GRANT SELECT(a), INSERT(a), UPDATE(a), REFERENCES(a) ON `test`.`t` TO 'u'@'%'"
+            "GRANT SELECT(a), INSERT(a), UPDATE(a), REFERENCES(a) ON `test`.`t` TO `u`@`%`"
                 .to_owned()
         ]
     );
@@ -77,7 +77,7 @@ fn column_grants_merge_into_one_line_in_row_order() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u'@'%'"))[1],
-        vec!["GRANT SELECT(a), INSERT(a, b) ON `test`.`t` TO 'u'@'%'".to_owned()]
+        vec!["GRANT SELECT(a), INSERT(a, b) ON `test`.`t` TO `u`@`%`".to_owned()]
     );
 
     session.run("CREATE USER 'u2'@'%'").unwrap();
@@ -92,7 +92,7 @@ fn column_grants_merge_into_one_line_in_row_order() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'"))[1],
-        vec!["GRANT SELECT(b, a, c) ON `test`.`t` TO 'u2'@'%'".to_owned()]
+        vec!["GRANT SELECT(b, a, c) ON `test`.`t` TO `u2`@`%`".to_owned()]
     );
 
     // Revoking ONE column drops just that column's row; the rest keep
@@ -102,7 +102,7 @@ fn column_grants_merge_into_one_line_in_row_order() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'"))[1],
-        vec!["GRANT SELECT(a, c) ON `test`.`t` TO 'u2'@'%'".to_owned()]
+        vec!["GRANT SELECT(a, c) ON `test`.`t` TO `u2`@`%`".to_owned()]
     );
 
     // The TABLE form of the same REVOKE leaves the column rows alone.
@@ -111,7 +111,7 @@ fn column_grants_merge_into_one_line_in_row_order() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'"))[1],
-        vec!["GRANT SELECT(a, c) ON `test`.`t` TO 'u2'@'%'".to_owned()]
+        vec!["GRANT SELECT(a, c) ON `test`.`t` TO `u2`@`%`".to_owned()]
     );
 
     // Column names resolve against the table, so the table's own spelling
@@ -122,7 +122,7 @@ fn column_grants_merge_into_one_line_in_row_order() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u5'@'%'"))[1],
-        vec!["GRANT SELECT(a) ON `test`.`t` TO 'u5'@'%'".to_owned()]
+        vec!["GRANT SELECT(a) ON `test`.`t` TO `u5`@`%`".to_owned()]
     );
 }
 
@@ -145,9 +145,9 @@ fn table_and_column_grants_on_one_table_print_as_two_lines() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u4'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u4'@'%'".to_owned()],
-            vec!["GRANT SELECT,UPDATE ON `test`.`t` TO 'u4'@'%'".to_owned()],
-            vec!["GRANT INSERT(a) ON `test`.`t` TO 'u4'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u4`@`%`".to_owned()],
+            vec!["GRANT SELECT,UPDATE ON `test`.`t` TO `u4`@`%`".to_owned()],
+            vec!["GRANT INSERT(a) ON `test`.`t` TO `u4`@`%`".to_owned()],
         ]
     );
 
@@ -158,9 +158,9 @@ fn table_and_column_grants_on_one_table_print_as_two_lines() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u4'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u4'@'%'".to_owned()],
-            vec!["GRANT ALL PRIVILEGES ON `test`.`t` TO 'u4'@'%'".to_owned()],
-            vec!["GRANT SELECT(c), INSERT(a) ON `test`.`t` TO 'u4'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u4`@`%`".to_owned()],
+            vec!["GRANT ALL PRIVILEGES ON `test`.`t` TO `u4`@`%`".to_owned()],
+            vec!["GRANT SELECT(c), INSERT(a) ON `test`.`t` TO `u4`@`%`".to_owned()],
         ]
     );
 
@@ -171,9 +171,9 @@ fn table_and_column_grants_on_one_table_print_as_two_lines() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u5'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u5'@'%'".to_owned()],
-            vec!["GRANT USAGE ON `test`.`t` TO 'u5'@'%' WITH GRANT OPTION".to_owned()],
-            vec!["GRANT SELECT(a) ON `test`.`t` TO 'u5'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u5`@`%`".to_owned()],
+            vec!["GRANT USAGE ON `test`.`t` TO `u5`@`%` WITH GRANT OPTION".to_owned()],
+            vec!["GRANT SELECT(a) ON `test`.`t` TO `u5`@`%`".to_owned()],
         ]
     );
 }
@@ -196,7 +196,7 @@ fn a_column_that_does_not_exist_is_refused_at_grant_time() {
     ));
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u3'@'%'")),
-        [vec!["GRANT USAGE ON *.* TO 'u3'@'%'".to_owned()]]
+        [vec!["GRANT USAGE ON *.* TO `u3`@`%`".to_owned()]]
     );
 
     assert!(matches!(
@@ -248,21 +248,21 @@ fn an_active_role_contributes_its_column_grants() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u3'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u3'@'%'".to_owned()],
-            vec!["GRANT 'r1'@'%' TO 'u3'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u3`@`%`".to_owned()],
+            vec!["GRANT `r1`@`%` TO `u3`@`%`".to_owned()],
         ]
     );
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u3'@'%' USING 'r1'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u3'@'%'".to_owned()],
-            vec!["GRANT SELECT(a, b) ON `test`.`t` TO 'u3'@'%'".to_owned()],
-            vec!["GRANT 'r1'@'%' TO 'u3'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u3`@`%`".to_owned()],
+            vec!["GRANT SELECT(a, b) ON `test`.`t` TO `u3`@`%`".to_owned()],
+            vec!["GRANT `r1`@`%` TO `u3`@`%`".to_owned()],
         ]
     );
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'r1'@'%'"))[1],
-        vec!["GRANT SELECT(a, b) ON `test`.`t` TO 'r1'@'%'".to_owned()]
+        vec!["GRANT SELECT(a, b) ON `test`.`t` TO `r1`@`%`".to_owned()]
     );
 }
 
@@ -283,13 +283,13 @@ fn usage_with_a_column_list_grants_nothing_but_creates_the_table_row() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u7'@'%'")),
-        [vec!["GRANT USAGE ON *.* TO 'u7'@'%'".to_owned()]]
+        [vec!["GRANT USAGE ON *.* TO `u7`@`%`".to_owned()]]
     );
     session
         .run("REVOKE SELECT (a) ON test.t FROM 'u7'@'%'")
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u7'@'%'")),
-        [vec!["GRANT USAGE ON *.* TO 'u7'@'%'".to_owned()]]
+        [vec!["GRANT USAGE ON *.* TO `u7`@`%`".to_owned()]]
     );
 }

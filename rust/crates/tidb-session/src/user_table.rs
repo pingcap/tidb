@@ -39,12 +39,6 @@
 //!  * direct DML against `mysql.user` executes (it is a real table) but does
 //!    not reach the registry, which is Go's own behavior BEFORE
 //!    `FLUSH PRIVILEGES`;
-//!  * the `$.Password_locking` member of `User_attributes` is NOT mirrored
-//!    (Go's `readPasswordLockingInfo`/`alterUserFailedLoginJSON` pipeline,
-//!    whose `auto_locked_last_changed` carries a wall-clock `time.UnixDate`
-//!    string): the registry models the whole policy and no recording in the
-//!    suite ever reads that JSON member back. Named gap, not an
-//!    approximation.
 
 use crate::*;
 use tidb_util::stringutil::go_to_lower;
@@ -92,6 +86,74 @@ pub(crate) fn json_string_literal(value: &str) -> String {
 }
 
 impl Session {
+    pub(crate) fn mirror_delete_password_history(
+        &mut self,
+        user: &str,
+        host: &str,
+    ) -> Result<(), DriverError> {
+        if !self.user_table_present() || self.account_storage_delegated {
+            return Ok(());
+        }
+        self.run_user_table_write(&format!(
+            "DELETE FROM mysql.password_history WHERE User={} AND Host={}",
+            sql_str(user),
+            sql_str(host)
+        ))
+    }
+
+    pub(crate) fn mirror_rename_password_history(
+        &mut self,
+        old_user: &str,
+        old_host: &str,
+        new_user: &str,
+        new_host: &str,
+    ) -> Result<(), DriverError> {
+        if !self.user_table_present() || self.account_storage_delegated {
+            return Ok(());
+        }
+        self.run_user_table_write(&format!(
+            "UPDATE mysql.password_history SET User={}, Host={} WHERE User={} AND Host={}",
+            sql_str(new_user),
+            sql_str(new_host),
+            sql_str(old_user),
+            sql_str(old_host)
+        ))
+    }
+
+    pub(crate) fn mirror_account_policy_and_history(
+        &mut self,
+        registry: &privilege::PrivilegeRegistry,
+        user: &str,
+        host: &str,
+    ) -> Result<(), DriverError> {
+        if !self.user_table_present() || self.account_storage_delegated {
+            return Ok(());
+        }
+        let (count, days) = registry.password_reuse_policy(user, host);
+        let count = count.map_or_else(|| "NULL".into(), |n| n.to_string());
+        let days = days.map_or_else(|| "NULL".into(), |n| n.to_string());
+        let attrs = registry
+            .user_attributes(user, host)
+            .as_deref()
+            .map_or_else(|| "NULL".into(), sql_str);
+        self.run_user_table_write(&format!("UPDATE mysql.user SET Password_reuse_history={count}, Password_reuse_time={days}, User_attributes={attrs} WHERE User={} AND Host={}", sql_str(user), sql_str(host)))?;
+        self.mirror_delete_password_history(user, host)?;
+        for row in registry.account_password_history(user, host) {
+            // Registry timestamps are UTC; SQL TIMESTAMP text belongs to this session.
+            let mut timestamp = row.timestamp;
+            timestamp
+                .convert_time_zone(
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    &self.vars.session_time_zone(),
+                )
+                .map_err(|error| {
+                    DriverError::Exec(tidb_executor::ExecError::internal(error.to_string()))
+                })?;
+            self.run_user_table_write(&format!("INSERT INTO mysql.password_history (Host, User, Password_timestamp, Password) VALUES ({}, {}, {}, {})", sql_str(&row.host), sql_str(&row.user), sql_str(&timestamp.to_string()), row.password.as_deref().map_or_else(|| "NULL".into(), sql_str)))?;
+        }
+        Ok(())
+    }
+
     /// Whether the shared catalog holds `mysql.user` -- true after
     /// [`Session::bootstrap_fresh_store`], false for a bare catalog a caller
     /// installed without bootstrapping (see the module doc's deviation

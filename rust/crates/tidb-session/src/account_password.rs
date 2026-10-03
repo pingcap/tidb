@@ -242,11 +242,7 @@ impl Session {
                 // explicit `IDENTIFIED WITH` changes it.
                 let (auth_string, plugin, plaintext) = match auth {
                     tidb_ast::CreateUserAuth::By(password) => {
-                        let current_plugin = if current_plugin.is_empty() {
-                            tidb_mysql::consts::AuthNativePassword.to_owned()
-                        } else {
-                            current_plugin.clone()
-                        };
+                        let current_plugin = effective(&current_plugin);
                         (
                             privilege::encode_password_for_plugin(
                                 &current_plugin,
@@ -281,6 +277,17 @@ impl Session {
                 if spec_retain && current_auth_string.is_empty() {
                     return Err(DriverError::SecondPasswordCannotBeEmpty { user, host });
                 }
+                self.maintain_password_history(
+                    &registry,
+                    &user,
+                    &host,
+                    &auth_string,
+                    plaintext,
+                    &plugin,
+                    &options,
+                    false,
+                    plugin_changed,
+                )?;
                 if registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin) {
                     // Go writes `password_expired='N'` and a fresh
                     // `Password_last_changed` in the same UPDATE as the new
@@ -334,14 +341,13 @@ impl Session {
                 Some(privilege::PasswordExpireSetting::Now) | None => {}
             }
             // Go's `newAttributes`: COMMENT/ATTRIBUTE metadata, then the
-            // RETAIN secondary. (`$.Password_locking` is deliberately not
-            // mirrored -- see `crate::user_table`'s module doc.)
+            // RETAIN secondary, preserving the locking object and other metadata.
             let mut new_attributes: Vec<String> = Vec::new();
             if let Some(annotation) = &alter.comment_or_attribute {
                 match annotation {
-                    tidb_ast::CreateUserCommentOrAttribute::Comment(text) => {
-                        new_attributes.push(format!("\"metadata\": {{\"comment\": \"{text}\"}}"))
-                    }
+                    tidb_ast::CreateUserCommentOrAttribute::Comment(text) => new_attributes.push(
+                        format!("\"metadata\": {}", serde_json::json!({"comment": text})),
+                    ),
                     tidb_ast::CreateUserCommentOrAttribute::Attribute(json) => {
                         new_attributes.push(format!("\"metadata\": {json}"));
                     }
@@ -358,33 +364,15 @@ impl Session {
             // Go: DISCARD removes the secondary, and a plugin change drops
             // it silently; RETAIN always writes a fresh one, so it wins.
             let drop_secondary = (spec_discard || plugin_changed) && !spec_retain;
-            // Go emits ONE `user_attributes` assignment so merge-then-remove
-            // is a single SQL expression, and the DISCARD-only form collapses
-            // a now-empty object back to NULL (not `'{}'`) via NULLIF.
-            match (new_attributes.is_empty(), drop_secondary) {
-                (false, true) => {
-                    let object = format!("{{{}}}", new_attributes.join(","));
-                    mirror_fields.push(format!(
-                        "user_attributes=json_remove(json_merge_patch(coalesce(user_attributes, \
-                         '{{}}'), {}), '$.additional_password')",
-                        crate::user_table::sql_str(&object)
-                    ));
-                }
-                (false, false) => {
-                    let object = format!("{{{}}}", new_attributes.join(","));
-                    mirror_fields.push(format!(
-                        "user_attributes=json_merge_patch(coalesce(user_attributes, '{{}}'), {})",
-                        crate::user_table::sql_str(&object)
-                    ));
-                }
-                (true, true) => {
-                    mirror_fields.push(
-                        "user_attributes=nullif(json_remove(coalesce(user_attributes, '{}'), \
-                         '$.additional_password'), cast('{}' as json))"
-                            .to_owned(),
-                    );
-                }
-                (true, false) => {}
+            if !new_attributes.is_empty() || drop_secondary {
+                let patch = format!("{{{}}}", new_attributes.join(","));
+                registry.merge_user_attributes(
+                    &user,
+                    &host,
+                    serde_json::from_str(&patch)
+                        .map_err(|error| DriverError::unsupported(error.to_string()))?,
+                    drop_secondary,
+                );
             }
             // Go REPLACES the whole `mysql.global_priv` PRIV JSON when the
             // statement carries any `REQUIRE` clause, and leaves the row
@@ -404,6 +392,7 @@ impl Session {
                 );
                 self.run_user_table_write(&sql)?;
             }
+            self.mirror_account_policy_and_history(&registry, &user, &host)?;
         }
         // A sandboxed session escapes by giving ITSELF a new password, which
         // is the only thing it was allowed in here to do (Go's
@@ -534,8 +523,11 @@ impl Session {
         // JSON's `ssl_type` for this clause (captured: `REQUIRE SSL` for an
         // account created with it, `REQUIRE NONE` for one without).
         let require_clause = registry.ssl_type(&user, &host).show_create_user_clause();
+        let (history, reuse_days) = registry.password_reuse_policy(&user, &host);
+        let history = history.map_or_else(|| "DEFAULT".to_owned(), |n| n.to_string());
+        let reuse_days = reuse_days.map_or_else(|| "DEFAULT".to_owned(), |n| format!("{n} DAY"));
         let show_str = format!(
-            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT{locking_clause}"
+            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY {history} PASSWORD REUSE INTERVAL {reuse_days}{locking_clause}"
         );
         // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
         // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).
@@ -625,6 +617,25 @@ impl Session {
         if set_password.retain_current_password && current_auth_string.is_empty() {
             return Err(DriverError::SecondPasswordCannotBeEmpty { user, host });
         }
+        self.maintain_password_history(
+            &registry,
+            &user,
+            &host,
+            &auth_string,
+            Some(&set_password.password),
+            &plugin,
+            &crate::account::PasswordOrLockOptions::default(),
+            false,
+            false,
+        )?;
+        if set_password.retain_current_password {
+            registry.merge_user_attributes(
+                &user,
+                &host,
+                serde_json::json!({"additional_password": current_auth_string}),
+                false,
+            );
+        }
         if !registry.set_auth_string(&user, &host, &auth_string) {
             return Err(DriverError::SetPasswordNoMatchingRow);
         }
@@ -652,10 +663,11 @@ impl Session {
                  Host={}",
                 crate::user_table::sql_str(&auth_string),
                 crate::user_table::sql_str(&user),
-                crate::user_table::sql_str(&go_to_lower(host)),
+                crate::user_table::sql_str(&go_to_lower(&host)),
             );
             self.run_user_table_write(&sql)?;
         }
+        self.mirror_account_policy_and_history(&registry, &user, &host)?;
         self.sandbox_mode = false;
         Ok(StmtOutput::Affected(0))
     }

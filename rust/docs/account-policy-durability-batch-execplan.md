@@ -23,12 +23,13 @@ acceptance and TLS transport A03 remain separately open.
 - [x] Compare all 66 carried findings with prior source hashes and review intervening owner changes.
 - [x] Remove the Go-contradicting empty-account discard test and production discard; prove failure before and 14 cluster tests passing afterward.
 - [x] Repair three stale hint test API calls and Go-observed EOF diagnostics; four hint tests pass.
-- [ ] Complete durable account source/test/caller accounting and fail-before regressions.
+- [x] Complete this maintenance batch's account source/test/caller accounting and fail-before regressions; parent package acceptance remains open.
 - [x] Carry expiry lifetime/timestamp through read, the single shared record, export and typed account mutations; retain NULL/NEVER and original epochs.
-- [ ] Carry TLS/locking/other attributes and history through the same bridge.
-- [ ] Integrate CREATE/ALTER/SET/DROP/RENAME callers and enforce Go reuse rules.
-- [ ] Run affected regressions, original source contracts, Ready checks and lint.
-- [ ] Update both finding registers and durable receipt with accurate limits.
+- [x] Carry locking state, raw attributes and history through the same bridge.
+- [ ] Carry global_priv/TLS and remaining authentication consumers through it.
+- [x] Integrate CREATE/ALTER/SET/DROP/RENAME callers and enforce Go reuse rules.
+- [x] Run affected regressions, source-based contract review, affected Ready checks and lint; full original Go suites remain unverified.
+- [x] Update both finding registers and durable receipt with accurate limits.
 - [ ] Commit through actual hook; fresh locked build immediately before normal
   push, verify remote SHA or record precise permission blocker.
 
@@ -108,8 +109,8 @@ git diff --check; distinguish diagnosed baseline failures from new failures.
 Go-authored policies survive load/export/write/reload without replacing epochs.
 History 3 rejects reuse across ALTER USER and SET PASSWORD; policy DEFAULT reads
 current globals, explicit zero disables the corresponding rule, and expired rows
-outside both windows are removed. Empty passwords never create history, salted
-plugins compare plaintext with stored hashes, plugin changes clear incompatible
+outside both windows are removed. Empty encoded credentials never create history; salted plugins may encode empty
+plaintext as a nonempty credential and compare plaintext with stored hashes, plugin changes clear incompatible
 history, drop/rename follows Go, and rejected changes retain prior credentials.
 Original cases and cloud process SQL checks substantiate each accepted behavior.
 Do not close A02/A04 until their entire recorded contract passes; keep broad package
@@ -160,3 +161,16 @@ gaps and all of A04. No new history implementation is dispatched and no whole
 upstream package is accepted. See parity/current-audit/account-expiry-durability-repair.md.
 Next milestone remains complete account attributes/global_priv and history
 ownership, then every CREATE/ALTER/SET/DROP/RENAME caller and transaction gate.
+
+
+### History and locking-image milestone, 2026-10-03
+
+The shared account image now carries nullable history/reuse limits, timestamped
+history and complete raw user attributes. Locking limits, counts and original
+epochs survive read/publication/write/reload; metadata and secondary credentials
+are retained. CREATE/ALTER/SET/DROP/RENAME compose the shared history owner, which
+checks Go count/time windows before credential publication. A04's recorded no-op
+contract is repaired; A02 remains partial for mysql.global_priv/TLS, durable wire
+login counters and broader cache invalidation. See account-history-locking-batch-
+execplan.md for current validation and parity/current-audit/account-history-
+locking-repair.md for the final receipt. No complete Go package is accepted.

@@ -70,9 +70,15 @@ impl Session {
     pub(crate) fn bootstrap_system_tables(&mut self) {
         let has_required_tables = self
             .with_catalog_mut(|catalog| {
-                Ok(["user", "bind_info", "stats_meta", "stats_table_locked"]
-                    .into_iter()
-                    .all(|table| catalog.contains_in("mysql", table)))
+                Ok([
+                    "user",
+                    "password_history",
+                    "bind_info",
+                    "stats_meta",
+                    "stats_table_locked",
+                ]
+                .into_iter()
+                .all(|table| catalog.contains_in("mysql", table)))
             })
             .unwrap_or(false);
         if has_required_tables {
@@ -95,6 +101,7 @@ impl Session {
             // starts with `CreateUserTable`); kept first here so a failure
             // names the account table rather than a bystander.
             tidb_metadef::system_tables_def::CREATE_USER_TABLE,
+            tidb_metadef::system_tables_def::CREATE_PASSWORD_HISTORY_TABLE,
             tidb_metadef::system_tables_def::CREATE_BIND_INFO_TABLE,
             tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
             tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,

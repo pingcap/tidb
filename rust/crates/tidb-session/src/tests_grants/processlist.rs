@@ -232,13 +232,14 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
     let target = Arc::new(Counter::default());
     let mut session = Session::new();
     let guard = registry.register(
-        5,
+        6,
         "alice".to_owned(),
         String::new(),
         "test".to_owned(),
         Some(target.clone()),
     );
-    session.attach_process(5, guard);
+    session.attach_process(6, guard);
+    // Even 32-bit IDs are valid under Go global kill; odd IDs are truncated.
     // KILL answers with an affected-row count, which the wire front turns
     // into the OK packet Go sends.
     assert_eq!(
@@ -249,12 +250,12 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
     assert_eq!(target.connections.load(Ordering::Acquire), 0);
     // Killing one's own query is legal and only cancels the statement.
     assert_eq!(
-        session.run("kill query 5").unwrap(),
+        session.run("kill query 6").unwrap(),
         StmtResult::Affected(0)
     );
     assert_eq!(target.queries.load(Ordering::Acquire), 1);
     assert_eq!(
-        session.run("kill connection 5").unwrap(),
+        session.run("kill connection 6").unwrap(),
         StmtResult::Affected(0)
     );
     assert_eq!(target.connections.load(Ordering::Acquire), 1);
@@ -284,13 +285,13 @@ fn kill_of_another_users_connection_requires_super() {
     let mut victim = authenticated_session(&privs, "root", "%");
     victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
     let victim_guard = registry.register(
-        1,
+        4,
         "root".to_owned(),
         "10.0.0.1:1".to_owned(),
         "test".to_owned(),
         None,
     );
-    victim.attach_process(1, victim_guard);
+    victim.attach_process(4, victim_guard);
 
     let mut bob = authenticated_session(&privs, "bob", "%");
     bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
@@ -311,14 +312,14 @@ fn kill_of_another_users_connection_requires_super() {
     );
 
     // Killing root's connection without SUPER is refused.
-    match bob.run("kill 1") {
+    match bob.run("kill 4") {
         Err(DriverError::KillAccessDenied) => {}
         other => panic!("expected KillAccessDenied, got {other:?}"),
     }
 
     // Granting SUPER lets the same KILL through.
     boot.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
-    assert_eq!(bob.run("kill 1").unwrap(), StmtResult::Affected(0));
+    assert_eq!(bob.run("kill 4").unwrap(), StmtResult::Affected(0));
 }
 
 /// The gate Go actually writes is the DYNAMIC `CONNECTION_ADMIN`; SUPER
@@ -335,13 +336,13 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     let mut victim = authenticated_session(&privs, "root", "%");
     victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
     let victim_guard = registry.register(
-        1,
+        4,
         "root".to_owned(),
         "10.0.0.1:1".to_owned(),
         "test".to_owned(),
         None,
     );
-    victim.attach_process(1, victim_guard);
+    victim.attach_process(4, victim_guard);
 
     let mut bob = authenticated_session(&privs, "bob", "%");
     bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
@@ -354,7 +355,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     );
     bob.attach_process(2, bob_guard);
 
-    match bob.run("kill 1") {
+    match bob.run("kill 4") {
         Err(DriverError::KillAccessDenied) => {}
         other => panic!("expected KillAccessDenied, got {other:?}"),
     }
@@ -362,7 +363,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     boot.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
         .unwrap();
     assert_eq!(
-        bob.run("kill 1").unwrap(),
+        bob.run("kill 4").unwrap(),
         StmtResult::Affected(0),
         "CONNECTION_ADMIN alone authorizes KILL of a peer's connection"
     );
@@ -371,14 +372,14 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     assert_eq!(
         row_text(bob.run("SHOW GRANTS FOR 'bob'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'bob'@'%'"],
-            ["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"],
+            ["GRANT USAGE ON *.* TO `bob`@`%`"],
+            ["GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`"],
         ]
     );
 
     boot.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
         .unwrap();
-    match bob.run("kill 1") {
+    match bob.run("kill 4") {
         Err(DriverError::KillAccessDenied) => {}
         other => panic!("expected KillAccessDenied after REVOKE, got {other:?}"),
     }

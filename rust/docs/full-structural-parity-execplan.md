@@ -2516,3 +2516,23 @@ only password changes refresh the epoch. A02 remains partial for TLS/locking/
 attributes and A04 history remains open. Counts stay 66 unresolved (56 open,
 ten partial), 20 repaired. This is existing owner maintenance, not package
 acceptance or performance evidence.
+
+### Shared account history and locking image, 2026-10-03
+
+Fresh Go master remains 93a01d31f6; native remains 19a56cc. Concurrent integration
+schema-acknowledgement commits through ee637c3a39 were merged with local account
+prerequisites. The existing account transaction/registry/storage owners now carry
+nullable reuse limits, timestamped history and raw attributes. Reuse fails before
+credential publication, including multi-account rollback; CREATE/ALTER/SET/DROP/
+RENAME compose that owner. Locking counts and original epochs survive unrelated
+writes, while unlock/removal follows existing Go policy.
+
+A04's recorded no-op finding is repaired. A02 remains partial for global_priv/TLS,
+durable wire-login counters, secondary-authentication consumers and broader cache
+invalidation. Counts are 65 unresolved (55 open, ten partial), 21 repaired, 86
+tracked. Go-based test maintenance preserves valid regressions and removes stale
+expectations; real ALL role-expansion and synthetic-schema visibility defects
+are repaired through shared owners. See current-audit/account-history-locking-
+repair.md and account-history-locking-validation.json for gates and limits. This
+maintenance batch accepts no complete executor/privilege package, platform or
+mixed-node security contract and claims no workload performance improvement.

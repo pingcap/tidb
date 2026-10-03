@@ -385,3 +385,233 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     assert!(!sandbox.in_sandbox_mode());
     sandbox.run("SELECT 1").unwrap();
 }
+
+#[test]
+fn password_history_checks_native_and_salted_credentials_before_publication() {
+    for plugin in [
+        "mysql_native_password",
+        "caching_sha2_password",
+        "tidb_sm3_password",
+    ] {
+        let mut session = session_with_privileges();
+        let registry = session.privileges.clone().unwrap();
+        session
+            .run(&format!(
+                "CREATE USER history_user IDENTIFIED WITH '{plugin}' BY 'first' PASSWORD HISTORY 3"
+            ))
+            .unwrap();
+        session
+            .run("ALTER USER history_user IDENTIFIED BY 'second'")
+            .unwrap();
+        let before = registry.export();
+        for sql in [
+            "ALTER USER history_user IDENTIFIED BY 'first'",
+            "SET PASSWORD FOR history_user = 'first'",
+        ] {
+            let error = session.run(sql).unwrap_err().to_mysql_error();
+            assert_eq!(error.code, 3638, "{plugin}: {sql}");
+            assert_eq!(error.message, "Cannot use these credentials for 'history_user@%' because they contradict the password history policy.");
+            assert_eq!(registry.export(), before);
+        }
+        session.run("SET PASSWORD FOR history_user = ''").unwrap();
+        // Go checks the encoded string: salted plugins encode empty plaintext
+        // as a nonempty hash, while native encodes it as an empty credential.
+        let expected = if plugin == "mysql_native_password" {
+            2
+        } else {
+            3
+        };
+        assert_eq!(
+            registry.account_password_history("history_user", "%").len(),
+            expected
+        );
+        session
+            .run("RENAME USER history_user TO renamed_history")
+            .unwrap();
+        assert!(registry
+            .account_password_history("history_user", "%")
+            .is_empty());
+        assert_eq!(
+            registry
+                .account_password_history("renamed_history", "%")
+                .len(),
+            expected
+        );
+        assert_eq!(
+            session
+                .run("SET PASSWORD FOR renamed_history = 'first'")
+                .unwrap_err()
+                .to_mysql_error()
+                .code,
+            3638
+        );
+        session.run("DROP USER renamed_history").unwrap();
+        assert!(registry
+            .account_password_history("renamed_history", "%")
+            .is_empty());
+    }
+}
+
+#[test]
+fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
+    let mut session = session_with_privileges();
+    let registry = session.privileges.clone().unwrap();
+    session.run("SET GLOBAL password_history = 2").unwrap();
+    session
+        .run("CREATE USER history_default IDENTIFIED BY 'first'")
+        .unwrap();
+    assert_eq!(
+        registry.password_reuse_policy("history_default", "%"),
+        (None, None)
+    );
+    assert_eq!(
+        registry
+            .account_password_history("history_default", "%")
+            .len(),
+        1
+    );
+    session
+        .run("ALTER USER history_default IDENTIFIED BY 'second'")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("SET PASSWORD FOR history_default = 'first'")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3638
+    );
+    session.run("ALTER USER history_default IDENTIFIED BY 'first' PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY").unwrap();
+    assert!(registry
+        .account_password_history("history_default", "%")
+        .is_empty());
+    session.run("ALTER USER history_default PASSWORD HISTORY 5 PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL 7 DAY PASSWORD REUSE INTERVAL DEFAULT").unwrap();
+    assert_eq!(
+        registry.password_reuse_policy("history_default", "%"),
+        (None, None)
+    );
+    session.run("SET GLOBAL password_history = 0").unwrap();
+    session
+        .run("SET PASSWORD FOR history_default = 'first'")
+        .unwrap();
+    assert!(registry
+        .account_password_history("history_default", "%")
+        .is_empty());
+    session
+        .run("ALTER USER history_default PASSWORD HISTORY 65536 PASSWORD REUSE INTERVAL 65536 DAY")
+        .unwrap();
+    assert_eq!(
+        registry.password_reuse_policy("history_default", "%"),
+        (Some(65535), Some(65535))
+    );
+    let shown = row_text(session.run("SHOW CREATE USER history_default"))[0][0].clone();
+    assert!(shown.contains("PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY"));
+    session
+        .run("ALTER USER history_default IDENTIFIED WITH caching_sha2_password BY 'first'")
+        .unwrap();
+    assert_eq!(
+        registry
+            .account_password_history("history_default", "%")
+            .len(),
+        1
+    );
+    session
+        .run("ALTER USER history_default IDENTIFIED WITH authentication_ldap_simple")
+        .unwrap();
+    assert!(registry
+        .account_password_history("history_default", "%")
+        .is_empty());
+    // Go CREATE stores nonempty LDAP credentials; ALTER's reuse owner exempts LDAP.
+    session.run("CREATE USER history_ldap IDENTIFIED WITH authentication_ldap_simple AS 'directory-user' PASSWORD HISTORY 3").unwrap();
+    assert_eq!(
+        registry.account_password_history("history_ldap", "%").len(),
+        1
+    );
+    session.run("ALTER USER history_ldap IDENTIFIED WITH authentication_ldap_simple AS 'other-directory-user'").unwrap();
+    assert_eq!(
+        registry.account_password_history("history_ldap", "%").len(),
+        1
+    );
+}
+
+#[test]
+fn password_history_protects_union_of_recent_count_and_reuse_time() {
+    let mut session = session_with_privileges();
+    let registry = session.privileges.clone().unwrap();
+    session.run("CREATE USER history_window IDENTIFIED BY 'first' PASSWORD HISTORY 1 PASSWORD REUSE INTERVAL 2 DAY").unwrap();
+    session
+        .run("ALTER USER history_window IDENTIFIED BY 'second'")
+        .unwrap();
+    // Outside count=1, but inside the two-day window.
+    assert_eq!(
+        session
+            .run("SET PASSWORD FOR history_window = 'first'")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3638
+    );
+    assert_eq!(
+        registry
+            .account_password_history("history_window", "%")
+            .len(),
+        2
+    );
+    registry.clock().advance(3 * 86400);
+    // Outside both windows; prune the old rows only after successful verification.
+    session
+        .run("SET PASSWORD FOR history_window = 'first'")
+        .unwrap();
+    assert_eq!(
+        registry
+            .account_password_history("history_window", "%")
+            .len(),
+        1
+    );
+    registry.clock().advance(3 * 86400);
+    // Old in time, but still the most recent password.
+    assert_eq!(
+        session
+            .run("SET PASSWORD FOR history_window = 'first'")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3638
+    );
+}
+
+#[test]
+fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversion() {
+    let mut session = session_with_privileges();
+    let registry = session.privileges.clone().unwrap();
+    session.run("SET time_zone = '+08:00'").unwrap();
+    session.run("CREATE USER history_zone IDENTIFIED BY 'first' PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 2 DAY").unwrap();
+    let mut expected = registry.account_password_history("history_zone", "%")[0].timestamp;
+    expected
+        .convert_time_zone(
+            &tidb_datatype::SessionTimeZone::utc(),
+            &session.vars.session_time_zone(),
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT Password_timestamp FROM mysql.password_history WHERE User='history_zone'"
+        )),
+        [[expected.to_string()]]
+    );
+    // getValidTime renders process-local UTC text, then SQL interprets it at +08:00.
+    // The source protects this credential for another eight hours in this session.
+    registry.clock().advance(52 * 3600);
+    assert_eq!(
+        session
+            .run("SET PASSWORD FOR history_zone = 'first'")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        3638
+    );
+    registry.clock().advance(9 * 3600);
+    session
+        .run("SET PASSWORD FOR history_zone = 'first'")
+        .unwrap();
+}

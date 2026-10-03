@@ -132,7 +132,7 @@ fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
     assert!(dana_auth.starts_with("$A$"));
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'dana'@'%'")),
-        [["GRANT USAGE ON *.* TO 'dana'@'%'"]]
+        [["GRANT USAGE ON *.* TO `dana`@`%`"]]
     );
 
     // A plugin-only clause (no BY/AS) is a passwordless account under that
@@ -210,9 +210,9 @@ fn rename_user_moves_the_whole_account_row() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'bobby'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'bobby'@'%'"],
-            ["GRANT SELECT ON `test`.* TO 'bobby'@'%'"],
-            ["GRANT SELECT ON `test`.`t` TO 'bobby'@'%'"],
+            ["GRANT SELECT ON *.* TO `bobby`@`%`"],
+            ["GRANT SELECT ON `test`.* TO `bobby`@`%`"],
+            ["GRANT SELECT ON `test`.`t` TO `bobby`@`%`"],
         ]
     );
     assert!(session.run("SHOW GRANTS FOR 'bob'@'%'").is_err());
@@ -245,8 +245,8 @@ fn rename_user_moves_role_edges_and_default_roles() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'r1'@'%' TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `r1`@`%` TO `u2`@`%`"],
         ]
     );
 
@@ -255,8 +255,8 @@ fn rename_user_moves_role_edges_and_default_roles() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r2'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'r2'@'%' TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `r2`@`%` TO `u2`@`%`"],
         ]
     );
 }
@@ -337,7 +337,7 @@ fn drop_user_clears_scoped_grant_rows() {
     session.run("CREATE USER 'gone'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'gone'@'%'")),
-        [["GRANT USAGE ON *.* TO 'gone'@'%'"]]
+        [["GRANT USAGE ON *.* TO `gone`@`%`"]]
     );
 }
 

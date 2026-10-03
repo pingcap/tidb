@@ -1259,6 +1259,13 @@ pub enum DriverError {
     /// with no `mysql.user` row. `SET PASSWORD` does NOT reuse
     /// `ErrCannotUser` (captured).
     SetPasswordNoMatchingRow,
+    /// Go error 3638: a protected credential cannot be reused.
+    PasswordInHistory {
+        /// Account username.
+        user: String,
+        /// Account host.
+        host: String,
+    },
     /// Go's plain `errors.Errorf("Dual password is not supported for users
     /// authenticating with plugin '%s'", ...)` (1105): `RETAIN CURRENT
     /// PASSWORD` on an account whose resolved plugin is not password-based

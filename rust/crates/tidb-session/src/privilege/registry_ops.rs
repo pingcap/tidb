@@ -147,7 +147,7 @@ fn wildcard_match(value: &[u8], pattern: &[u8]) -> bool {
 }
 
 impl PrivilegeRegistry {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), UserRecord>> {
+    pub(super) fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), UserRecord>> {
         self.users
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -320,6 +320,9 @@ impl PrivilegeRegistry {
                 is_role,
                 plugin: plugin.to_owned(),
                 password_locking: None,
+                user_attributes: None,
+                password_reuse_history: None,
+                password_reuse_time: None,
                 // Go's `CREATE ROLE` writes `Password_expired='Y'` while
                 // `CREATE USER` leaves it `'N'` (captured: `SHOW CREATE USER`
                 // for a role prints a bare `PASSWORD EXPIRE`, for a user
@@ -440,6 +443,8 @@ impl PrivilegeRegistry {
     /// list is no longer changed, but it stops mattering.
     pub fn replace_from(&self, fresh: &Self) {
         *self.lock() = std::mem::take(&mut *fresh.lock());
+        *self.password_history.lock().unwrap() =
+            std::mem::take(&mut *fresh.password_history.lock().unwrap());
         *self.lock_db() = std::mem::take(&mut *fresh.lock_db());
         *self.lock_table() = std::mem::take(&mut *fresh.lock_table());
         *self.lock_column() = std::mem::take(&mut *fresh.lock_column());
@@ -470,6 +475,12 @@ impl PrivilegeRegistry {
                 return false;
             };
             guard.insert(new_key, record);
+        }
+        for row in self.password_history.lock().unwrap().iter_mut() {
+            if row.user == old_user && row.host == old_host {
+                row.user = new_user.into();
+                row.host = new_host.into();
+            }
         }
         let mut db_guard = self.lock_db();
         *db_guard = db_guard
@@ -862,6 +873,7 @@ impl PrivilegeRegistry {
             .lock()
             .remove(&(user.to_owned(), host.to_owned()))
             .is_some();
+        self.clear_password_history(user, host);
         // Go deletes the account's `mysql.db`/`mysql.tables_priv` rows in the
         // same transaction (captured: after `DROP USER`, `mysql.db` has no
         // row left for the account), so a later account recreated under the
@@ -1862,6 +1874,9 @@ impl PrivilegeRegistry {
                 password_last_changed: record
                     .password_last_changed
                     .map(tidb_datatype::Time::go_raw),
+                password_reuse_history: record.password_reuse_history,
+                password_reuse_time: record.password_reuse_time,
+                user_attributes: record.export_attributes(),
                 privileges: printed_privileges(record.privs),
             })
             .collect();
@@ -1953,6 +1968,7 @@ impl PrivilegeRegistry {
         default_roles.sort();
 
         RegistryExport {
+            password_history: self.password_history.lock().unwrap().clone(),
             users,
             db_grants,
             table_grants,
