@@ -48,9 +48,9 @@ sampled eviction candidates. It is shared code, not a shared global budget.
   retire Stretto and private FIFO stores after callers migrate.
 - [x] Restore original meaningful probabilistic assertions, remove stale FIFO
   expectations, and validate all four findings through production callers.
-- [ ] Update both registers, receipts and full ExecPlan; run Ready checks,
+- [x] Update both registers, receipts and full ExecPlan; run Ready checks,
   actual precommit hook and a fresh locked server build immediately before push.
-- [ ] Preserve publication evidence, recovery bundle and reusable cloud draft.
+- [x] Record publication denial and the recovery/configuration handoff; final bundle and draft metadata are retained in the cloud publication receipt.
 
 ## Milestones and Plan of Work
 
@@ -181,3 +181,13 @@ binding tests, repeated server all-target check, locked server build and both
 real MySQL wire checks (baseline SQL plus CREATE/match/DROP global binding).
 Both registries agree on 61 unresolved and 25 repaired. Actual commit-hook and
 fresh pre-push builds remain publication gates, recorded after execution.
+
+
+Implementation merge 2336faceb4 passed the actual locked-build hook. A fresh
+locked server build immediately before push also passed. GitHub denied the
+exact requested destination with HTTP 403; remote remains 7b991676da. This final
+receipt commit uses the hook and remains local without another unchanged denied
+push. The recovery bundle and cloud draft retain exact local heads; consult
+/workspace/.cloud-setup/cache-batch/publication-final.json for their final IDs
+and hashes. Fresh-task restore and GitHub publication remain separately blocked
+or unverified; implementation and current-instance validation are complete.

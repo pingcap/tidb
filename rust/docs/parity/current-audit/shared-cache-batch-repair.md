@@ -133,3 +133,22 @@ arrange access. The actual result for this batch is recorded in the validation
 JSON after the mandatory fresh build. Preserve the verified recovery bundle
 and exact local HEAD in the reusable environment draft; draft saving is not
 publication or proof of fresh-task restoration.
+
+
+Actual publication result: implementation merge `2336faceb409b2db8305a0e5cb6702f88d364eef`
+passed its tracked precommit hook. A separate fresh locked server build passed
+immediately before `git push origin HEAD:hparser-integration`. GitHub returned
+exit 128 with the exact sanitized diagnostic:
+
+    remote: Permission to pingcap/tidb.git denied to ngaut.
+    fatal: unable to access 'https://github.com/pingcap/tidb.git/': The requested URL returned error: 403
+
+`git ls-remote` verified the remote remains
+`7b991676da79f044774caf6da4dfffe247160feb`. A final documentation-only commit
+records this result and uses the actual hook again. It is retained locally;
+there is no repeated push without an access change. Final local SHA, verified
+recovery bundle and saved cloud-draft revision are in
+`/workspace/.cloud-setup/cache-batch/publication-final.json`. Local-only commit
+restoration in a new task remains unverified. Three completed test executables
+were also reclaimed after validation to leave build space; their results and
+all source/library dependencies remain preserved.

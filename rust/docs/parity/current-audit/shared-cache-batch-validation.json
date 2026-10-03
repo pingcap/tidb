@@ -1533,7 +1533,8 @@
     "Root allocation TTL fixture restored original one-second interval after premature 20ms expiry.",
     "Final live startup exposed duplicate binding metric registration. Server dashboard now re-exports shared session gauges; startup regression and real wire smoke pass.",
     "Cargo incremental disk exhaustion; disable incremental compilation.",
-    "Locked server build linker bus error with zero disk; remove seven obsolete test executables after Cargo stopped, then retry with CARGO_BUILD_JOBS=2."
+    "Locked server build linker bus error with zero disk; remove seven obsolete test executables after Cargo stopped, then retry with CARGO_BUILD_JOBS=2.",
+    "After validation, three additional completed test executables were removed to leave space for future cloud builds; sources, compiled library dependencies and logs remain."
   ],
   "unverified": [
     "full Go bindinfo/copr suites",
@@ -1544,10 +1545,30 @@
     "fresh-task restoration of unpublished commits"
   ],
   "publication": {
-    "status": "pending_actual_hook_and_fresh_pre_push_build",
+    "status": "blocked_github_repository_write_denial",
     "destination": "pingcap/tidb:hparser-integration",
     "native_unchanged": true,
     "prior_diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut.\nfatal: unable to access 'https://github.com/pingcap/tidb.git/': The requested URL returned error: 403",
-    "scope_diagnosis": "Repository-scoped GitHub denial; account role versus GitHub-app installation scope cannot be distinguished; user will arrange access."
+    "scope_diagnosis": "Repository-scoped GitHub denial; account role versus GitHub-app installation scope cannot be distinguished; user will arrange access.",
+    "source_commit": "2336faceb409b2db8305a0e5cb6702f88d364eef",
+    "actual_commit_hook": {
+      "exit_code": 0,
+      "locked_server_build": "passed",
+      "log_sha256": "418be27b82be1d9f60b62ffd39fc00a5191ce2aec0e41801ead52361c174582a"
+    },
+    "fresh_pre_push_build": {
+      "exit_code": 0,
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "log_sha256": "e492d84512834c2924cd2a514ddf01895383dcf818cde38226d3deae2990bcd4"
+    },
+    "push": {
+      "command": "git push origin HEAD:hparser-integration",
+      "exit_code": 128,
+      "diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut.\nfatal: unable to access 'https://github.com/pingcap/tidb.git/': The requested URL returned error: 403"
+    },
+    "verified_remote": "7b991676da79f044774caf6da4dfffe247160feb",
+    "receipt_commit": "Subsequent documentation-only commit records these actual outcomes; no repeated unchanged denied push.",
+    "recovery": "Final local HEAD, bundle hash and saved draft revision are recorded in /workspace/.cloud-setup/cache-batch/publication-final.json after the receipt commit.",
+    "fresh_task_restore_verified": false
   }
 }
