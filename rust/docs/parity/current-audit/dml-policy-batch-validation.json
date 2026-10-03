@@ -1,0 +1,354 @@
+{
+  "date": "2026-10-03",
+  "integration_start": "134a7557f1e55d829d5e33036d741d92682c3d63",
+  "source_commit": null,
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "scope": "Existing-owner maintenance of E03/T01; no complete Go package acceptance. Other findings retain prior evidence.",
+  "finding_statuses": {
+    "E03": "partial",
+    "T01": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "unresolved": 58,
+    "open": 44,
+    "partial": 14,
+    "repaired": 28
+  },
+  "go_sources": [
+    {
+      "path": "pkg/executor/update.go",
+      "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10"
+    },
+    {
+      "path": "pkg/executor/delete.go",
+      "sha256": "e25ea1aa01293b942e5e87c7dbadf30b32c14999f3930661f2fa9836d02e6283"
+    },
+    {
+      "path": "pkg/table/tables/tables.go",
+      "sha256": "d0b6204e9cade9e9cf5af83b64e682d8e49b4c90ed61b37e460acdb19b1fd46e"
+    },
+    {
+      "path": "pkg/table/tables/index.go",
+      "sha256": "8524c014d3edfa022bc37c1626857e84508df20b7221daef69e63a6c456162a5"
+    }
+  ],
+  "validated_rust_snapshot": [
+    {
+      "path": "rust/crates/tidb-exec/Cargo.toml",
+      "sha256": "b12bf3ad6c16bee594217f6329bb076f5891765be332b782c7a86cd4ca060a6f"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/lib.rs",
+      "sha256": "3f4c02c72e29118c55da64cd55bfddb1ff44f57a045710f44b7c11c2b46ff86e"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/multi_statement_transaction.rs",
+      "sha256": "44659d938557d9239b206c40f0489ff84e44a43718ed0f2dba5486dcd866c685"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+      "sha256": "3560d3d5a7d3a5f0e1a549ee0cc4bc3d80bd6eb13ae3137670e0e4fa3a538e1d"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/system_row_write.rs",
+      "sha256": "7beb278be41f61ac719ac906e1f426d9e0b3f529a896ade90448279b0b34e41a"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/table_write_policy.rs",
+      "sha256": "fb0b6fbac0656c28b96e1eebe7ea2e26e86ffa8e4b1ba0b4a61d38c3d1651100"
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/cluster_ddl_source.rs",
+      "sha256": "aa20277a7066d67dcd6ff84178d36d028a20b948eb11bb302d45328ce75f2f95"
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/prepared_dml_lowering_source.rs",
+      "sha256": "d941f1147670a95d96fadd44f58975de0f7ee5c7ee116d9294eee99f6ded6414"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver.rs",
+      "sha256": "f7a96ba4c84e31325acddc86300349d6ee8496f7304b17ea485266511e0556dd"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/dml.rs",
+      "sha256": "90ae298fd83b067a5d02e5d40d027930e300ad27f7a0666c6fbea709f1251397"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/multi_dml.rs",
+      "sha256": "3665085f8f4041a0cd8807238e9040568fc53c9fc3e4453f0f7ae8b8d09269db"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+      "sha256": "d66d7847593b6e84a64341f3587392bd3bb313288b6891692a3a055b2a640bb7"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs",
+      "sha256": "b9e707e78adc98c1bdabc84a1fbfeb8589a5c8d48b1a20066ea7a320241d37a8"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/Cargo.toml",
+      "sha256": "a65f66ed4307fd2d11565a1b02d506c8f078e658b05fd6c5bc3c27cfa5cff334"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/transaction/mutation.rs",
+      "sha256": "4f9c28585ffe2afaf83b527f61fde92a53ec9721f3eaec2548318ed42da416ec"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/async_commit_one_pc_realtikv_source.rs",
+      "sha256": "6dc4688398cfd42776521e97b285b8f810577ae51c7f2ddc4c58114081a6fadd"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/async_commit_one_pc_source.rs",
+      "sha256": "7939b9434d05bb3d6df5df49454aee01803ad8b2b3049ad4053e1c1b51fe3ea9"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/optimistic_2pc_failure_branch_source.rs",
+      "sha256": "cb99ba5a5ebd4324de82df75925b79e07b8c147e6b2c097580ee5d300bb216ef"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/optimistic_2pc_realtikv_source.rs",
+      "sha256": "2bcfa1fc3d40b7fc86828da5f0d5a2e943a7883b7c94eab90a2e8159edc43a34"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/pessimistic_lock_realtikv_source.rs",
+      "sha256": "e09fe548adfee5d3e9a40d564bd5b99d4150d835d9e0195685c473988b52a28d"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/pessimistic_lock_source.rs",
+      "sha256": "3b62acb65bdee9a2abb601c0b85f89a9115217350c8238ed1430773591e932ac"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/pessimistic_prewrite_recovery_realtikv_source.rs",
+      "sha256": "99d62b54b456ce3a73dc3b5f01cd9a72695d8f40cdfdfc2080af25e287776948"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/tikv_commit_outcome_parity_source.rs",
+      "sha256": "b302dac66c535207f512bb640d041171ee2b6f5f7d89ba8bfcdbffe8ccca1919"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/tikv_transaction_driver_source.rs",
+      "sha256": "55bcf54843edeab394f7f88fc2d5fcd851c535bea56f54624090a4c065d014ea"
+    },
+    {
+      "path": "rust/crates/tidb-unistore/src/client.rs",
+      "sha256": "dbcca9ff098ac67064438b9007e41be6740f669349ffe179c40919ee32daeaef"
+    }
+  ],
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-exec --lib table_write_policy",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-policy.log",
+      "sha256": "8ab4aa805a7013346b6377ebcdc3dbff0957a796c461e3e6083644e1b0e2a4c3",
+      "test_results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 393 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib system_row_write",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-system-record.log",
+      "sha256": "087dedf8d15a047b78fd77b1432d2b79f0c706715c0b46b0821ac010c88bcc47",
+      "test_results": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 388 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test prepared_dml_lowering_source --test cluster_account_write_source --test cluster_sysvar_write_source --test cluster_ddl_source",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 101,
+      "log": "/workspace/.cloud-setup/dml-batch/green-callers.log",
+      "sha256": "a673ac6552b799c66a43de97658e2dede7d834c33557af10d22340ea329c0a56",
+      "test_results": [
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s",
+        "test result: FAILED. 111 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test prepared_dml_lowering_source --test cluster_sysvar_write_source",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-configured.log",
+      "sha256": "1765b33628eece589ed2d6610ce55278f4b15f439a7c703a60f4d1ef123d1bbf",
+      "test_results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s",
+        "test result: ok. 83 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 101,
+      "log": "/workspace/.cloud-setup/dml-batch/green-executor.log",
+      "sha256": "de87e2742a04cbc04a9fa584de601c0c97c2fed45c4b92a53dfaaedba7bbf44a",
+      "test_results": [
+        "test result: FAILED. 327 passed; 12 failed; 0 ignored; 0 measured; 1205 filtered out; finished in 7.75s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib dml_batch",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-dml-final.log",
+      "sha256": "cee745b64655c6ce90fed8f4df3d564757937b6c382da36f5985a9f0d4b0dfbb",
+      "test_results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1541 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::tests::dml",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-dml-sql.log",
+      "sha256": "3528cd180c55f80b7315df48248d017453f6d9363435e6c9e0ce7abeeacb87f6",
+      "test_results": [
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1532 filtered out; finished in 0.18s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::tests::mem_quota",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-quota-sql.log",
+      "sha256": "e46cb5c724b0fee01b18f9774e6264fe40b706e2ec85994a2555d55e474807ff",
+      "test_results": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1536 filtered out; finished in 0.06s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --lib transaction::mutation::tests",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-mutation-final.log",
+      "sha256": "7a38311c6c995e08855dec26b3db304c9a144e7cbd413736133ef2fefdb223b3",
+      "test_results": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 140 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test tikv_transaction_driver_source",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-driver.log",
+      "sha256": "722aca7084c241bf42fff75d5c65c0f3794e10464c7d9a949dfd1b969d1613ad",
+      "test_results": [
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-exec -p tidb-txnkv -p tidb-server -p tidb-unistore --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/all-targets-final.log",
+      "sha256": "6b644a2d9ff52f5a26b172de7737f9ec1d0d4d7396e5a0037145f873eccc0755",
+      "test_results": []
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "test_results": []
+    }
+  ],
+  "regressions": {
+    "fail_before_pass_after": 5,
+    "policy_failures": 2,
+    "physical_reader_failures": 3,
+    "red_logs": [
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-policy.log",
+        "sha256": "9ee62fcdee5ba5382177dcaf6157edc7ccaf7d0476a1e084cec29c9e4ef0c90b"
+      },
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-dml-corrected.log",
+        "sha256": "b7049e5a7f1b6f476aa2a12536710d1929535ae8303338f955b6a623ac5d4140"
+      }
+    ],
+    "excluded_evidence": [
+      "Initial zero-test policy run",
+      "Initial quota assertion using wrong wrapped error variant",
+      "Initial incomplete migration compile failures"
+    ]
+  },
+  "test_accounting": {
+    "distinct_current_cases_passed": 563,
+    "distinct_fully_passing_focused_cases": 148,
+    "wider_preexisting_failures": 17,
+    "counts_exclude_baseline_duplicates_and_removed_new_getter_case": true,
+    "five_python_lint_tests_separate": true
+  },
+  "baseline_comparison": {
+    "baseline_commit": "134a7557f1e55d829d5e33036d741d92682c3d63",
+    "restored_executor_files": 4,
+    "same_failure_names": true,
+    "failures": [
+      "driver::catalog::statistics_request_tests::original_collect_histogram_needed_columns_cases_match",
+      "driver::errors::exec::tests::an_error_with_a_code_of_its_own_never_renders_an_empty_message",
+      "driver::planner_bridge::statistics_initialization_tests::statistics_collection_preserves_estimation_validity",
+      "driver::planner_bridge::statistics_initialization_tests::unfiltered_table_path_count_uses_realtime_row_count",
+      "driver::tests::aggregates::global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader",
+      "driver::tests::column_defaults::named_and_nested_defaults_use_the_referenced_column",
+      "driver::tests::column_defaults::on_duplicate_defaults_cover_conflict_and_no_conflict",
+      "driver::tests::index_prefix_reads::index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls",
+      "driver::tests::index_prefix_reads::partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters",
+      "driver::tests::index_ranges::ordered_limit_adjusts_the_common_handle_scan_estimate",
+      "driver::tests::point_get::prepared_in_predicate_uses_filtered_stats_for_cache_admission",
+      "driver::tests::set_operations::single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize"
+    ],
+    "baseline_passed": 324,
+    "modified_passed": 327,
+    "note": "Only executor edits were swapped; unchanged dependency/configuration environment retained. Original implementation bytes restored in finally.",
+    "ddl_system_behavior_comparison": {
+      "same_failure_names": true,
+      "failures": [
+        "a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+        "a_created_database_persists_its_resolved_charset_and_collation",
+        "a_modify_column_reorganizes_exactly_where_go_says_it_must",
+        "check_job_submission_precedes_every_schema_transition",
+        "completed_check_schema_stays_active_until_schema_sync"
+      ],
+      "baseline_passed": 111,
+      "modified_passed": 111,
+      "scope": "Original system_row_write source; removed insert API expanded to its exact former true/AssertNotExist metadata. Modified tests retained. Source restored in finally."
+    }
+  },
+  "stale_test_maintenance": {
+    "original_test_obligations_retired": 0,
+    "ignored_or_disabled_new_tests": 0,
+    "notes": "Corrected checked-vs-lazy flag assumptions and ordinary-insert assertion. Notifier record selection now uses actual assertion. Discarded new getter-only draft; retained all meaningful source obligations and all 17 broader failing cases."
+  },
+  "precommit_hook": {
+    "status": "pending",
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "hooks_path": "hooks",
+    "bypass": false
+  },
+  "wire_smoke": {
+    "status": "pending",
+    "scope": "Single-node real MySQL/unistore quota cancellation/rollback plus default-quota controls; not live TiKV assertions"
+  },
+  "publication": {
+    "push": "not attempted; prohibited by latest user instruction",
+    "exact_intended_destinations": [
+      "pingcap/tidb hparser-integration",
+      "ngaut/client-rust master"
+    ],
+    "native_source_changed": false
+  },
+  "remaining": [
+    "Complete planner/handle metadata and final joined write buffering",
+    "Matrix interpreter retirement",
+    "Full system-index uniqueness/assertion lifecycle",
+    "Integrated pessimistic prewrite constraint policy",
+    "Seventeen broader pre-existing driver/DDL failures",
+    "Full upstream Go package suites and live multi-node/TiKV assertion-level behavior",
+    "Exact Go chunk arithmetic and workload performance"
+  ]
+}

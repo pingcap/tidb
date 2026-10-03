@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [DML policy batch](dml-policy-batch-repair.md) advances **E03 and T01 together** to partial: physical row consumption/early quota/cleanup and explicit caller-owned absence/assertion metadata. **58 unresolved (44 open, fourteen partial), 28 repaired, 86 tracked.** Complete planner/matrix/system-index/pessimistic owners remain open; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
+
+The MPP checkpoint below is historical.
+
 The [MPP read batch](mpp-read-batch-repair.md) repairs **M02 and M03 together** and advances M04 to partial through canonical process PD/cache ownership and stale-region invalidation. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Three fail-before regressions and 37 targeted Rust cases validate ranges, streaming and cleanup. Thirty ignored empty shells are removed with all [upstream/golden obligations retained](mpp-unverified-test-obligations.json). No full MPP package, transport or live multi-node acceptance is claimed; the other findings retain their prior evidence.
 
 The TiFlash checkpoint below is historical.

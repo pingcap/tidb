@@ -318,7 +318,13 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
     let writer_start_ts = writer.start_ts();
     let outcome = writer
         .commit(
-            vec![BufferMutation::insert(key.clone(), b"resolved-writer".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                key.clone(),
+                b"resolved-writer".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &call(),
         )
         .expect("the Prewrite must reach a verdict, not a transport failure");
@@ -369,7 +375,13 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
     let writer_call = UnaryCallContext::with_timeout(Duration::from_secs(5));
     let outcome = writer
         .commit(
-            vec![BufferMutation::insert(key.clone(), b"must-not-win".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                key.clone(),
+                b"must-not-win".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &writer_call,
         )
         .expect("the Prewrite must reach a verdict, not a transport failure");
@@ -527,10 +539,13 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
     assert!(writer.start_ts() > orphan_start_ts);
     let outcome = writer
         .commit(
-            vec![
-                BufferMutation::insert(secondary.clone(), b"after-orphan-recovery".to_vec())
-                    .unwrap(),
-            ],
+            vec![BufferMutation::set_with_flags(
+                secondary.clone(),
+                b"after-orphan-recovery".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &call(),
         )
         .expect("the writer reaches a terminal outcome");

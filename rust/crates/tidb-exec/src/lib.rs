@@ -229,6 +229,7 @@ pub mod storage_class;
 pub mod storage_reader;
 pub mod system_db_filter;
 pub mod system_row_write;
+pub(crate) mod table_write_policy;
 pub mod sysvar_error;
 pub mod sysvar_scope;
 pub mod sysvar_type;

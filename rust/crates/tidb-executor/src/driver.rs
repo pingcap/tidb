@@ -958,27 +958,140 @@ pub(crate) struct FromTable {
     pub(crate) offset: usize,
 }
 
-/// Opens `exec`, drains every row as datums of `types`, and closes it.
-fn drain_executor_rows(
+/// Delivers each physical row before requesting another chunk. The DML owner
+/// accounts retained rows inside `visit`; no intermediate datum matrix exists.
+fn visit_executor_rows(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
     memory: &crate::StatementMemory,
-) -> Result<Vec<Vec<Datum>>, DriverError> {
-    exec.open()?;
-    let mut rows = Vec::new();
-    let mut req = exec.new_chunk();
-    loop {
-        next_executor(exec.as_mut(), &mut req, memory)?;
-        let n = req.num_rows();
-        if n == 0 {
-            break;
+    mut visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
+) -> Result<(), DriverError> {
+    let result = (|| {
+        exec.open()?;
+        let mut req = exec.new_chunk();
+        loop {
+            next_executor(exec.as_mut(), &mut req, memory)?;
+            if req.num_rows() == 0 {
+                break;
+            }
+            for r in 0..req.num_rows() {
+                visit(req.get_row(r).get_datum_row(types))?;
+            }
         }
-        for r in 0..n {
-            rows.push(req.get_row(r).get_datum_row(types));
+        Ok(())
+    })();
+    // Close even after partial open, next, conversion or quota failure.
+    // Preserve the primary read/write error if cleanup also fails.
+    let close = exec.close().map_err(DriverError::from);
+    result.and(close)
+}
+
+#[cfg(test)]
+mod dml_batch_tests {
+    use super::*;
+    use crate::executor::ExecutorMeta;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use tidb_expr::schema::Schema;
+    struct Source {
+        meta: ExecutorMeta,
+        nexts: Arc<AtomicUsize>,
+        closes: Arc<AtomicUsize>,
+        fail_next: bool,
+    }
+    impl Executor for Source {
+        fn open(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn next(&mut self, req: &mut tidb_chunk::chunk::Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let n = self.nexts.fetch_add(1, SeqCst);
+            if self.fail_next {
+                return Err(ExecError::internal("read failed"));
+            }
+            if n < 100 {
+                req.append_bytes(0, &[b'x'; 4096]);
+            }
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            self.closes.fetch_add(1, SeqCst);
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            1
+        }
+        fn max_chunk_size(&self) -> usize {
+            1
+        }
+        fn new_chunk(&self) -> tidb_chunk::chunk::Chunk {
+            self.meta.new_chunk()
         }
     }
-    exec.close()?;
-    Ok(rows)
+    fn source(
+        fail_next: bool,
+    ) -> (
+        Box<dyn Executor>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Vec<FieldType>,
+    ) {
+        let ft = FieldType::new(FieldTypeCode::VarString);
+        let nexts = Arc::new(AtomicUsize::new(0));
+        let closes = Arc::new(AtomicUsize::new(0));
+        let exec = Source {
+            meta: ExecutorMeta::new(Schema::new(vec![Column::new(1, ft.clone())]), 1, 1, 1),
+            nexts: nexts.clone(),
+            closes: closes.clone(),
+            fail_next,
+        };
+        (Box::new(exec), nexts, closes, vec![ft])
+    }
+    #[test]
+    fn quota_failure_stops_reading_and_closes_source() {
+        let (exec, nexts, closes, types) = source(false);
+        let memory = crate::StatementMemory::new(1024, crate::mem_quota::OomAction::Cancel, 7);
+        let accountant = memory.write_accountant(crate::mem_quota::label::UPDATE);
+        let result = visit_executor_rows(exec, &types, &memory, |row| {
+            accountant.account_row(&row).map_err(DriverError::from)
+        });
+        assert!(matches!(
+            result,
+            Err(DriverError::MemoryExceedForQuery { conn_id: 7 })
+        ));
+        assert_eq!(
+            nexts.load(SeqCst),
+            1,
+            "quota must stop before the second chunk"
+        );
+        assert_eq!(closes.load(SeqCst), 1);
+    }
+    #[test]
+    fn read_failure_closes_source() {
+        let (exec, _, closes, types) = source(true);
+        assert!(
+            visit_executor_rows(exec, &types, &crate::StatementMemory::default(), |_| Ok(()))
+                .is_err()
+        );
+        assert_eq!(closes.load(SeqCst), 1);
+    }
+    #[test]
+    fn consumer_failure_stops_reading_and_closes_source() {
+        let (exec, nexts, closes, types) = source(false);
+        assert!(
+            visit_executor_rows(exec, &types, &crate::StatementMemory::default(), |_| Err(
+                DriverError::unsupported("write validation failed")
+            ))
+            .is_err()
+        );
+        assert_eq!(nexts.load(SeqCst), 1);
+        assert_eq!(closes.load(SeqCst), 1);
+    }
 }
 
 fn next_executor(

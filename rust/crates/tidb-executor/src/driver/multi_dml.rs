@@ -869,7 +869,14 @@ pub(crate) fn run_multi_update(
             )?
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
         };
-        planned_source_rows(&source, plan, catalog, ctx, runtime)?
+        planned_source_rows(
+            &source,
+            plan,
+            catalog,
+            ctx,
+            runtime,
+            crate::mem_quota::label::UPDATE,
+        )?
     } else {
         ctx.notify_before_executor_first_run();
         selected_rows(
@@ -881,7 +888,9 @@ pub(crate) fn run_multi_update(
         )?
     };
 
-    account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
+    if !planned {
+        account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
+    }
 
     // Go keeps updatedRowKeys per target position, but mergedRowData per
     // base table and handle. Neither map can stand in for the other.
@@ -1194,12 +1203,21 @@ pub(crate) fn run_multi_delete(
             )?
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
         };
-        planned_source_rows(&source, plan, catalog, ctx, runtime)?
+        planned_source_rows(
+            &source,
+            plan,
+            catalog,
+            ctx,
+            runtime,
+            crate::mem_quota::label::DELETE,
+        )?
     } else {
         ctx.notify_before_executor_first_run();
         selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?
     };
-    account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
+    if !planned {
+        account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
+    }
 
     // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
     // several join paths -- or named twice in the target list -- is removed
@@ -1420,6 +1438,7 @@ fn planned_source_rows(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    memory_label: i64,
 ) -> Result<Vec<SourceRow>, DriverError> {
     struct Slot<'a> {
         width: usize,
@@ -1445,66 +1464,74 @@ fn planned_source_rows(
         });
     }
     let expected: usize = slots.iter().map(|slot| slot.width).sum();
-    let (rows, collected) =
-        super::physical_builder::execute_dml_source(plan, catalog, ctx, runtime.is_some())?;
+    let zone = ctx.session_zone();
+    let accountant = ctx.statement_memory().write_accountant(memory_label);
+    let mut out = Vec::new();
+    let collected = super::physical_builder::execute_dml_source(
+        plan,
+        catalog,
+        ctx,
+        runtime.is_some(),
+        |row| {
+            if row.len() != expected {
+                return Err(DriverError::unsupported(format!(
+                    "a multi-table read returned {} columns, expected {expected}",
+                    row.len()
+                )));
+            }
+            let mut ids = Vec::with_capacity(slots.len());
+            let mut values = Vec::with_capacity(source.width());
+            let mut start = 0;
+            for slot in &slots {
+                let part = &row[start..start + slot.width];
+                start += slot.width;
+                let id = match slot.kv {
+                    None => None,
+                    Some(kv) => {
+                        let handle = if let Some(offset) = kv.pk_handle_offset() {
+                            match &part[offset] {
+                                Datum::Int(value) => Some(TableHandle::Int(*value)),
+                                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                                _ => None,
+                            }
+                        } else if !kv.common_handle_offsets().is_empty() {
+                            let handle_values: Vec<Datum> = kv
+                                .common_handle_offsets()
+                                .iter()
+                                .map(|offset| part[*offset].clone())
+                                .collect();
+                            if handle_values
+                                .iter()
+                                .any(|value| matches!(value, Datum::Null))
+                            {
+                                None
+                            } else {
+                                Some(
+                                    kv.common_handle_of_values(&handle_values, &zone)
+                                        .map_err(kv_write_error)?,
+                                )
+                            }
+                        } else {
+                            match &part[slot.stored] {
+                                Datum::Int(value) => Some(TableHandle::Int(*value)),
+                                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+                                _ => None,
+                            }
+                        };
+                        handle.map(RowId::Kv)
+                    }
+                };
+                ids.push(id);
+                values.extend_from_slice(&part[..slot.stored]);
+            }
+            // Charge as rows arrive, before retaining them or pulling another chunk.
+            accountant.account_row(&values).map_err(DriverError::from)?;
+            out.push((ids, values));
+            Ok(())
+        },
+    )?;
     if let Some(runtime) = runtime {
         runtime.extend(collected);
-    }
-    let zone = ctx.session_zone();
-    let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
-        if row.len() != expected {
-            return Err(DriverError::unsupported(format!(
-                "a multi-table read returned {} columns, expected {expected}",
-                row.len()
-            )));
-        }
-        let mut ids = Vec::with_capacity(slots.len());
-        let mut values = Vec::with_capacity(source.width());
-        let mut start = 0;
-        for slot in &slots {
-            let part = &row[start..start + slot.width];
-            start += slot.width;
-            let id = match slot.kv {
-                None => None,
-                Some(kv) => {
-                    let handle = if let Some(offset) = kv.pk_handle_offset() {
-                        match &part[offset] {
-                            Datum::Int(value) => Some(TableHandle::Int(*value)),
-                            Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                            _ => None,
-                        }
-                    } else if !kv.common_handle_offsets().is_empty() {
-                        let handle_values: Vec<Datum> = kv
-                            .common_handle_offsets()
-                            .iter()
-                            .map(|offset| part[*offset].clone())
-                            .collect();
-                        if handle_values
-                            .iter()
-                            .any(|value| matches!(value, Datum::Null))
-                        {
-                            None
-                        } else {
-                            Some(
-                                kv.common_handle_of_values(&handle_values, &zone)
-                                    .map_err(kv_write_error)?,
-                            )
-                        }
-                    } else {
-                        match &part[slot.stored] {
-                            Datum::Int(value) => Some(TableHandle::Int(*value)),
-                            Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                            _ => None,
-                        }
-                    };
-                    handle.map(RowId::Kv)
-                }
-            };
-            ids.push(id);
-            values.extend_from_slice(&part[..slot.stored]);
-        }
-        out.push((ids, values));
     }
     Ok(out)
 }

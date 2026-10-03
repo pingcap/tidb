@@ -77,3 +77,7 @@ path = "tests/region_batch_locate_source.rs"
 [[test]]
 name = "shared_read_runtime_source"
 path = "tests/shared_read_runtime_source.rs"
+
+[[test]]
+name = "tikv_transaction_driver_source"
+path = "tests/tikv_transaction_driver_source.rs"

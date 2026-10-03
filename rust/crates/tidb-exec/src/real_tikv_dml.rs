@@ -397,12 +397,26 @@ pub struct ConfiguredWriteWarning {
 
 /// Encodes one INSERT statement's rows into typed mutations.
 ///
-/// TiKV enforces absence through the `Insert` operation's `NotExist`
-/// assertion, so this performs no preliminary existence read.
+/// The optimistic lazy check transports an Insert flag and AssertUnknown.
+/// It performs no preliminary snapshot existence read; TiKV still checks duplicates.
 pub fn plan_insert(
     table: &ConfiguredTable,
     rows: &[ConfiguredInsertRow],
     session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    plan_insert_with_check(
+        table,
+        rows,
+        session_tz,
+        crate::table_write_policy::AbsenceCheck::Lazy,
+    )
+}
+
+fn plan_insert_with_check(
+    table: &ConfiguredTable,
+    rows: &[ConfiguredInsertRow],
+    session_tz: &SessionTimeZone,
+    check: crate::table_write_policy::AbsenceCheck,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let mut mutations = Vec::with_capacity(rows.len());
     let mut handles = Vec::with_capacity(rows.len());
@@ -415,16 +429,19 @@ pub fn plan_insert(
         handles.push(handle);
         let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
         let value = encode_row_value(&columns)?;
-        mutations.push(BufferMutation::insert(key, value)?);
+        mutations.push(crate::table_write_policy::insert_record(
+            key, value, check, false,
+        )?);
         // Every configured index gains one entry for the new row, committed in
         // the same 2PC as the record so the index can never lag the row.
         for index in table.indexes() {
             let indexed = indexed_insert_value(index, &columns)?;
-            mutations.push(index_put_mutation(
+            mutations.push(index_put_mutation_with_check(
                 table.table_id(),
                 index,
                 indexed,
                 handle,
+                check,
             )?);
         }
     }
@@ -485,8 +502,12 @@ pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
             continue;
         }
 
-        let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(table, std::slice::from_ref(row), session_tz)?
+        let ConfiguredWritePlan::Write { mutations, .. } = plan_insert_with_check(
+            table,
+            std::slice::from_ref(row),
+            session_tz,
+            crate::table_write_policy::AbsenceCheck::Checked,
+        )?
         else {
             unreachable!("one INSERT IGNORE row always has an insert plan")
         };
@@ -615,7 +636,12 @@ fn plan_replace_row<S: WritePlanningSnapshot>(
         mutations: inserts,
         affected_rows: insert_affected,
         warnings: insert_warnings,
-    } = plan_insert(table, std::slice::from_ref(row), session_tz)?
+    } = plan_insert_with_check(
+        table,
+        std::slice::from_ref(row),
+        session_tz,
+        crate::table_write_policy::AbsenceCheck::Checked,
+    )?
     else {
         unreachable!("a replacement INSERT always publishes");
     };
@@ -918,7 +944,12 @@ fn plan_on_duplicate_row<S: WritePlanningSnapshot>(
             session_tz,
         );
     }
-    plan_insert(table, std::slice::from_ref(row), session_tz)
+    plan_insert_with_check(
+        table,
+        std::slice::from_ref(row),
+        session_tz,
+        crate::table_write_policy::AbsenceCheck::Checked,
+    )
 }
 
 /// Plans all rows of a configured duplicate-update INSERT through one
@@ -1287,10 +1318,31 @@ fn index_put_mutation(
     value: i64,
     handle: i64,
 ) -> Result<BufferMutation, ConfiguredWriteError> {
+    index_put_mutation_with_check(
+        table_id,
+        index,
+        value,
+        handle,
+        crate::table_write_policy::AbsenceCheck::Lazy,
+    )
+}
+
+fn index_put_mutation_with_check(
+    table_id: i64,
+    index: &ConfiguredIndex,
+    value: i64,
+    handle: i64,
+    check: crate::table_write_policy::AbsenceCheck,
+) -> Result<BufferMutation, ConfiguredWriteError> {
     if index.is_unique() {
         let key = unique_index_key(table_id, index.index_id(), value)?;
-        return BufferMutation::insert(key, handle.to_be_bytes().to_vec())
-            .map_err(ConfiguredWriteError::Mutations);
+        return crate::table_write_policy::insert_record(
+            key,
+            handle.to_be_bytes().to_vec(),
+            check,
+            false,
+        )
+        .map_err(ConfiguredWriteError::Mutations);
     }
     let key =
         encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)

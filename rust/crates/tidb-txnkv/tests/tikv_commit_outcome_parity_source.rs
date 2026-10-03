@@ -89,8 +89,20 @@ fn a_successful_write_set_reports_committed_with_its_commit_timestamp() {
 
     let outcome = txn
         .commit_mutations(vec![
-            BufferMutation::insert(b"row-1".to_vec(), b"v1".to_vec()).unwrap(),
-            BufferMutation::insert(b"row-2".to_vec(), b"v2".to_vec()).unwrap(),
+            BufferMutation::set_with_flags(
+                b"row-1".to_vec(),
+                b"v1".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
+            BufferMutation::set_with_flags(
+                b"row-2".to_vec(),
+                b"v2".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
         ])
         .expect("the mutation set stages and commits");
 
@@ -121,9 +133,11 @@ fn a_violated_insert_assertion_reports_rolled_back_and_leaves_nothing_behind() {
     let opener = opener();
 
     let mut seed = opener.begin().unwrap();
-    seed.commit_mutations(vec![BufferMutation::insert(
+    seed.commit_mutations(vec![BufferMutation::set_with_flags(
         b"taken".to_vec(),
         b"first".to_vec(),
+        true,
+        tidb_txnkv::AssertionOp::AssertNotExist,
     )
     .unwrap()])
         .unwrap();
@@ -133,9 +147,11 @@ fn a_violated_insert_assertion_reports_rolled_back_and_leaves_nothing_behind() {
     // RolledBack state.
     let mut conflicting = opener.begin().unwrap();
     let outcome = conflicting
-        .commit_mutations(vec![BufferMutation::insert(
+        .commit_mutations(vec![BufferMutation::set_with_flags(
             b"taken".to_vec(),
             b"second".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
         )
         .unwrap()])
         .expect("the commit path reports an outcome rather than erroring out");
@@ -162,9 +178,11 @@ fn a_write_conflict_reports_rolled_back() {
     let opener = opener();
 
     let mut seed = opener.begin().unwrap();
-    seed.commit_mutations(vec![BufferMutation::insert(
+    seed.commit_mutations(vec![BufferMutation::set_with_flags(
         b"contended".to_vec(),
         b"base".to_vec(),
+        true,
+        tidb_txnkv::AssertionOp::AssertNotExist,
     )
     .unwrap()])
         .unwrap();
@@ -212,8 +230,20 @@ fn every_mutation_kind_stages_with_its_source_op_and_assertion() {
     // Seed rows the existence-asserting kinds need.
     let mut seed = opener.begin().unwrap();
     seed.commit_mutations(vec![
-        BufferMutation::insert(b"existing-row".to_vec(), b"v".to_vec()).unwrap(),
-        BufferMutation::insert(b"doomed-row".to_vec(), b"v".to_vec()).unwrap(),
+        BufferMutation::set_with_flags(
+            b"existing-row".to_vec(),
+            b"v".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            b"doomed-row".to_vec(),
+            b"v".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     ])
     .unwrap();
 

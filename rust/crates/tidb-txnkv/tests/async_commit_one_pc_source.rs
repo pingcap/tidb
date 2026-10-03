@@ -465,7 +465,15 @@ fn detached_secondary_commit_regroups_after_split() {
         set_txn_resource_group(&mut transaction, "split-recovery");
         let observed = transaction.observe_detached_commits();
         let mut mutations = two_region_mutations();
-        mutations.push(BufferMutation::insert(b"z".to_vec(), b"tail".to_vec()).unwrap());
+        mutations.push(
+            BufferMutation::set_with_flags(
+                b"z".to_vec(),
+                b"tail".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
+        );
         let outcome = transaction
             .commit(mutations, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
             .unwrap();
@@ -634,13 +642,31 @@ fn transaction_at(
 }
 
 fn single_region_mutation() -> Vec<BufferMutation> {
-    vec![BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap()]
+    vec![BufferMutation::set_with_flags(
+        PRIMARY_KEY.to_vec(),
+        b"primary-value".to_vec(),
+        true,
+        tidb_txnkv::AssertionOp::AssertNotExist,
+    )
+    .unwrap()]
 }
 
 fn two_region_mutations() -> Vec<BufferMutation> {
     vec![
-        BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap(),
-        BufferMutation::insert(SECONDARY_KEY.to_vec(), b"secondary-value".to_vec()).unwrap(),
+        BufferMutation::set_with_flags(
+            PRIMARY_KEY.to_vec(),
+            b"primary-value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            SECONDARY_KEY.to_vec(),
+            b"secondary-value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     ]
 }
 
@@ -1053,8 +1079,20 @@ fn a_transaction_over_the_key_size_limit_never_asks_for_async_commit() {
     let mut secondary = SECONDARY_KEY.to_vec();
     secondary.resize(2_100, b'z');
     let mutations = vec![
-        BufferMutation::insert(primary, b"value".to_vec()).unwrap(),
-        BufferMutation::insert(secondary, b"value".to_vec()).unwrap(),
+        BufferMutation::set_with_flags(
+            primary,
+            b"value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            secondary,
+            b"value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     ];
 
     let (transaction, timestamp_calls) = transaction(

@@ -232,7 +232,7 @@ fn expected_row(handle: i64, balance: i64) -> (Vec<u8>, Vec<u8>) {
 // -----------------------------------------------------------------------------
 
 #[test]
-fn one_insert_row_becomes_one_not_exists_mutation_and_one_affected_row() {
+fn optimistic_lazy_insert_preserves_duplicate_check_and_one_affected_row() {
     let ConfiguredPreparedWrite::InsertRows { table, rows } = bound_insert(
         "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?)",
         &[10, 100],
@@ -253,6 +253,11 @@ fn one_insert_row_becomes_one_not_exists_mutation_and_one_affected_row() {
 
     let (key, value) = expected_row(10, 100);
     assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
+    assert!(mutations[0].presume_not_exists());
+    assert_eq!(
+        mutations[0].assertion(),
+        tidb_txnkv::AssertionOp::AssertUnknown
+    );
     assert_eq!(mutations[0].key(), key);
     assert_eq!(mutations[0].value(), value);
 }
@@ -1024,7 +1029,11 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     assert_eq!(affected_rows, 3);
     assert_eq!(mutations.len(), 2);
     assert_eq!(mutations[0].kind(), BufferMutationOp::Set);
-    assert!(mutations[0].presume_not_exists());
+    assert!(!mutations[0].presume_not_exists());
+    assert_eq!(
+        mutations[0].assertion(),
+        tidb_txnkv::AssertionOp::AssertNotExist
+    );
     assert_eq!(mutations[1].value(), stored_row(207));
 }
 
@@ -1245,7 +1254,8 @@ fn replace_reads_a_unique_conflict_and_moves_its_handle() {
             && mutation.value() == 20_i64.to_be_bytes()
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.presume_not_exists()
+        !mutation.presume_not_exists()
+            && mutation.assertion() == tidb_txnkv::AssertionOp::AssertNotExist
             && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(20))
     }));
 }
@@ -1290,11 +1300,14 @@ fn multiple_replace_rows_observe_the_statement_local_replacement() {
     assert_eq!(affected_rows, 3);
     assert_eq!(mutations.len(), 6);
     assert!(mutations.iter().any(|mutation| {
-        mutation.presume_not_exists()
+        !mutation.presume_not_exists()
+            && mutation.assertion() == tidb_txnkv::AssertionOp::AssertNotExist
             && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
     }));
     assert!(mutations.iter().any(|mutation| {
-        mutation.presume_not_exists() && mutation.key() == expected_unique_index_entry(200)
+        !mutation.presume_not_exists()
+            && mutation.assertion() == tidb_txnkv::AssertionOp::AssertNotExist
+            && mutation.key() == expected_unique_index_entry(200)
     }));
 }
 

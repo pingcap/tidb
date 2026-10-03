@@ -142,8 +142,13 @@ pub fn insert_row_with_collation(
     use_new_collation: bool,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
     let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id));
-    let mut mutations = vec![BufferMutation::insert(key, encode_row(table, values)?)
-        .map_err(|error| encode_error(error.to_string()))?];
+    let mut mutations = vec![crate::table_write_policy::insert_record(
+        key,
+        encode_row(table, values)?,
+        crate::table_write_policy::AbsenceCheck::Checked,
+        false,
+    )
+    .map_err(|error| encode_error(error.to_string()))?];
     mutations.extend(index_entries(
         table,
         &Handle::Int(IntHandle::new(row_id)),
@@ -307,8 +312,13 @@ fn store_clustered_row_with_collation(
     match existing {
         Some(existing) => rewrite_row(table, &key, &handle, existing, values, use_new_collation),
         None => {
-            let mut mutations = vec![BufferMutation::insert(key, encode_row(table, values)?)
-                .map_err(|error| encode_error(error.to_string()))?];
+            let mut mutations = vec![crate::table_write_policy::insert_record(
+                key,
+                encode_row(table, values)?,
+                crate::table_write_policy::AbsenceCheck::Checked,
+                false,
+            )
+            .map_err(|error| encode_error(error.to_string()))?];
             mutations.extend(index_entries(
                 table,
                 &handle,

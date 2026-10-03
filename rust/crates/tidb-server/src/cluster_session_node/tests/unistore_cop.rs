@@ -2171,7 +2171,12 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
                     let mutation = if existing {
                         BufferMutation::put_existing(key.clone(), b"updated".to_vec())
                     } else {
-                        BufferMutation::insert(key.clone(), b"inserted".to_vec())
+                        BufferMutation::set_with_flags(
+                            key.clone(),
+                            b"inserted".to_vec(),
+                            true,
+                            tidb_txnkv::AssertionOp::AssertNotExist,
+                        )
                     }
                     .unwrap();
                     Ok(((), vec![mutation]))

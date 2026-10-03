@@ -515,7 +515,13 @@ mod tests {
                 // `AssertionLevel_Strict`, so the first write must be an
                 // Insert (`Assertion_NotExist`) — a `put_existing` here would
                 // be refused as an assertion failure, exactly as in Go.
-                vec![BufferMutation::insert(key.clone(), value.clone()).expect("a valid mutation")],
+                vec![BufferMutation::set_with_flags(
+                    key.clone(),
+                    value.clone(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .expect("a valid mutation")],
                 &call,
             )
             .expect("the two-phase commit completes in-process");

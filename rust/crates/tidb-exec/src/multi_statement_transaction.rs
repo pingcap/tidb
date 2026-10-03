@@ -1377,8 +1377,20 @@ mod tests {
             mutations: vec![
                 BufferMutation::delete_existing(b"record/old".to_vec()).unwrap(),
                 BufferMutation::delete(b"index/old".to_vec()).unwrap(),
-                BufferMutation::insert(b"record/new".to_vec(), b"row".to_vec()).unwrap(),
-                BufferMutation::insert(b"index/new".to_vec(), b"handle".to_vec()).unwrap(),
+                BufferMutation::set_with_flags(
+                    b"record/new".to_vec(),
+                    b"row".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
+                BufferMutation::set_with_flags(
+                    b"index/new".to_vec(),
+                    b"handle".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
             ],
             affected_rows: 2,
             warnings: Vec::new(),

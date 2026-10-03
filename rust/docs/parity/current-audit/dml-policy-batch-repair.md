@@ -1,0 +1,37 @@
+# DML read and mutation policy batch
+
+The batch advances E03 and T01 together against freshly fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, starting at TiDB integration `134a7557f1e55d829d5e33036d741d92682c3d63`. Native master remains `19a56ccda1e128218cd33c69709038219aced9bc`; both exact remote destinations are preserved. No pushes are authorized. This maintains existing owners and grants no complete Go package acceptance.
+
+The register has **58 unresolved: 44 open and fourteen partial; 28 repaired; 86 tracked**. E03 and T01 move from open to partial. Other IDs retain their prior evidence; they were not all freshly reproduced in this batch.
+
+The physical DML child delivers rows directly to a caller visitor. The intermediate full datum matrix and its second joined-row conversion pass are gone. Every physical caller migrates: INSERT SELECT, single-table UPDATE/DELETE, and multi-table UPDATE/DELETE. Retained rows are charged during growth, before requesting another physical chunk. Single-table rows retain both output and stored representations, and both are charged rather than hiding the copy. Joined rows are no longer charged a second time after collection. Result-path cleanup closes the executor on partial open, read, quota or consumer failure and preserves the original failure when close also fails.
+
+Go `pkg/executor/update.go::updateRows` and `delete.go` charge arriving chunks. Rust still retains its final write vectors, reconstructs target handles/layouts from catalog metadata, and keeps a separate matrix join interpreter. Those contracts remain E03's explicit unresolved scope. No full streaming write/Halloween-protection or finalized planner-owned handle migration is claimed.
+
+`BufferMutation::insert` is removed after every Rust call migrates. `set_with_flags` transports the caller's absence-check flag and assertion independently. `tidb-exec/src/table_write_policy.rs` follows Go `pkg/table/tables/{tables,index}.go`: an optimistic lazy insertion uses the duplicate-check flag with `AssertUnknown`; checked or pessimistic absence uses `AssertNotExist`. The live retained configured-write owner is explicitly optimistic. Ordinary inserts use lazy policy for record and unique-index mutations. INSERT IGNORE, REPLACE and ON DUPLICATE non-conflicts reuse their completed transaction-view checks. System record writers use their allocated/snapshot-checked absence without asking for another lazy check. Existing transport tests deliberately retain their explicit Insert/NotExist metadata rather than silently changing what their storage branch tests.
+
+T01 remains partial: complete system-index uniqueness checking/assertions, transaction-local duplicate lifecycles and pessimistic prewrite constraint policy are not composed here. The policy function's pessimistic assertion branch is a local source rule, not acceptance of a complete pessimistic table path. Live TiKV assertion-level/mixed-node behavior is unverified.
+
+Two policy regressions fail against the old coupling; three physical-reader regressions fail against the old drain/close behavior. The quota and consumer cases previously pulled 101 times (100 data chunks plus EOF), now stop after one chunk; read failure previously closed zero times, now closes once. The initial quota test used the wrong wrapped error variant; its corrected fail-before run checks the actual dedicated 8175 variant and fails on premature draining. Only the corrected run counts as evidence. The initial accidental zero-test run is excluded.
+
+Stale test assumptions are corrected rather than deleting meaningful coverage. A configured ordinary-insert case now verifies lazy `AssertUnknown`. Checked REPLACE/duplicate-update tests verify the checked assertion instead of requiring a lazy flag. Notifier-row identification uses the record prefix and actual assertion, not an unrelated lazy flag. A newly drafted getter-only test was discarded before delivery; it added no behavioral coverage. No original upstream test obligation is retired.
+
+The wider driver run passes 327 and fails twelve cases. With all four executor implementation files temporarily replaced by pre-batch bytes, it passes 324 and fails the exact same twelve case names. Backups are retained outside the repository, and original WIP bytes are restored in `finally`. The wider DDL run passes 111 and fails five cases; the pre-batch system-write behavior fails the exact same five. That comparison expands the removed insert API to its exact former true/NotExist metadata solely so the old source compiles. These are controlled subsystem comparisons, not a claim that the entire repository was checked out at the old commit. The failures concern parser/plan/statistics/error metadata and DDL fixtures/admission/history expectations; they remain visible and were not disabled or deleted merely to obtain a green suite.
+
+Validation records 563 distinct current passing Rust cases (148 focused cases, deduplicated from broader runs), seventeen reproduced pre-existing failures, and five separate Python lint tests in [the receipt](dml-policy-batch-validation.json). All affected targets check successfully. Final actual hook/wire receipts are recorded after execution. Exact commands run from `/workspace/tidb/rust`, after `source /workspace/.cloud-setup/env.sh`:
+
+    cargo test --locked -p tidb-exec --lib table_write_policy
+    cargo test --locked -p tidb-exec --lib system_row_write
+    cargo test --locked -p tidb-exec --test prepared_dml_lowering_source --test cluster_account_write_source --test cluster_sysvar_write_source --test cluster_ddl_source
+    cargo test --locked -p tidb-exec --test prepared_dml_lowering_source --test cluster_sysvar_write_source
+    cargo test --locked -p tidb-executor --lib driver::
+    cargo test --locked -p tidb-executor --lib dml_batch
+    cargo test --locked -p tidb-executor --lib driver::tests::dml
+    cargo test --locked -p tidb-executor --lib driver::tests::mem_quota
+    cargo test --locked -p tidb-txnkv --lib transaction::mutation::tests
+    cargo test --locked -p tidb-txnkv --test tikv_transaction_driver_source
+    cargo check --locked -p tidb-executor -p tidb-exec -p tidb-txnkv -p tidb-server -p tidb-unistore --all-targets
+
+From `/workspace/tidb`, `make lint` passes, including all protocol checks and five Python script tests. Its full log was inspected for dependency-download errors. No Go files/imports/modules/Bazel metadata changed, so `make bazel_prepare` is not triggered. Existing Rust warnings remain.
+
+The actual precommit hook must execute `cd rust && cargo build --locked -p tidb-server`; results are recorded after execution. Live multi-node TiKV/PD, the complete upstream Go package suites, exact Go chunk accounting, the twelve/five broader failures, and workload performance remain unverified or unresolved. No throughput improvement is claimed from the early-stop fixture. The no-push instruction remains binding; any later explicitly reauthorized push still requires a fresh locked server build immediately before it.

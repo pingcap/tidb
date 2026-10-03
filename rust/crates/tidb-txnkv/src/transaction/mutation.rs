@@ -43,14 +43,17 @@ impl BufferMutation {
     ) -> Result<Self, MutationSetError> {
         Self::new(BufferMutationOp::Set, key.into(), value.into())
     }
-    /// Sets a value with a lazy absence check and a not-exists assertion.
-    pub fn insert(
+    /// Stores caller-selected duplicate-check flags and assertions independently.
+    /// The table layer owns existence checking and transaction-mode policy.
+    pub fn set_with_flags(
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
+        presume_not_exists: bool,
+        assertion: AssertionOp,
     ) -> Result<Self, MutationSetError> {
         let mut mutation = Self::set(key, value)?;
-        mutation.presume_not_exists = true;
-        mutation.assertion = AssertionOp::AssertNotExist;
+        mutation.presume_not_exists = presume_not_exists;
+        mutation.assertion = assertion;
         Ok(mutation)
     }
     /// Sets a value with the table layer's exists assertion.
@@ -145,14 +148,31 @@ mod tests {
     #[test]
     fn planning_does_not_impose_storage_size_limits() {
         // Only the configured MemDB owns entry-size validation.
-        assert!(BufferMutation::insert(vec![1; 4097], vec![2]).is_ok());
-        assert!(BufferMutation::insert(vec![1], vec![2; 6 * 1024 * 1024 + 1]).is_ok());
+        assert!(BufferMutation::set_with_flags(
+            vec![1; 4097],
+            vec![2],
+            true,
+            crate::AssertionOp::AssertNotExist
+        )
+        .is_ok());
+        assert!(BufferMutation::set_with_flags(
+            vec![1],
+            vec![2; 6 * 1024 * 1024 + 1],
+            true,
+            crate::AssertionOp::AssertNotExist
+        )
+        .is_ok());
     }
 
     #[test]
     fn empty_keys_fail_before_storage() {
         assert_eq!(
-            BufferMutation::insert(Vec::new(), b"v".to_vec()),
+            BufferMutation::set_with_flags(
+                Vec::new(),
+                b"v".to_vec(),
+                true,
+                crate::AssertionOp::AssertNotExist
+            ),
             Err(MutationSetError::EmptyKey)
         );
     }

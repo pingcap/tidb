@@ -156,7 +156,13 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
         .commit(
             // The playground starts empty, so the locked row is genuinely new
             // and carries the not-exists assertion an INSERT would.
-            vec![BufferMutation::insert(CONTENDED_KEY.to_vec(), b"held".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                CONTENDED_KEY.to_vec(),
+                b"held".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &call(),
         )
         .expect("the holder reaches a terminal outcome");
@@ -253,7 +259,13 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
         .expect("open the writing optimistic transaction");
     let outcome = writer
         .commit(
-            vec![BufferMutation::insert(FAIR_LOCK_KEY.to_vec(), b"newer".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                FAIR_LOCK_KEY.to_vec(),
+                b"newer".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &call(),
         )
         .expect("the writer reaches a terminal outcome");

@@ -99,3 +99,19 @@ path = "tests/result_schema_source.rs"
 [[test]]
 name = "catalog_reload_source"
 path = "tests/catalog_reload_source.rs"
+
+[[test]]
+name = "prepared_dml_lowering_source"
+path = "tests/prepared_dml_lowering_source.rs"
+
+[[test]]
+name = "cluster_account_write_source"
+path = "tests/cluster_account_write_source.rs"
+
+[[test]]
+name = "cluster_sysvar_write_source"
+path = "tests/cluster_sysvar_write_source.rs"
+
+[[test]]
+name = "cluster_ddl_source"
+path = "tests/cluster_ddl_source.rs"

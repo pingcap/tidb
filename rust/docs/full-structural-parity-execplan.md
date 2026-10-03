@@ -2562,3 +2562,8 @@ The stale negative-ID panic test is retired and FIFO/whole-image test assumption
 are corrected to Go's source contract. Counts: 61 unresolved (52 open/nine
 partial), 25 repaired, 86 tracked. C02, X02 and broader parent-package obligations
 remain distinct. Detailed checks and publication state are in the validation JSON.
+
+
+## DML policy maintenance checkpoint, 2026-10-03
+
+The [DML batch ExecPlan](dml-policy-batch-execplan.md) maintains E03 and T01 together against freshly fetched master 93a01d31f6. Both are partial; 58 unresolved (44 open, fourteen partial), 28 repaired remain. The intermediate physical datum matrix and generic insertion policy are removed after caller migration. Complete planner/handle metadata, final joined buffering, matrix interpretation, system-index uniqueness and pessimistic constraint checks remain. This is existing-owner maintenance, not complete package acceptance. User no-push remains binding. The [receipt](parity/current-audit/dml-policy-batch-repair.md) records focused and baseline validation without certifying the twelve pre-existing driver failures.

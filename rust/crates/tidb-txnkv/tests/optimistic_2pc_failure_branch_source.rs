@@ -488,13 +488,31 @@ fn transaction_with_timeout(
 
 fn two_region_mutations() -> Vec<BufferMutation> {
     vec![
-        BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap(),
-        BufferMutation::insert(SECONDARY_KEY.to_vec(), b"secondary-value".to_vec()).unwrap(),
+        BufferMutation::set_with_flags(
+            PRIMARY_KEY.to_vec(),
+            b"primary-value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            SECONDARY_KEY.to_vec(),
+            b"secondary-value".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     ]
 }
 
 fn primary_mutation() -> Vec<BufferMutation> {
-    vec![BufferMutation::insert(PRIMARY_KEY.to_vec(), b"primary-value".to_vec()).unwrap()]
+    vec![BufferMutation::set_with_flags(
+        PRIMARY_KEY.to_vec(),
+        b"primary-value".to_vec(),
+        true,
+        tidb_txnkv::AssertionOp::AssertNotExist,
+    )
+    .unwrap()]
 }
 
 // -----------------------------------------------------------------------------

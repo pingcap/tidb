@@ -287,7 +287,35 @@ fn sql_mutation_assertions_reach_the_authoritative_memdb() {
     let mut txn = driver(&pd, &runtime);
     let cases = [
         (
-            Mutation::insert(b"insert".to_vec(), b"v".to_vec()).unwrap(),
+            Mutation::set_with_flags(
+                b"lazy".to_vec(),
+                b"v".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertUnknown,
+            )
+            .unwrap(),
+            AssertionState::Unknown,
+            true,
+        ),
+        (
+            Mutation::set_with_flags(
+                b"checked".to_vec(),
+                b"v".to_vec(),
+                false,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
+            AssertionState::NotExists,
+            false,
+        ),
+        (
+            Mutation::set_with_flags(
+                b"insert".to_vec(),
+                b"v".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
             AssertionState::NotExists,
             true,
         ),
@@ -302,7 +330,13 @@ fn sql_mutation_assertions_reach_the_authoritative_memdb() {
             false,
         ),
         (
-            Mutation::insert(b"unique".to_vec(), b"v".to_vec()).unwrap(),
+            Mutation::set_with_flags(
+                b"unique".to_vec(),
+                b"v".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap(),
             AssertionState::NotExists,
             true,
         ),
@@ -355,7 +389,13 @@ fn deleting_a_lazy_insert_preserves_its_constraint_check() {
     seed.commit().unwrap();
     let mut txn = driver(&pd, &runtime);
     txn.stage_mutation(
-        &BufferMutation::insert(b"existing".to_vec(), b"replacement".to_vec()).unwrap(),
+        &BufferMutation::set_with_flags(
+            b"existing".to_vec(),
+            b"replacement".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     )
     .unwrap();
     txn.stage_mutation(&BufferMutation::delete_existing(b"existing".to_vec()).unwrap())

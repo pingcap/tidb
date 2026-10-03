@@ -5506,7 +5506,7 @@ pub(crate) fn execute_first_row(
     Ok(row)
 }
 
-/// Builds and drains the retained child of an UPDATE or DELETE. Go's DML
+/// Builds and visits the retained child of an UPDATE or DELETE. Go's DML
 /// executors consume this same physical child to obtain both the row values
 /// and the handle columns used by the write. Runtime counters are collected
 /// only for EXPLAIN ANALYZE; ordinary and cached execution use the identical
@@ -5516,7 +5516,8 @@ pub(crate) fn execute_dml_source(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     analyze: bool,
-) -> Result<(Vec<Vec<tidb_datatype::Datum>>, PhysicalRuntimeStats), DriverError> {
+    visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
+) -> Result<PhysicalRuntimeStats, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: analyze.then(HashMap::new),
@@ -5525,8 +5526,8 @@ pub(crate) fn execute_dml_source(
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     ctx.notify_before_executor_first_run();
     let field_types = root.ret_field_types().to_vec();
-    let rows = super::drain_executor_rows(root, &field_types, &ctx.statement_memory())?;
-    Ok((rows, state.runtime_counters.take().unwrap_or_default()))
+    super::visit_executor_rows(root, &field_types, &ctx.statement_memory(), visit)?;
+    Ok(state.runtime_counters.take().unwrap_or_default())
 }
 
 #[cfg(test)]

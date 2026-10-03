@@ -574,11 +574,20 @@ fn run_insert_with_physical(
             let physical = physical_source.ok_or_else(|| {
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
             })?;
-            let (rows, collected) = super::physical_builder::execute_dml_source(
+            let mut rows = Vec::new();
+            let accountant = ctx
+                .statement_memory()
+                .write_accountant(mem_quota::label::INSERT);
+            let collected = super::physical_builder::execute_dml_source(
                 physical,
                 catalog,
                 ctx,
                 runtime.is_some(),
+                |row| {
+                    accountant.account_row(&row).map_err(DriverError::from)?;
+                    rows.push(row);
+                    Ok(())
+                },
             )?;
             if let Some(runtime) = runtime {
                 runtime.extend(collected);
@@ -3246,7 +3255,15 @@ fn run_update_with_physical(
             .as_deref_mut()
             .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
         SourceRows::Kv {
-            rows: execute_physical_write_rows(physical, catalog, &database, &name, ctx, runtime)?,
+            rows: execute_physical_write_rows(
+                physical,
+                catalog,
+                &database,
+                &name,
+                ctx,
+                runtime,
+                mem_quota::label::UPDATE,
+            )?,
             partition_ids,
         }
     } else {
@@ -3312,9 +3329,6 @@ fn run_update_with_physical(
                 field_types: physical_field_types,
             } = rows;
             for row in rows {
-                accountant
-                    .account_row(&row.stored)
-                    .map_err(DriverError::from)?;
                 let computed = row_evaluator.compute(
                     &row.stored,
                     extra_handle_value(&row.handle),
@@ -3717,7 +3731,13 @@ fn run_delete_with_physical(
             .as_deref_mut()
             .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
         SourceRows::Kv(execute_physical_write_rows(
-            physical, catalog, &database, &name, ctx, runtime,
+            physical,
+            catalog,
+            &database,
+            &name,
+            ctx,
+            runtime,
+            mem_quota::label::DELETE,
         )?)
     } else {
         let entry = catalog.get_in(&database, &name).ok_or_else(|| {
@@ -3758,20 +3778,12 @@ fn run_delete_with_physical(
         }
         SourceRows::Kv(rows) => {
             // Go `DeleteExec.deleteSingleTableByChunk`: the child's chunk is
-            // consumed as it arrives, which is why a `DELETE` over a table
-            // too large for the quota is cancelled by the DELETE and not by
-            // the read below it. Here the rows are already materialized, so
-            // the equivalent is per row, inside the loop.
-            let accountant = ctx
-                .statement_memory()
-                .write_accountant(mem_quota::label::DELETE);
+            // charged as it arrives in execute_physical_write_rows. The
+            // retained output/stored rows are already charged here.
             // Selected first, deleted after: the parent-side cascade below
             // needs the table released, because it writes the DEPENDENT
             // tables the statement never named.
             for row in rows.rows {
-                accountant
-                    .account_row(&row.stored)
-                    .map_err(DriverError::from)?;
                 if dml_row_is_selected_with_handle(
                     &row.stored,
                     extra_handle
@@ -3861,6 +3873,7 @@ fn execute_physical_write_rows(
     name: &str,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    memory_label: i64,
 ) -> Result<PhysicalWriteRows, DriverError> {
     let field_types = physical
         .schema()
@@ -3873,11 +3886,6 @@ fn execute_physical_write_rows(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (rows, collected) =
-        super::physical_builder::execute_dml_source(physical, catalog, ctx, runtime.is_some())?;
-    if let Some(runtime) = runtime {
-        runtime.extend(collected);
-    }
     let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Err(DriverError::unsupported(
             "a physical write child does not read a byte-backed table",
@@ -3887,9 +3895,14 @@ fn execute_physical_write_rows(
     let has_extra_handle =
         table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
     let expected_width = stored_width + usize::from(has_extra_handle);
-    let rows = rows
-        .into_iter()
-        .map(|row| {
+    let accountant = ctx.statement_memory().write_accountant(memory_label);
+    let mut rows = Vec::new();
+    let collected = super::physical_builder::execute_dml_source(
+        physical,
+        catalog,
+        ctx,
+        runtime.is_some(),
+        |row| {
             if row.len() < expected_width {
                 return Err(DriverError::unsupported(format!(
                     "a physical write child returned {} columns, expected at least {expected_width}",
@@ -3926,13 +3939,21 @@ fn execute_physical_write_rows(
                     }
                 }
             };
-            Ok(PhysicalWriteRow {
+            let stored = row[..stored_width].to_vec();
+            // Both representations stay live until the write phase.
+            accountant.account_row(&row).map_err(DriverError::from)?;
+            accountant.account_row(&stored).map_err(DriverError::from)?;
+            rows.push(PhysicalWriteRow {
                 handle,
-                stored: row[..stored_width].to_vec(),
+                stored,
                 output: row,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            });
+            Ok(())
+        },
+    )?;
+    if let Some(runtime) = runtime {
+        runtime.extend(collected);
+    }
     Ok(PhysicalWriteRows { rows, field_types })
 }
 

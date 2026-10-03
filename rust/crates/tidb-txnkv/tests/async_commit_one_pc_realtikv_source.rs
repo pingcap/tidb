@@ -89,8 +89,20 @@ fn a_real_async_commit_transaction_commits_at_its_prewrite_timestamps() {
     let outcome = transaction
         .commit(
             vec![
-                BufferMutation::insert(ASYNC_PRIMARY_KEY.to_vec(), b"async-v1".to_vec()).unwrap(),
-                BufferMutation::insert(ASYNC_SECONDARY_KEY.to_vec(), b"async-v2".to_vec()).unwrap(),
+                BufferMutation::set_with_flags(
+                    ASYNC_PRIMARY_KEY.to_vec(),
+                    b"async-v1".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
+                BufferMutation::set_with_flags(
+                    ASYNC_SECONDARY_KEY.to_vec(),
+                    b"async-v2".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
@@ -168,7 +180,13 @@ fn a_real_one_pc_transaction_publishes_no_commit_command() {
 
     let outcome = transaction
         .commit(
-            vec![BufferMutation::insert(ONE_PC_KEY.to_vec(), b"one-pc-v1".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                ONE_PC_KEY.to_vec(),
+                b"one-pc-v1".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("run a real 1PC transaction");

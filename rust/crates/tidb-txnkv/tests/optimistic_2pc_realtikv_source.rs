@@ -249,9 +249,27 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     wait_for_phase(&phase_dir, "split-complete");
 
     let mutations = vec![
-        BufferMutation::insert(LOW_KEY.to_vec(), b"low-v1".to_vec()).unwrap(),
-        BufferMutation::insert(LOW_SIBLING_KEY.to_vec(), b"low-sibling-v1".to_vec()).unwrap(),
-        BufferMutation::insert(HIGH_KEY.to_vec(), b"high-v1".to_vec()).unwrap(),
+        BufferMutation::set_with_flags(
+            LOW_KEY.to_vec(),
+            b"low-v1".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            LOW_SIBLING_KEY.to_vec(),
+            b"low-sibling-v1".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
+        BufferMutation::set_with_flags(
+            HIGH_KEY.to_vec(),
+            b"high-v1".to_vec(),
+            true,
+            tidb_txnkv::AssertionOp::AssertNotExist,
+        )
+        .unwrap(),
     ];
     let detached_completions = transaction.observe_detached_commits();
     let committed = transaction
@@ -421,8 +439,20 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let outcome = conflict
         .commit(
             vec![
-                BufferMutation::insert(rollback_key.to_vec(), b"rollback".to_vec()).unwrap(),
-                BufferMutation::insert(duplicate_key.to_vec(), b"duplicate".to_vec()).unwrap(),
+                BufferMutation::set_with_flags(
+                    rollback_key.to_vec(),
+                    b"rollback".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
+                BufferMutation::set_with_flags(
+                    duplicate_key.to_vec(),
+                    b"duplicate".to_vec(),
+                    true,
+                    tidb_txnkv::AssertionOp::AssertNotExist,
+                )
+                .unwrap(),
             ],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
@@ -455,7 +485,13 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let post_cleanup = opener.begin().expect("allocate post-cleanup write");
     let post_cleanup = post_cleanup
         .commit(
-            vec![BufferMutation::insert(rollback_key.to_vec(), b"post-cleanup".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                rollback_key.to_vec(),
+                b"post-cleanup".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("write rolled-back key immediately");
@@ -540,10 +576,13 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let older_lock_wait_started = Instant::now();
     let older_lock_outcome = older_lock_writer
         .commit(
-            vec![
-                BufferMutation::insert(OLDER_LOCK_KEY.to_vec(), b"resolved-writer".to_vec())
-                    .unwrap(),
-            ],
+            vec![BufferMutation::set_with_flags(
+                OLDER_LOCK_KEY.to_vec(),
+                b"resolved-writer".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("resolve older live fixture and commit at the same start_ts");
@@ -585,9 +624,13 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     );
     let newer_conflict_outcome = newer_conflict
         .commit(
-            vec![
-                BufferMutation::insert(NEWER_LOCK_KEY.to_vec(), b"must-not-win".to_vec()).unwrap(),
-            ],
+            vec![BufferMutation::set_with_flags(
+                NEWER_LOCK_KEY.to_vec(),
+                b"must-not-win".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &UnaryCallContext::with_timeout(RPC_TIMEOUT),
         )
         .expect("return typed newer-lock conflict");

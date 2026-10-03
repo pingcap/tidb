@@ -1623,7 +1623,13 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
 
     transaction
         .commit(
-            vec![BufferMutation::insert(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
+            vec![BufferMutation::set_with_flags(
+                PRIMARY_KEY.to_vec(),
+                b"v".to_vec(),
+                true,
+                tidb_txnkv::AssertionOp::AssertNotExist,
+            )
+            .unwrap()],
             &call(),
         )
         .expect("the two-phase commit runs");
