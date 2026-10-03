@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **58 unresolved (44 open, fourteen partial)** after the DML policy batch; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **58 unresolved (42 open, sixteen partial)** after the statement-observation batch; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
 
 ## Baseline and scope
 
@@ -266,3 +266,8 @@ The [batch receipt](tiflash-replica-batch-repair.md) closes F03's classic pollin
 ## Connected DML/SET maintenance batch — 2026-10-03
 
 E03, T01 and N03 advance together while remaining partial. Physical read/quota/close, insertion metadata, active statement retirement and SET recovery share the maintained owners; premature GC-trigger and packet-validation branches are removed. The [receipt](dml-policy-batch-repair.md) records eleven repaired behavioral cases, corrected stale Go expectations, 698 distinct passing Rust cases, seventeen retained baseline failures and successful wire cancellation/recovery controls. Remaining planner/matrix/system-index/pessimistic/configuration obligations keep their existing sequence. No pushes.
+
+
+## Statement observation checkpoint, 2026-10-03
+
+O18/O11/N03 share the completed SQL producer and process lifecycle in [the observation batch](statement-observation-batch-repair.md). Missing producer/startup claims are replaced by partial acceptance with concrete telemetry/profiling obligations. The original workstream allocation remains historical; no complete Go package is accepted by these leaf integrations. User no-push remains binding.

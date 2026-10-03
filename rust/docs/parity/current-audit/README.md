@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [statement observation batch](statement-observation-batch-repair.md) advances **O18, O11 and N03 together**: shared SQL completion/counters, routed durable publication, full current/history schema, persistent startup/fallback/readers and joined shutdown. **58 unresolved (42 open, sixteen partial), 28 repaired, 86 tracked.** Detailed telemetry and complete profiling/transport remain unresolved; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
+
+The DML checkpoint below is historical.
+
 The [DML policy batch](dml-policy-batch-repair.md) advances **E03 and T01 together** to partial: physical row consumption/early quota/cleanup, shared statement retirement/recovery and explicit caller-owned absence/assertion metadata. The connected SET/config checks remove duplicate GC-trigger/packet validation under N03, which remains partial, and correct stale classic-kernel/query-info tests. **58 unresolved (44 open, fourteen partial), 28 repaired, 86 tracked.** Complete planner/matrix/system-index/pessimistic owners remain open; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
 
 The MPP checkpoint below is historical.

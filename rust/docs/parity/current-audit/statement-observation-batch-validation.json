@@ -1,0 +1,305 @@
+{
+  "date": "2026-10-03",
+  "integration_start": "b81b7abe4092504b3df6a8a112ad09979eafe35f",
+  "source_commit": "a7bb8c3e074dc70a41193f67337f86510c501723",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "scope": "Connected maintenance of three existing owners; no complete package transcreation/acceptance. Other 55 unresolved IDs retain prior evidence, not fresh behavioral revalidation.",
+  "finding_statuses": {
+    "O18": "partial",
+    "O11": "partial",
+    "N03": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "unresolved": 58,
+    "open": 42,
+    "partial": 16,
+    "repaired": 28
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-stmtsummary -p tidb-util -p tidb-exec --lib -- topsql_stmtstats adapter::tests statement_summary::tests reader::tests evicted::tests v2:: --test-threads=1",
+      "status": "passed",
+      "passing_cases": 172,
+      "log": "/workspace/.cloud-setup/statement-observation-batch/owner-tests.log",
+      "sha256": "1b10c5c02342283afcc72bbe015bf918c775bbc4a6be0341f50e673d7fe2c4d8",
+      "followup_duplicate_cases": false
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- observation_batch tests_system_schemas tests_mem_quota tests_core::lifecycle --test-threads=1",
+      "status": "passed",
+      "passing_cases": 67,
+      "log": "/workspace/.cloud-setup/statement-observation-batch/session-final.log",
+      "sha256": "91f803c117b39d2d3486083b3fd5a40981b723b4eef0f32351eccaccafdfc574",
+      "followup_duplicate_cases": false
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- observation_batch prepared_transactions autocommit_transactions transactions --test-threads=1",
+      "status": "passed",
+      "passing_cases": 67,
+      "log": "/workspace/.cloud-setup/statement-observation-batch/server-tests.log",
+      "sha256": "b3c50be8d1ea36477cd26b1a4edfb7529783867af73492d8999cd0ab23c1d74f",
+      "followup_duplicate_cases": false
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib observation_batch -- --test-threads=1",
+      "status": "passed",
+      "passing_cases": 13,
+      "log": "/workspace/.cloud-setup/statement-observation-batch/session-followup.log",
+      "sha256": "ea17202da0839c77220d80846c89c69f8ea271589d139663ac29e6aa17937228",
+      "followup_duplicate_cases": true
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- observation_batch prepared_transactions --test-threads=1",
+      "status": "passed",
+      "passing_cases": 14,
+      "log": "/workspace/.cloud-setup/statement-observation-batch/server-followup.log",
+      "sha256": "4cbfbbd391e27303f3c1b5487a0e3988e0a335bffef7c9ae9cadda7edad4086e",
+      "followup_duplicate_cases": true
+    },
+    {
+      "command": "cargo check --locked --all-targets -p tidb-server -p tidb-session -p tidb-stmtsummary -p tidb-util -p tidb-executor -p tidb-exec",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/all-targets-final.log",
+      "sha256": "ed1ae21142c66125f082f11ac0a37fa1397a75e3656dbc4a0e220d3116ed4ea5"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/build-final.log",
+      "sha256": "af1298f2a813297b4cb9bba047171bb5b0e7a9f67c0fa03de4c2312501c8ca5b"
+    },
+    {
+      "command": "make lint",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/lint-final.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "regressions": {
+    "distinct_rust_fail_before_pass_after_cases": 5,
+    "red_evidence": [
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/summary-before.log",
+        "sha256": "9267d7a463caa6883919509ff564dd8be4f6fe792873c9aa70c578c32ef94fdf"
+      },
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/session-before.log",
+        "sha256": "0f2e7a58453375fd2c19605ff80036d0395cccedbdc938857b50cf23caf4b5c0"
+      },
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/instance-getters-before.log",
+        "sha256": "e69645327a092a4c34cc45037630030e4c125de9b11d86d3ed30ddea0eaa233d"
+      },
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/wire-before.log",
+        "sha256": "57bcaf39f33413da939ce0b5b7389a91fe5eb392ac6344f1cdf3edaeea134664"
+      },
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/wire-memory-before-prepared.log",
+        "sha256": "2259b0bcb8e897073dafcac3f0e784d83bd8918c5d4d46aa74bfb20ad978e2bf"
+      },
+      {
+        "log": "/workspace/.cloud-setup/statement-observation-batch/wire-memory-before-instance-getters.log",
+        "sha256": "b7d50f12578a9c699802eb96bdf0ae31e13399aa5bfba0fecefcda100517f784"
+      }
+    ],
+    "excluded": [
+      "Initial compile errors, zero-test filters and wrong-column test drafts",
+      "Duplicate test execution counts",
+      "Removed synthetic fixture is not passing coverage"
+    ]
+  },
+  "test_accounting": {
+    "distinct_passing_rust_cases": 306,
+    "owner_cases": 172,
+    "session_cases": 67,
+    "server_transaction_cases": 67,
+    "ignored_in_focused_runs": 0,
+    "python_lint_cases_separate": 5,
+    "followup_runs_are_duplicates": true
+  },
+  "wire_smoke": [
+    {
+      "mode": "memory",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/wire-memory.log",
+      "sha256": "3d0fc14b73f6686c97a796b31821ceb177419ee58278516f90be74ea88510940"
+    },
+    {
+      "mode": "persistent",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/wire-persistent.log",
+      "sha256": "25a24d3a41a72d3d5ca5d995b88d3ef771a000011dabd31508c5bceaf2c00c5e"
+    },
+    {
+      "mode": "fallback",
+      "status": "passed",
+      "log": "/workspace/.cloud-setup/statement-observation-batch/wire-fallback.log",
+      "sha256": "65804af19970887953cac7df65d332c592f0b8a04671252ede96f5511e83ee0c"
+    }
+  ],
+  "precommit_hook": {
+    "status": "passed",
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "hooks_path": "hooks",
+    "bypass": false,
+    "log": "/workspace/.cloud-setup/statement-observation-batch/source-precommit.log",
+    "sha256": "7b3c0d1dda39e0064de7d8567f71592ceb100adf7a3fd933837bb8e5b2a7bfd9"
+  },
+  "go_sources": [
+    {
+      "path": "cmd/tidb-server/main.go",
+      "sha256": "2679ee3cd0480f67e1c8acf23db64b33139a3ba3666de4c70576a940a471223d"
+    },
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    },
+    {
+      "path": "pkg/executor/stmtsummary.go",
+      "sha256": "9e7d43cfa026e2a11f1b6b46a61664e483316f9967e5dcac27c01c20696a489c"
+    },
+    {
+      "path": "pkg/infoschema/tables.go",
+      "sha256": "e015c10352b0e507c90c84c26422c8777d0e849f72f80e557298f5a3ecb4ac04"
+    },
+    {
+      "path": "pkg/sessionctx/variable/sysvar.go",
+      "sha256": "2f6aef4039ed9b9d2d5656aaa9e8e20736348bc53bce0d570fa5025bb03ea46b"
+    },
+    {
+      "path": "pkg/util/stmtsummary/statement_summary.go",
+      "sha256": "304dc07df74443931ac12ac2b4f2ebbac1adf8dfd9f99ac6c1ca65cc92b75145"
+    },
+    {
+      "path": "pkg/util/stmtsummary/v2/stmtsummary.go",
+      "sha256": "0f97cba0055354f6d1a7b7046526cfa53204a0184e182ad58382ed09df37f581"
+    },
+    {
+      "path": "pkg/util/stmtsummary/v2/reader.go",
+      "sha256": "ea9893f8447745a9e15673c83fbbda0cb0dc26ff7232d01894371536288b24d8"
+    },
+    {
+      "path": "pkg/util/topsql/stmtstats/stmtstats.go",
+      "sha256": "b9ae4fb441b288704471e6db63556eb374ef8319794013d356681c53bb7e655e"
+    },
+    {
+      "path": "pkg/util/topsql/stmtstats/aggregator.go",
+      "sha256": "eba581227750286740903ce293303fc5612c86ea30b051555d8f03c074ac0807"
+    }
+  ],
+  "validated_rust_snapshot": [
+    {
+      "path": "rust/crates/tidb-exec/src/adapter.rs",
+      "sha256": "c05bbf3a67f214f9d3fc0c288e67cb7671f7d0339d989c82ed92ce49a58ac58d"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/infoschema_meta.rs",
+      "sha256": "4ebc1062aacafa4baf182a307d5285c565f7c94a4f6f2f55013341c720bc43d1"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/infoschema_statement_summary.rs",
+      "sha256": "e96a22a54d71d3bd86ff9c3a1c85ec71a404b9104af95b527ab30c9dba5a65cd"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "sha256": "a71aa0f60e6bc6ed8f9a3e398c3dedd4484f5b5d547529c33ebb778efb04c770"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/mod.rs",
+      "sha256": "a12cc4708d3b1491fac6f4529523457ceab98ea0cf680fdd806f105c68a91c4b"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/observation_batch.rs",
+      "sha256": "6d50bc3d247f411e6851b0794a00f715ebe8b62e3b801027a41783c8b2ede841"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/lib.rs",
+      "sha256": "42410d9aae47657f30da44e93e55e54586dbed4e27bdff55cc7debc7b53ae706"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/dispatch.rs",
+      "sha256": "1bb2fd8e32f4dafab587ff5ee11db5ec4363b77169d195065a919952c66d8890"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "e14559fdbe16a4dce4b35d53c44a44360b3a46a33a741cb8331d1209c7f024a1"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/observation.rs",
+      "sha256": "68cec1cf8a4f7306a1f6e01d4f2aa1b159b7028aa29e3a62faaa984b65d67893"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/prepared_statements.rs",
+      "sha256": "e96438c74d434b96cabebb06bcd091a2c5995571d52216a23d56607553d80d5a"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_observation_batch.rs",
+      "sha256": "bc1fe89b16b6bb2250a82287849fa5de5e259be6f1a8a00a1b6170dd494f1ae1"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_system_schemas.rs",
+      "sha256": "9baa9f66a8564378201ad2dddbbcc52106f9069787373c5d6e7bd357acc70dc8"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/vars.rs",
+      "sha256": "63a3d8dbe20a76b0c4bb6824250b1141cb0b95155c9430c8d8aceb50be6d8b50"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/warnings.rs",
+      "sha256": "a185c03bdaacb7418b5f9704975f0cf63ac330f8620473e8cb7c69c27e31de80"
+    },
+    {
+      "path": "rust/crates/tidb-stmtsummary/src/reader.rs",
+      "sha256": "a8dc05d308ec67a7ccd49bfb598abfff981a9a2ba61c04477d4fd68cc7fa4e08"
+    },
+    {
+      "path": "rust/crates/tidb-stmtsummary/src/v2/column.rs",
+      "sha256": "28ca8f86d276cf1f1bff4d198c815f1562d8aa58e1f0e99744728adc48d1b8c1"
+    },
+    {
+      "path": "rust/crates/tidb-stmtsummary/src/v2/reader.rs",
+      "sha256": "9ef0f5d520c9432f6a8899da6ba8a7b948448c6475b0ba22e38ba1bc7f2d78dc"
+    },
+    {
+      "path": "rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs",
+      "sha256": "350aad6e43a947926e371764562c1893432e4674374e2135f1af8d2817e0fc3f"
+    },
+    {
+      "path": "rust/crates/tidb-util/src/topsql_stmtstats/aggregator.rs",
+      "sha256": "2a71821db743ac57813c4562bf8ddc4063c7045aed49ccb648db75e5552ec85f"
+    },
+    {
+      "path": "rust/crates/tidb-util/src/topsql_stmtstats/mod.rs",
+      "sha256": "01d71ad697f1d966312269b77f33d0a631ff7c01b3209b6699f16348a3de8604"
+    }
+  ],
+  "stale_tests": {
+    "synthetic_cumulative_fixture": "replaced with real authenticated SQL execution and retrieval; injected-record scaffolding retired",
+    "corrected_assertions": [
+      "Six current Go system schemas",
+      "Existing mysql.password_history table owner",
+      "Unordered text/prepared index-merge result order"
+    ],
+    "meaningful_obligations_disabled": 0
+  },
+  "publication": {
+    "push": "not attempted; user instructed do not push",
+    "exact_intended_destinations": [
+      "pingcap/tidb hparser-integration",
+      "ngaut/client-rust master"
+    ],
+    "native_changed": false
+  },
+  "remaining": [
+    "Plan digests/encoded plans and complete statement table/phase/RPC/RU/CPU/network/retry/write-response/keyspace-ID measurements",
+    "Explicit restricted SQL / EXPLAIN EXPLORE context and complete evicted/cluster retrieval owners",
+    "TopSQL SQL/plan registration, profiling, KV/RU/network attribution, generated TiPB transport, sinks and reporter lifecycle",
+    "Native startup defaults, TLS policy A03 and other N03 runtime consumers",
+    "Complete upstream Go package inventories/platform/generated/test/fixture acceptance, full Go suites, live multi-node TiKV/PD/TiFlash and workload performance",
+    "Fresh-task restoration of unpublished local commits remains unverified; draft saving does not publish the environment"
+  ]
+}

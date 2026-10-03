@@ -89,10 +89,10 @@
       "id": "N03",
       "status": "partial",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; partially repaired:** executable startup now uses the shared configuration loader and override pass; the second TOML parse, whitelist, presence tracker and manual reconstruction are removed. Recognized fields, CLI precedence, config-check/strict policy and Go's false auto-TLS default are covered. Native deployment defaults and incomplete runtime consumers remain; accepting ssl-ca does not repair A03 certificate enforcement. The TiFlash batch additionally composes cluster CA/client-identity/HTTPS configuration into its shared PD/status HTTP client; native defaults and the other recorded consumers remain partial. The DML/SET batch removes premature float-only GC-trigger and duplicate packet-size scope branches, leaving canonical percentage/range validation and warnings. SET literals and pre-bound bare words use shared scalar policy; complete configuration consumers remain open.",
-      "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md); `tidb-session/src/sysvar.rs::run_validation_with_lookup`; `variables.rs::check_max_allowed_packet_scope`, `eval_bound_value`",
+      "finding": "**P2; partially repaired:** executable startup now uses the shared configuration loader and override pass; the second TOML parse, whitelist, presence tracker and manual reconstruction are removed. Recognized fields, CLI precedence, config-check/strict policy and Go's false auto-TLS default are covered. Native deployment defaults and incomplete runtime consumers remain; accepting ssl-ca does not repair A03 certificate enforcement. The TiFlash batch additionally composes cluster CA/client-identity/HTTPS configuration into its shared PD/status HTTP client; native defaults and the other recorded consumers remain partial. The DML/SET batch removes premature float-only GC-trigger and duplicate packet-size scope branches, leaving canonical percentage/range validation and warnings. SET literals and pre-bound bare words use shared scalar policy; complete configuration consumers remain open. The statement-observation batch consumes persistent summary filename/rotation settings at common process startup, validates the sink before publishing workers and switches the shared configuration to v1 on failure. Both store runners share joined shutdown. Native defaults, TLS A03 and other consumers remain partial. All five read-only persistent-summary instance getters now expose live shared configuration, including the ON/OFF fallback state and rotation limits.",
+      "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md); `tidb-session/src/sysvar.rs::run_validation_with_lookup`; `variables.rs::check_max_allowed_packet_scope`, `eval_bound_value`; `tidb-server/src/lib.rs::start_statement_observation`; `tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; `tidb-session/src/vars.rs::runtime_instance_value`",
       "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Finish the remaining runtime consumers and deployment defaults before complete acceptance. Deprecated performance.run-auto-analyze uses the shared loader's diagnostics; the live auto-analyze worker reads vardef.RunAutoAnalyze, as Go does.",
-      "review_basis": "Batch from integration 43e827e2c4 against Go master 93a01d31f6 and unchanged native 19a56cc. Rejection/default regressions failed before repair and pass afterward; config/CLI/startup projection and config-check tests pass. Real default-plaintext MySQL startup exposed and then verified shared instance-memory defaults. No whole-package acceptance; see config-statistics-maintenance-repair.md. See tiflash-replica-batch-repair.md for the additional cluster HTTP consumer validation. Rechecked Go sysvar.go, varsutil.go::parsePercentage, SetExecutor, adapter.go query-info and classic-kernel trace-event tests; two stale test expectations corrected and two real duplicate-validation regressions repaired."
+      "review_basis": "Batch from integration 43e827e2c4 against Go master 93a01d31f6 and unchanged native 19a56cc. Rejection/default regressions failed before repair and pass afterward; config/CLI/startup projection and config-check tests pass. Real default-plaintext MySQL startup exposed and then verified shared instance-memory defaults. No whole-package acceptance; see config-statistics-maintenance-repair.md. See tiflash-replica-batch-repair.md for the additional cluster HTTP consumer validation. Rechecked Go sysvar.go, varsutil.go::parsePercentage, SetExecutor, adapter.go query-info and classic-kernel trace-event tests; two stale test expectations corrected and two real duplicate-validation regressions repaired. See statement-observation-batch-repair.md for checked persistent startup/fallback and runtime reader selection against current Go. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json."
     },
     {
       "id": "N06",
@@ -474,12 +474,12 @@
     },
     {
       "id": "O18",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "**P2; reproduced in the in-process SQL owner:** statement-summary data structures, settings and readers exist, but completed production SQL never constructs/submits `StmtExecInfo`. The persistent v2 owner also lacks server setup/close and reader selection. Tests directly inject records and therefore do not establish the live pipeline.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/adapter.rs::decide_summary_stmt` and its explicit population boundary; `rust/crates/tidb-session/src/dispatch.rs::tidb_statements_stats_table_rows`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; no production add/setup/close callers",
+      "finding": "**P2; partially repaired:** real authenticated SQL now submits completed statement records through the existing SummaryStmt gate, including streaming Close, prepared original SQL and one outer routed/durable completion including text and binary prepared DML storage verdicts. The full 127-column current/history schema selects v1 memory or v2 memory plus disk with user/PROCESS filtering. Checked persistent initialization falls back to v1 on failure; process shutdown closes workers and flushes the sink. Plan digests/encoded plans, complete table and phase/RPC/RU/CPU/network metadata, restricted/explain context, complete evicted/cluster retrieval and complete package obligations remain unaccepted; empty measurements do not establish parity.",
+      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `record_set.rs`; `dispatch.rs::statement_summary_table_rows`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `cluster_session_node/mod.rs::observe_routed_write`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs`; `rust/crates/tidb-executor/src/driver/infoschema_statement_summary.rs`",
       "go_owner": "`pkg/executor/adapter.go::SummaryStmt`, `pkg/util/stmtsummary/v2::Add`, `cmd/tidb-server/main.go::setupStmtSummary`/`closeStmtSummary`, `pkg/executor/stmtsummary.go::buildStmtSummaryRetriever`: connect statement completion, summary-mode dispatch, reader and sink lifetime together. Keep the existing v1/v2 stores.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. With both summary switches enabled, retained SQL still leaves cumulative statement stats at zero. Production still does not submit StmtExecInfo or compose the v2 sink lifetime. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Statement observation batch starting b81b7abe40 against freshly fetched Go master 93a01d31f6 and unchanged native 19a56cc. Real-session and old-server wire regressions reproduce disconnected summary retrieval/publication before repair. Live producer/readers replace the synthetic cumulative fixture. See statement-observation-batch-repair.md and its validation JSON; remaining detailed measurements and whole-package obligations are explicit. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json."
     },
     {
       "id": "O19",
@@ -753,12 +753,12 @@
     },
     {
       "id": "O11",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; source-confirmed:** TopSQL has data models and metrics but no composed SQL/plan registration, profiling collector, aggregation, sink and reporter lifecycle.",
-      "rust_evidence": "`rust/crates/tidb-util/src/topsql_reporter/mod.rs`; `datamodel.rs`; `rust/crates/tidb-server/src/lib.rs:273`",
+      "finding": "**P2; partially repaired:** each SQL Session registers the existing StatementStats owner, publishes live SQL execution count/duration and marks its counter finished on close; the process starts and joins the existing shared aggregator for both stores. A registered collector receives real completed SQL and retires the closed session. Complete SQL/plan registration, exact compile/execution attribution, profiling, KV/RU/network attribution, generated TiPB transport, sinks and reporter lifecycle remain missing or unverified. This is a live counter/aggregation producer, not a completed TopSQL profiling/reporting pipeline.",
+      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `lib.rs` Session construction/Drop; `rust/crates/tidb-util/src/topsql_stmtstats/{stmtstats,aggregator}.rs`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `tidb-util/src/topsql_reporter/mod.rs` remains explicitly incomplete",
       "go_owner": "`pkg/util/topsql/topsql.go::SetupTopProfiling`, `RegisterSQL`/`RegisterPlan`, reporter/collector packages and execution hooks. Wire the complete lifetime and generated TiPB boundary. A registered metric or resource-group tag is not a running reporting pipeline.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. TopSQL startup still initializes metrics only; SQL/plan registration, profiling collection, aggregation and reporting remain uncomposed. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Statement observation batch starting b81b7abe40 against Go master 93a01d31f6 and native 19a56cc. The real-session collector regression fails before repair and passes with execution count/duration, Session close and aggregator retirement. Process lifetime now composes setup/close rather than metrics alone. Complete profiling/reporting still requires the recorded Go package and generated boundary. See statement-observation-batch-repair.md. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json."
     },
     {
       "id": "O12",
@@ -791,19 +791,19 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "ids": [
-      "E03",
-      "T01",
+      "O18",
+      "O11",
       "N03"
     ],
     "statuses": {
-      "E03": "partial",
-      "T01": "partial",
+      "O18": "partial",
+      "O11": "partial",
       "N03": "partial"
     },
-    "scope": "Existing E03/T01/N03 DML/SET/quota/cleanup, statement ownership/recovery and caller-owned insertion policy maintenance; 698 distinct Rust cases pass; seventeen broader baseline failures retained. Final MySQL wire cancellation/recovery and controls pass. No complete package acceptance.",
-    "integration_start": "134a7557f1e55d829d5e33036d741d92682c3d63",
+    "scope": "Shared live statement completion/counter publication, persistent summary startup/fallback/readers/flush and routed durable observation. Existing-owner maintenance; detailed telemetry, profiling transport and whole-package acceptance remain unresolved. No push authorized.",
+    "integration_start": "b81b7abe4092504b3df6a8a112ad09979eafe35f",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "dml-policy-batch-repair.md",
-    "source_commit": "02c78d1a69d4fed3989f858bdbdb7e96a5014c3f"
+    "receipt": "statement-observation-batch-repair.md",
+    "source_commit": "a7bb8c3e074dc70a41193f67337f86510c501723"
   }
 }

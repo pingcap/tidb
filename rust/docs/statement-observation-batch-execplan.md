@@ -12,8 +12,8 @@ Completed SQL must reach the existing summary owner and per-session TopSQL count
 - [x] Four behavioral regressions fail before repair; old server wire retrieval also fails and cumulative records are absent.
 - [x] Connect the shared summary gate and observation scope, current/history readers, checked sink initialization/fallback and process cleanup.
 - [x] Finish behavioral validation: 306 distinct passing Rust cases, six-crate all-target checking, make lint, locked server build and three real MySQL/unistore modes.
-- [ ] Capture the actual normal source-commit precommit locked build and finalize local retention.
-- [ ] Update both finding registers and durable receipts.
+- [x] Capture the actual normal source-commit precommit locked build; final local recovery/draft details are retained externally in the cloud handoff.
+- [x] Update both finding registers and durable receipts.
 
 ## Context and Orientation
 
@@ -53,4 +53,4 @@ Reuse tidb-exec::adapter::decide_summary_stmt as the canonical gate. Use one SQL
 
 ## Outcomes & Retrospective
 
-The initial session/runtime regressions pass. Source self-review found nested account/local-DDL execution could publish before durability; the routed scope now preserves one outer completion and transaction-control attribution. Final runtime validation passes in memory, persistent and invalid-sink fallback modes, including text/named/binary prepared DML, prepared DDL attribution and all five live instance getters. No complete package acceptance is claimed. O18/O11/N03 stay partial; 58 unresolved remain. The synthetic cumulative fixture is replaced with real SQL and three stale schema/order assertions are corrected. Actual source-hook evidence and local-only retention are the final steps.
+The initial session/runtime regressions pass. Source self-review found nested account/local-DDL execution could publish before durability; the routed scope now preserves one outer completion and transaction-control attribution. Final runtime validation passes in memory, persistent and invalid-sink fallback modes, including text/named/binary prepared DML, prepared DDL attribution and all five live instance getters. No complete package acceptance is claimed. O18/O11/N03 stay partial; 58 unresolved remain. The synthetic cumulative fixture is replaced with real SQL and three stale schema/order assertions are corrected. The actual normal source-commit hook passed its locked build. Both registers and durable validation now record the three partial owners, remaining scope and source hashes. Local recovery and the reusable cloud draft retain unpublished work; saving is not publication or proof of new-task restoration.
