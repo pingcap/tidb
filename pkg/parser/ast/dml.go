@@ -3521,7 +3521,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
 			ctx.WriteKeyWord("IMPORT JOBS")
-			restoreShowLikeOrWhereOpt()
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
 		}
 	case ShowImportGroups:
 		if n.ShowGroupKey != "" {
@@ -3529,7 +3531,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.ShowGroupKey)
 		} else {
 			ctx.WriteKeyWord("IMPORT GROUPS")
-			restoreShowLikeOrWhereOpt()
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
 		}
 	case ShowDistributionJobs:
 		if n.DistributionJobID != nil {
@@ -3537,7 +3541,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlainf("%d", *n.DistributionJobID)
 		} else {
 			ctx.WriteKeyWord("DISTRIBUTION JOBS")
-			restoreShowLikeOrWhereOpt()
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
 		}
 	// ShowTargetFilterable
 	default:
@@ -3666,7 +3672,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
-		restoreShowLikeOrWhereOpt()
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
