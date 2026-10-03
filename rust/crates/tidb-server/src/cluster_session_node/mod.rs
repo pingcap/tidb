@@ -7673,20 +7673,16 @@ pub fn build_tiflash_mpp_source(
 pub fn build_tiflash_replica_poll(
     catalog: std::sync::Arc<tidb_exec::catalog_watch::SharedCatalog>,
     pd_endpoints: &[String],
+    security: &tidb_pd_client::ClusterSecurity,
     ddl: Arc<dyn tidb_exec::tiflash_replica_manager::TiFlashReplicaControl>,
 ) -> Option<tidb_exec::tiflash_replica_manager::TiFlashReplicaPoller> {
     let endpoint = pd_endpoints.first()?;
-    let result =
-        tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), Duration::from_secs(10))
-            .map_err(|error| error.to_string())
-            .and_then(|pd| {
-                tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::new(
-                    catalog,
-                    move || pd.all_stores().map_err(|error| error.to_string()),
-                    ddl,
-                    format!("http://{endpoint}"),
-                )
-            });
+    let result = tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::with_pd_http_security(
+        catalog,
+        ddl,
+        format!("http://{endpoint}"),
+        security,
+    );
     match result {
         Ok(manager) => Some(manager.spawn()),
         Err(error) => {

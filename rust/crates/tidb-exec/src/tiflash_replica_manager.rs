@@ -33,7 +33,8 @@
 //! 4. the flip publishes through the same DDL transaction path Go uses
 //!    (`UpdateTableReplicaInfo` -> `ActionUpdateTiFlashReplicaStatus`).
 
-use std::sync::{mpsc, Arc};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{mpsc, Arc, LazyLock, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -48,6 +49,19 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 // PD's HTTP client and TiDB's InternalHTTPClient have different deadlines.
 const PD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const TIFLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+// Go infosync's process-scoped replica manager owns the shared progress image.
+static PROGRESS: LazyLock<Arc<RwLock<HashMap<i64, f64>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Cached full-replica progress, distinct from one-replica SQL availability.
+pub fn cached_replica_progress(physical_id: i64) -> Option<f64> {
+    PROGRESS
+        .read()
+        .expect("TiFlash progress cache")
+        .get(&physical_id)
+        .copied()
+}
 
 /// DDL capabilities used by the poller; the DDL executor owns publication.
 pub trait TiFlashReplicaControl: Send + Sync {
@@ -64,6 +78,92 @@ pub struct TiFlashReplicaManager {
     ddl: Arc<dyn TiFlashReplicaControl>,
     pd_http: String,
     http: reqwest::blocking::Client,
+    http_scheme: &'static str,
+    state: Mutex<PollState>,
+}
+
+#[derive(Default)]
+struct PollState {
+    counter: u64,
+    stores: Vec<PdStore>,
+    backoff: HashMap<i64, BackoffElement>,
+    progress: Arc<RwLock<HashMap<i64, f64>>>,
+    pending: VecDeque<i64>,
+}
+
+struct BackoffElement {
+    counter: usize,
+    threshold: f64,
+    total: usize,
+}
+
+impl Default for BackoffElement {
+    fn default() -> Self {
+        Self {
+            counter: 0,
+            threshold: 1.0,
+            total: 0,
+        }
+    }
+}
+
+impl BackoffElement {
+    // Go Tick grows BEFORE incrementing, including float-to-int truncation.
+    fn tick(&mut self) -> bool {
+        let grew = self.counter >= self.threshold as usize;
+        if grew {
+            self.threshold = (self.threshold.max(1.0) * 1.5).min(10.0);
+            self.counter = 0;
+        }
+        self.counter += 1;
+        self.total += 1;
+        grew
+    }
+}
+
+struct ReplicaTable {
+    id: i64,
+    count: u64,
+    labels: Vec<String>,
+    available: bool,
+    logical_available: bool,
+}
+
+fn replica_tables(catalog: &crate::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
+    let mut tables = Vec::new();
+    for database in &catalog.databases {
+        for stored in &database.tables {
+            let Some(replica) = &stored.tiflash_replica else {
+                continue;
+            };
+            let replica = replica.read();
+            if replica.count == 0 {
+                continue;
+            }
+            let mut append = |id, available| {
+                tables.push(ReplicaTable {
+                    id,
+                    count: replica.count,
+                    labels: replica.location_labels.iter().cloned().collect(),
+                    available,
+                    logical_available: replica.available,
+                })
+            };
+            if let Some(partition) = stored.get_partition_info() {
+                let partition = partition.read();
+                for definitions in [&partition.definitions, &partition.adding_definitions] {
+                    definitions.with_visible(|definitions| {
+                        for p in definitions {
+                            append(p.id, replica.is_partition_available(p.id));
+                        }
+                    });
+                }
+            } else {
+                append(stored.id, replica.available);
+            }
+        }
+    }
+    tables
 }
 
 /// Node-owned worker, stopped and joined before DDL and PD are shut down.
@@ -111,6 +211,68 @@ impl Drop for TiFlashReplicaPoller {
 }
 
 impl TiFlashReplicaManager {
+    /// Uses PD's HTTP store metadata, matching infosync.GetTiFlashStoresStat.
+    /// Retained five-tick discovery is shared with deterministic injected tests.
+    pub fn with_pd_http(
+        catalog: Arc<crate::catalog_watch::SharedCatalog>,
+        ddl: Arc<dyn TiFlashReplicaControl>,
+        pd_http: String,
+    ) -> Result<Self, String> {
+        Self::with_pd_http_security(
+            catalog,
+            ddl,
+            pd_http,
+            &tidb_pd_client::ClusterSecurity::plaintext(),
+        )
+    }
+
+    /// Applies the shared cluster CA and optional client identity to both PD
+    /// discovery and TiFlash status requests, as Go InternalHTTPClient does.
+    pub fn with_pd_http_security(
+        catalog: Arc<crate::catalog_watch::SharedCatalog>,
+        ddl: Arc<dyn TiFlashReplicaControl>,
+        pd_http: String,
+        security: &tidb_pd_client::ClusterSecurity,
+    ) -> Result<Self, String> {
+        let scheme = if security.is_tls_enabled() {
+            "https"
+        } else {
+            "http"
+        };
+        let pd_http = if security.is_tls_enabled() {
+            pd_http.replacen("http://", "https://", 1)
+        } else {
+            pd_http
+        };
+        let endpoint = pd_http.trim_end_matches('/').to_owned();
+        let client = cluster_http_client(security)?;
+        let http = client.clone();
+        let mut manager = Self::new(
+            catalog,
+            move || {
+                let response = http
+                    .get(format!("{endpoint}/pd/api/v1/stores"))
+                    .timeout(PD_HTTP_TIMEOUT)
+                    .send()
+                    .map_err(|error| error.to_string())?
+                    .error_for_status()
+                    .map_err(|error| error.to_string())?;
+                let body: serde_json::Value = response.json().map_err(|error| error.to_string())?;
+                decode_http_stores(&body)
+            },
+            ddl,
+            pd_http,
+        )?;
+        manager
+            .state
+            .get_mut()
+            .expect("TiFlash poll state")
+            .progress = Arc::clone(&PROGRESS);
+        manager.http = client;
+        manager.http_scheme = scheme;
+        Ok(manager)
+    }
+
     /// Binds discovery and DDL capabilities without opening another transaction path.
     pub fn new(
         catalog: Arc<crate::catalog_watch::SharedCatalog>,
@@ -129,6 +291,8 @@ impl TiFlashReplicaManager {
             ddl,
             pd_http,
             http,
+            http_scheme: "http",
+            state: Mutex::new(PollState::default()),
         })
     }
 
@@ -139,6 +303,14 @@ impl TiFlashReplicaManager {
                 eprintln!("tiflash replica poll: {error}");
             }
         })
+    }
+
+    fn record_progress(&self, state: &mut PollState, id: i64, progress: f64) {
+        state
+            .progress
+            .write()
+            .expect("TiFlash progress cache")
+            .insert(id, progress);
     }
 
     fn http_call(
@@ -166,43 +338,59 @@ impl TiFlashReplicaManager {
     /// availability for tables whose learners are all in place.
     fn poll_once(&self) -> Result<(), String> {
         if !self.ddl.is_owner() {
+            self.state
+                .lock()
+                .expect("TiFlash poll state")
+                .progress
+                .write()
+                .expect("TiFlash progress cache")
+                .clear();
             return Ok(());
         }
         let endpoint = self.pd_http.trim_end_matches('/').to_owned();
         let catalog = self.catalog.load();
-        let stores: Vec<_> = (self.stores)()?
-            .into_iter()
-            .filter(|store| {
-                store.state == PdStoreState::Up
-                    && store.labels.iter().any(|(key, value)| {
-                        key.eq_ignore_ascii_case("engine") && value.eq_ignore_ascii_case("tiflash")
-                    })
-            })
-            .collect();
-        if stores.is_empty() {
-            return Ok(());
+        let mut state = self.state.lock().expect("TiFlash poll state");
+        if state.counter % 5 == 0 {
+            match (self.stores)() {
+                Ok(stores) => {
+                    state.stores = stores
+                        .into_iter()
+                        .filter(|store| {
+                            store
+                                .labels
+                                .iter()
+                                .any(|(key, value)| key == "engine" && value == "tiflash")
+                        })
+                        .collect()
+                }
+                Err(error) => {
+                    state.counter = 0;
+                    return Err(error);
+                }
+            }
         }
+        state.counter += 1;
+        let stores = state.stores.clone();
         // Collect EVERY replica-carrying table first: the rule pass needs the
         // full desired set (available tables keep their rule too), while the
         // progress pass only advances not-yet-available ones.
-        let mut replica_tables: Vec<(i64, u64, Vec<String>, bool)> = Vec::new();
-        for database in &catalog.databases {
-            for stored in &database.tables {
-                let Some(replica) = stored.tiflash_replica.as_ref() else {
-                    continue;
-                };
-                let replica = replica.read();
-                if replica.count == 0 {
-                    continue;
-                }
-                replica_tables.push((
-                    stored.id,
-                    replica.count,
-                    replica.location_labels.iter().cloned().collect(),
-                    replica.available,
-                ));
+        let replica_tables = replica_tables(&catalog);
+        if stores.is_empty() && replica_tables.is_empty() {
+            return Ok(());
+        }
+        // Bounded refresh of already available replicas, as PollAvailableTableProgress.
+        for _ in 0..1000 {
+            let Some(id) = state.pending.pop_front() else {
+                break;
+            };
+            let Some(table) = replica_tables.iter().find(|table| table.id == id) else {
+                continue;
+            };
+            if let Ok((_, progress)) = self.progress(id, table.count, &endpoint, &stores) {
+                self.record_progress(&mut state, id, progress);
             }
         }
+        let refill_pending = state.pending.is_empty();
 
         // Legacy rule reconciliation remains here until configuration and
         // cleanup migrate to the DDL/GC owners. Go classic clusters do not
@@ -227,7 +415,7 @@ impl TiFlashReplicaManager {
                     .to_owned();
                 let desired = replica_tables
                     .iter()
-                    .any(|(table_id, _, _, _)| *id == format!("table-{table_id}-r"));
+                    .any(|table| id == format!("table-{}-r", table.id));
                 if desired || id.is_empty() {
                     continue;
                 }
@@ -246,13 +434,13 @@ impl TiFlashReplicaManager {
         if !replica_tables.is_empty() {
             self.ensure_rule_group(&endpoint)?;
         }
-        for (table_id, count, labels, available) in &replica_tables {
-            let table_id = *table_id;
-            let count = *count;
+        for table in &replica_tables {
+            let table_id = table.id;
+            let count = table.count;
 
             // Set one rule, like infosync.SetPlacementRule. A bundle for
             // the shared "tiflash" group would replace every sibling rule.
-            let rule = new_tiflash_rule(table_id, count, labels);
+            let rule = new_tiflash_rule(table_id, count, &table.labels);
             let rule_body = serde_json::to_string(&rule).map_err(|error| error.to_string())?;
             let (status, _) = self.http_call(
                 "POST",
@@ -285,7 +473,17 @@ impl TiFlashReplicaManager {
                 eprintln!("{{\"event\":\"tiflash_accelerate_refused\",\"status\":{accel_status}}}");
             }
 
-            if *available {
+            if table.available || table.logical_available {
+                if refill_pending {
+                    state.pending.push_front(table_id);
+                }
+                continue;
+            }
+            if state
+                .backoff
+                .get_mut(&table_id)
+                .is_some_and(|entry| !entry.tick())
+            {
                 continue;
             }
             let (one_replica_progress, full_progress) =
@@ -300,15 +498,19 @@ impl TiFlashReplicaManager {
             // where availProgress is the ONE-replica progress: every
             // region carries at least one learner peer.
             let available = one_replica_progress >= 1.0;
+            self.record_progress(&mut state, table_id, full_progress);
+            if full_progress == 1.0 {
+                state.backoff.remove(&table_id);
+            } else if state.backoff.len() < 1000 {
+                state.backoff.entry(table_id).or_default();
+            }
             eprintln!(
                 "{{\"event\":\"tiflash_replica_progress\",\"table_id\":{table_id},\
                      \"available\":{available},\"one\":{one_replica_progress},\
                      \"full\":{full_progress}}}"
             );
-            if available {
-                if let Err(error) = self.ddl.update_replica_status(table_id, true) {
-                    eprintln!("updating TiFlash replica status for table {table_id}: {error}");
-                }
+            if let Err(error) = self.ddl.update_replica_status(table_id, available) {
+                eprintln!("updating TiFlash replica status for table {table_id}: {error}");
             }
         }
         Ok(())
@@ -348,14 +550,20 @@ impl TiFlashReplicaManager {
         let mut peer_count = 0usize;
         for store in stores {
             let url = format!(
-                "http://{}/tiflash/sync-status/keyspace/{NULL_KEYSPACE_ID}/table/{table_id}",
-                store.status_address,
+                "{}://{}/tiflash/sync-status/keyspace/{NULL_KEYSPACE_ID}/table/{table_id}",
+                self.http_scheme, store.status_address,
             );
             // CollectTiFlashStatusWithCtx parses the body regardless of HTTP status.
-            let (_, sync_body) = self.http_call("GET", &url, None, TIFLASH_HTTP_TIMEOUT)?;
-            // Go counts unique regions per store, then unions across stores.
-            let store_regions: std::collections::HashSet<_> =
-                parse_sync_status(&sync_body)?.into_iter().collect();
+            let regions = self
+                .http_call("GET", &url, None, TIFLASH_HTTP_TIMEOUT)
+                .and_then(|(_, body)| parse_sync_status(&body));
+            let store_regions: std::collections::HashSet<_> = match regions {
+                Ok(regions) => regions.into_iter().collect(),
+                // Go skips failed Down/Offline/Tombstone stores; Up and
+                // Disconnected failures abort the calculation.
+                Err(_) if store.state == PdStoreState::Offline => continue,
+                Err(error) => return Err(error),
+            };
             peer_count += store_regions.len();
             regions_with_peer.extend(store_regions);
         }
@@ -400,6 +608,100 @@ impl TiFlashReplicaManager {
         }
         Ok(())
     }
+}
+
+fn cluster_http_client(
+    security: &tidb_pd_client::ClusterSecurity,
+) -> Result<reqwest::blocking::Client, String> {
+    let mut builder = reqwest::blocking::Client::builder();
+    if security.is_tls_enabled() {
+        let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
+        let roots =
+            reqwest::Certificate::from_pem_bundle(&ca).map_err(|error| error.to_string())?;
+        if roots.is_empty() {
+            return Err("cluster CA contains no certificates".to_owned());
+        }
+        builder = builder.tls_certs_only(roots);
+        if !security.cert_path().is_empty() && !security.key_path().is_empty() {
+            let mut identity =
+                std::fs::read(security.cert_path()).map_err(|error| error.to_string())?;
+            identity.push(b'\n');
+            identity.extend(std::fs::read(security.key_path()).map_err(|error| error.to_string())?);
+            builder = builder.identity(
+                reqwest::Identity::from_pem(&identity).map_err(|error| error.to_string())?,
+            );
+        }
+    }
+    builder.build().map_err(|error| error.to_string())
+}
+
+impl Drop for TiFlashReplicaManager {
+    fn drop(&mut self) {
+        self.state
+            .get_mut()
+            .expect("TiFlash poll state")
+            .progress
+            .write()
+            .expect("TiFlash progress cache")
+            .clear();
+    }
+}
+
+fn decode_http_stores(body: &serde_json::Value) -> Result<Vec<PdStore>, String> {
+    let stores = body
+        .get("stores")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "PD stores response has no stores array".to_owned())?;
+    stores
+        .iter()
+        .map(|entry| {
+            let store = entry
+                .get("store")
+                .ok_or_else(|| "PD stores entry has no store".to_owned())?;
+            let labels = store
+                .get("labels")
+                .and_then(serde_json::Value::as_array)
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .filter_map(|label| {
+                            Some((
+                                label.get("key")?.as_str()?.to_owned(),
+                                label.get("value")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let name = store
+                .get("state_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Up");
+            Ok(PdStore {
+                id: store
+                    .get("id")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| "PD store has no ID".to_owned())?,
+                address: store
+                    .get("address")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                status_address: store
+                    .get("status_address")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                state: if name == "Up" || name == "Disconnected" {
+                    PdStoreState::Up
+                } else {
+                    PdStoreState::Offline
+                },
+                node_state: tidb_pd_client::PdNodeState::Serving,
+                labels,
+            })
+        })
+        .collect()
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -541,6 +843,300 @@ mod tests {
         ddl.owner.store(false, Ordering::SeqCst);
         poller.poll_once().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn tiflash_batch_store_discovery_is_retained_for_five_owner_ticks() {
+        let ddl = Arc::new(Ddl::default());
+        ddl.owner.store(true, Ordering::SeqCst);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let poller = manager(ddl, calls.clone());
+        for tick in 0..11 {
+            poller.poll_once().unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), tick / 5 + 1);
+        }
+    }
+
+    #[test]
+    fn tiflash_batch_failed_discovery_retries_without_consuming_a_tick() {
+        let ddl = Arc::new(Ddl::default());
+        ddl.owner.store(true, Ordering::SeqCst);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let catalog = replica_catalog(&[]);
+        let poller = TiFlashReplicaManager::new(
+            catalog,
+            move || {
+                let attempt = count.fetch_add(1, Ordering::SeqCst);
+                if attempt < 2 {
+                    Err("PD unavailable".to_owned())
+                } else {
+                    Ok(vec![])
+                }
+            },
+            ddl,
+            String::new(),
+        )
+        .unwrap();
+        assert!(poller.poll_once().is_err());
+        assert!(poller.poll_once().is_err());
+        for _ in 0..5 {
+            poller.poll_once().unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        poller.poll_once().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn tiflash_batch_backoff_grows_before_increment_with_fractional_thresholds() {
+        let mut entry = BackoffElement::default();
+        assert!(!entry.tick());
+        assert!(entry.tick());
+        assert_eq!(entry.threshold, 1.5);
+        assert!(entry.tick());
+        assert_eq!(entry.threshold, 2.25);
+        assert!(!entry.tick());
+        assert!(entry.tick());
+        for _ in 0..200 {
+            entry.tick();
+        }
+        assert_eq!(entry.threshold, 10.0);
+        assert_eq!(entry.total, 205);
+    }
+
+    /// Fifty ticks from unchanged Go master backoff source, not a Rust-derived expectation.
+    #[test]
+    fn tiflash_batch_backoff_matches_go_oracle_trace() {
+        let expected = [
+            (false, 1.0, 1),
+            (true, 1.5, 1),
+            (true, 2.25, 1),
+            (false, 2.25, 2),
+            (true, 3.375, 1),
+            (false, 3.375, 2),
+            (false, 3.375, 3),
+            (true, 5.0625, 1),
+            (false, 5.0625, 2),
+            (false, 5.0625, 3),
+            (false, 5.0625, 4),
+            (false, 5.0625, 5),
+            (true, 7.59375, 1),
+            (false, 7.59375, 2),
+            (false, 7.59375, 3),
+            (false, 7.59375, 4),
+            (false, 7.59375, 5),
+            (false, 7.59375, 6),
+            (false, 7.59375, 7),
+            (true, 10.0, 1),
+            (false, 10.0, 2),
+            (false, 10.0, 3),
+            (false, 10.0, 4),
+            (false, 10.0, 5),
+            (false, 10.0, 6),
+            (false, 10.0, 7),
+            (false, 10.0, 8),
+            (false, 10.0, 9),
+            (false, 10.0, 10),
+            (true, 10.0, 1),
+            (false, 10.0, 2),
+            (false, 10.0, 3),
+            (false, 10.0, 4),
+            (false, 10.0, 5),
+            (false, 10.0, 6),
+            (false, 10.0, 7),
+            (false, 10.0, 8),
+            (false, 10.0, 9),
+            (false, 10.0, 10),
+            (true, 10.0, 1),
+            (false, 10.0, 2),
+            (false, 10.0, 3),
+            (false, 10.0, 4),
+            (false, 10.0, 5),
+            (false, 10.0, 6),
+            (false, 10.0, 7),
+            (false, 10.0, 8),
+            (false, 10.0, 9),
+            (false, 10.0, 10),
+            (true, 10.0, 1),
+        ];
+        let mut entry = BackoffElement::default();
+        for (index, (grew, threshold, counter)) in expected.into_iter().enumerate() {
+            assert_eq!(
+                (entry.tick(), entry.threshold, entry.counter),
+                (grew, threshold, counter)
+            );
+            assert_eq!(entry.total, index + 1);
+        }
+    }
+
+    #[test]
+    fn tiflash_batch_collects_physical_and_adding_partitions() {
+        let catalog = replica_catalog(&[(7, false)]);
+        let mut image = catalog.load();
+        Arc::make_mut(&mut image).databases[0].tables[0].partition =
+            Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
+                enable: true,
+                definitions: vec![tidb_model::PartitionDefinition {
+                    id: 71,
+                    ..Default::default()
+                }]
+                .into(),
+                adding_definitions: vec![tidb_model::PartitionDefinition {
+                    id: 72,
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            }));
+        let tables = replica_tables(&image);
+        assert_eq!(
+            tables.iter().map(|table| table.id).collect::<Vec<_>>(),
+            vec![71, 72]
+        );
+        let http = HttpFixture::new(|path| {
+            if path == "/pd/api/v1/config/rules/group/tiflash" {
+                (
+                    200,
+                    r#"[{"id":"table-71-r"},{"id":"table-72-r"}]"#.to_owned(),
+                )
+            } else {
+                successful_response(path)
+            }
+        });
+        let ddl = Arc::new(Ddl::default());
+        ddl.owner.store(true, Ordering::SeqCst);
+        let poller = fixture_manager(&http, ddl, &[]);
+        poller.catalog.store((*image).clone());
+        poller.poll_once().unwrap();
+        let requests = http.requests.lock().unwrap();
+        assert!(
+            !requests
+                .iter()
+                .any(|(path, _)| path.contains("/config/rule/tiflash/")),
+            "physical partition rules are desired, not stale logical-table rules"
+        );
+        let ids = requests
+            .iter()
+            .filter(|(path, _)| path == "/pd/api/v1/config/rule")
+            .map(|(_, body)| {
+                serde_json::from_str::<serde_json::Value>(body).unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["table-71-r", "table-72-r"]);
+    }
+
+    #[test]
+    fn tiflash_batch_available_progress_refreshes_full_replica_count() {
+        let http = HttpFixture::new(successful_response);
+        let ddl = Arc::new(Ddl::default());
+        ddl.owner.store(true, Ordering::SeqCst);
+        let poller = fixture_manager(&http, ddl.clone(), &[(7, true)]);
+        poller.poll_once().unwrap();
+        assert!(poller
+            .state
+            .lock()
+            .unwrap()
+            .progress
+            .read()
+            .unwrap()
+            .is_empty());
+        poller.poll_once().unwrap();
+        assert_eq!(
+            poller
+                .state
+                .lock()
+                .unwrap()
+                .progress
+                .read()
+                .unwrap()
+                .get(&7),
+            Some(&0.5)
+        );
+        assert!(
+            ddl.updates.lock().unwrap().is_empty(),
+            "full progress does not revoke usability"
+        );
+        ddl.owner.store(false, Ordering::SeqCst);
+        poller.poll_once().unwrap();
+        assert!(
+            poller
+                .state
+                .lock()
+                .unwrap()
+                .progress
+                .read()
+                .unwrap()
+                .is_empty(),
+            "Go clears progress on owner loss"
+        );
+    }
+
+    #[test]
+    fn tiflash_batch_http_discovery_and_shared_progress_have_owned_lifetime() {
+        let status_address = Arc::new(Mutex::new(String::new()));
+        let address = status_address.clone();
+        let http = HttpFixture::new(move |path| {
+            if path == "/pd/api/v1/stores" {
+                (
+                    200,
+                    serde_json::json!({"stores":[{"store":{
+                        "id":1,"state_name":"Up","status_address":*address.lock().unwrap(),
+                        "labels":[{"key":"engine","value":"tiflash"}]
+                    }}]})
+                    .to_string(),
+                )
+            } else {
+                successful_response(path)
+            }
+        });
+        *status_address.lock().unwrap() = http.address.clone();
+        let ddl = Arc::new(Ddl::default());
+        ddl.owner.store(true, Ordering::SeqCst);
+        let poller = TiFlashReplicaManager::with_pd_http(
+            replica_catalog(&[(66661, false)]),
+            ddl,
+            format!("http://{}", http.address),
+        )
+        .unwrap();
+        poller.poll_once().unwrap();
+        assert_eq!(cached_replica_progress(66661), Some(0.5));
+        poller.poll_once().unwrap();
+        assert_eq!(
+            http.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(path, _)| path == "/pd/api/v1/stores")
+                .count(),
+            1
+        );
+        drop(poller);
+        assert_eq!(cached_replica_progress(66661), None);
+    }
+
+    #[test]
+    fn tiflash_batch_offline_status_failures_skip_but_up_failures_abort() {
+        let http = HttpFixture::new(|path| {
+            if path.starts_with("/tiflash/") {
+                (503, "unavailable".to_owned())
+            } else {
+                successful_response(path)
+            }
+        });
+        let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
+        let mut store = http.store();
+        assert!(poller
+            .progress(7, 2, &poller.pd_http, &[store.clone()])
+            .is_err());
+        store.state = PdStoreState::Offline;
+        assert_eq!(
+            poller.progress(7, 2, &poller.pd_http, &[store]).unwrap(),
+            (0.0, 0.0)
+        );
     }
 
     /// Go helper.TestComputeTiFlashStatus: the first line is a count, not a region.
@@ -764,7 +1360,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|(path, _)| path.ends_with("/table/7")),
-            "available tables must not be published again"
+            "the first pass queues available progress for a later tick"
         );
     }
 

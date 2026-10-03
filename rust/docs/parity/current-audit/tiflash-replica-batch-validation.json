@@ -1,0 +1,448 @@
+{
+  "date": "2026-10-03",
+  "integration_start": "80af2d654e32e71d7676cd34ece35ceccdb476c5",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "scope": "Existing classic API-V1 metadata, poll and HTTP consumers. No whole pkg/ddl/infosync/security acceptance. Other findings retain carried evidence.",
+  "finding_statuses": {
+    "F01": "partial",
+    "F02": "partial",
+    "F03": "repaired",
+    "N03": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "unresolved": 60,
+    "open": 49,
+    "partial": 11,
+    "repaired": 26
+  },
+  "source_files": [
+    {
+      "path": "pkg/ddl/table.go",
+      "sha256": "1655ef217accefec0e16993cade87d2dcc90f18408f4bdd12cbcf40b1afc2b16"
+    },
+    {
+      "path": "pkg/ddl/ddl_tiflash_api.go",
+      "sha256": "c33cc6548f9840f9572628b1a81c38ab45945120e55ce22bf352bd7f383975a5"
+    },
+    {
+      "path": "pkg/ddl/tiflash_replica_test.go",
+      "sha256": "347b597c4ae4d30e9df5ade42d975f22daa5c2560813e52eed1b20ab654170ec"
+    },
+    {
+      "path": "pkg/domain/infosync/tiflash_manager.go",
+      "sha256": "e6e45b75c29899ef6fea07ebe3ec93f09e09638c73512f845ca9b42aa85fb4d5"
+    },
+    {
+      "path": "pkg/domain/infosync/info.go",
+      "sha256": "e5de2dcd47afb7bb9b6a9035dd26574eb80d6f582f1804a6d0eb6e510a6b5bcb"
+    },
+    {
+      "path": "pkg/util/engine/engine.go",
+      "sha256": "61c770e29e7843e2f1d78083bc7fde8452139c58fea0fd3b4a760d925baeb563"
+    },
+    {
+      "path": "pkg/executor/infoschema_reader.go",
+      "sha256": "fb7e137b1530451b921545cb7e7a0da1e6a134175ded187b9b1678d8ae4d57c0"
+    },
+    {
+      "path": "pkg/ddl/partition.go",
+      "sha256": "08edda35e3c95e10786df77b4d9550692a0235d133aa66dec78a8bfff77a5aed"
+    },
+    {
+      "path": "pkg/util/misc.go",
+      "sha256": "0da134d5a166296f15aa8171e2de02e9457e606c0de44689d1e9024df59fd461"
+    }
+  ],
+  "regressions": {
+    "fail_before_pass_after": 6,
+    "red_logs": [
+      "red.log",
+      "red-metadata.log",
+      "red-retirement.log"
+    ],
+    "cases": [
+      "count/label availability",
+      "physical partition publication",
+      "five-tick discovery",
+      "drop retired availability IDs",
+      "truncate partition readiness",
+      "truncate table readiness"
+    ],
+    "rust_distinct_tests": 29,
+    "retired_empty_ignored_shells": 8,
+    "retained_executable_source_tests": 2,
+    "upstream_obligations_retired": 0
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-exec --lib tiflash_replica_manager",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "tests": 19,
+      "ignored": 0,
+      "log_sha256": "c0cb8d7b2d9a7078824fcbe57e3ef6c977f38c2d52e2aaad992ff9669e426f9d"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test all tiflash_batch",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "tests": 6,
+      "ignored": 0,
+      "log_sha256": "e59aebeb6143c9f4f88ff77fd2a8de6f8e89a35250623474fec2a57311da4b50"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib tiflash_batch_cluster_http",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "tests": 2,
+      "ignored": 0,
+      "log_sha256": "e7c61b2f00e31ee2e7e6f0ef058039ce69000ccd3840c9ad0002f37e2ecf4c08"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all tiflash_replica_test_source",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "tests": 2,
+      "ignored": 0,
+      "log_sha256": "0fc45303ff70a5fde7e78f341bd5f32e094cc260aee61283c175e1bc82157378"
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "log_sha256": "b7506be9f9a4c2255cc059cd1b2fb40aedcd66aefe2e3a9405e102fdbbe90942"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "go_oracle": {
+    "kind": "isolated execution of unchanged extracted Go backoff source; not full original package tests",
+    "ticks": 50,
+    "trace": [
+      {
+        "counter": 1,
+        "grew": false,
+        "threshold": 1,
+        "total": 1
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 1.5,
+        "total": 2
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 2.25,
+        "total": 3
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 2.25,
+        "total": 4
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 3.375,
+        "total": 5
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 3.375,
+        "total": 6
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 3.375,
+        "total": 7
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 5.0625,
+        "total": 8
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 5.0625,
+        "total": 9
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 5.0625,
+        "total": 10
+      },
+      {
+        "counter": 4,
+        "grew": false,
+        "threshold": 5.0625,
+        "total": 11
+      },
+      {
+        "counter": 5,
+        "grew": false,
+        "threshold": 5.0625,
+        "total": 12
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 7.59375,
+        "total": 13
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 14
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 15
+      },
+      {
+        "counter": 4,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 16
+      },
+      {
+        "counter": 5,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 17
+      },
+      {
+        "counter": 6,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 18
+      },
+      {
+        "counter": 7,
+        "grew": false,
+        "threshold": 7.59375,
+        "total": 19
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 10,
+        "total": 20
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 10,
+        "total": 21
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 10,
+        "total": 22
+      },
+      {
+        "counter": 4,
+        "grew": false,
+        "threshold": 10,
+        "total": 23
+      },
+      {
+        "counter": 5,
+        "grew": false,
+        "threshold": 10,
+        "total": 24
+      },
+      {
+        "counter": 6,
+        "grew": false,
+        "threshold": 10,
+        "total": 25
+      },
+      {
+        "counter": 7,
+        "grew": false,
+        "threshold": 10,
+        "total": 26
+      },
+      {
+        "counter": 8,
+        "grew": false,
+        "threshold": 10,
+        "total": 27
+      },
+      {
+        "counter": 9,
+        "grew": false,
+        "threshold": 10,
+        "total": 28
+      },
+      {
+        "counter": 10,
+        "grew": false,
+        "threshold": 10,
+        "total": 29
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 10,
+        "total": 30
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 10,
+        "total": 31
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 10,
+        "total": 32
+      },
+      {
+        "counter": 4,
+        "grew": false,
+        "threshold": 10,
+        "total": 33
+      },
+      {
+        "counter": 5,
+        "grew": false,
+        "threshold": 10,
+        "total": 34
+      },
+      {
+        "counter": 6,
+        "grew": false,
+        "threshold": 10,
+        "total": 35
+      },
+      {
+        "counter": 7,
+        "grew": false,
+        "threshold": 10,
+        "total": 36
+      },
+      {
+        "counter": 8,
+        "grew": false,
+        "threshold": 10,
+        "total": 37
+      },
+      {
+        "counter": 9,
+        "grew": false,
+        "threshold": 10,
+        "total": 38
+      },
+      {
+        "counter": 10,
+        "grew": false,
+        "threshold": 10,
+        "total": 39
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 10,
+        "total": 40
+      },
+      {
+        "counter": 2,
+        "grew": false,
+        "threshold": 10,
+        "total": 41
+      },
+      {
+        "counter": 3,
+        "grew": false,
+        "threshold": 10,
+        "total": 42
+      },
+      {
+        "counter": 4,
+        "grew": false,
+        "threshold": 10,
+        "total": 43
+      },
+      {
+        "counter": 5,
+        "grew": false,
+        "threshold": 10,
+        "total": 44
+      },
+      {
+        "counter": 6,
+        "grew": false,
+        "threshold": 10,
+        "total": 45
+      },
+      {
+        "counter": 7,
+        "grew": false,
+        "threshold": 10,
+        "total": 46
+      },
+      {
+        "counter": 8,
+        "grew": false,
+        "threshold": 10,
+        "total": 47
+      },
+      {
+        "counter": 9,
+        "grew": false,
+        "threshold": 10,
+        "total": 48
+      },
+      {
+        "counter": 10,
+        "grew": false,
+        "threshold": 10,
+        "total": 49
+      },
+      {
+        "counter": 1,
+        "grew": true,
+        "threshold": 10,
+        "total": 50
+      }
+    ],
+    "source_sha256": "a2ad0f4c3c9cfd52e8a807d7480a47c8aae72c2550d3bcc371d1c8e58a1d299e"
+  },
+  "unverified": [
+    "full Go DDL/infosync suites",
+    "multi-node TiKV/TiFlash",
+    "durable ADD PARTITION readiness/rollback",
+    "mTLS peer validation and CN allowlist",
+    "all platforms",
+    "uncached SQL progress retriever/circuit breaker",
+    "sysbench/TPC-C/TPC-H/YCSB",
+    "fresh-task cloud restore"
+  ],
+  "publication": {
+    "commit_hook_locked_build": "pending",
+    "fresh_pre_push_locked_build": "pending",
+    "push": "pending",
+    "destination": "https://github.com/pingcap/tidb.git hparser-integration"
+  }
+}

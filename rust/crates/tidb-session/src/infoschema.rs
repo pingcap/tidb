@@ -390,7 +390,25 @@ fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec
         let Some(replica) = table.tiflash_replica() else {
             continue;
         };
-        let progress = f64::from(replica.available);
+        let fallback = f64::from(replica.available);
+        let progress = if let Some(partition) = table.partition() {
+            let ids: Vec<_> = partition.definitions.iter().map(|p| p.id).collect();
+            if ids.is_empty() {
+                fallback
+            } else {
+                ids.iter()
+                    .map(|id| {
+                        tidb_exec::tiflash_replica_manager::cached_replica_progress(*id)
+                            .unwrap_or(fallback)
+                    })
+                    .sum::<f64>()
+                    / ids.len() as f64
+            }
+        } else {
+            tidb_exec::tiflash_replica_manager::cached_replica_progress(table.table_id)
+                .unwrap_or(fallback)
+        };
+        let progress = tidb_datatype::truncate(progress, 2);
         rows.push(vec![
             text(&schema),
             text(&table_name),

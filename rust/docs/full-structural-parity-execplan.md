@@ -1,5 +1,7 @@
 # Audit and remove Go/Rust structural mismatches
 
+Current checkpoint (2026-10-03): the [TiFlash replica batch](parity/current-audit/tiflash-replica-batch-repair.md) maintains F01/F02/F03 together and connects N03's shared cluster HTTP consumer. F03's classic polling contract is repaired; F01/F02 stay partial for durable placement/GC and partition readiness phases. The current register has **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked**. Earlier checkpoint counts below are historical. Eight ignored empty shells are retired with all original-source obligations retained.
+
 This is a living ExecPlan under root PLANS.md. Maintain Progress, Surprises & Discoveries, Decision Log, and Outcomes & Retrospective. The existing storage plan retains earlier repair receipts.
 
 ## Purpose and acceptance
@@ -38,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-03, TiFlash batch) Repair count/reset/physical status and retired-ID readiness, retained cache/backoff/HTTP discovery and secure configuration consumers together. Six red regressions, 29 distinct targeted Rust cases, isolated Go policy trace, affected all-target checks and lint pass. Full package and multi-node acceptance remains separate; publication gates are tracked in the batch receipt.
 
 
 - [x] (2026-10-01, concurrent integration) Preserve incoming 32666fbaf0 while removing its Go-absent TopN heap dump. A new virtual-row regression fails on its assumed column zero before removal; all 54 executor TopN cases, all targets, affected-file formatting and merged-tree lint pass. No whole sortexec acceptance is claimed. The merge still uses the actual hook and fresh locked build; see `parity/current-audit/pd-opt-owner-repair.md`.

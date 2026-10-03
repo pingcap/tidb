@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [TiFlash replica batch](tiflash-replica-batch-repair.md) repairs F03's classic cache/backoff/discovery contract and advances F01/F02 together, including six failing metadata/cadence regressions and N03's secure cluster HTTP consumer. **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked.** Eight ignored empty test shells are removed; every unverified upstream obligation is [retained explicitly](tiflash-unverified-test-obligations.json). No full DDL/infosync acceptance or fresh reproduction of every other finding is claimed.
+
+The cache checkpoint below retains its historical counts.
+
 The [shared cache batch](shared-cache-batch-repair.md) repairs B01, B02, C03 and
 C04 together: one pinned Ristretto implementation, live incremental binding
 maintenance, effective coprocessor configuration and deferred LFU admission.

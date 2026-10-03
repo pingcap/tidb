@@ -1,0 +1,54 @@
+{
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "All eight retired shells remain explicit acceptance obligations; some maintained path portions now have separate tests. No whole pkg/ddl acceptance.",
+  "obligations": [
+    {
+      "retired_rust_shell": "set_table_flash_replica_records_and_clears_replica_settings",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:54-192::TestSetTableFlashReplica`. With two\n/// spoofed TiFlash stores: `alter table t_flash set tiflash replica 2\n/// location labels 'a','b'` persists `TiFlashReplica{Count: 2,\n/// LocationLabels: [a b]}` on plain and hash-partitioned tables and replica 0\n/// clears it; `UpdateTableReplicaInfo(tableID, true/false)` flips\n/// `Available` for the table; for a partitioned table per-partition ids\n/// accumulate into `AvailablePartitionIDs` in first-set order, all-three\n/// makes `Available` true, un-setting one makes it false again; an unknown id\n/// answers `[schema:1146]Table which ID = 9223372036854775807 does not\n/// exist.`; `FindTableByPartitionID` resolves a partition id to the parent\n/// table but a table id to nil; and replica 2 over zero stores is refused\n/// `the tiflash replica count: 2 should be less than the total tiflash\n/// server count: 0`.\n// go-parity-gap: no SET TIFLASH REPLICA carrier, no UpdateTableReplicaInfo,\n// no store-count spoof or replica-status update carrier.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "infoschema_tiflash_replica_reports_the_persisted_replica_state",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:193-217::TestInfoSchemaForTiFlashReplica`.\n/// After `alter table t set tiflash replica 2 location labels 'a','b'`,\n/// `information_schema.tiflash_replica` reports `test t 2 a,b 0 0`; flipping\n/// `TiFlashReplica.Available` in the meta (via a raw `meta.Mutator`\n/// `UpdateTable` + `dom.Reload()`) makes the same query report `... 1 0` \u2014\n/// progress stays 0 until the poller reports otherwise.\n// go-parity-gap: no mock TiFlash status server, no SET TIFLASH REPLICA\n// carrier, no information_schema.tiflash_replica surface, no domain reload.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "set_tiflash_replica_on_temporary_tables_answers_go_errors",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:219-250::TestSetTiFlashReplicaForTemporaryTable`.\n/// Go answers `alter table temp set tiflash replica 1` on a GLOBAL temporary\n/// table `[ddl:1562]` (`ErrOptOnTemporaryTable`) and on a LOCAL temporary\n/// table `[ddl:8200]` (`ErrUnsupportedDDLOperation`); a normal table accepts\n/// the replica; and `create global temporary table temp like normal` /\n/// `create temporary table temp like normal` copies carry NO replica, so\n/// `REPLICA_COUNT` has no row for them.\n// go-parity-gap: documented divergence \u2014 this tier answers the generic 1105\n// ALTER refusal for every table shape (ddl/alter_table.rs:359), so neither\n// the Go error codes nor the accepting case can be pinned.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "add_gbk_or_gb18030_columns_with_a_tiflash_replica_answers_8200",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:252-292::TestSetTiFlashReplicaForAddGBKColumn`.\n/// With a TiFlash replica set on the table: adding one GBK column is\n/// `[ddl:8200]unsupported add column 'c1' when altering 't' with TiFlash\n/// replicas and gbk encoding`, two such columns are\n/// `errno.ErrUnsupportedDDLOperation`; the same holds for a table CREATED\n/// `charset = gbk` (its default-charset additions are refused) except an\n/// explicit `character set utf8` column is accepted; identical arms for\n/// GB18030 with the `gb18030 encoding` message.\n// go-parity-gap: Go's gate is `checkUnsupportedCharsetForTiFlash`\n// (pkg/ddl/add_column.go:186, raising ErrUnsupportedAddColumn at :189) over a\n// table whose TiFlashReplica is set \u2014 a carrier this tier lacks, so neither\n// the refusals nor the accepting utf8 arm can be pinned.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "set_tiflash_replica_on_system_tables_answers_per_database_errors",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:294-323::TestSetTableFlashReplicaForSystemTable`.\n/// As root, `alter table <t> set tiflash replica 1` over every table of\n/// `MySQL`/`INFORMATION_SCHEMA`/`PERFORMANCE_SCHEMA`/`METRICS_SCHEMA`/`SYS`:\n/// MySQL/SYS non-views answer\n/// `[ddl:8200]Unsupported \\`set TiFlash replica\\` settings for system table\n/// and memory table`, views answer `ErrWrongObject`, and the other three\n/// schemas answer `[planner:1142]ALTER command denied to user 'root'@'%' for\n/// table '<name>'` (lower-cased name).\n// go-parity-gap: no authed multi-schema ALTER surface, no privilege\n// evaluation, no SET TIFLASH REPLICA carrier.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "tiflash_replica_ddls_skip_the_schema_checker_but_add_column_does_not",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:325-373::TestSkipSchemaChecker` (its nextgen\n/// skip guard at :327 does not apply to this classic-only tier). With\n/// `tidb_enable_metadata_lock=0`: an uncommitted txn survives a concurrent\n/// `alter table t1 set tiflash replica 2 ...` (ActionSetTiFlashReplica) and a\n/// concurrent `UpdateTableReplicaInfo` (ActionUpdateTiFlashReplicaStatus) \u2014\n/// the schema checker is SKIPPED for those two actions \u2014 while a concurrent\n/// `alter table t1 add column b int` makes the commit fail\n/// `domain.ErrInfoSchemaChanged` (the checker is not skipped, and when the\n/// infoschema change forces a full reload the commit may surface exactly that\n/// error).\n// go-parity-gap: no concurrent-session transaction validation, no metadata\n// lock switch, no SET TIFLASH REPLICA / UpdateTableReplicaInfo carriers.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "create_table_like_started_during_non_public_source_schema_changes",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:375-436::TestCreateTableWithLike2`, the four\n/// failpoint arms. `create table t2 like t1` is fired by a\n/// `beforeRunOneJobStep` failpoint the moment the source reaches\n/// `StateDeleteOnly` of an ADD/DROP COLUMN or ADD/DROP INDEX job; each copy\n/// then succeeds, accepts further ALTERs, and its visible column count\n/// equals its `Meta().Columns` count (the ADD INDEX arm additionally requires\n/// every copied index to be `model.StatePublic`).\n// go-parity-gap: no online-DDL job queue or state machine, no failpoints, no\n// backgroundExec session.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    },
+    {
+      "retired_rust_shell": "truncate_table_reassigns_the_id_and_clears_tiflash_availability",
+      "status": "unverified_obligation",
+      "historical_source_notes": "/// Go `tiflash_replica_test.go:503-576::TestTruncateTable2`, the slices this\n/// tier cannot answer. (a) :503-507: the truncated table is a NEW table with\n/// a strictly greater id (`newTblInfo.ID > oldTblID`); (b) :509-530 under\n/// `EmulatorGCEnable`: the OLD table's key range is physically emptied by the\n/// background GC worker (`require.Eventually` no key with the old table\n/// prefix remains); (c) :532-561 with a replica mocked available: TRUNCATE\n/// TABLE keeps `Count`/`LocationLabels` but clears `Available` and\n/// `AvailablePartitionIDs` (Go `pkg/ddl/table.go:560-561`), TRUNCATE\n/// PARTITION keeps the untouched partition's id in `AvailablePartitionIDs`\n/// (`[p1]` after truncating p0) and a second truncate of p0 leaves that\n/// unchanged.\n// go-parity-gap: documented divergence \u2014 this tier truncates IN PLACE\n// (KvTable::truncate, kv_table.rs:1670, keeps the table id), and has no GC\n// worker or key-range iteration; its in-place truncate also cannot reproduce\n// Go's replica-availability reset, so none of (a)-(c) can be pinned.",
+      "reason": "Ignored empty body; no regression or runtime evidence. Retire executable placeholder, retain upstream obligation."
+    }
+  ]
+}

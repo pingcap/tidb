@@ -291,6 +291,8 @@ pub enum DdlStatement {
         count: u64,
         /// Placement labels, in written order.
         labels: Vec<String>,
+        /// Go SetTiFlashReplicaArgs.ResetAvailable, used by restore repair.
+        reset_available: bool,
     },
     /// Go `UpdateTableReplicaInfo` -> the `ActionUpdateTiFlashReplicaStatus`
     /// job: the replica manager's poller flips `Available` once TiFlash
@@ -1548,6 +1550,7 @@ fn lower_alter_table_catalog(
                 table,
                 count: *count,
                 labels: labels.clone(),
+                reset_available: false,
             }))
         }
         tidb_ast::AlterTableAction::SetTableOptions { options } => {
@@ -7923,6 +7926,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             count,
             labels,
+            reset_available,
         } => {
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
@@ -7933,9 +7937,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
-            // Go `onSetTiFlashReplicaFinish` persists the replica metadata
-            // with Available cleared; the replica manager owns rules and the
-            // availability flip afterwards.
+            // Go onSetTableFlashReplica retains logical usability when the
+            // replica count/labels change, unless restore explicitly resets it.
             let mut info = stored.clone_like_go();
             if *count == 0 {
                 info.tiflash_replica = None;
@@ -7943,6 +7946,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let mut replica = tidb_model::table::TiFlashReplicaInfo::default();
                 replica.count = *count;
                 replica.location_labels = labels.clone().into();
+                replica.available = !reset_available
+                    && stored
+                        .tiflash_replica
+                        .as_ref()
+                        .is_some_and(|old| old.read().available);
                 info.tiflash_replica = Some(GoShared::new(replica));
             }
             let db_id = database.info.id;
@@ -7954,10 +7962,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_SET_TI_FLASH_REPLICA;
             diff.schema_id = db_id;
             diff.table_id = stored.id;
-            // Go keeps the PD placement rule OUT of the DDL job: the domain
-            // replica manager (`syncTiFlashTableRule`) creates and repairs it
-            // outside the transaction. This node mirrors that split — the
-            // replica manager owns rules and availability.
+            // Placement creation still uses the legacy poll owner here.
+            // Its migration to durable DDL and cleanup to GC remains F01.
         }
         DdlStatement::UpdateTiFlashReplicaStatus {
             table_id,
@@ -7970,7 +7976,13 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut found: Option<(i64, tidb_model::table_info::TableInfo)> = None;
             for database in &catalog.databases {
                 for stored in &database.tables {
-                    if stored.id == *table_id {
+                    if stored.id == *table_id
+                        || stored.get_partition_info().is_some_and(|pi| {
+                            pi.read().definitions.with_visible(|definitions| {
+                                definitions.iter().any(|p| p.id == *table_id)
+                            })
+                        })
+                    {
                         found = Some((database.info.id, stored.clone_like_go()));
                     }
                 }
@@ -7987,21 +7999,44 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     "the table carries no TiFlash replica to mark".to_owned(),
                 ));
             };
-            if replica.read().available == *available {
+            let previous = if info.id == *table_id {
+                replica.read().available
+            } else {
+                replica.read().is_partition_available(*table_id)
+            };
+            if previous == *available {
                 return Ok(DdlPlan::AlreadySatisfied {
                     detail: "TiFlash replica status already matches".to_owned(),
                     warnings: Vec::new(),
                 });
             }
-            replica.write().available = *available;
+            if info.id == *table_id {
+                replica.write().available = *available;
+            } else {
+                let partition = info
+                    .get_partition_info()
+                    .expect("physical ID resolved in partitions");
+                let mut replica = replica.write();
+                let mut ids: Vec<_> = replica.available_partition_ids.iter().copied().collect();
+                if *available {
+                    ids.push(*table_id);
+                    replica.available = partition.read().definitions.with_visible(|definitions| {
+                        definitions.iter().all(|p| ids.contains(&p.id))
+                    });
+                } else {
+                    ids.retain(|id| id != table_id);
+                    replica.available = false;
+                }
+                replica.available_partition_ids = ids.into();
+            }
             writes.push(BufferMutation::set(
-                key::table_kv_key(db_id, *table_id),
+                key::table_kv_key(db_id, info.id),
                 value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             diff.action_type = ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS;
             diff.schema_id = db_id;
-            diff.table_id = *table_id;
+            diff.table_id = info.id;
         }
         DdlStatement::AlterAutoRandomBits {
             schema,
@@ -8272,6 +8307,25 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 .expect("the partition change validated partitioning")
                 .write()
                 .definitions = definitions.into();
+            if !adding {
+                if let Some(replica) = &info.tiflash_replica {
+                    let remaining = info
+                        .partition
+                        .as_ref()
+                        .unwrap()
+                        .read()
+                        .definitions
+                        .snapshot();
+                    let mut replica = replica.write();
+                    replica.available_partition_ids = replica
+                        .available_partition_ids
+                        .iter()
+                        .copied()
+                        .filter(|id| remaining.iter().any(|p| p.id == *id))
+                        .collect::<Vec<_>>()
+                        .into();
+                }
+            }
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -8637,6 +8691,24 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 .expect("the partition change validated partitioning")
                 .write()
                 .definitions = definitions.into();
+            if let Some(replica) = &info.tiflash_replica {
+                let remaining = info
+                    .partition
+                    .as_ref()
+                    .unwrap()
+                    .read()
+                    .definitions
+                    .snapshot();
+                let mut replica = replica.write();
+                replica.available = false;
+                replica.available_partition_ids = replica
+                    .available_partition_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| remaining.iter().any(|p| p.id == *id))
+                    .collect::<Vec<_>>()
+                    .into();
+            }
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9342,6 +9414,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let new_table_id = ids[0];
             let mut info = stored.clone_like_go();
             info.id = new_table_id;
+            if let Some(replica) = &info.tiflash_replica {
+                let mut replica = replica.write();
+                replica.available = false;
+                replica.available_partition_ids = Default::default();
+            }
             if let Some(partition) = &info.partition {
                 let partition = partition.read();
                 for (ordinal, id) in ids[1..].iter().enumerate() {

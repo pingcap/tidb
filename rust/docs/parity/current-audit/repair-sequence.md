@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-This is the current work map for the [living ExecPlan](../../full-structural-parity-execplan.md), dated 2026-10-01. It assigns every one of the **77 known unresolved findings** to one primary workstream. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **60 unresolved (49 open, eleven partial)** after the TiFlash replica batch; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
 
 ## Baseline and scope
 
@@ -258,3 +258,7 @@ The [complete PD error owner](pd-errors-owner-repair.md) supplies all source
 definitions, codes, cause chains and classification/logging helpers before the
 grpcutil migration. It removes the uncoded breaker enum and duplicate native TSO
 EOF/count diagnostics. Parent transport/lifecycle and all 77 findings remain open.
+
+## TiFlash metadata/polling batch — 2026-10-03
+
+The [batch receipt](tiflash-replica-batch-repair.md) closes F03's classic polling contract and advances F01/F02 together. Placement/GC ownership and durable ADD PARTITION readiness remain W05 obligations. The shared HTTP configuration consumer advances N03 without accepting its remaining defaults/consumers. Eight ignored empty shells are retired, with all upstream integration obligations retained explicitly.

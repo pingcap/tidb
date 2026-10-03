@@ -5091,6 +5091,233 @@ fn table_with_two_columns(store: &mut MetaStore) -> i64 {
     write.created_id.expect("a table id")
 }
 
+#[test]
+fn tiflash_batch_count_and_label_changes_preserve_available() {
+    let mut store = bootstrapped();
+    let id = table_with_two_columns(&mut store);
+    let mut table = committed_table(&store, id);
+    table.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 2,
+        available: true,
+        available_partition_ids: vec![991].into(),
+        ..Default::default()
+    }));
+    store.put(
+        key::table_kv_key(112, id),
+        value::serialize_table_info(&table).unwrap(),
+    );
+    for sql in [
+        "ALTER TABLE u6.minimal SET TIFLASH REPLICA 3 LOCATION LABELS 'zone'",
+        "ALTER TABLE u6.minimal SET TIFLASH REPLICA 1",
+    ] {
+        let write = plan(&mut store, sql, 5000);
+        apply(&mut store, &write);
+        let current = committed_table(&store, id);
+        let replica = current.tiflash_replica.as_ref().unwrap().read();
+        assert!(
+            replica.available,
+            "Go preserves usability across count/label changes"
+        );
+        assert!(
+            replica.available_partition_ids.is_empty(),
+            "Go constructs a new record"
+        );
+    }
+}
+
+#[test]
+fn tiflash_batch_partition_status_updates_containing_table() {
+    let mut store = bootstrapped();
+    let id = table_with_two_columns(&mut store);
+    let mut table = committed_table(&store, id);
+    table.partition = Some(GoShared::new(tidb_model::PartitionInfo {
+        enable: true,
+        definitions: vec![
+            tidb_model::PartitionDefinition {
+                id: 9001,
+                ..Default::default()
+            },
+            tidb_model::PartitionDefinition {
+                id: 9002,
+                ..Default::default()
+            },
+        ]
+        .into(),
+        ..Default::default()
+    }));
+    table.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 2,
+        ..Default::default()
+    }));
+    store.put(
+        key::table_kv_key(112, id),
+        value::serialize_table_info(&table).unwrap(),
+    );
+    for (physical, available, logical) in [
+        (9001, true, false),
+        (9002, true, true),
+        (9001, false, false),
+    ] {
+        let DdlPlan::Write(write) = plan_ddl(
+            &mut store,
+            &DdlStatement::UpdateTiFlashReplicaStatus {
+                table_id: physical,
+                available,
+            },
+            5000,
+        )
+        .unwrap() else {
+            panic!("status publishes a metadata change")
+        };
+        assert_eq!(write.diff.table_id, id);
+        apply(&mut store, &write);
+        let current = committed_table(&store, id);
+        let replica = current.tiflash_replica.as_ref().unwrap().read();
+        assert_eq!(replica.available, logical);
+        assert_eq!(
+            replica
+                .available_partition_ids
+                .iter()
+                .any(|v| *v == physical),
+            available
+        );
+        assert!(!store.pairs.contains_key(&key::table_kv_key(112, physical)));
+    }
+}
+
+#[test]
+fn tiflash_batch_restore_reset_and_zero_count_clear_the_record() {
+    let mut store = bootstrapped();
+    let id = table_with_two_columns(&mut store);
+    let mut table = committed_table(&store, id);
+    table.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 1,
+        available: true,
+        ..Default::default()
+    }));
+    store.put(
+        key::table_kv_key(112, id),
+        value::serialize_table_info(&table).unwrap(),
+    );
+    let mut statement = statement("ALTER TABLE u6.minimal SET TIFLASH REPLICA 1");
+    let DdlStatement::SetTiFlashReplica {
+        reset_available, ..
+    } = &mut statement
+    else {
+        panic!("replica statement")
+    };
+    *reset_available = true;
+    let DdlPlan::Write(write) = plan_ddl(&mut store, &statement, 5000).unwrap() else {
+        panic!("reset writes")
+    };
+    apply(&mut store, &write);
+    assert!(
+        !committed_table(&store, id)
+            .tiflash_replica
+            .as_ref()
+            .unwrap()
+            .read()
+            .available
+    );
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.minimal SET TIFLASH REPLICA 0",
+        5001,
+    );
+    apply(&mut store, &write);
+    assert!(committed_table(&store, id).tiflash_replica.is_none());
+}
+
+fn tiflash_partition_fixture() -> (MetaStore, i64, Vec<i64>) {
+    let mut store = bootstrapped();
+    let create = plan(&mut store, "CREATE TABLE u6.tfparts (id BIGINT PRIMARY KEY) PARTITION BY RANGE(id) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(MAXVALUE))", 5000);
+    let id = create.created_id.unwrap();
+    apply(&mut store, &create);
+    let mut table = committed_table(&store, id);
+    let ids: Vec<_> = table
+        .partition
+        .as_ref()
+        .unwrap()
+        .read()
+        .definitions
+        .snapshot()
+        .iter()
+        .map(|p| p.id)
+        .collect();
+    table.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 2,
+        available: true,
+        available_partition_ids: ids.clone().into(),
+        ..Default::default()
+    }));
+    store.put(
+        key::table_kv_key(112, id),
+        value::serialize_table_info(&table).unwrap(),
+    );
+    (store, id, ids)
+}
+
+#[test]
+fn tiflash_batch_drop_partition_removes_only_retired_availability_ids() {
+    let (mut store, id, old_ids) = tiflash_partition_fixture();
+    let write = plan(&mut store, "ALTER TABLE u6.tfparts DROP PARTITION p0", 5001);
+    apply(&mut store, &write);
+    let table = committed_table(&store, id);
+    let replica = table.tiflash_replica.as_ref().unwrap().read();
+    assert!(replica.available);
+    assert_eq!(
+        replica
+            .available_partition_ids
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![old_ids[1]]
+    );
+}
+
+#[test]
+fn tiflash_batch_truncate_partition_resets_only_replaced_availability_ids() {
+    let (mut store, id, old_ids) = tiflash_partition_fixture();
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.tfparts TRUNCATE PARTITION p0",
+        5001,
+    );
+    apply(&mut store, &write);
+    let table = committed_table(&store, id);
+    let replica = table.tiflash_replica.as_ref().unwrap().read();
+    assert!(!replica.available);
+    assert_eq!(
+        replica
+            .available_partition_ids
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![old_ids[1]]
+    );
+}
+
+#[test]
+fn tiflash_batch_truncate_table_resets_all_availability() {
+    let (mut store, _, _) = tiflash_partition_fixture();
+    let write = plan(&mut store, "TRUNCATE TABLE u6.tfparts", 5001);
+    apply(&mut store, &write);
+    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let table = catalog
+        .databases
+        .iter()
+        .find(|db| db.info.name.lowercase() == "u6")
+        .unwrap()
+        .tables
+        .iter()
+        .find(|t| t.name.lowercase() == "tfparts")
+        .unwrap();
+    let replica = table.tiflash_replica.as_ref().unwrap().read();
+    assert!(!replica.available);
+    assert!(replica.available_partition_ids.is_empty());
+    assert_eq!(replica.count, 2);
+}
+
 /// Reads back the `TableInfo` a write set stored for `table_id`.
 pub(crate) fn stored_table(
     write: &tidb_exec::cluster_ddl::DdlWrite,

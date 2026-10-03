@@ -333,3 +333,134 @@ impl Write for ClientStream {
         }
     }
 }
+
+#[cfg(test)]
+mod tiflash_cluster_http_tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use tidb_exec::tiflash_replica_manager::{TiFlashReplicaControl, TiFlashReplicaManager};
+
+    struct Owner;
+    impl TiFlashReplicaControl for Owner {
+        fn is_owner(&self) -> bool {
+            true
+        }
+        fn update_replica_status(&self, _: i64, _: bool) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn exercise_tls_discovery(trust_server: bool) {
+        let certificate = rcgen::generate_simple_self_signed(vec![
+            "localhost".to_owned(),
+            "127.0.0.1".to_owned(),
+        ])
+        .unwrap();
+        let wrong = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let ca_path = std::env::temp_dir().join(format!(
+            "tidb-tiflash-ca-{}-{}-{}.pem",
+            std::process::id(),
+            trust_server,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &ca_path,
+            if trust_server {
+                certificate.cert.pem()
+            } else {
+                wrong.cert.pem()
+            },
+        )
+        .unwrap();
+        let key = PrivateKeyDer::try_from(certificate.signing_key.serialize_der()).unwrap();
+        let tls = MysqlServerTls::from_material(
+            vec![certificate.cert.der().clone()],
+            key,
+            "test cluster server",
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sent, received) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            match tls.accept(socket) {
+                Ok(mut stream) => {
+                    let mut request = String::new();
+                    let mut reader = BufReader::new(&mut stream);
+                    reader.read_line(&mut request).unwrap();
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let body = "{\"stores\":[]}";
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .unwrap();
+                    stream.flush().unwrap();
+                    sent.send(Some(request)).unwrap();
+                }
+                Err(_) => {
+                    sent.send(None).unwrap();
+                }
+            }
+        });
+        let security = tidb_pd_client::ClusterSecurity::new(
+            ca_path.to_string_lossy().into_owned(),
+            String::new(),
+            String::new(),
+            vec![],
+        );
+        let catalog = Arc::new(tidb_exec::catalog_watch::SharedCatalog::new(
+            tidb_exec::cluster_catalog::ClusterCatalog {
+                schema_version: 1,
+                databases: vec![],
+            },
+        ));
+        let manager = TiFlashReplicaManager::with_pd_http_security(
+            catalog,
+            Arc::new(Owner),
+            format!("http://{address}"),
+            &security,
+        )
+        .unwrap();
+        let mut poller = manager.spawn();
+        let request = received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("discovery reaches the TLS peer");
+        poller.shutdown();
+        worker.join().unwrap();
+        fs::remove_file(ca_path).unwrap();
+        if trust_server {
+            assert!(request.unwrap().starts_with("GET /pd/api/v1/stores "));
+        } else {
+            assert!(
+                request.is_none(),
+                "untrusted certificates must never receive an HTTP request"
+            );
+        }
+    }
+
+    #[test]
+    fn tiflash_batch_cluster_http_uses_configured_ca_and_https() {
+        exercise_tls_discovery(true);
+    }
+
+    #[test]
+    fn tiflash_batch_cluster_http_rejects_an_untrusted_peer() {
+        exercise_tls_discovery(false);
+    }
+}

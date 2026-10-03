@@ -324,6 +324,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
         Arc::clone(&catalog),
         &config.pd_endpoints,
+        &config.cluster_security,
         cluster_ddl.clone(),
     );
     let global_config_keeper = crate::global_config_sync::GlobalConfigKeeper::start(
