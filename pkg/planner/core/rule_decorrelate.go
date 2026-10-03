@@ -332,6 +332,42 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 						var appendedAggFuncs []*aggregation.AggFuncDesc
 
 						join := &apply.LogicalJoin
+						// The default values only describe a *scalar* aggregation, which yields one row
+						// over an empty input. An aggregation carrying an explicit GROUP BY yields no row
+						// at all for an outer row with no matching group, and the outer join's NULL
+						// extension is then the correct answer. This is reachable from LEFT JOIN LATERAL,
+						// where the inner subquery is not wrapped in a MaxOneRow.
+						var defaultValueMap map[int]*expression.Constant
+						if len(agg.GroupByItems) == 0 {
+							defaultValueMap = s.aggDefaultValueMap(agg)
+						}
+						// `defaultValueMap` means this scalar aggregation subquery should return a non-NULL
+						// default value (e.g. COUNT -> 0) when the subquery's input is empty.
+						//
+						// If there are conditions pulled up from above the aggregation (typically HAVING),
+						// attaching them to the join will make the "no matching group" cases ambiguous:
+						//   1) empty input group (should apply default values), and
+						//   2) existing group filtered out by HAVING (should return NULL).
+						// Preserve correctness by removing those join conditions and applying them in a
+						// projection that NULL-ifies the inner columns when the condition is false.
+						var havingConds []expression.Expression
+						if len(defaultValueMap) > 0 && (len(join.EqualConditions)+len(join.LeftConditions)+len(join.RightConditions)+len(join.OtherConditions)+len(join.NAEQConditions) > 0) {
+							havingConds = make([]expression.Expression, 0, len(join.EqualConditions)+len(join.LeftConditions)+len(join.RightConditions)+len(join.OtherConditions)+len(join.NAEQConditions))
+							for _, cond := range join.EqualConditions {
+								havingConds = append(havingConds, cond)
+							}
+							for _, cond := range join.NAEQConditions {
+								havingConds = append(havingConds, cond)
+							}
+							havingConds = append(havingConds, join.LeftConditions...)
+							havingConds = append(havingConds, join.RightConditions...)
+							havingConds = append(havingConds, join.OtherConditions...)
+							join.EqualConditions = nil
+							join.NAEQConditions = nil
+							join.LeftConditions = nil
+							join.RightConditions = nil
+							join.OtherConditions = nil
+						}
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
@@ -358,20 +394,62 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 							agg.SetChildren(sel.Children()[0])
 							appendRemoveSelectionTraceStep(agg, sel, opt)
 						}
-						defaultValueMap := s.aggDefaultValueMap(agg)
-						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
-							proj.SetSchema(apply.Schema())
-							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
-							for i, val := range defaultValueMap {
-								pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
-								proj.Exprs[pos] = ifNullFunc
+							if len(havingConds) == 0 {
+								proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								proj.SetSchema(apply.Schema())
+								proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
+								for i, val := range defaultValueMap {
+									pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
+									ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+									proj.Exprs[pos] = ifNullFunc
+								}
+								proj.SetChildren(apply)
+								p = proj
+								appendAddProjTraceStep(apply, proj, opt)
+							} else {
+								// Materialize HAVING conditions once to avoid evaluating it multiple times
+								// when NULL-ifying every inner column.
+								defaultProj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								defaultProj.SetSchema(apply.Schema().Clone())
+								defaultProj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
+								defaultValueSchema := expression.NewSchema()
+								defaultValueExprs := make([]expression.Expression, 0, len(defaultValueMap))
+								for i, val := range defaultValueMap {
+									pos := defaultProj.Schema().ColumnIndex(agg.Schema().Columns[i])
+									ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+									defaultProj.Exprs[pos] = ifNullFunc
+									defaultValueSchema.Append(agg.Schema().Columns[i])
+									defaultValueExprs = append(defaultValueExprs, ifNullFunc)
+								}
+								havingItems := make([]expression.Expression, 0, len(havingConds))
+								for _, cond := range havingConds {
+									havingItems = append(havingItems, expression.ColumnSubstitute(agg.SCtx().GetExprCtx(), cond, defaultValueSchema, defaultValueExprs))
+								}
+								havingExpr := expression.ComposeCNFCondition(agg.SCtx().GetExprCtx(), havingItems...)
+								havingCol := &expression.Column{
+									UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+									RetType:  havingExpr.GetType(agg.SCtx().GetExprCtx().GetEvalCtx()),
+								}
+								defaultProj.Exprs = append(defaultProj.Exprs, havingExpr)
+								defaultProj.Schema().Append(havingCol)
+								defaultProj.SetChildren(apply)
+
+								proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								proj.SetSchema(apply.Schema())
+								proj.Exprs = expression.Column2Exprs(defaultProj.Schema().Columns[:apply.Schema().Len()])
+								outerLen := outerPlan.Schema().Len()
+								havingVal := defaultProj.Schema().Columns[defaultProj.Schema().Len()-1]
+								for i := outerLen; i < proj.Schema().Len(); i++ {
+									retType := proj.Schema().Columns[i].RetType.DeepCopy()
+									retType.DelFlag(mysql.NotNullFlag)
+									nullVal := expression.NewNullWithFieldType(retType)
+									proj.Exprs[i] = expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.If, retType, havingVal, proj.Exprs[i], nullVal)
+								}
+								proj.SetChildren(defaultProj)
+								p = proj
+								appendAddProjTraceStep(apply, proj, opt)
 							}
-							proj.SetChildren(apply)
-							p = proj
-							appendAddProjTraceStep(apply, proj, opt)
 						}
 						appendModifyAggTraceStep(outerPlan, apply, agg, sel, appendedGroupByCols, appendedAggFuncs, eqCondWithCorCol, opt)
 						return s.Optimize(ctx, p, opt)
@@ -569,11 +647,31 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 	// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
 	// which may break the semantics of LeftOuterJoin.
 	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
-	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
 	outerPlan := apply.Children()[0]
 	for _, expr := range proj.Exprs {
 		cols := expression.ExtractColumns(expr)
 		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			return true
+		}
+	}
+
+	// Pulling the projection above the join means it is evaluated on the null-extended rows too,
+	// so an expression over inner columns must still produce NULL once those columns are NULL.
+	// A non-null-preserving expression such as ifnull(b, 'z') or `b IS NULL` would otherwise turn
+	// a non-match into a real value. Reachable from LEFT JOIN LATERAL, whose inner side is not
+	// wrapped in a LogicalMaxOneRow.
+	// proj.Exprs are written against the projection's input, not its own output schema.
+	innerSchema := proj.Children()[0].Schema()
+	for _, expr := range proj.Exprs {
+		if expression.ExtractColumnSet(expr).IsEmpty() {
+			continue
+		}
+		nullResult, err := expression.EvaluateExprWithNull(apply.SCtx().GetExprCtx(), innerSchema, expr)
+		if err != nil {
+			return true
+		}
+		con, ok := nullResult.(*expression.Constant)
+		if !ok || con.DeferredExpr != nil || con.ParamMarker != nil || !con.Value.IsNull() {
 			return true
 		}
 	}
