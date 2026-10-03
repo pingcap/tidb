@@ -75,10 +75,8 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
 			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
 		}
 	}
