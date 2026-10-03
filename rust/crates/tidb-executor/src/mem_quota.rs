@@ -738,6 +738,14 @@ impl StatementMemory {
         self.killer.reset();
     }
 
+    /// Whether this statement's tracker lifetime has already retired.
+    /// Rebuilding a context must share an active lifetime, while a completed
+    /// materialization must not be reused as a new statement's tracker.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.lifetime.finished.load(SeqCst)
+    }
+
     /// Ends the statement-scoped tracker/action lifetime after every source
     /// and operator has closed. Persistent cursor rows may remain attached to
     /// the session root; a later [`SessionMemory::statement`] installs fresh

@@ -84,8 +84,13 @@ impl Session {
         if has_required_tables {
             return;
         }
-        self.run_bootstrap_statements()
-            .expect("bootstrap: the mysql system tables must be creatable by this tier's own DDL");
+        let result = self.run_bootstrap_statements();
+        // Bootstrap is an internal execution boundary, completed before the
+        // connection installs its spill storage and memory arbitrator.
+        if let Some(authority) = self.statement_result_authority.get_mut().take() {
+            authority.statement_memory().finish_statement();
+        }
+        result.expect("bootstrap: the mysql system tables must be creatable by this tier's own DDL");
     }
 
     fn run_bootstrap_statements(&mut self) -> Result<(), DriverError> {

@@ -349,6 +349,14 @@ impl Session {
     ) -> crate::ResultMaterializationAuthority {
         self.session_memory
             .configure(mem_quota, oom_action, tmp_storage_on_oom);
+        // Go resets one StmtCtx per statement. Planning, execution and
+        // metadata contexts share it; replacing it here lets the old tracker
+        // detach after a new OOM action is installed and clear that action.
+        if let Some(authority) = self.statement_result_authority.borrow().as_ref() {
+            if !authority.statement_memory().is_finished() {
+                return authority.clone();
+            }
+        }
         let memory = self.session_memory.statement_with_arbitration(
             snapshot.arbitrator_wait_averse,
             snapshot.arbitrator_reserved,

@@ -88,7 +88,7 @@ fn long_data_uses_live_query_quota_and_releases_session_bytes() {
 
 #[test]
 fn statement_contexts_keep_one_session_memory_root() {
-    let session = Session::new();
+    let mut session = Session::new();
     let first = session.statement_context(false).statement_memory();
     let second = session.statement_context(true).statement_memory();
 
@@ -96,16 +96,21 @@ fn statement_contexts_keep_one_session_memory_root() {
         first.session_tracker(),
         second.session_tracker()
     ));
-    assert!(!Arc::ptr_eq(first.stmt_tracker(), second.stmt_tracker()));
+    assert!(Arc::ptr_eq(first.stmt_tracker(), second.stmt_tracker()));
 
     let retained = first.operator_tracker(917);
     retained.consume(128);
     assert_eq!(
         second.bytes_consumed(),
         128,
-        "a retained result from the preceding statement remains under this connection's quota"
+        "planning and execution account through the same active statement"
     );
     retained.consume(-128);
+    session.begin_statement_execution("SELECT 1").unwrap();
+    let next = session.statement_context(false).statement_memory();
+    assert!(first.is_finished());
+    assert!(!Arc::ptr_eq(first.stmt_tracker(), next.stmt_tracker()));
+    assert!(Arc::ptr_eq(first.session_tracker(), next.session_tracker()));
 }
 
 #[test]

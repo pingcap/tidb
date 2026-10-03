@@ -15,6 +15,8 @@ Joined writes must stop at their session memory quota while reading, and every r
 
 ## Surprises & Discoveries
 
+The production wire smoke exposed OOM action loss: replacing helper contexts lets the earlier tracker detach after the next action is installed. Two owner-lifetime regressions fail before the repair. Planning/execution share the active authority; SQL, cached prepared and bootstrap boundaries retire it explicitly. Bootstrap must not leave a tracker active before the connection installs spill/arbitration policy. Go ResetContextOfStmt and Tracker.Detach retain their ownership and ordering.
+
 Go table AddRecord asserts Unknown for an optimistic lazy absence check, while checked or pessimistic writes assert NotExist. Current BufferMutation::insert unconditionally asserts NotExist. The retained configured-write executor is explicitly optimistic. System clustered writes receive a snapshot-proven absence. System index code still requires a fuller duplicate-check lifecycle and must not be marked repaired merely because record policy improves.
 
 ## Decision Log

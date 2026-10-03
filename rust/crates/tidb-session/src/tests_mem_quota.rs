@@ -449,3 +449,71 @@ fn with_tmp_storage_off_the_same_hash_join_is_gos_8175() {
     assert_eq!(wire.code, 8175);
     assert_eq!(&wire.state, b"HY000");
 }
+
+#[test]
+fn dml_batch_context_rebuild_keeps_one_active_statement_tracker() {
+    let mut session = Session::new();
+    session.set_connection_id(71);
+    session
+        .vars
+        .set_system("tidb_mem_quota_query", "1".to_owned())
+        .unwrap();
+    let first = session.statement_context(false).statement_memory();
+    let second = session.statement_context(true).statement_memory();
+    assert!(
+        std::sync::Arc::ptr_eq(first.stmt_tracker(), second.stmt_tracker()),
+        "planning and DML must use the same active statement lifetime"
+    );
+    drop(first);
+    assert!(second
+        .write_accountant(tidb_executor::mem_quota::label::UPDATE)
+        .account_row(&[tidb_datatype::Datum::Int(1)])
+        .is_err());
+}
+
+#[test]
+fn dml_batch_late_previous_authority_drop_cannot_unbind_current_oom_action() {
+    let mut session = Session::new();
+    session.set_connection_id(72);
+    let previous = session.statement_context(false).statement_memory();
+    session.begin_statement_execution("SELECT 1").unwrap();
+    session
+        .vars
+        .set_system("tidb_mem_quota_query", "1".to_owned())
+        .unwrap();
+    let current = session.statement_context(true).statement_memory();
+    drop(previous);
+    assert!(
+        current
+            .write_accountant(tidb_executor::mem_quota::label::UPDATE)
+            .account_row(&[tidb_datatype::Datum::Int(1)])
+            .is_err(),
+        "retiring an old result must not clear the new statement's OOM action"
+    );
+}
+
+#[test]
+fn dml_batch_live_quota_cancels_all_physical_write_sources_without_changes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,42)").unwrap();
+    for sql in [
+        "UPDATE t a JOIN t b ON a.id=b.id SET a.v=a.v+1",
+        "INSERT INTO t SELECT id+1,v FROM t",
+        "DELETE a FROM t a JOIN t b ON a.id=b.id",
+    ] {
+        session.run("SET tidb_mem_quota_query=1").unwrap();
+        let error = session
+            .run(sql)
+            .expect_err("physical source must enforce the live quota");
+        assert_eq!(error.to_mysql_error().code, 8175, "{sql}");
+        session.run("SET tidb_mem_quota_query=1073741824").unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SELECT id,v FROM t")),
+            vec![vec!["1".to_owned(), "42".to_owned()]],
+            "{sql}"
+        );
+    }
+}

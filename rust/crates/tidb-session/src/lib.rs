@@ -2135,7 +2135,11 @@ impl Session {
             self.executor_first_run_breakpoint
                 .store(false, std::sync::atomic::Ordering::Release);
         }
-        self.statement_result_authority.get_mut().take();
+        if let Some(previous) = self.statement_result_authority.get_mut().take() {
+            // Retire before installing the next root action, even when a
+            // retained authority delays Drop beyond the statement boundary.
+            previous.statement_memory().finish_statement();
+        }
         self.stmt_hints = tidb_hint::StmtHints::default();
         *self
             .process_plan_info

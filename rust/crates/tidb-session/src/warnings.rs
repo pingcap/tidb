@@ -364,7 +364,11 @@ impl Session {
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
         self.restore_statement_variables();
         self.prepared_params = None;
-        self.statement_result_authority.get_mut().take();
+        if let Some(previous) = self.statement_result_authority.get_mut().take() {
+            // Retire before installing the next root action, even when a
+            // retained authority delays Drop beyond the statement boundary.
+            previous.statement_memory().finish_statement();
+        }
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;

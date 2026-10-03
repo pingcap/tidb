@@ -64,7 +64,7 @@ and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
 this does not accept the complete root/discovery/TSO packages or close P03.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 86 tracked ownership/contract findings (61 unresolved, 25 repaired), review candidates and the
+consolidates 86 tracked ownership/contract findings (58 unresolved, 28 repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
