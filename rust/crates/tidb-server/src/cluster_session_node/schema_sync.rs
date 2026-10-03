@@ -198,7 +198,12 @@ fn acks_due(
             job.version <= loaded_version
                 // Go `RemoveLockDDLJobs`: live work that used one of the
                 // job's tables on an older schema holds the job back.
-                && !pins.blocks(job.version, &job.table_ids)
+                // A zero table id is Go's sentinel for a schema-level DDL
+                // job (for example CREATE DATABASE). It has no table lock
+                // conflict, so an unresolved table reference must not hold
+                // its acknowledgement back.
+                && (job.table_ids.iter().all(|&table_id| table_id == 0)
+                    || !pins.blocks(job.version, &job.table_ids))
                 // Go's `jobCache`: one ack per (job, version).
                 && acked.get(&job.job_id).is_none_or(|&sent| sent < job.version)
         })
@@ -842,6 +847,18 @@ mod tests {
         assert!(!pins.blocks(4, &[999]), "but not a job at its own version");
         drop(txn);
         assert!(!pins.blocks(5, &[999]));
+    }
+
+    #[test]
+    fn a_schema_job_is_not_blocked_by_unresolved_work() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 1);
+        pins.record_unresolved(7);
+        assert_eq!(
+            acks_due(2, &pins, &[job(1, 2, &[0])], &BTreeMap::new()),
+            vec![job(1, 2, &[0])]
+        );
+        drop(txn);
     }
 
     /// Go's `jobCache`: one ack per (job, version), but a job re-published
