@@ -639,6 +639,46 @@ func TestGlobalStatsNDV(t *testing.T) {
 	tk.MustExec("insert into t values (31), (33), (34)")
 	tk.MustExec("insert into t values (1), (2), (3)")
 	checkNDV(13, 3, 3, 3, 4)
+
+	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV of every
+	// column here, while a unique column or index takes the exact row count on
+	// partitions and on the global stats.
+	tk.MustExec(`create table tu (a int primary key, b int not null, c int,
+	unique key ab(a, b), unique key ac(a, c), key ic(c)) partition by hash(a) partitions 2`)
+	tk.MustExec("insert into tu values (1, 1, 1)")
+	for n := 1; n < 1<<15; n *= 2 {
+		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
+	}
+	for _, async := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
+		tk.MustExec("analyze table tu")
+		var ndvs []string
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tu'").Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v %v", r[2], r[3], r[6]))
+		}
+		require.Equal(t, []string{
+			"global a 32768", "global ab 32768", "global ac 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"p0 a 16384", "p0 ab 16384", "p0 ac 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
+			"p1 a 16384", "p1 ab 16384", "p1 ac 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+		}, ndvs)
+
+		// A global unique key does not determine the partition. Move b=1 to p1
+		// without changing its value. After analyzing only p1, both its fresh
+		// stats and p0's stale stats contain that same value. NULL rows keep the
+		// row-count cap from hiding double-counted NDVs.
+		tk.MustExec("drop table if exists tm")
+		tk.MustExec("create table tm (a int, b int, unique key ub(b) global) partition by hash(a) partitions 2")
+		tk.MustExec("insert into tm values (0, 1), (1, null), (2, null)")
+		tk.MustExec("analyze table tm")
+		tk.MustExec("update tm set a = 1 where b = 1")
+		tk.MustExec("flush stats_delta *.*")
+		tk.MustExec("analyze table tm partition p1")
+		ndvs = ndvs[:0]
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = 'tm' and partition_name = 'global' and column_name in ('b', 'ub')").Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v", r[3], r[6]))
+		}
+		require.Equal(t, []string{"b 1", "ub 1"}, ndvs)
+	}
 }
 
 func TestGlobalStatsIndexNDV(t *testing.T) {
@@ -858,12 +898,12 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 		Check(testkit.Rows("1", "2", "3", "15"))
-	// 4 rows actually match (b in {1,2,3,15}). All 6 distinct b values
-	// land in the global TopN, so the estimate comes from exact TopN
-	// membership rather than histogram-bucket interpolation.
+	// 4 rows actually match (b in {1,2,3,15}). b is unique, so its global
+	// stats have no TopN and the estimate comes from histogram-bucket
+	// interpolation.
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	// analyze table t index idx
 	tk.MustExec("drop table if exists t")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -883,7 +923,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-	require.Equal(t, "4.00", rows[0][1]) // see comment above; exact via TopN.
+	require.Equal(t, "5.00", rows[0][1]) // see comment above; no TopN for unique b.
 
 	// analyze table t index
 	tk.MustExec("drop table if exists t")
@@ -904,8 +944,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 }
 
 func TestIssues24349(t *testing.T) {
@@ -1000,19 +1040,19 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
-	// Column a and idx_ab have NDV ~= row_count and the per-partition
-	// TopN slot picks an arbitrary singleton each, leaving the global
-	// merge with 7 unrelated count=1 candidates competing for the
-	// 1-slot global TopN. analyze ran with an explicit `1 topn`, so the
-	// merge does not prune those singletons (the singleton filter is
-	// gated on numTopN == DefaultTopNValue, mirroring per-table
-	// analyze's allowPruning); one arbitrary count=1 value survives for
-	// a and idx_ab, matching an identical non-partitioned table.
+	// idx_ab has NDV ~= row_count and the per-partition TopN slot picks
+	// an arbitrary singleton, leaving the global merge with 7 unrelated
+	// count=1 candidates competing for the 1-slot global TopN. analyze
+	// ran with an explicit `1 topn`, so the merge does not prune those
+	// singletons (the singleton filter is gated on numTopN ==
+	// DefaultTopNValue, mirroring per-table analyze's allowPruning); one
+	// arbitrary count=1 value survives for idx_ab, matching an identical
+	// non-partitioned table. Column a is the primary key, so neither
+	// ANALYZE nor the merge collects TopN for it.
 	// Columns b and d (and indexes covering them) saturate at one
 	// repeated value across all partitions, so their TopN entries
 	// survive with counts == total row count.
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
-		"test t global a 0 1 1",
 		"test t global b 0 1 100010",
 		"test t global d 0  100010",
 		"test t global idx_ab 1 (1, 1) 1",
@@ -1023,7 +1063,6 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		// uidx_e is not collected, due to #66236
 	))
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
-		"test t p0 a 0 7 1",
 		"test t p0 b 0 1 14287",
 		"test t p0 d 0  14287",
 		"test t p0 idx_ab 1 (7, 1) 1",
@@ -1036,21 +1075,22 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	// bucket fires it pulls in nearly all of bucket-1 mass from all 7
 	// partitions. The leftmost global bucket is then just the tail of
 	// values below the smallest partition lower bound.
-	// Value 1 is now in the global TopN (see the TopN check above), so
-	// it is excluded from the histogram: bucket-0 starts at lower bound
-	// 2 and each bucket's cumulative count is one lower than it would be
-	// if value 1 had stayed in the histogram.
+	// Value (1, 1) is now in the idx_ab global TopN (see the TopN check
+	// above), so it is excluded from that histogram: bucket-0 starts at
+	// lower bound (2, 1) and each bucket's cumulative count is one lower
+	// than it would be if (1, 1) had stayed in the histogram. Column a has
+	// no TopN, so its histogram keeps every row.
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
-		"test t global a 0 0 7 0 2 9 0",
-		"test t global a 0 1 33353 0 9 33355 0",
-		"test t global a 0 2 100009 1 33355 100010 0",
+		"test t global a 0 0 1 0 1 2 0",
+		"test t global a 0 1 33347 0 2 33348 0",
+		"test t global a 0 2 100010 1 33348 100010 0",
 		"test t global idx_ab 1 0 7 0 (2, 1) (9, 1) 0",
 		"test t global idx_ab 1 1 33353 0 (9, 1) (33355, 1) 0",
 		"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0"))
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
-		"test t p0 a 0 0 4763 1 14 33348 0",
-		"test t p0 a 0 1 9526 1 33355 66689 0",
-		"test t p0 a 0 2 14286 1 66696 100009 0",
+		"test t p0 a 0 0 4763 1 7 33341 0",
+		"test t p0 a 0 1 9526 1 33348 66682 0",
+		"test t p0 a 0 2 14287 1 66689 100009 0",
 		"test t p0 idx_ab 1 0 4763 1 (14, 1) (33348, 1) 0",
 		"test t p0 idx_ab 1 1 9526 1 (33355, 1) (66689, 1) 0",
 		"test t p0 idx_ab 1 2 14286 1 (66696, 1) (100009, 1) 0"))

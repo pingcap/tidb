@@ -567,10 +567,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Combined TopN + histogram merge.
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
+			unique := statistics.IsUniqueBySchema(a.globalTableInfo, isIndex, a.histIDs[item.idx])
 			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
 				stmtCtx, killer,
 				wrapper.AllTopN, wrapper.AllHg,
-				uint32(opts[ast.AnalyzeOptNumTopN]),
+				globalNumTopN(opts, unique),
 				int64(opts[ast.AnalyzeOptNumBuckets]),
 				isIndex,
 			)
@@ -581,7 +582,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 			// we just set the table-level NDV.
 			if *globalHg != nil {
-				(*globalHg).NDV = a.globalStatsNDV[item.idx]
+				ndv := a.globalStatsNDV[item.idx]
+				if statistics.CanSumPartitionNDV(a.globalTableInfo, isIndex, a.histIDs[item.idx]) {
+					ndv = uniqueGlobalNDV(wrapper.AllHg, a.globalStats.Count)
+				}
+				(*globalHg).NDV = ndv
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil

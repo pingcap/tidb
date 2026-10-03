@@ -32,6 +32,15 @@ insert into t values (1,1),(1,2),(2,3);
 analyze table t with 5 topn;
 --sorted_result
 show stats_topn where table_name = 't';
+# The same holds for an integer handle and for composite and prefix keys that
+# the schema keeps unique. A unique key with a nullable column can repeat, so
+# it keeps TopN.
+drop table if exists t2;
+create table t2(id int primary key clustered, a int not null, b int not null, c int, s varchar(10), unique index uidx_ab(a, b), unique index uidx_ac(a, c), unique index uidx_s(s(2)));
+insert into t2 values (1,1,1,null,'aa1'),(2,1,2,null,'ab2'),(3,2,3,1,'ac3');
+analyze table t2 all columns with 5 topn;
+--sorted_result
+show stats_topn where table_name = 't2' and column_name in ('id', 'uidx_ab', 'uidx_ac', 'uidx_s');
 set @@session.tidb_analyze_version = default;
 
 # Cleanup

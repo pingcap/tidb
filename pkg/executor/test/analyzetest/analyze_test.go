@@ -1092,7 +1092,8 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	// The primary key never gets TopN; column c shows the TopN option.
+	require.Zero(t, tbl.GetCol(tableInfo.Columns[0].ID).TopN.Num())
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
@@ -1112,7 +1113,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Zero(t, tbl.GetCol(tableInfo.Columns[0].ID).TopN.Num())
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
@@ -1131,7 +1132,7 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Zero(t, tbl.GetCol(tableInfo.Columns[0].ID).TopN.Num())
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
@@ -1216,9 +1217,11 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// The primary key gets no TopN, so the default bucket count gives each
+	// of its values a bucket.
+	require.Equal(t, 9, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 5, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 14, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])

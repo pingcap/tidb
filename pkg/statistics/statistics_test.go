@@ -640,6 +640,101 @@ func SubTestBuild() func(*testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, col.Len())
 		require.Equal(t, col.GetUpper(0), col.GetLower(0))
+
+		// Stats take the row count as the NDV of an integer handle, the column
+		// of a single-column unique index, and a unique index, but a
+		// multi-column index with a nullable column may repeat its tuples.
+		handle := &model.ColumnInfo{ID: 1, Offset: 0}
+		handle.AddFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+		notNull := &model.ColumnInfo{ID: 3, Offset: 2}
+		notNull.AddFlag(mysql.NotNullFlag)
+		tblInfo := &model.TableInfo{PKIsHandle: true, Columns: []*model.ColumnInfo{handle, {ID: 2, Offset: 1}, notNull}}
+		for i, cols := range [][]*model.IndexColumn{
+			{{Offset: 1, Length: types.UnspecifiedLength}},
+			{{Offset: 2, Length: 4}},
+			{{Offset: 1, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+			{{Offset: 0, Length: types.UnspecifiedLength}, {Offset: 2, Length: types.UnspecifiedLength}},
+		} {
+			tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{ID: int64(i + 1), Unique: true, State: model.StatePublic, Columns: cols})
+		}
+		for _, global := range []bool{false, true} {
+			for _, idx := range tblInfo.Indices {
+				idx.Global = global
+			}
+			for _, want := range []struct {
+				isIndex bool
+				id      int64
+				unique  bool
+			}{{false, 1, true}, {false, 2, true}, {false, 3, false}, {false, model.ExtraHandleID, false},
+				{true, 1, true}, {true, 2, true}, {true, 3, false}, {true, 4, true}, {true, 5, false}} {
+				require.Equal(t, want.unique, IsUniqueBySchema(tblInfo, want.isIndex, want.id), "global=%v %+v", global, want)
+				// Integer handles remain partition-local even when all secondary
+				// indexes are global. Other values need a local unique index.
+				canSum := want.unique && (!global || !want.isIndex && want.id == handle.ID)
+				require.Equal(t, canSum, CanSumPartitionNDV(tblInfo, want.isIndex, want.id), "global=%v %+v", global, want)
+			}
+		}
+		// A local unique index still qualifies the column when a global unique
+		// index on the same column appears first in the table metadata.
+		localIdx := tblInfo.Indices[0].Clone()
+		localIdx.ID = 5
+		localIdx.Global = false
+		tblInfo.Indices = append(tblInfo.Indices, localIdx)
+		require.True(t, CanSumPartitionNDV(tblInfo, false, 2))
+		require.True(t, CanSumPartitionNDV(tblInfo, true, localIdx.ID))
+
+		t.Run("UniqueTopN", func(t *testing.T) {
+			for _, tc := range []struct {
+				name        string
+				sampleCount int
+				count       int64
+				numBuckets  int
+				numTopN     int
+				wantTopN    int
+				unique      bool
+			}{
+				// ANALYZE requests no TopN for schema-unique keys, so all their rows
+				// stay in the histogram.
+				{"sampled_unique", 8, 256, 4, 0, 0, true},
+				{"single_sample_unique", 1, 32, 4, 0, 0, true},
+				{"full_unique", 8, 8, 4, 0, 0, true},
+				{"sampled_non_unique", 8, 256, 4, 1, 1, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					collector := &SampleCollector{
+						Count:    tc.count,
+						FMSketch: NewFMSketch(tc.sampleCount),
+						Unique:   tc.unique,
+					}
+					for i := range tc.sampleCount {
+						value := types.NewIntDatum(int64(i))
+						// Use encoded composite index keys, with one occurrence per sample.
+						encoded, err := codec.EncodeKey(sc.TimeZone(), nil, value, value)
+						require.NoError(t, err)
+						datum := types.NewBytesDatum(encoded)
+						collector.Samples = append(collector.Samples, &SampleItem{Value: datum})
+						require.NoError(t, collector.FMSketch.InsertValue(sc, datum))
+					}
+					hist, topN, err := BuildHistAndTopN(ctx, tc.numBuckets, tc.numTopN, 4, collector, types.NewFieldType(mysql.TypeBlob), false, nil)
+					require.NoError(t, err)
+					require.Equal(t, tc.wantTopN, topN.Num())
+					wantNDV := int64(tc.sampleCount)
+					wantFrequency := tc.count / int64(tc.sampleCount)
+					if tc.unique {
+						wantNDV = tc.count
+						wantFrequency = 1
+					}
+					require.Equal(t, wantNDV, hist.NDV)
+					for _, item := range topN.TopN {
+						require.Equal(t, uint64(wantFrequency), item.Count)
+					}
+					require.Equal(t, float64(tc.count), hist.NotNullCount()+float64(topN.TotalCount()))
+					for _, bucket := range hist.Buckets {
+						require.Equal(t, wantFrequency, bucket.Repeat)
+					}
+				})
+			}
+		})
 	}
 }
 
