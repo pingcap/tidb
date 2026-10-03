@@ -4,6 +4,7 @@ insert into t values (1);
 analyze table t;
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
+<<<<<<< HEAD
 TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
 └─TableReader_16	1.00	19.11	root		data:TopN_15
   └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1
@@ -16,6 +17,20 @@ TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:10000
   └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
     └─Selection_14	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
       └─TableFullScan_13	1.00	203.50	cop[tikv]	table:t	keep order:false
+=======
+TopN_9	1.00	24.53	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+└─TableReader_19	1.00	21.33	root		data:TopN_18
+  └─TopN_18	1.00	256.60	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+    └─Selection_17	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
+      └─TableFullScan_16	1.00	203.50	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1000000000;
+id	estRows	estCost	task	access object	operator info
+TopN_9	1.00	716.08	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+└─TableReader_19	1.00	64.55	root		data:TopN_18
+  └─TopN_18	1.00	904.93	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+    └─Selection_17	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
+      └─TableFullScan_16	1.00	203.50	cop[tikv]	table:t	keep order:false
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 drop table if exists t;
 create table t (a int primary key, b int, c int, key(b));
 insert into t values (0, 0, 0), (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8), (9, 9, 9), (10, 10, 10), (11, 11, 11), (12, 12, 12), (13, 13, 13), (14, 14, 14), (15, 15, 15), (16, 16, 16), (17, 17, 17), (18, 18, 18), (19, 19, 19), (20, 20, 20), (21, 21, 21), (22, 22, 22), (23, 23, 23), (24, 24, 24), (25, 25, 25), (26, 26, 26), (27, 27, 27), (28, 28, 28), (29, 29, 29), (30, 30, 30), (31, 31, 31), (32, 32, 32), (33, 33, 33), (34, 34, 34), (35, 35, 35), (36, 36, 36), (37, 37, 37), (38, 38, 38), (39, 39, 39), (40, 40, 40), (41, 41, 41), (42, 42, 42), (43, 43, 43), (44, 44, 44), (45, 45, 45), (46, 46, 46), (47, 47, 47), (48, 48, 48), (49, 49, 49), (50, 50, 50), (51, 51, 51), (52, 52, 52), (53, 53, 53), (54, 54, 54), (55, 55, 55), (56, 56, 56), (57, 57, 57), (58, 58, 58), (59, 59, 59), (60, 60, 60), (61, 61, 61), (62, 62, 62), (63, 63, 63), (64, 64, 64), (65, 65, 65), (66, 66, 66), (67, 67, 67), (68, 68, 68), (69, 69, 69), (70, 70, 70), (71, 71, 71), (72, 72, 72), (73, 73, 73), (74, 74, 74), (75, 75, 75), (76, 76, 76), (77, 77, 77), (78, 78, 78), (79, 79, 79), (80, 80, 80), (81, 81, 81), (82, 82, 82), (83, 83, 83), (84, 84, 84), (85, 85, 85), (86, 86, 86), (87, 87, 87), (88, 88, 88), (89, 89, 89), (90, 90, 90), (91, 91, 91), (92, 92, 92), (93, 93, 93), (94, 94, 94), (95, 95, 95), (96, 96, 96), (97, 97, 97), (98, 98, 98), (99, 99, 99);
