@@ -533,6 +533,16 @@ SHOW GRANTS;
 disconnect show_column_grants;
 connection default;
 
+# issue 67060
+CREATE USER revoke_all_column_user;
+CREATE TABLE revoke_all_column_t (c1 int, c2 int);
+GRANT SELECT(c1), UPDATE(c2) ON privilege__privileges.revoke_all_column_t TO revoke_all_column_user;
+REVOKE ALL(c1) ON privilege__privileges.revoke_all_column_t FROM revoke_all_column_user;
+SELECT table_priv, column_priv FROM mysql.tables_priv WHERE user = 'revoke_all_column_user' AND host = '%' AND db = 'privilege__privileges' AND table_name = 'revoke_all_column_t';
+SELECT column_name, column_priv FROM mysql.columns_priv WHERE user = 'revoke_all_column_user' AND host = '%' AND db = 'privilege__privileges' AND table_name = 'revoke_all_column_t' ORDER BY column_name;
+DROP USER revoke_all_column_user;
+DROP TABLE revoke_all_column_t;
+
 # TestFieldList
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
