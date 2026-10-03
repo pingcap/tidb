@@ -321,6 +321,72 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	return true
 }
 
+// indexJoinPathCountAfterAccess4Compare adjusts CountAfterAccess with join EQ.
+//
+// The original CountAfterAccess keeps the selectivity from predicates that have
+// already been considered by access path estimation, and this function further
+// divides it by the NDV of the index join key columns. For example, if the inner
+// table t1 has index(a, b) and the predicates are t1.a=t2.a and t1.b=1, the
+// normal CountAfterAccess may be Estimation(t1.b=1) because the concrete t2.a
+// value is unknown during DataSource estimation. In IndexJoin, t1.a=t2.a becomes
+// a per-probe lookup key, so the compare-time access count should be:
+//
+//	Estimation(t1.b=1) / NDV(t1.a)
+//
+// countAfterAccess4IndexJoinOK is false when the join-key NDV is not stable
+// enough for this strong skyline pruning rule, such as pseudo/missing stats,
+// prefix index columns, multiple join keys, or no initialized single-column stats.
+// If the single stable join key is already covered by CountAfterAccess, this
+// function returns the original CountAfterAccess with ok=true.
+func indexJoinPathCountAfterAccess4Compare(
+	indexJoinInfo *indexJoinPathInfo,
+	path *util.AccessPath,
+	idxOff2KeyOff []int,
+	usedColsLen int,
+) (countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) {
+	if path.CountAfterAccess <= 0 ||
+		indexJoinInfo.innerTableStats == nil ||
+		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion ||
+		indexJoinInfo.innerTableStats.HistColl == nil {
+		return path.CountAfterAccess, false
+	}
+	var (
+		joinKeyColID   int64
+		joinKeyFound   bool
+		needNDVAdjust  bool
+		joinKeyColSeen int
+	)
+	for idxOff, keyOff := range idxOff2KeyOff {
+		if idxOff >= usedColsLen {
+			break
+		}
+		if keyOff < 0 {
+			continue
+		}
+		if idxOff >= len(path.FullIdxCols) || path.FullIdxCols[idxOff] == nil ||
+			idxOff >= len(path.FullIdxColLens) || path.FullIdxColLens[idxOff] != types.UnspecifiedLength {
+			return path.CountAfterAccess, false
+		}
+		joinKeyColID = path.FullIdxCols[idxOff].UniqueID
+		joinKeyFound = true
+		joinKeyColSeen++
+		if !(idxOff < len(path.ConstCols) && path.ConstCols[idxOff]) {
+			needNDVAdjust = true
+		}
+	}
+	if !joinKeyFound || joinKeyColSeen > 1 {
+		return path.CountAfterAccess, false
+	}
+	colStats := indexJoinInfo.innerTableStats.HistColl.GetCol(joinKeyColID)
+	if colStats == nil || !colStats.IsStatsInitialized() || colStats.NDV <= 0 {
+		return path.CountAfterAccess, false
+	}
+	if !needNDVAdjust || colStats.NDV == 1 {
+		return path.CountAfterAccess, true
+	}
+	return path.CountAfterAccess / float64(colStats.NDV), true
+}
+
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
 	sctx planctx.PlanContext,
@@ -337,9 +403,10 @@ func indexJoinPathConstructResult(
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
+	countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		usedColsNDV:    innerNDV,
 		chosenRanges:   ranges,
