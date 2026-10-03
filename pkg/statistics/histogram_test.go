@@ -47,7 +47,7 @@ func TestValueToString4InvalidKey(t *testing.T) {
 	datum := types.NewDatum(bytes)
 	res, err := ValueToString(nil, &datum, 3, nil)
 	require.NoError(t, err)
-	require.Equal(t, "(1, 0.5, \x14)", res)
+	require.Equal(t, "(1, 0.5, 0x14)", res)
 }
 
 type bucket4Test struct {
