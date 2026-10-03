@@ -166,6 +166,12 @@ where
         self.opener.open_session()
     }
 
+    /// A request-opening cache capability; callers retain a lease for each operation.
+    #[must_use]
+    pub fn region_cache_opener(&self) -> BackgroundRegionCache<L> {
+        self.region_cache.opener_handle()
+    }
+
     /// Returns a cloneable opener with no worker shutdown or join authority.
     #[must_use]
     pub fn opener(&self) -> SharedReadOpener<C, L> {

@@ -2,6 +2,10 @@
 
 User instruction (2026-10-03): **Do not push; continue implementation in Codex Cloud.** Keep both repositories' validated commits local and retain their exact intended destinations. A later push needs a new explicit user instruction plus the mandatory fresh locked server build. Normal commit hooks remain mandatory.
 
+Current checkpoint (2026-10-03): the [MPP read batch](parity/current-audit/mpp-read-batch-repair.md) repairs M02/M03 and advances M04 to partial. Exact ranges, canonical process cache/PD, incremental results, shared cancellation/quota and bounded remote cleanup are composed together. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Thirty empty ignored shells are removed with original obligations retained; full packages, transport and live multi-node acceptance remain unverified.
+
+The TiFlash checkpoint below is historical.
+
 Current checkpoint (2026-10-03): the [TiFlash replica batch](parity/current-audit/tiflash-replica-batch-repair.md) maintains F01/F02/F03 together and connects N03's shared cluster HTTP consumer. F03's classic polling contract is repaired; F01/F02 stay partial for durable placement/GC and partition readiness phases. The current register has **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked**. Earlier checkpoint counts below are historical. Eight ignored empty shells are retired with all original-source obligations retained.
 
 This is a living ExecPlan under root PLANS.md. Maintain Progress, Surprises & Discoveries, Decision Log, and Outcomes & Retrospective. The existing storage plan retains earlier repair receipts.

@@ -194,7 +194,8 @@ impl<L> std::ops::Deref for BackgroundRegionCacheOwner<L> {
 }
 
 impl<L> BackgroundRegionCache<L> {
-    pub(crate) fn open_lease(&self) -> Result<Self, BackgroundRegionCacheError> {
+    /// Retains one foreground request until it releases this lease.
+    pub fn open_lease(&self) -> Result<Self, BackgroundRegionCacheError> {
         let mut leases = self
             .shared
             .leases
@@ -601,6 +602,15 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
         &self,
         ranges: &[KeyRange],
     ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
+        self.batch_locate_ranges_with_backoff(ranges, &mut RetryingBatchBackoff::default())
+    }
+
+    /// Uses the same shared traversal with the caller's cancellation and retry budget.
+    pub fn batch_locate_ranges_with_backoff(
+        &self,
+        ranges: &[KeyRange],
+        backoff: &mut impl BatchScanBackoff,
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
         let now_seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
@@ -617,7 +627,6 @@ impl<L: RegionLoader> BackgroundRegionCache<L> {
             need_buckets: false,
             need_leader: false,
         };
-        let mut backoff = RetryingBatchBackoff::default();
         let load_result = (|| -> Result<(), RegionRouteError> {
             while !misses.is_empty() {
                 let batch_len = misses.len().min(super::MAX_RANGES_PER_BATCH);

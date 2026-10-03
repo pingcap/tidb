@@ -1,0 +1,213 @@
+{
+  "date": "2026-10-03",
+  "integration_start": "02f3ba2e620dedde4e8312fa504b3c78004e0add",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "scope": "Existing classic API-V1 MPP scan maintenance, not acceptance of whole copr/coordinator/native/transport packages. No new plan shape. Only M02/M03/M04 rechecked in this batch; other finding evidence is carried.",
+  "finding_statuses": {
+    "M02": "repaired",
+    "M03": "repaired",
+    "M04": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "unresolved": 58,
+    "open": 46,
+    "partial": 12,
+    "repaired": 28
+  },
+  "source_files": [
+    {
+      "path": "pkg/store/copr/mpp.go",
+      "sha256": "8f60476304bcaad0315c30977abf75ce0878a0f1621ef519466154279689eb5c"
+    },
+    {
+      "path": "pkg/store/copr/batch_coprocessor.go",
+      "sha256": "d39b7cef54938935e6be3a90cf494ffa317b111f1689219aeefe1d61161a4790"
+    },
+    {
+      "path": "pkg/store/copr/coprocessor.go",
+      "sha256": "bb6caccce699aa4f37c53707fc9869f2f5803edd2f21ccdf7f95f8a200fc05fb"
+    },
+    {
+      "path": "pkg/executor/internal/mpp/local_mpp_coordinator.go",
+      "sha256": "314508f5eb9ff1b73f55bc4f92bc2979be0a1d550e5a27e544949b41a2ae4150"
+    },
+    {
+      "path": "pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go",
+      "sha256": "da859abb4a5e9786a4741992b5c3f298d645535a11cf29f5024928a6f5b4117e"
+    },
+    {
+      "path": "pkg/planner/core/casetest/mpp/mpp_test.go",
+      "sha256": "50fa0cf3d1a89f583af9853bbdc2ca6419e6bb744642aa836cfe14d5ed7fd8cf"
+    }
+  ],
+  "validated_rust_snapshot": [
+    {
+      "path": "rust/Cargo.lock",
+      "sha256": "d53d66a7807c57faeb233af325dea85b612beec228cde93420d016dbd94ace48"
+    },
+    {
+      "path": "rust/crates/tidb-exec/Cargo.toml",
+      "sha256": "74bf04092e6933fdf94cc58a117916560ee6271aec3f0dc8ad984c294ae2168a"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_read.rs",
+      "sha256": "76a80570c1db839e35cee19a8b1fa2dbaf0e5dea664adfcf181c91e43895dd2a"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs",
+      "sha256": "48e8f0254975ceb3d753377b953129e10953f3f8870405663d5ef6b272596e2a"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/mem_quota.rs",
+      "sha256": "7221842c9249273ea5d62f70cfe70b0e47b915d95c590116dedd46473d38ce32"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/remote_scan.rs",
+      "sha256": "cfbf6fd14ab38a51a86ab147e4abd231917b0103a7996719a15cfc1ed28f0cbe"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/boot.rs",
+      "sha256": "022bce9f5fb48ae1c05a215a95131acba527745d987d2e44f4adcd1e3fe130cf"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "sha256": "ce77b49925494249e393e047d48f8648823f13dfe1294f6679a134511ddd01a1"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/Cargo.toml",
+      "sha256": "f2c5b6fc71b5eace0e445aabe34b246c649c21c33d7a500abe9cdc840d1e1ce1"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/read_runtime.rs",
+      "sha256": "1d81fea89c354fd4fb61214b7a60ae840609eba26a5016c18c0fe384b3519afb"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/region/background.rs",
+      "sha256": "2fa772d6c54da1698a48a68c613870e33074989444858dec34dcb06e5f7a0113"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/shared_read_runtime_source.rs",
+      "sha256": "3770c3a8dbbe46828bc6d7e1609fe70cf013311d1704e5cafb323255cb450612"
+    }
+  ],
+  "regressions": {
+    "original_behavior_fail_before_pass_after": 3,
+    "red_log": "red.log",
+    "red_sha256": "ede04c543845c6744501d01dadfbbd037f6c253d53f877f7cf16ef49eafe4c63",
+    "cases": [
+      "exact_disjoint_ranges_do_not_scan_the_gap",
+      "unrelated_region_is_not_dispatched",
+      "stream_open_returns_before_tail_and_preserves_first_packet"
+    ],
+    "red_method": "Extract existing envelope projection and complete stream drain into private testable helpers without semantic change; add cases, run and observe three failures before replacement. Local network fixtures require authorized network access.",
+    "rust_distinct_tests": 37,
+    "new_executable_regressions_and_lifecycle_cases": 12,
+    "retired_empty_ignored_shells": 30,
+    "upstream_obligations_retired": 0
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-exec --lib tiflash_mpp_scan",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "green-shared.log",
+      "sha256": "ac08a6bfaa4432687d83b9800612a25bd276a871ab9f6a0866bad81615e98e68",
+      "rust_cases": [
+        "tiflash_mpp_scan::dispatch_context_tests::classic_mpp_dispatch_uses_the_transactional_v1_codec",
+        "tiflash_mpp_scan::dispatch_context_tests::mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks",
+        "tiflash_mpp_scan::dispatch_context_tests::mpp_metadata_carries_the_domain_server_id",
+        "tiflash_mpp_scan::dispatch_context_tests::mpp_query_timestamp_uses_unix_nanoseconds",
+        "tiflash_mpp_scan::dispatch_context_tests::mpp_query_identity_is_unique_even_at_the_same_snapshot",
+        "tiflash_mpp_scan::mpp_read_batch_tests::exact_ranges_clip_each_region_and_preserve_infinite_end",
+        "tiflash_mpp_scan::mpp_read_batch_tests::exact_disjoint_ranges_do_not_scan_the_gap",
+        "tiflash_mpp_scan::mpp_read_batch_tests::mpp_range_lookup_uses_shared_pagination_and_retained_cache",
+        "tiflash_mpp_scan::mpp_read_batch_tests::early_close_and_drop_cancel_the_gather_once",
+        "tiflash_mpp_scan::mpp_read_batch_tests::canonical_kill_interrupts_a_stalled_receive",
+        "tiflash_mpp_scan::mpp_read_batch_tests::remote_projection_uses_the_same_statement_memory_and_killer",
+        "tiflash_mpp_scan::mpp_read_batch_tests::quota_exceeded_is_a_typed_sql_failure_and_cleans_up",
+        "tiflash_mpp_scan::mpp_read_batch_tests::unrelated_region_is_not_dispatched",
+        "tiflash_mpp_scan::mpp_read_batch_tests::stream_open_returns_before_tail_and_preserves_first_packet",
+        "tiflash_mpp_scan::mpp_read_batch_tests::later_transport_error_preserves_first_packet_and_cancels",
+        "tiflash_mpp_scan::mpp_read_batch_tests::natural_completion_releases_memory_without_cancel"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test region_batch_locate_source --test shared_read_runtime_source",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "shared-cache-tests.log",
+      "sha256": "54782c6eb825483b736a649d8eacbefc2d435a2cf767a7f366ec5c7911ad6246",
+      "rust_cases": [
+        "batch_cache_uses_exact_pd_limit_and_need_bucket_flag",
+        "cache_accepts_loader_owned_legacy_scan_fallback_results",
+        "cached_overlap_cannot_mask_an_interior_gap_in_the_exact_pd_reply",
+        "coverage_distinguishes_holes_from_a_reached_limit",
+        "gap_reply_retries_then_publishes_only_the_converged_reply",
+        "leader_required_batch_retries_all_leaderless_but_accepts_mixed_metadata",
+        "live_batch_merger_preserves_a_partial_cached_bridge_for_this_result",
+        "merger_ports_the_original_overlap_and_hole_table",
+        "merger_preserves_partial_overlap_but_drops_fully_covered_cache",
+        "split_ranges_ports_original_boundary_table",
+        "overlapping_loaded_regions_preserve_the_partial_cached_prefix",
+        "terminal_gap_reply_does_not_pollute_the_cache",
+        "batch_cache_progresses_after_the_exact_128_region_pd_limit",
+        "batch_cache_caps_each_pd_request_at_2048_ranges",
+        "sessions_share_process_authority_but_not_client_cells",
+        "retained_cache_opener_shares_authority_without_hiding_a_foreground_lease",
+        "authority_is_send_and_sync_while_sessions_are_opened_in_workers"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test tiflash_mpp_root_shape_source",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "retained-planner-tests.log",
+      "sha256": "f97415a0654b1eaf21c3b1e8a8c575e2791d9004065bac94b465c58c0c0eb9a9",
+      "rust_cases": [
+        "cop_reader_explain_stays_plain",
+        "mpp_reader_explain_carries_the_newest_mpp_version_and_the_sender",
+        "passthrough_sender_explain_matches_go",
+        "hash_sender_explain_lists_hash_columns_like_go"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-executor -p tidb-server -p tidb-txnkv -p tidb-planner --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "result": "passed",
+      "log": "all-targets-final.log",
+      "sha256": "fe7014b585267ba9114739530c0cd62a044c85c91a29871f21d5d3fde16bfcd0",
+      "rust_cases": []
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "result": "passed",
+      "log": "lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "rust_cases": []
+    }
+  ],
+  "commit_gate": {
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "actual_hook": "hooks/pre-commit",
+    "result": "pending_normal_commit_hook; delivery follow-up records outcome"
+  },
+  "publication": {
+    "push": "disabled by explicit user instruction; neither repository pushed",
+    "intended_destinations": [
+      "pingcap/tidb hparser-integration",
+      "ngaut/client-rust master"
+    ],
+    "restoration": "new-task snapshot restore unverified; preserve local bundle"
+  },
+  "not_verified": [
+    "original full Go copr/coordinator/planner suites",
+    "live multi-node TiKV/TiFlash and disjoint-range SQL on TiFlash",
+    "shared gRPC TLS/security/dispatch/establish recovery",
+    "full MPP graph, balancing, compute topology and package acceptance",
+    "sysbench/TPC-C/TPC-H/YCSB measurements"
+  ]
+}

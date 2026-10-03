@@ -545,6 +545,15 @@ pub struct StatementMemory {
     killer: Arc<SqlKiller>,
 }
 
+impl std::fmt::Debug for StatementMemory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StatementMemory")
+            .field("bytes_consumed", &self.bytes_consumed())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for StatementMemory {
     /// A budget with the SHIPPED defaults: `tidb_mem_quota_query` = 1GiB and
     /// `tidb_mem_oom_action` = `CANCEL`.

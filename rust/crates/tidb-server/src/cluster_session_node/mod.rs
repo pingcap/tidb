@@ -7641,29 +7641,17 @@ fn detached_storage() -> ClusterTableStorage {
     ClusterTableStorage::new(MutationBuffer::new(), slot)
 }
 
-/// Builds the TiFlash MPP dispatch source over the node's PD seeds.
-///
-/// A node that cannot reach PD still boots: the MPP capability degrades to
-/// refusal, which surfaces at the statement as "no live TiFlash store" only
-/// when a query actually names the columnar engine.
+/// Builds MPP over the existing process PD and region-cache capabilities.
 #[must_use]
 pub fn build_tiflash_mpp_source(
-    pd_endpoints: &[String],
+    authority: &tidb_exec::real_tikv_read::ProductionReadProcessAuthority,
     schema_version: impl Fn() -> i64 + Send + Sync + 'static,
 ) -> Option<tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource> {
-    if pd_endpoints.is_empty() {
-        return None;
-    }
-    match tidb_pd_client::PdClient::connect_seeds(pd_endpoints.to_vec(), Duration::from_secs(10)) {
-        Ok(client) => Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
-            client,
-            schema_version,
-        )),
-        Err(error) => {
-            eprintln!("{{\"event\":\"tiflash_mpp_pd_unreachable\",\"error\":\"{error}\"}}");
-            None
-        }
-    }
+    Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
+        authority.pd_client()?,
+        authority.region_cache_opener()?,
+        schema_version,
+    ))
 }
 
 /// Spawns the TiFlash replica availability poller over the node's catalog

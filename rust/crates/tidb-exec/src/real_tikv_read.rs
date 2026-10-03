@@ -777,6 +777,16 @@ impl ProductionReadProcessAuthority {
         }
     }
 
+    /// Opens MPP requests against the same process region cache as row reads.
+    pub fn region_cache_opener(
+        &self,
+    ) -> Option<tidb_txnkv::region::BackgroundRegionCache<PdRegionLoader>> {
+        match &self.lifecycle.region_cache {
+            ProductionRegionLifecycle::Running(authority) => Some(authority.region_cache_opener()),
+            ProductionRegionLifecycle::Closed => None,
+        }
+    }
+
     /// Cloneable write capability over this same authority.
     ///
     /// Reads and writes therefore share one PD worker, one RegionCache, one

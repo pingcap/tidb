@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **60 unresolved (49 open, eleven partial)** after the TiFlash replica batch; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **58 unresolved (46 open, twelve partial)** after the MPP read batch; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
 
 ## Baseline and scope
 

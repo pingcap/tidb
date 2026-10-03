@@ -1,0 +1,175 @@
+{
+  "date": "2026-10-03",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remove empty ignored Rust shells only. Original Go tests, golden fixtures and support obligations remain unverified; no package acceptance or passed test is claimed. Historical source notes are not current feature evidence.",
+  "retired_empty_shells": 30,
+  "upstream_obligations_retired": 0,
+  "modules": [
+    {
+      "retired_rust_path": "rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs",
+      "historical_sha256": "0278a68474d0df5149291ee592c257864e9b7d03102de15c037f0bb7b442ad53",
+      "status": "unverified_upstream_obligations",
+      "cases": [
+        {
+          "rust_shell": "mpp_single_distinct_three_stage_golden",
+          "historical_ignore_reason": "go-parity-gap: needs live MPP costing with TiFlash replica meta injection and the three-stage distinct-agg physical shaping",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_multi_distinct_three_stage_golden",
+          "historical_ignore_reason": "go-parity-gap: multi-distinct three-stage MPP rewrite lives only inside the unported optimizer/implementation set",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_null_aware_semi_join_push_down_golden",
+          "historical_ignore_reason": "go-parity-gap: null-aware semi-join MPP pushdown decisions and their warnings are unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_shared_cte_scan_golden",
+          "historical_ignore_reason": "go-parity-gap: shared-CTE MPP execution planning and the mpp_shared_cte_execution switch are unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "rollup_mpp_grouping_argument_and_plans_golden",
+          "historical_ignore_reason": "go-parity-gap: ROLLUP grouping-set planning plus the GROUPING argument check have no end-to-end owner in this crate",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "enforce_mpp_newest_cases_golden",
+          "historical_ignore_reason": "go-parity-gap: needs the live MPP-enforcement decision loop over primary-key tables",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "read_committed_isolation_keeps_root_hashjoin_unless_enforced_via_hint",
+          "historical_ignore_reason": "go-parity-gap: set_var hint evaluation, READ-COMMITTED txn context and MPP broadcast-join rendering are unported",
+          "status": "unverified"
+        }
+      ],
+      "historical_source_notes": "// Copyright 2026 PingCAP, Inc.\n//\n// Licensed under the Apache License, Version 2.0 (the \"License\");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an \"AS IS\" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n//! Documentary gap ports for the remainder of\n//! `pkg/planner/core/casetest/enforcempp` (`pkg/planner.part4` items 181\u2013187\n//! on `origin/master`; part3's sibling module\n//! `casetest_enforce_mpp_suite_source.rs` already covers items 174\u2013180 of the\n//! same Go file).\n//!\n//! All seven tests drive whole EXPLAIN/warning goldens out of the\n//! `enforce_mpp_suite` book through a live mock-TiFlash session whose table\n//! meta carries an available TiFlash replica. Plan rows for `explain`/`desc`\n//! inputs are normalized by rewriting every `_[0-9]+` node-id suffix to `_N`\n//! (enforce_mpp_test.go:30-46 helper `checkEnforceMPPPlanRows`), and session\n//! warnings must equal the book exactly. None of this surface exists here:\n//! the crate has no TiFlash-replica meta injection, no MPP task generation,\n//! three-stage distinct-agg shaping, shared-CTE execution, rollup MPP rules,\n//! or a per-statement warning sink. The package bootstrap\n//! `enforcempp/main_test.go:29 TestMain` is item \u2014: skipped-reason bootstrap\n//! (loads the `enforce_mpp_suite` book, goleak), documented in the receipt.\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:427\n/// TestMPPSingleDistinct3Stage`.\n///\n/// Re-derived contract: over t(a int, b bigint not null, c bigint,\n/// d date, e varchar(20) collate utf8mb4_general_ci) carrying one available\n/// TiFlash replica assigned straight onto `tbl.Meta().TiFlashReplica`, every\n/// suite input must reproduce its plan rows (`set`/`UPDATE` entries are\n/// executed, not compared) with warnings matched verbatim; the file-level\n/// helpers pin that single count-distinct aggregates lower into a THREE-stage\n/// MPP aggregation chain.\n#[test]\n#[ignore = \"go-parity-gap: needs live MPP costing with TiFlash replica meta injection and the three-stage distinct-agg physical shaping\"]\nfn mpp_single_distinct_three_stage_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:474\n/// TestMPPMultiDistinct3Stage`.\n///\n/// Under `tidb_opt_enable_three_stage_multi_distinct_agg=1`,\n/// `tidb_isolation_read_engines=\"tiflash\"`, `tidb_enforce_mpp=1`,\n/// `tidb_allow_mpp=ON`, table split BETWEEN (0) AND (5000) REGIONS 5 and ten\n/// duplicated inserted rows, the three-stage lowering of MULTIPLE distinct\n/// aggregates (plus mixed sum(c)) must reproduce the book rows; the source\n/// comment (:469-470) records that a post-resolveIndices optimization may\n/// inject another projection below the agg without changing output names.\n#[test]\n#[ignore = \"go-parity-gap: multi-distinct three-stage MPP rewrite lives only inside the unported optimizer/implementation set\"]\nfn mpp_multi_distinct_three_stage_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:521\n/// TestMPPNullAwareSemiJoinPushDown`.\n///\n/// NULL-aware anti/semi joins between t(a,b,c) and s(a,b,c), both given\n/// TiFlash replicas through `alter table .. set tiflash replica 1` followed\n/// by `UpdateTableReplicaInfo(.., true)` (the DDL-path meta variant instead\n/// of direct assignment), must reproduce their MPP pushdown plans and\n/// warnings from the book.\n#[test]\n#[ignore = \"go-parity-gap: null-aware semi-join MPP pushdown decisions and their warnings are unported\"]\nfn mpp_null_aware_semi_join_push_down_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:568\n/// TestMPPSharedCTEScan`.\n///\n/// With `tidb_enforce_mpp='on'` and\n/// `tidb_opt_enable_mpp_shared_cte_execution='on'`, plans over t/s plus\n/// TPC-H-shaped part/orders tables (all with replicas enabled through\n/// UpdateTableReplicaInfo) must show CTE consumers reading SHARED scans on\n/// TiFlash per the book; runs against a plain mockstore session rather than\n/// the cascades loop but uses the same `_N` row normalization.\n#[test]\n#[ignore = \"go-parity-gap: shared-CTE MPP execution planning and the mpp_shared_cte_execution switch are unported\"]\nfn mpp_shared_cte_scan_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:640\n/// TestRollupMPP`.\n///\n/// First pins the exact rejection of grouping a column outside its GROUP BY\n/// under ROLLUP: explaining `... GROUP BY country, country, product WITH\n/// ROLLUP ORDER BY grouping(year)` must fail with\n/// `[planner:3602]Argument #0 of GROUPING function is not in GROUP BY`\n/// (:686-687). Then, with `tidb_enforce_mpp='on'` and\n/// `TiFlashFineGrainedShuffleStreamCount=-1`, GROUP BY ROLLUP aggregates over\n/// sales(year, country, product, profit) must produce their MPP plans and\n/// warnings from the book.\n#[test]\n#[ignore = \"go-parity-gap: ROLLUP grouping-set planning plus the GROUPING argument check have no end-to-end owner in this crate\"]\nfn rollup_mpp_grouping_argument_and_plans_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:696\n/// TestEnforceMPPNewest`.\n///\n/// Regression window over t1(a int primary key)/t2(a int primary key) with\n/// `testkit.SetTiFlashReplica` injections: whatever the current newest\n/// enforcement decisions are, they are FROZEN by the book \u2014 every input's\n/// plan rows (normalized) and warnings must keep matching.\n#[test]\n#[ignore = \"go-parity-gap: needs the live MPP-enforcement decision loop over primary-key tables\"]\nfn enforce_mpp_newest_cases_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/enforcempp/enforce_mpp_test.go:727\n/// TestReadCommittedWithTiflash`.\n///\n/// Under `tx_isolation=\"READ-COMMITTED\"` and\n/// `tidb_isolation_read_engines=\"tidb,tiflash\"` inside a transaction: the\n/// hinted `/*+ set_var(tidb_enforce_mpp=on) */` join explains as a full MPP\n/// tree \u2014 TableReader(ExchangeSender(PassThrough(HashJoin \u2026 broadcast build\n/// over TableRangeScan range:[1,1],[2,2], probe TableFullScan with pushed\n/// `in(test.t2.b, 1, 2), not(isnull(test.t2.b))`))), MppVersion: 3 \u2014 while\n/// the UNHINTED same query keeps a root HashJoin whose build side is\n/// Batch_Point_Get handle:[1 2] and whose probe side reads TiFlash, then the\n/// transaction commits.\n#[test]\n#[ignore = \"go-parity-gap: set_var hint evaluation, READ-COMMITTED txn context and MPP broadcast-join rendering are unported\"]\nfn read_committed_isolation_keeps_root_hashjoin_unless_enforced_via_hint() {}\n"
+    },
+    {
+      "retired_rust_path": "rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs",
+      "historical_sha256": "dbd1a68654e84dbaacb185ae8c2772e7abf2cee1f79c653bb9032edb0ded927e",
+      "status": "unverified_upstream_obligations",
+      "cases": [
+        {
+          "rust_shell": "mpp_join_star_schema_golden_plans_under_tiflash_isolation",
+          "historical_ignore_reason": "go-parity-gap: needs RunTestUnderCascadesWithDomain (mock-store + TiFlash replica meta injection), ANALYZE stats, session isolation variables and the integration_suite golden plans -- none of this surface exists in tidb-planner",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_exchange_sender_places_limit_pushdown_above_passthrough_exchange",
+          "historical_ignore_reason": "go-parity-gap: needs hint-driven storage selection plus physical plan construction and plan_tree printing of ExchangeSender/Limit stacks",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_left_semi_join_golden_with_enforce_mpp_and_warnings",
+          "historical_ignore_reason": "go-parity-gap: enforced-MPP planning with statement-warning capture needs the live session pipeline and golden book",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_outer_join_build_side_for_broadcast_follows_row_counts",
+          "historical_ignore_reason": "go-parity-gap: outer-join build-side selection by broadcast threshold costs lives in unported findBestTask MPP paths needing analyze stats + replicas",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_outer_join_fixed_build_side_forces_shuffle_build_side",
+          "historical_ignore_reason": "go-parity-gap: fixed-build-side override inside unported MPP shuffle join planning",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_outer_join_shuffle_build_side_flips_when_cost_prefers",
+          "historical_ignore_reason": "go-parity-gap: cost-driven build-side choice in unported MPP shuffle join planning",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_shuffled_join_hash_exchanges_pinned_by_thresholds",
+          "historical_ignore_reason": "go-parity-gap: threshold-to-shuffle decisions need the unported MPP task/cost machinery plus golden plans",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_join_decimal_width_gap_does_not_lose_columns_from_schema",
+          "historical_ignore_reason": "go-parity-gap: whole-plan goldens over enforce-MPP column pruning; the error surface itself lives in unported exchange resolution",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_hash_exchange_allowed_when_new_collation_flag_set",
+          "historical_ignore_reason": "go-parity-gap: collation gating of hash exchanges happens in unported MPP exchange resolution",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_broadcast_exchange_ignores_new_collation_gate",
+          "historical_ignore_reason": "go-parity-gap: same missing live-planning surface as the hash-exchange sibling",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_avg_rewrite_pushes_sum_count_pair_over_exchange",
+          "historical_ignore_reason": "go-parity-gap: avg-to-sum/count rewrite under MPP pushdown needs the unported aggregation split rule chain",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_union_all_branches_read_through_pass_through_exchanges",
+          "historical_ignore_reason": "go-parity-gap: union branches inside the unported MPP costing loop",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_join_decimal_scales_keep_their_exchange_types",
+          "historical_ignore_reason": "go-parity-gap: decimal-keyed join costing + exchange selection unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_join_exchange_only_ships_pruned_join_columns",
+          "historical_ignore_reason": "go-parity-gap: exchange-level column pruning interacts with the unported physical optimizer driver",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_fine_grained_join_and_agg_use_injected_stream_counts",
+          "historical_ignore_reason": "go-parity-gap: fine-grained-shuffle stream derivation + failpoint-backed instance list need domain plumbing absent from tidb-planner (receiver only exposes the configured count)",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_agg_topn_with_join_stage_placement_golden",
+          "historical_ignore_reason": "go-parity-gap: agg/topn placement across MPP stages requires unported enforcement+costing",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_reject_sort_keeps_violating_order_at_root",
+          "historical_ignore_reason": "go-parity-gap: sort-property rejection over MPP property enforcement unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_selection_push_down_splits_across_engines",
+          "historical_ignore_reason": "go-parity-gap: cross-engine selection distribution in unported physical planning",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_projection_push_down_shape_golden",
+          "historical_ignore_reason": "go-parity-gap: projection placement across exchanges unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_agg_push_down_two_phase_layout_golden",
+          "historical_ignore_reason": "go-parity-gap: two-phase agg decomposition over exchanges unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_version_gates_exchanges_and_warns",
+          "historical_ignore_reason": "go-parity-gap: session-variable gated exchange versions + executor round trip unported",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_join_with_remove_useless_exchange_golden",
+          "historical_ignore_reason": "go-parity-gap: remove-useless-exchange rewrite belongs to the unported MPP post-processing",
+          "status": "unverified"
+        },
+        {
+          "rust_shell": "mpp_join_without_remove_useless_exchange_golden",
+          "historical_ignore_reason": "go-parity-gap: same missing surface as its WithRemoveUselessExchange sibling",
+          "status": "unverified"
+        }
+      ],
+      "historical_source_notes": "// Copyright 2026 PingCAP, Inc.\n//\n// Licensed under the Apache License, Version 2.0 (the \"License\");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an \"AS IS\" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n//! Documentary gap ports for `pkg/planner/core/casetest/mpp`\n//! (`pkg/planner.part6` items 307\u2013329 on `origin/master`; family bootstrap is\n//! `mpp/main_test.go:30 TestMain`, skipped-reason in the receipt).\n//!\n//! Every test here runs `testkit.RunTestUnderCascadesWithDomain`: a live mock\n//! cluster whose domain can mark tables with virtual TiFlash replicas\n//! (`testkit.SetTiFlashReplica`), session engine/MPP variables, and the\n//! `integration_suite` golden book\n//! (`pkg/planner/core/casetest/mpp/testdata/integration_suite`) whose inputs\n//! are whole EXPLAIN statements compared row-by-row. The Rust workspace has\n//! neither a session/executor pair nor MPP join costing or exchange\n//! selection: the wired physical tree has no ExchangeSender or\n//! ExchangeReceiver variants, so these stay documented gaps. Bodies are EMPTY\n//! on purpose \u2014 asserting them here would mean inventing the plans the golden\n//! book records.\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:31 TestMPPJoin`.\n///\n/// Re-derived contract: the star schema (fact_t keyed by int d1_k /\n/// decimal(10,2) d2_k / date d3_k plus three analyzed dimension tables), all\n/// carrying available TiFlash replicas, must reproduce every recorded plan of\n/// the integration_suite book once `tidb_isolation_read_engines='tiflash'`\n/// and `tidb_allow_mpp=1` are set; each join key type picks its own exchange\n/// shapes through live MPP costing.\n#[test]\n#[ignore = \"go-parity-gap: needs RunTestUnderCascadesWithDomain (mock-store + TiFlash replica meta injection), ANALYZE stats, session isolation variables and the integration_suite golden plans -- none of this surface exists in tidb-planner\"]\nfn mpp_join_star_schema_golden_plans_under_tiflash_isolation() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:78 TestMPPExchangeSender`.\n///\n/// Re-derived contract (inline golden, issue 36194): for table t with a TiFlash\n/// replica, `explain format='plan_tree' select /*+ read_from_storage(tiflash[t]) */ *\n/// from t where a + 1 > 20 limit 100` prints Limit above a root TableReader whose\n/// child is an mpp[tiflash] ExchangeSender(PassThrough) wrapping a Selection over\n/// TableFullScan \u2014 i.e. the filter runs below the exchange on TiFlash and the\n/// TableReader explains \"MppVersion: 3\".\n#[test]\n#[ignore = \"go-parity-gap: needs hint-driven storage selection plus physical plan construction and plan_tree printing of ExchangeSender/Limit stacks\"]\nfn mpp_exchange_sender_places_limit_pushdown_above_passthrough_exchange() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:95 TestMPPLeftSemiJoin`.\n///\n/// Re-derived contract: left semi join against\n/// `t(a int not null, b int null)` with `tidb_allow_mpp=1;\n/// tidb_enforce_mpp=1` and an injected TiFlash replica must match the\n/// integration_suite goldens including per-statement warning snapshots; rows\n/// beginning `set`/`UPDATE` execute as statements rather than being planned.\n#[test]\n#[ignore = \"go-parity-gap: enforced-MPP planning with statement-warning capture needs the live session pipeline and golden book\"]\nfn mpp_left_semi_join_golden_with_enforce_mpp_and_warnings() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:139 TestMPPOuterJoinBuildSideForBroadcastJoin`.\n///\n/// Re-derived contract: two-row build vs three-row probe sides with high\n/// broadcast thresholds (`tidb_broadcast_join_threshold_size/count = 10000`)\n/// and `tidb_opt_mpp_outer_join_fixed_build_side=0` let the cost model pick\n/// broadcast joins whose build side follows row counts; the golden book pins\n/// the chosen side for every outer-join variant.\n#[test]\n#[ignore = \"go-parity-gap: outer-join build-side selection by broadcast threshold costs lives in unported findBestTask MPP paths needing analyze stats + replicas\"]\nfn mpp_outer_join_build_side_for_broadcast_follows_row_counts() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:176 TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide`.\n///\n/// Re-derived contract: with both thresholds zeroed and\n/// `tidb_opt_mpp_outer_join_fixed_build_side=1`, every outer join keeps its\n/// declared (left-for-left/right-for-right) shuffle build side even though the\n/// other side is smaller.\n#[test]\n#[ignore = \"go-parity-gap: fixed-build-side override inside unported MPP shuffle join planning\"]\nfn mpp_outer_join_fixed_build_side_forces_shuffle_build_side() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:212 TestMPPOuterJoinBuildSideForShuffleJoin`.\n///\n/// Re-derived contract: the same outer joins as the fixed-build-side case but\n/// with `tidb_opt_mpp_outer_join_fixed_build_side=0`, where the cost model may\n/// flip each shuffle join's build side to the smaller input.\n#[test]\n#[ignore = \"go-parity-gap: cost-driven build-side choice in unported MPP shuffle join planning\"]\nfn mpp_outer_join_shuffle_build_side_flips_when_cost_prefers() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:249 TestMPPShuffledJoin`.\n///\n/// Re-derived contract: doubled fact/dimension row counts with thresholds\n/// pinned to 1 force hash-partitioned (shuffled) joins across int/decimal/date\n/// keys; integration_suite pins every resulting plan tree.\n#[test]\n#[ignore = \"go-parity-gap: threshold-to-shuffle decisions need the unported MPP task/cost machinery plus golden plans\"]\nfn mpp_shuffled_join_hash_exchanges_pinned_by_thresholds() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:303 TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError`.\n///\n/// Re-derived contract: joining decimal(20,2)-wide with decimal(10,2)-narrow\n/// schemas under enforce-mpp exercises the resolve path where a pruned column\n/// used to raise `Can't find column Column#N in schema Column: [...]`;\n/// integration_suite now pins the healthy plans the fix produces.\n#[test]\n#[ignore = \"go-parity-gap: whole-plan goldens over enforce-MPP column pruning; the error surface itself lives in unported exchange resolution\"]\nfn mpp_join_decimal_width_gap_does_not_lose_columns_from_schema() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:345 TestMPPWithHashExchangeUnderNewCollation`.\n///\n/// Re-derived contract: utf8mb4_general_ci vs utf8mb4_bin char-keyed indexed\n/// tables with `tidb_hash_exchange_with_new_collation=1` decide whether hash\n/// exchanges on string columns are permitted per collation; goldens record\n/// which keys become broadcasts instead.\n#[test]\n#[ignore = \"go-parity-gap: collation gating of hash exchanges happens in unported MPP exchange resolution\"]\nfn mpp_hash_exchange_allowed_when_new_collation_flag_set() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:384 TestMPPWithBroadcastExchangeUnderNewCollation`.\n///\n/// Re-derived contract: broadcast joins are legal regardless of collation, so\n/// plain utf8mb4_bin string keys keep their broadcast plans; golden-pinned.\n#[test]\n#[ignore = \"go-parity-gap: same missing live-planning surface as the hash-exchange sibling\"]\nfn mpp_broadcast_exchange_ignores_new_collation_gate() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:415 TestMPPAvgRewrite`.\n///\n/// Re-derived contract: AVG over a decimal(10,2) column pushed to TiFlash is\n/// rewritten to SUM/COUNT pairs before crossing an exchange; integration_suite\n/// pins the rewritten projection shapes.\n#[test]\n#[ignore = \"go-parity-gap: avg-to-sum/count rewrite under MPP pushdown needs the unported aggregation split rule chain\"]\nfn mpp_avg_rewrite_pushes_sum_count_pair_over_exchange() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:446 TestMppUnionAll`.\n///\n/// Re-derived contract: UNION ALL over two TiFlash-replica tables under\n/// `tidb_enforce_mpp=1` plans every branch into a TiFlash pass-through read;\n/// golden-pinned.\n#[test]\n#[ignore = \"go-parity-gap: union branches inside the unported MPP costing loop\"]\nfn mpp_union_all_branches_read_through_pass_through_exchanges() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:478 TestMppJoinDecimal`.\n///\n/// Re-derived contract: mixed decimal(8,5)/decimal(9,5)/decimal(40,20) scales\n/// joining at threshold-1 broadcast sizes; goldens pin each exchange type the\n/// decimal comparisons admit.\n#[test]\n#[ignore = \"go-parity-gap: decimal-keyed join costing + exchange selection unported\"]\nfn mpp_join_decimal_scales_keep_their_exchange_types() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:514 TestMppJoinExchangeColumnPrune`.\n///\n/// Re-derived contract: five-column integer fact joined to one-column tt\n/// proves exchange senders only ship the join keys (column pruning below\n/// exchanges); goldens pin the narrowed schemas.\n#[test]\n#[ignore = \"go-parity-gap: exchange-level column pruning interacts with the unported physical optimizer driver\"]\nfn mpp_join_exchange_only_ships_pruned_join_columns() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:551 TestMppFineGrainedJoinAndAgg`.\n///\n/// Re-derived contract: failpoint-injected store instances\n/// (`infoschema/mockStoreServerInfo` returning a tiflash+tikv instance list)\n/// and `planner/core/mockTiFlashStreamCountUsingMinLogicalCores` returning \"8\"\n/// streams make fine-grained shuffle joins/aggs appear when\n/// `tiflash_fine_grained_shuffle_stream_count` derives from logical cores; the\n/// goldens pin the fine-grained operator layout.\n#[test]\n#[ignore = \"go-parity-gap: fine-grained-shuffle stream derivation + failpoint-backed instance list need domain plumbing absent from tidb-planner (receiver only exposes the configured count)\"]\nfn mpp_fine_grained_join_and_agg_use_injected_stream_counts() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:600 TestMppAggTopNWithJoin`.\n///\n/// Re-derived contract: aggregate and TopN over a decimal(6,3) table with an\n/// available TiFlash replica choose which stage (root vs mpp) each operator\n/// lands on; integration_suite pins every arrangement.\n#[test]\n#[ignore = \"go-parity-gap: agg/topn placement across MPP stages requires unported enforcement+costing\"]\nfn mpp_agg_topn_with_join_stage_placement_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:637 TestRejectSortForMPP`.\n///\n/// Re-derived contract: sorts that TiFlash cannot satisfy (char(128) ordering)\n/// must be rejected/enforced back on root while still keeping MPP for the rest;\n/// golden-pinned.\n#[test]\n#[ignore = \"go-parity-gap: sort-property rejection over MPP property enforcement unported\"]\nfn mpp_reject_sort_keeps_violating_order_at_root() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:673 TestPushDownSelectionForMPP`.\n///\n/// Re-derived contract: with engines `'tiflash,tidb'`, selections distribute\n/// between root and mpp[tiflash] scans depending on the predicate's\n/// expressibility on TiFlash; goldens pin the split.\n#[test]\n#[ignore = \"go-parity-gap: cross-engine selection distribution in unported physical planning\"]\nfn mpp_selection_push_down_splits_across_engines() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:710 TestPushDownProjectionForMPP`.\n///\n/// Re-derived contract: projections collapse toward the mpp scan so exchanges\n/// carry minimal payloads; golden-pinned shape checks.\n#[test]\n#[ignore = \"go-parity-gap: projection placement across exchanges unported\"]\nfn mpp_projection_push_down_shape_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:746 TestPushDownAggForMPP`.\n///\n/// Re-derived contract: aggregates decompose into final/partial stages around\n/// hash/broadcast exchanges at threshold-1 broadcast sizes; goldens pin the\n/// two-phase layouts.\n#[test]\n#[ignore = \"go-parity-gap: two-phase agg decomposition over exchanges unported\"]\nfn mpp_agg_push_down_two_phase_layout_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/mpp_test.go:782 TestMppVersion`.\n///\n/// Re-derived contract: `tidb_mpp_version` values gate exchange operator\n/// availability and warn (\"The version ... invalid\") while invalid settings\n/// fall back; the issue 52828 block additionally forces a MAX-with-group-by\n/// over an IN-subquery join to execute without erroring, proving the MppVersion\n/// machinery does not regress it.\n#[test]\n#[ignore = \"go-parity-gap: session-variable gated exchange versions + executor round trip unported\"]\nfn mpp_version_gates_exchanges_and_warns() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:852 TestMPPJoinWithRemoveUselessExchange`.\n///\n/// Re-derived contract: four primary-key tables whose FK-less self-joins are\n/// single-partition show the useless-exchange removal rule dropping redundant\n/// exchanges while keeping ones carrying value semantics; goldens include\n/// per-plan warnings.\n#[test]\n#[ignore = \"go-parity-gap: remove-useless-exchange rewrite belongs to the unported MPP post-processing\"]\nfn mpp_join_with_remove_useless_exchange_golden() {}\n\n/// GO PORT of `pkg/planner/core/casetest/mpp/\n/// mpp_test.go:906 TestMPPJoinWithoutUselessExchange`.\n///\n/// Re-derived contract: identical star schema (t1..t3 decimals plus\n/// dims/fact_t) but WITHOUT the removal variable enabled, so the same queries\n/// keep those exchanges; the differing goldens document exactly what the flag\n/// changes.\n#[test]\n#[ignore = \"go-parity-gap: same missing surface as its WithRemoveUselessExchange sibling\"]\nfn mpp_join_without_remove_useless_exchange_golden() {}\n"
+    }
+  ]
+}

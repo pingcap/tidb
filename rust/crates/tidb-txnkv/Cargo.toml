@@ -68,3 +68,12 @@ harness = false
 [[test]]
 name = "transaction_size_limits_source"
 path = "tests/transaction_size_limits_source.rs"
+
+# Keep MPP's shared traversal and lease lifecycle checks independently runnable.
+[[test]]
+name = "region_batch_locate_source"
+path = "tests/region_batch_locate_source.rs"
+
+[[test]]
+name = "shared_read_runtime_source"
+path = "tests/shared_read_runtime_source.rs"

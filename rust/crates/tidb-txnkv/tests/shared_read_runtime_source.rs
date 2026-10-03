@@ -124,3 +124,22 @@ fn authority_is_send_and_sync_while_sessions_are_opened_in_workers() {
         .shutdown()
         .expect("authority shutdown");
 }
+
+#[test]
+fn retained_cache_opener_shares_authority_without_hiding_a_foreground_lease() {
+    use tidb_txnkv::region::BackgroundRegionCacheError;
+    let authority =
+        SharedReadAuthority::start(ClientHandle(7), RegionCache::new(EmptyLoader)).unwrap();
+    let opener = authority.region_cache_opener();
+    let lease = opener.open_lease().unwrap();
+    assert!(matches!(
+        authority.shutdown(),
+        Err(BackgroundRegionCacheError::SharedOwners { owners: 1 })
+    ));
+    drop(lease);
+    authority.shutdown().unwrap();
+    assert!(matches!(
+        opener.open_lease(),
+        Err(BackgroundRegionCacheError::LeaseAdmissionClosed)
+    ));
+}

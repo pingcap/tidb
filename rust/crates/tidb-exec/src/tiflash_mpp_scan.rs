@@ -27,7 +27,6 @@
 //! the packet stream (`MPPDataPacket.data` = tipb `SelectResponse`) in the
 //! same `SelectResponseIter` the TiKV cop path consumes.
 
-use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use prost::Message as _;
@@ -41,7 +40,7 @@ use tidb_executor::remote_scan::{
     PushdownReadEngine, PushdownRowStream, PushdownScanRequest, PushdownScannerError,
 };
 use tidb_executor::storage::StorageError;
-use tidb_pd_client::{PdClient, PdKeyRange, PdStoreState};
+use tidb_pd_client::{PdClient, PdStoreState};
 use tidb_proto::mpp::{
     DispatchTaskRequest, EstablishMppConnectionRequest, MppDataPacket, TaskMeta,
 };
@@ -50,6 +49,12 @@ use tidb_proto::tipb::{
     DagRequest, EncodeType, Endian, ExchangeSender as PbExchangeSender, ExchangeType, ExecType,
     Executor, TableScan,
 };
+use tidb_txnkv::region::{
+    BackgroundRegionCache, BatchScanBackoff, BatchScanRetryReason, RegionBackoffBudget,
+    RegionBackoffKind, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
+    RegionRouteError, RegionVerId,
+};
+use tidb_txnkv::PdRegionLoader;
 
 use crate::cop_scan::scan_column;
 use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_INCREMENT};
@@ -63,7 +68,8 @@ use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_
 /// client directly, `mpp.go:235` EstablishMPPConns).
 pub struct TiFlashMppScanSource {
     pd: Mutex<PdClient>,
-    runtime: tokio::runtime::Runtime,
+    regions: BackgroundRegionCache<PdRegionLoader>,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
     /// Go `is.SchemaMetaVersion()`, read at dispatch time from the node's
     /// catalog watch: TiFlash resolves the request's table in the schema
     /// generation the coordinator names, so a stale or zero version makes
@@ -79,13 +85,21 @@ impl std::fmt::Debug for TiFlashMppScanSource {
 
 impl TiFlashMppScanSource {
     /// Builds the source over the node's PD membership and catalog watch.
-    pub fn new(pd: PdClient, schema_version: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
+    pub fn new(
+        pd: PdClient,
+        regions: BackgroundRegionCache<PdRegionLoader>,
+        schema_version: impl Fn() -> i64 + Send + Sync + 'static,
+    ) -> Self {
         Self {
+            regions,
             pd: Mutex::new(pd),
-            runtime: tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("the TiFlash MPP runtime starts"),
+            runtime: std::sync::Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("the TiFlash MPP runtime starts"),
+            ),
             schema_version: Box::new(schema_version),
         }
     }
@@ -109,41 +123,6 @@ impl TiFlashMppScanSource {
             .ok_or_else(|| {
                 "no live TiFlash store answers the dispatch: check the replica placement".to_owned()
             })
-    }
-
-    /// The regions covering the scan's record ranges, in key order. The
-    /// ranges are the executor's WIRE record keys (flagged-int encodings),
-    /// the same bytes a coprocessor request would carry.
-    fn table_regions(
-        &self,
-        ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<tidb_pd_client::PdRegion>), String> {
-        let start = ranges
-            .iter()
-            .map(|(low, _)| low.as_slice().to_vec())
-            .min()
-            .ok_or_else(|| "the scan carries no key ranges".to_owned())?;
-        let end = ranges
-            .iter()
-            .map(|(_, high)| high.as_slice().to_vec())
-            .max()
-            .ok_or_else(|| "the scan carries no key ranges".to_owned())?;
-        let client = self
-            .pd
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let regions = client
-            .batch_scan_regions(
-                &[PdKeyRange {
-                    start_key: start.clone(),
-                    end_key: end.clone(),
-                }],
-                10_000,
-                false,
-                false,
-            )
-            .map_err(|error| error.to_string())?;
-        Ok((start, end, regions))
     }
 
     /// Opens one MPP-served scan.
@@ -179,7 +158,13 @@ impl TiFlashMppScanSource {
             return Err(refuse("index scans have no TiFlash path".to_owned()));
         }
         let address = self.tiflash_store_address().map_err(refuse)?;
-        let (start_key, end_key, regions) = self.table_regions(&request.ranges).map_err(refuse)?;
+        let region_lease = self
+            .regions
+            .open_lease()
+            .map_err(|error| refuse(error.to_string()))?;
+        let regions =
+            locate_mpp_region_infos(&region_lease, &request.ranges, &request.statement.memory)
+                .map_err(refuse)?;
         if regions.is_empty() {
             return Err(refuse(
                 "no region covers the table's record range".to_owned(),
@@ -297,75 +282,11 @@ impl TiFlashMppScanSource {
             root_executor: Some(sender_executor),
             ..Default::default()
         };
-        eprintln!(
-            "{{\"event\":\"tiflash_mpp_dispatch\",\"address\":\"{address}\",\"schema_ver\":{},\"start_ts\":{},\"regions\":{},\"table_id\":{},\"ranges\":{:?},\"region_ids\":{:?},\"region_spans\":{:?}}}",
-            (self.schema_version)(),
-            request.snapshot_ts,
-            regions.len(),
-            request.table_id,
-            request
-                .ranges
-                .iter()
-                .map(|(low, high)| (
-                    low.as_slice()
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<String>(),
-                    high.as_slice()
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<String>()
-                ))
-                .collect::<Vec<_>>(),
-            regions.iter().map(|region| region.id).collect::<Vec<_>>(),
-            regions
-                .iter()
-                .map(|region| (
-                    region
-                        .start_key
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<String>(),
-                    region
-                        .end_key
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<String>()
-                ))
-                .collect::<Vec<_>>()
-        );
         let encoded_plan = dag.encode_to_vec();
 
         // Region infos are clipped to the table's record range: PD answers
         // with whole regions whose bounds may straddle the prefix.
-        let region_infos = regions
-            .iter()
-            .map(|region| {
-                let range_start = if region.start_key.as_slice() > start_key.as_slice() {
-                    region.start_key.clone()
-                } else {
-                    start_key.clone()
-                };
-                let range_end = if region.end_key.is_empty()
-                    || region.end_key.as_slice() > end_key.as_slice()
-                {
-                    end_key.clone()
-                } else {
-                    region.end_key.clone()
-                };
-                tidb_proto::coprocessor::RegionInfo {
-                    region_id: region.id,
-                    region_epoch: Some(tidb_proto::coprocessor::RegionEpoch {
-                        conf_ver: region.epoch.conf_ver,
-                        version: region.epoch.version,
-                    }),
-                    ranges: vec![tidb_proto::coprocessor::KeyRange {
-                        start: range_start,
-                        end: range_end,
-                    }],
-                }
-            })
-            .collect();
+        let region_infos = regions;
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(meta.clone()),
             encoded_plan,
@@ -375,12 +296,9 @@ impl TiFlashMppScanSource {
             ..Default::default()
         });
 
-        // The dispatch and the result stream run on this module's runtime.
-        // The stream drains fully before rows are served: the root task's
-        // whole answer for the minimal read fits one exchange, and the
-        // consumer-facing iteration stays incremental through the decoded
-        // chunk queue.
-        let packets = self
+        // Dispatch opens the live stream; the shared response consumer pulls
+        // packets on demand. Keep the runtime alive through the response owner.
+        let mut response = self
             .runtime
             .block_on(async {
                 let endpoint = format!("http://{address}");
@@ -398,42 +316,26 @@ impl TiFlashMppScanSource {
                         error.msg, error.code
                     ));
                 }
-                // Go `MPPClient.DispatchMPPTask` (mpp.go:174-189): retry regions
+                // Go `MPPClient.DispatchMPPTask`: retry regions
                 // only invalidate the coordinator's region cache; they are NOT a
                 // dispatch failure. The task itself has already registered and
                 // will serve its regions through the learner read.
-                if !dispatch_response.retry_regions.is_empty() {
-                    eprintln!(
-                        "{{\"event\":\"tiflash_mpp_stale_regions\",\"count\":{}}}",
-                        dispatch_response.retry_regions.len()
-                    );
-                }
-                let connection = client
-                    .establish_mpp_connection(EstablishMppConnectionRequest {
-                        sender_meta: Some(meta.clone()),
-                        receiver_meta: Some(receiver_meta.clone()),
+                region_lease
+                    .with_cache(|cache| {
+                        invalidate_mpp_retry_regions(cache, &dispatch_response.retry_regions)
                     })
-                    .await
-                    .map_err(|error| format!("tiflash mpp: connect stream: {error}"))?;
-                let mut stream = connection.into_inner();
-                let mut packets: VecDeque<prost::bytes::Bytes> = VecDeque::new();
-                while let Some(packet) = stream
-                    .message()
-                    .await
-                    .map_err(|error| format!("tiflash mpp: stream: {error}"))?
-                {
-                    let MppDataPacket { data, error, .. } = packet;
-                    if let Some(error) = error {
-                        return Err(format!(
-                            "tiflash mpp: task error: {} ({})",
-                            error.msg, error.code
-                        ));
-                    }
-                    packets.push_back(data.into());
-                }
-                Ok(packets)
+                    .map_err(|error| error.to_string())?;
+                establish_mpp_response(
+                    &mut client,
+                    meta.clone(),
+                    receiver_meta.clone(),
+                    std::sync::Arc::clone(&self.runtime),
+                    request.statement.memory.clone(),
+                )
+                .await
             })
             .map_err(refuse)?;
+        response.region_lease = Some(region_lease);
 
         let field_types: Vec<FieldType> = request
             .columns
@@ -442,10 +344,6 @@ impl TiFlashMppScanSource {
             .collect();
         let time_zone = request.statement.time_zone.clone();
         let warnings = request.statement.warnings.clone();
-        let response = MppQueryResponse {
-            packets,
-            closed: false,
-        };
         let iter = SelectResponseIter::from_query_response(
             Box::new(response),
             field_types,
@@ -470,10 +368,228 @@ impl TiFlashMppScanSource {
     }
 }
 
-/// One packet's result subset, feeding the shared response decoder.
+fn mpp_region_infos(
+    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+    regions: &[RegionLocation],
+) -> Vec<tidb_proto::coprocessor::RegionInfo> {
+    regions
+        .iter()
+        .filter_map(|region| {
+            let ranges: Vec<_> = ranges
+                .iter()
+                .filter_map(|(start, end)| {
+                    let start = start.as_slice().max(region.start_key.as_slice()).to_vec();
+                    let end = match (end.is_empty(), region.end_key.is_empty()) {
+                        (true, _) => region.end_key.clone(),
+                        (_, true) => end.as_slice().to_vec(),
+                        _ => end.as_slice().min(region.end_key.as_slice()).to_vec(),
+                    };
+                    (end.is_empty() || start < end)
+                        .then_some(tidb_proto::coprocessor::KeyRange { start, end })
+                })
+                .collect();
+            (!ranges.is_empty()).then_some(tidb_proto::coprocessor::RegionInfo {
+                region_id: region.region.id,
+                region_epoch: Some(tidb_proto::coprocessor::RegionEpoch {
+                    conf_ver: region.region.epoch.conf_ver,
+                    version: region.region.epoch.version,
+                }),
+                ranges,
+            })
+        })
+        .collect()
+}
+
+fn locate_mpp_region_infos<L: RegionLoader>(
+    cache: &BackgroundRegionCache<L>,
+    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+    memory: &tidb_executor::StatementMemory,
+) -> Result<Vec<tidb_proto::coprocessor::RegionInfo>, String> {
+    if ranges.is_empty() {
+        return Err("the scan carries no key ranges".to_owned());
+    }
+    mpp_memory_error(memory).map_err(|error| error.to_string())?;
+    let keys = ranges
+        .iter()
+        .map(|(start, end)| tidb_txnkv::region::KeyRange::new(start.as_slice(), end.as_slice()))
+        .collect::<Vec<_>>();
+    let mut backoff = MppRegionBackoff {
+        budget: RegionBackoffBudget::new(std::time::Duration::from_secs(5)),
+        memory,
+    };
+    let regions = cache
+        .batch_locate_ranges_with_backoff(&keys, &mut backoff)
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    Ok(mpp_region_infos(ranges, &regions))
+}
+
+struct MppRegionBackoff<'a> {
+    budget: RegionBackoffBudget,
+    memory: &'a tidb_executor::StatementMemory,
+}
+impl BatchScanBackoff for MppRegionBackoff<'_> {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        let fail = |message: String| {
+            RegionRouteError::Loader(RegionLoadError::new("mpp-region-lookup", message))
+        };
+        mpp_memory_error(self.memory).map_err(|error| fail(error.to_string()))?;
+        let delay = self
+            .budget
+            .next_delay(RegionBackoffKind::PdRpc)
+            .map_err(|error| fail(format!("{reason:?}: {error:?}")))?;
+        let interrupted = self.memory.sleep_for(delay);
+        self.budget.finish_wait(!interrupted);
+        mpp_memory_error(self.memory).map_err(|error| fail(error.to_string()))
+    }
+}
+
+fn invalidate_mpp_retry_regions<L>(
+    cache: &mut RegionCache<L>,
+    retries: &[tidb_proto::metapb::Region],
+) {
+    for region in retries {
+        if let Some(epoch) = &region.region_epoch {
+            cache.invalidate(RegionVerId::new(region.id, epoch.conf_ver, epoch.version));
+        }
+    }
+}
+
+async fn establish_mpp_response(
+    client: &mut TikvClient<tonic::transport::Channel>,
+    meta: TaskMeta,
+    receiver_meta: TaskMeta,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    memory: tidb_executor::StatementMemory,
+) -> Result<MppQueryResponse, String> {
+    let connection = client
+        .establish_mpp_connection(EstablishMppConnectionRequest {
+            sender_meta: Some(meta.clone()),
+            receiver_meta: Some(receiver_meta),
+        })
+        .await;
+    match connection {
+        Ok(connection) => Ok(MppQueryResponse {
+            stream: Some(connection.into_inner()),
+            client: Some(client.clone()),
+            runtime,
+            memory,
+            cancel_meta: cancel_task_meta(&meta),
+            held_bytes: 0,
+            region_lease: None,
+            completed: false,
+            closed: false,
+        }),
+        Err(error) => {
+            cancel_mpp_task(client, cancel_task_meta(&meta)).await;
+            Err(format!("tiflash mpp: connect stream: {error}"))
+        }
+    }
+}
+
+fn cancel_task_meta(meta: &TaskMeta) -> TaskMeta {
+    // Go CancelMPPTasks cancels the gather, not just its root task.
+    TaskMeta {
+        start_ts: meta.start_ts,
+        gather_id: meta.gather_id,
+        query_ts: meta.query_ts,
+        local_query_id: meta.local_query_id,
+        server_id: meta.server_id,
+        mpp_version: meta.mpp_version,
+        resource_group_name: meta.resource_group_name.clone(),
+        sql_digest: meta.sql_digest.clone(),
+        plan_digest: meta.plan_digest.clone(),
+        ..Default::default()
+    }
+}
+
+async fn cancel_mpp_task(client: &mut TikvClient<tonic::transport::Channel>, meta: TaskMeta) {
+    // The source makes one best-effort request, without retry, under the
+    // maintained client's ReadTimeoutShort. Never hide the original failure.
+    let request = tidb_proto::mpp::CancelTaskRequest {
+        meta: Some(meta),
+        ..Default::default()
+    };
+    match tokio::time::timeout(
+        tikv_client::tikv::READ_TIMEOUT_SHORT,
+        client.cancel_mpp_task(request),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => eprintln!("tiflash mpp: cancel failed: {error}"),
+        Err(error) => eprintln!("tiflash mpp: cancel timed out: {error}"),
+    }
+}
+
+fn mpp_memory_error(memory: &tidb_executor::StatementMemory) -> Result<(), QueryResponseError> {
+    memory.check().map_err(|error| {
+        let sql = tidb_executor::DriverError::Exec(error).to_mysql_error();
+        QueryResponseError::Sql {
+            code: sql.code,
+            message: sql.message,
+        }
+    })
+}
+
+/// Pull one packet at a time through the shared DistSQL decoder. No query-wide
+/// packet queue is retained, and the canonical statement killer can interrupt
+/// a stalled message without waiting for another network packet.
 struct MppQueryResponse {
-    packets: VecDeque<prost::bytes::Bytes>,
+    stream: Option<tonic::Streaming<MppDataPacket>>,
+    client: Option<TikvClient<tonic::transport::Channel>>,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    memory: tidb_executor::StatementMemory,
+    cancel_meta: TaskMeta,
+    held_bytes: i64,
+    region_lease: Option<BackgroundRegionCache<PdRegionLoader>>,
+    completed: bool,
     closed: bool,
+}
+
+impl MppQueryResponse {
+    fn release_packet(&mut self) {
+        if self.held_bytes != 0 {
+            self.memory.stmt_tracker().consume(-self.held_bytes);
+            self.held_bytes = 0;
+        }
+    }
+    fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        self.release_packet();
+        mpp_memory_error(&self.memory)?;
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(None);
+        };
+        let packet = self.runtime.block_on(async {
+            let message = stream.message();
+            tokio::pin!(message);
+            loop {
+                tokio::select! {
+                    packet = &mut message => return packet.map_err(|error| QueryResponseError::Source(format!("tiflash mpp: stream: {error}"))),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => { mpp_memory_error(&self.memory)?; }
+                }
+            }
+        })?;
+        let Some(packet) = packet else {
+            self.completed = true;
+            self.stream = None;
+            self.client = None;
+            return Ok(None);
+        };
+        if let Some(ref error) = packet.error {
+            return Err(QueryResponseError::Source(format!(
+                "tiflash mpp: task error: {} ({})",
+                error.msg, error.code
+            )));
+        }
+        self.held_bytes = packet.encoded_len() as i64;
+        self.memory.stmt_tracker().consume(self.held_bytes);
+        mpp_memory_error(&self.memory)?;
+        Ok(Some(QueryResultSubset {
+            data: packet.data.into(),
+            runtime: None,
+        }))
+    }
 }
 
 impl tidb_distsql::QueryResponse for MppQueryResponse {
@@ -481,21 +597,32 @@ impl tidb_distsql::QueryResponse for MppQueryResponse {
         if self.closed {
             return Ok(None);
         }
-        match self.packets.pop_front() {
-            Some(data) => Ok(Some(QueryResultSubset {
-                data,
-                runtime: None,
-            })),
-            None => {
-                self.closed = true;
-                Ok(None)
+        let result = self.pull();
+        if result.is_err() || matches!(result, Ok(None)) {
+            self.close();
+        }
+        result
+    }
+    fn close(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        self.stream = None;
+        self.release_packet();
+        if let Some(mut client) = self.client.take() {
+            if !self.completed {
+                self.runtime
+                    .block_on(cancel_mpp_task(&mut client, self.cancel_meta.clone()));
             }
         }
+        self.region_lease = None;
     }
+}
 
-    fn close(&mut self) {
-        self.closed = true;
-        self.packets.clear();
+impl Drop for MppQueryResponse {
+    fn drop(&mut self) {
+        tidb_distsql::QueryResponse::close(self);
     }
 }
 
@@ -730,5 +857,367 @@ mod dispatch_context_tests {
             meta.keyspace,
             Some(tidb_proto::mpp::task_meta::Keyspace::KeyspaceId(u32::MAX))
         );
+    }
+}
+
+#[cfg(test)]
+mod mpp_read_batch_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    use tidb_distsql::QueryResponse;
+    use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
+    use tidb_txnkv::region::BatchLoadOptions;
+
+    fn region(id: u64, start: &[u8], end: &[u8]) -> RegionLocation {
+        RegionLocation {
+            region: RegionVerId::new(id, 1, 1),
+            start_key: start.to_vec(),
+            end_key: end.to_vec(),
+            ..Default::default()
+        }
+    }
+    fn ranges() -> Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> {
+        vec![
+            (b"b".to_vec().into(), b"c".to_vec().into()),
+            (b"x".to_vec().into(), b"z".to_vec().into()),
+        ]
+    }
+    #[test]
+    fn exact_disjoint_ranges_do_not_scan_the_gap() {
+        let infos = mpp_region_infos(&ranges(), &[region(1, b"a", b"zz")]);
+        assert_eq!(
+            infos[0]
+                .ranges
+                .iter()
+                .map(|r| (r.start.clone(), r.end.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (b"b".to_vec(), b"c".to_vec()),
+                (b"x".to_vec(), b"z".to_vec())
+            ]
+        );
+    }
+    #[test]
+    fn unrelated_region_is_not_dispatched() {
+        let infos = mpp_region_infos(&ranges(), &[region(1, b"d", b"w")]);
+        assert!(infos.is_empty(), "the gap has no requested rows");
+    }
+
+    #[derive(Clone)]
+    struct Service {
+        cancels: Arc<AtomicUsize>,
+        fail_tail: bool,
+    }
+    #[tonic::async_trait]
+    impl Tikv for Service {
+        async fn establish_mpp_connection(
+            &self,
+            _: tonic::Request<EstablishMppConnectionRequest>,
+        ) -> Result<tonic::Response<tonic::codegen::BoxStream<MppDataPacket>>, tonic::Status>
+        {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let fail_tail = self.fail_tail;
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(Ok(MppDataPacket {
+                        data: b"first".to_vec(),
+                        ..Default::default()
+                    }))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if fail_tail {
+                    let _ = tx
+                        .send(Err(tonic::Status::aborted("late stream failure")))
+                        .await;
+                }
+            });
+            Ok(tonic::Response::new(Box::pin(
+                tokio_stream::wrappers::ReceiverStream::new(rx),
+            )))
+        }
+        async fn cancel_mpp_task(
+            &self,
+            _: tonic::Request<tidb_proto::mpp::CancelTaskRequest>,
+        ) -> Result<tonic::Response<tidb_proto::mpp::CancelTaskResponse>, tonic::Status> {
+            self.cancels.fetch_add(1, Ordering::SeqCst);
+            Ok(tonic::Response::new(Default::default()))
+        }
+    }
+    struct Fixture {
+        address: String,
+        runtime: Arc<tokio::runtime::Runtime>,
+        shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+        task: Option<tokio::task::JoinHandle<()>>,
+        cancels: Arc<AtomicUsize>,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            Self::with_tail(true)
+        }
+        fn with_tail(fail_tail: bool) -> Self {
+            let runtime = Arc::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap(),
+            );
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let cancels = Arc::new(AtomicUsize::new(0));
+            let service = Service {
+                cancels: Arc::clone(&cancels),
+                fail_tail,
+            };
+            let (shutdown, rx) = tokio::sync::oneshot::channel();
+            let task = runtime.spawn(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                tonic::transport::Server::builder()
+                    .add_service(TikvServer::new(service))
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                        async {
+                            let _ = rx.await;
+                        },
+                    )
+                    .await
+                    .unwrap();
+            });
+            Self {
+                address,
+                runtime,
+                shutdown: Some(shutdown),
+                task: Some(task),
+                cancels,
+            }
+        }
+        fn open(&self) -> Result<MppQueryResponse, String> {
+            self.open_with_memory(tidb_executor::StatementMemory::default())
+        }
+        fn open_with_memory(
+            &self,
+            memory: tidb_executor::StatementMemory,
+        ) -> Result<MppQueryResponse, String> {
+            self.runtime.block_on(async {
+                let mut client = TikvClient::connect(format!("http://{}", self.address))
+                    .await
+                    .unwrap();
+                let response = tokio::time::timeout(
+                    Duration::from_millis(250),
+                    establish_mpp_response(
+                        &mut client,
+                        TaskMeta::default(),
+                        TaskMeta::default(),
+                        Arc::clone(&self.runtime),
+                        memory,
+                    ),
+                )
+                .await;
+                response.map_err(|_| "opening drained a stalled stream".to_string())?
+            })
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.shutdown.take().unwrap().send(());
+            self.runtime.block_on(self.task.take().unwrap()).unwrap();
+        }
+    }
+    #[test]
+    fn stream_open_returns_before_tail_and_preserves_first_packet() {
+        let fixture = Fixture::new();
+        let mut response = fixture.open().expect("open must not drain the stream");
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"first");
+        response.close();
+    }
+    #[test]
+    fn early_close_and_drop_cancel_the_gather_once() {
+        let fixture = Fixture::new();
+        let mut response = fixture.open().unwrap();
+        response.next().unwrap().unwrap();
+        response.close();
+        response.close();
+        drop(response);
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+        drop(fixture.open().unwrap());
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn later_transport_error_preserves_first_packet_and_cancels() {
+        let fixture = Fixture::new();
+        let mut response = fixture.open().unwrap();
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"first");
+        assert!(
+            matches!(response.next(),Err(QueryResponseError::Source(message)) if message.contains("late stream failure"))
+        );
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+        assert_eq!(response.next().unwrap(), None);
+    }
+
+    #[test]
+    fn natural_completion_releases_memory_without_cancel() {
+        let fixture = Fixture::with_tail(false);
+        let memory = tidb_executor::StatementMemory::default();
+        let mut response = fixture.open_with_memory(memory.clone()).unwrap();
+        response.next().unwrap().unwrap();
+        assert!(memory.bytes_consumed() > 0);
+        assert_eq!(response.next().unwrap(), None);
+        assert_eq!(memory.bytes_consumed(), 0);
+        response.close();
+        drop(response);
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn quota_exceeded_is_a_typed_sql_failure_and_cleans_up() {
+        let fixture = Fixture::new();
+        let memory = tidb_executor::StatementMemory::new(2, tidb_executor::OomAction::Cancel, 42);
+        let mut response = fixture.open_with_memory(memory.clone()).unwrap();
+        assert!(matches!(
+            response.next(),
+            Err(QueryResponseError::Sql { code: 8175, .. })
+        ));
+        assert_eq!(memory.bytes_consumed(), 0);
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn canonical_kill_interrupts_a_stalled_receive() {
+        let fixture = Fixture::new();
+        let memory = tidb_executor::StatementMemory::default();
+        let mut response = fixture.open_with_memory(memory.clone()).unwrap();
+        response.next().unwrap().unwrap();
+        let killer = Arc::clone(memory.sql_killer());
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        });
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            response.next(),
+            Err(QueryResponseError::Sql { code: 1317, .. })
+        ));
+        thread.join().unwrap();
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(memory.bytes_consumed(), 0);
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn exact_ranges_clip_each_region_and_preserve_infinite_end() {
+        let ranges = vec![
+            (b"b".to_vec().into(), b"c".to_vec().into()),
+            (b"x".to_vec().into(), Vec::<u8>::new().into()),
+        ];
+        let infos = mpp_region_infos(
+            &ranges,
+            &[
+                region(1, b"", b"m"),
+                region(2, b"m", b"z"),
+                region(3, b"z", b""),
+            ],
+        );
+        assert_eq!(
+            infos.iter().map(|r| r.region_id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(infos[0].ranges[0].end, b"c");
+        assert_eq!(infos[1].ranges[0].start, b"x");
+        assert_eq!(infos[2].ranges[0].start, b"z");
+        assert!(infos[2].ranges[0].end.is_empty());
+    }
+    struct PagedLoader {
+        calls: Arc<AtomicUsize>,
+        count: u16,
+    }
+    impl RegionLoader for PagedLoader {
+        fn cluster_id(&self) -> u64 {
+            1
+        }
+        fn load_region(&mut self, _: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+            Err(RegionLoadError::new("unexpected", "batch lookup required"))
+        }
+        fn batch_load_regions(
+            &mut self,
+            requested: &[tidb_txnkv::region::KeyRange],
+            limit: usize,
+            _: BatchLoadOptions,
+        ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok((0..self.count)
+                .filter_map(|id| {
+                    let start = id.to_be_bytes().to_vec();
+                    let end = (id + 1).to_be_bytes().to_vec();
+                    requested
+                        .iter()
+                        .any(|r| start < r.end && r.start < end)
+                        .then(|| region(u64::from(id) + 1, &start, &end))
+                })
+                .take(limit)
+                .collect())
+        }
+    }
+    #[test]
+    fn mpp_range_lookup_uses_shared_pagination_and_retained_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let storage = tidb_txnkv::SharedReadRuntime::new_injected(
+            (),
+            RegionCache::new(PagedLoader {
+                calls: Arc::clone(&calls),
+                count: 150,
+            }),
+        );
+        let cache = storage.region_cache_handle();
+        let ranges = vec![(
+            0u16.to_be_bytes().to_vec().into(),
+            150u16.to_be_bytes().to_vec().into(),
+        )];
+        let memory = tidb_executor::StatementMemory::default();
+        let infos = locate_mpp_region_infos(&cache, &ranges, &memory).unwrap();
+        assert_eq!(infos.len(), 150);
+        assert_eq!(infos.last().unwrap().ranges[0].end, 150u16.to_be_bytes());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            locate_mpp_region_infos(&cache, &ranges, &memory).unwrap(),
+            infos
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        cache
+            .with_cache(|cache| {
+                invalidate_mpp_retry_regions(
+                    cache,
+                    &[tidb_proto::metapb::Region {
+                        id: 1,
+                        region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                            conf_ver: 1,
+                            version: 1,
+                        }),
+                        ..Default::default()
+                    }],
+                )
+            })
+            .unwrap();
+        locate_mpp_region_infos(&cache, &ranges, &memory).unwrap();
+        assert!(
+            calls.load(Ordering::SeqCst) > 2,
+            "retry_regions must invalidate the retained owner"
+        );
+    }
+
+    #[test]
+    fn remote_projection_uses_the_same_statement_memory_and_killer() {
+        let memory = tidb_executor::StatementMemory::default();
+        let context = tidb_executor::StmtContext::for_query_with_memory(memory.clone());
+        let remote = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&context);
+        assert!(Arc::ptr_eq(remote.memory.sql_killer(), memory.sql_killer()));
+        remote.memory.stmt_tracker().consume(17);
+        assert_eq!(memory.bytes_consumed(), 17);
+        remote.memory.stmt_tracker().consume(-17);
     }
 }

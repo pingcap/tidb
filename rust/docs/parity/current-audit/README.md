@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [MPP read batch](mpp-read-batch-repair.md) repairs **M02 and M03 together** and advances M04 to partial through canonical process PD/cache ownership and stale-region invalidation. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Three fail-before regressions and 37 targeted Rust cases validate ranges, streaming and cleanup. Thirty ignored empty shells are removed with all [upstream/golden obligations retained](mpp-unverified-test-obligations.json). No full MPP package, transport or live multi-node acceptance is claimed; the other findings retain their prior evidence.
+
+The TiFlash checkpoint below is historical.
+
 The [TiFlash replica batch](tiflash-replica-batch-repair.md) repairs F03's classic cache/backoff/discovery contract and advances F01/F02 together, including six failing metadata/cadence regressions and N03's secure cluster HTTP consumer. **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked.** Eight ignored empty test shells are removed; every unverified upstream obligation is [retained explicitly](tiflash-unverified-test-obligations.json). No full DDL/infosync acceptance or fresh reproduction of every other finding is claimed.
 
 The cache checkpoint below retains its historical counts.

@@ -3592,6 +3592,7 @@ dependencies = [
  "tidb-vardef",
  "tikv-client",
  "tokio",
+ "tokio-stream",
  "tonic",
 ]
 

@@ -508,6 +508,8 @@ pub struct PushdownScanRequest {
 /// one and forget the other.
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
+    /// Shared statement quota and SQL killer for remote response ownership.
+    pub memory: crate::StatementMemory,
     /// One query identity and allocation state for every MPP gather in this statement.
     pub mpp_query_info: Arc<crate::MppQueryInfo>,
     /// Domain/server-info ID, never the operating system process ID.
@@ -564,6 +566,7 @@ pub struct PushdownStatementContext {
 impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
+            memory: crate::StatementMemory::default(),
             mpp_query_info: Arc::default(),
             mpp_server_id: 0,
             plan_id: 0,
@@ -590,6 +593,7 @@ impl PushdownStatementContext {
     #[must_use]
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
+            memory: ctx.statement_memory(),
             mpp_query_info: ctx.mpp_query_info(),
             mpp_server_id: ctx.mpp_server_id(),
             plan_id: 0,

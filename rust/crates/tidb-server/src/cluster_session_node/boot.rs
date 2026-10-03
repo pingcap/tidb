@@ -181,15 +181,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // top of them client-side, which is Go's `UnionScan` over a distsql
     // reader.
     //
-    // The TiFlash MPP lowering shares the node's PD seeds: one client for
-    // the store listing (`engine=tiflash`) and the record-range region scan
-    // the dispatch needs (Go's `MPPClient.ConstructMPPTasks`).
+    // TiFlash discovery and range lookup retain the node's existing PD and
+    // canonical region-cache capabilities (Go MPPClient.ConstructMPPTasks).
     let cop_scans: Arc<dyn PushdownScanner> = {
         let catalog = Arc::clone(&catalog);
-        let tiflash_mpp = crate::cluster_session_node::build_tiflash_mpp_source(
-            &config.pd_endpoints,
-            move || catalog.load().schema_version,
-        );
+        let tiflash_mpp =
+            crate::cluster_session_node::build_tiflash_mpp_source(&authority, move || {
+                catalog.load().schema_version
+            });
         match tiflash_mpp {
             Some(source) => {
                 Arc::new(CopScanSource::new(authority.transport_factory()).with_tiflash_mpp(source))
