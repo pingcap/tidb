@@ -262,3 +262,7 @@ EOF/count diagnostics. Parent transport/lifecycle and all 77 findings remain ope
 ## TiFlash metadata/polling batch — 2026-10-03
 
 The [batch receipt](tiflash-replica-batch-repair.md) closes F03's classic polling contract and advances F01/F02 together. Placement/GC ownership and durable ADD PARTITION readiness remain W05 obligations. The shared HTTP configuration consumer advances N03 without accepting its remaining defaults/consumers. Eight ignored empty shells are retired, with all upstream integration obligations retained explicitly.
+
+## Connected DML/SET maintenance batch — 2026-10-03
+
+E03, T01 and N03 advance together while remaining partial. Physical read/quota/close, insertion metadata, active statement retirement and SET recovery share the maintained owners; premature GC-trigger and packet-validation branches are removed. The [receipt](dml-policy-batch-repair.md) records eleven repaired behavioral cases, corrected stale Go expectations, 698 distinct passing Rust cases, seventeen retained baseline failures and successful wire cancellation/recovery controls. Remaining planner/matrix/system-index/pessimistic/configuration obligations keep their existing sequence. No pushes.

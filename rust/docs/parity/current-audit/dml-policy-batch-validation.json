@@ -1,14 +1,15 @@
 {
   "date": "2026-10-03",
   "integration_start": "134a7557f1e55d829d5e33036d741d92682c3d63",
-  "source_commit": null,
+  "source_commit": "02c78d1a69d4fed3989f858bdbdb7e96a5014c3f",
   "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
   "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
   "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
-  "scope": "Existing-owner maintenance of E03/T01; no complete Go package acceptance. Other findings retain prior evidence.",
+  "scope": "Existing-owner maintenance of E03/T01/N03, including connected SET/configuration policy; no complete Go package acceptance. Other findings retain prior evidence.",
   "finding_statuses": {
     "E03": "partial",
-    "T01": "partial"
+    "T01": "partial",
+    "N03": "partial"
   },
   "counts": {
     "tracked": 86,
@@ -33,9 +34,45 @@
     {
       "path": "pkg/table/tables/index.go",
       "sha256": "8524c014d3edfa022bc37c1626857e84508df20b7221daef69e63a6c456162a5"
+    },
+    {
+      "path": "pkg/executor/select.go",
+      "sha256": "4a2ff5a778cafef9428166214b22a8ddf74ebd0a7f3766870b7743ee9ebeb871"
+    },
+    {
+      "path": "pkg/executor/set.go",
+      "sha256": "88e1af9d91e146a3e1abda147faa15f761f12b99bc56f1f4595cce3131a60e70"
+    },
+    {
+      "path": "pkg/util/memory/tracker.go",
+      "sha256": "c4c544b0c56b7d0f431404be853856492754f3c96020dfd89262096db9a43f58"
+    },
+    {
+      "path": "pkg/sessionctx/variable/sysvar.go",
+      "sha256": "2f6aef4039ed9b9d2d5656aaa9e8e20736348bc53bce0d570fa5025bb03ea46b"
+    },
+    {
+      "path": "pkg/sessionctx/variable/varsutil.go",
+      "sha256": "420c025a6c6ad35ba76929c00dd5257ee6b34a57830fd292f6409f4d29dd13e8"
+    },
+    {
+      "path": "pkg/sessionctx/variable/sysvar_test.go",
+      "sha256": "cd16a3b54ce841b6dbcd19e500702de26b8d18ea60fb608fa6a98ac6b263b6ff"
+    },
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    },
+    {
+      "path": "pkg/sessionctx/sessionstates/session_states.go",
+      "sha256": "6b76477cccbefac3b0f29b11ae704a95bdabfad6c803d6c72b4dbe337f95be64"
     }
   ],
   "validated_rust_snapshot": [
+    {
+      "path": "rust/Cargo.lock",
+      "sha256": "c544300d3774e3af86d561bfa9059be1f5259deeb5bcfe015275fc04164c42cb"
+    },
     {
       "path": "rust/crates/tidb-exec/Cargo.toml",
       "sha256": "b12bf3ad6c16bee594217f6329bb076f5891765be332b782c7a86cd4ca060a6f"
@@ -85,8 +122,56 @@
       "sha256": "d66d7847593b6e84a64341f3587392bd3bb313288b6891692a3a055b2a640bb7"
     },
     {
+      "path": "rust/crates/tidb-executor/src/mem_quota.rs",
+      "sha256": "e7ed19ba1eb8875a90d4855d0995d6868bd8d6f27299c0f5571f0d08194afce9"
+    },
+    {
       "path": "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs",
       "sha256": "b9e707e78adc98c1bdabc84a1fbfeb8589a5c8d48b1a20066ea7a320241d37a8"
+    },
+    {
+      "path": "rust/crates/tidb-session/Cargo.toml",
+      "sha256": "541160c07219c9e7655711f7f651e1c77add9632ecbbe5ea8102af66f9d84e8b"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/bootstrap.rs",
+      "sha256": "c85212f06884b5e3911d98b292af35aa6c4349f8c568204df79b5c579b4952c7"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "c398a58b42efd796244c393284a89f1b2bfd167200fc1f61eaf7ce290abbea0d"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/stmt_ctx.rs",
+      "sha256": "55958e7a0a8228c0988b47857b4b398fe749fc3be92b83be22b0da8853946cad"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/sysvar.rs",
+      "sha256": "15d97b20d094d5376385642305d859abcb32b048e87b17dece4b9c4c1b217711"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_core/lifecycle.rs",
+      "sha256": "bd668964e52ee5c494ad89da906b94a7c5d4ac17fbce780782815749e36afcf3"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_global_vars.rs",
+      "sha256": "56e0bbf70c3f35e27bf23fe144ee3669a6d4a2a29215f2533e7c95f41a07af82"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_mem_quota.rs",
+      "sha256": "c5044bca99244d7f32a9de94c66d027ec6ab1a3afe891d7fb2ef2aa714234184"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_session_var_hooks.rs",
+      "sha256": "d20c3dfffb36a6f6a9bc7c77587387ccfed517a036853ea7eb430a8815cd1768"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/variables.rs",
+      "sha256": "7af9068fa2d57773e64b672096ddd0b65de8fbb3c18b58445b6631404a59c62c"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/warnings.rs",
+      "sha256": "f4aceea78462604078b13f58bdb4b1f0ab98138a271c53ebfcc9f772a60c7d48"
     },
     {
       "path": "rust/crates/tidb-txnkv/Cargo.toml",
@@ -255,10 +340,36 @@
       "log": "/workspace/.cloud-setup/dml-batch/lint.log",
       "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
       "test_results": []
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_mem_quota tests_core::lifecycle tests_user_vars tests_session_var_hooks tests_global_vars sysvar::tests::server_memory_limit_gc_trigger",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/green-session-batch-final.log",
+      "sha256": "6daff0e36ac9fae9e06bc98a765580d7c8df490360d78d65a3f1a83d45bfb125",
+      "test_results": [
+        "test result: ok. 135 passed; 0 failed; 0 ignored; 0 measured; 1997 filtered out; finished in 1.85s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-session -p tidb-executor -p tidb-exec -p tidb-txnkv -p tidb-server -p tidb-unistore --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/all-targets-owner-final.log",
+      "sha256": "df61bd84b64871dd3f125a23c10c4307296098c6b7b7f96f7cb72cbb0aebdf20",
+      "test_results": []
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/dml-batch/lint-owner-final.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "test_results": []
     }
   ],
   "regressions": {
-    "fail_before_pass_after": 5,
+    "fail_before_pass_after": 11,
     "policy_failures": 2,
     "physical_reader_failures": 3,
     "red_logs": [
@@ -269,20 +380,41 @@
       {
         "path": "/workspace/.cloud-setup/dml-batch/red-dml-corrected.log",
         "sha256": "b7049e5a7f1b6f476aa2a12536710d1929535ae8303338f955b6a623ac5d4140"
+      },
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-session-owner.log",
+        "sha256": "4d4725b3421bcf22f9f07396ae28b67e3f06de6d8ade4aa3422a1fe73be08527"
+      },
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-session-text-boundary.log",
+        "sha256": "7cbf55244e8b363762a53bc516ccaad10073956b8ab8a691633b7a8ddcc925d2"
+      },
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-session-user-vars.log",
+        "sha256": "afedc1b4da169827661fcc66d59a1258367224cf0034ff6a2bd0c0cc27252bef"
+      },
+      {
+        "path": "/workspace/.cloud-setup/dml-batch/red-session-expanded-batch.log",
+        "sha256": "2b32acc48cfea30b505c8449cb362775f426ffeff031dec43d92d7280f7a43a8"
       }
     ],
     "excluded_evidence": [
       "Initial zero-test policy run",
       "Initial quota assertion using wrong wrapped error variant",
       "Initial incomplete migration compile failures"
-    ]
+    ],
+    "memory_owner_and_recovery_failures": 3,
+    "existing_bare_word_set_failure": 1,
+    "existing_duplicate_sysvar_validation_failures": 2,
+    "expanded_stale_case_expectations_corrected_not_counted_as_behavioral_repairs": 2
   },
   "test_accounting": {
-    "distinct_current_cases_passed": 563,
-    "distinct_fully_passing_focused_cases": 148,
+    "distinct_current_cases_passed": 698,
+    "distinct_fully_passing_focused_cases": 283,
     "wider_preexisting_failures": 17,
     "counts_exclude_baseline_duplicates_and_removed_new_getter_case": true,
-    "five_python_lint_tests_separate": true
+    "five_python_lint_tests_separate": true,
+    "session_owner_quota_variables_passed": 135
   },
   "baseline_comparison": {
     "baseline_commit": "134a7557f1e55d829d5e33036d741d92682c3d63",
@@ -322,17 +454,49 @@
   "stale_test_maintenance": {
     "original_test_obligations_retired": 0,
     "ignored_or_disabled_new_tests": 0,
-    "notes": "Corrected checked-vs-lazy flag assumptions and ordinary-insert assertion. Notifier record selection now uses actual assertion. Discarded new getter-only draft; retained all meaningful source obligations and all 17 broader failing cases."
+    "notes": "Corrected checked-vs-lazy flag assumptions and ordinary-insert assertion. Notifier record selection now uses actual assertion. Discarded new getter-only draft; retained all meaningful source obligations and all 17 broader failing cases. Corrected the harmful separate-helper-tracker expectation to shared active ownership plus distinct explicit next-statement ownership."
   },
   "precommit_hook": {
-    "status": "pending",
+    "status": "passed",
     "command": "cd rust && cargo build --locked -p tidb-server",
     "hooks_path": "hooks",
-    "bypass": false
+    "bypass": false,
+    "source_commit_logs": [
+      {
+        "log": "/workspace/.cloud-setup/dml-batch/commit.log",
+        "sha256": "67228852f5295216fcfe843b6d7263e037e167bc9f5801e645b8b2f820e2a5fa",
+        "exit": 0
+      },
+      {
+        "log": "/workspace/.cloud-setup/dml-batch/commit-owner.log",
+        "sha256": "e48adb86082a3adadb44006c28f4be4ebcdfdce9891591055bd4fac0b5781da2",
+        "exit": 0
+      },
+      {
+        "log": "/workspace/.cloud-setup/dml-batch/commit-recovery.log",
+        "sha256": "e1bb46b9800cc6428f30c4a48da1ee2eec4d709143e381c050fa694162e917a2",
+        "exit": 0
+      }
+    ],
+    "recovered_failed_attempt": {
+      "log": "/workspace/.cloud-setup/dml-batch/commit-recovery-disk-failed.log",
+      "sha256": "e9361ffab4408b95366e774883b6fb3d52bcdeb670619a0810e029776a6e03c2",
+      "reason": "Disk exhausted linking auxiliary binaries; normal hook rejected commit. Obsolete completed ELF artifacts and failed linker temporaries were removed with Cargo stopped; unchanged staged source committed only after the same enabled hook passed."
+    }
   },
   "wire_smoke": {
-    "status": "pending",
-    "scope": "Single-node real MySQL/unistore quota cancellation/rollback plus default-quota controls; not live TiKV assertions"
+    "status": "passed",
+    "scope": "Single-node real MySQL/unistore quota cancellation/rollback plus default-quota controls; not live TiKV assertions",
+    "log": "/workspace/.cloud-setup/dml-batch/wire-smoke-final.log",
+    "sha256": "86c7743362451cbf72ba88964f30dd344359002a83ee072ed90bd046e691e406",
+    "cancelled_writes": 3,
+    "successful_write_controls": 3,
+    "baseline_auth_ddl_dml": true,
+    "intermediate_failures": [
+      "wire-smoke.log",
+      "wire-smoke-retry.log",
+      "wire-smoke-owner-first.log"
+    ]
   },
   "publication": {
     "push": "not attempted; prohibited by latest user instruction",
@@ -349,6 +513,17 @@
     "Integrated pessimistic prewrite constraint policy",
     "Seventeen broader pre-existing driver/DDL failures",
     "Full upstream Go package suites and live multi-node/TiKV assertion-level behavior",
-    "Exact Go chunk arithmetic and workload performance"
-  ]
+    "Exact Go chunk arithmetic and workload performance",
+    "Complex SET expression/subquery scalar ownership beyond direct literals"
+  ],
+  "source_commits": [
+    "d45a5e66e10fca71633cce88ce25dda043172112",
+    "93aba20483e90a175bb930522ac0d0deb93abd0c",
+    "02c78d1a69d4fed3989f858bdbdb7e96a5014c3f"
+  ],
+  "artifact_cleanup": {
+    "log": "/workspace/.cloud-setup/dml-batch/output-cleanup.json",
+    "sha256": "7f1d45893132571212f51c437ba17346e8af97d154800e19e21d0164f1a8c750",
+    "source_or_library_deletion": false
+  }
 }

@@ -792,15 +792,18 @@
   "latest_repair": {
     "ids": [
       "E03",
-      "T01"
+      "T01",
+      "N03"
     ],
     "statuses": {
       "E03": "partial",
-      "T01": "partial"
+      "T01": "partial",
+      "N03": "partial"
     },
-    "scope": "Existing physical DML read/quota/close and caller-owned insert policy maintenance; 563 distinct current cases pass, seventeen broader failures reproduce with pre-batch subsystem behavior. No complete package acceptance.",
+    "scope": "Existing E03/T01/N03 DML/SET/quota/cleanup, statement ownership/recovery and caller-owned insertion policy maintenance; 698 distinct Rust cases pass; seventeen broader baseline failures retained. Final MySQL wire cancellation/recovery and controls pass. No complete package acceptance.",
     "integration_start": "134a7557f1e55d829d5e33036d741d92682c3d63",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "dml-policy-batch-repair.md"
+    "receipt": "dml-policy-batch-repair.md",
+    "source_commit": "02c78d1a69d4fed3989f858bdbdb7e96a5014c3f"
   }
 }

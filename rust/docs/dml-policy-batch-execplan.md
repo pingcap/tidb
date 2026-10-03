@@ -11,7 +11,7 @@ Joined writes must stop at their session memory quota while reading, and every r
 - [x] Read instructions and reproduce live source gaps; fetch all authorized refs. Go master remains 93a01d31f6da205ae4bf376825293903a6899fdb, native remains 19a56ccda1e128218cd33c69709038219aced9bc; integration remote remains 7b991676da79f044774caf6da4dfffe247160feb.
 - [x] Add two policy and three corrected quota/close/consumer fail-before regressions.
 - [x] Consume every physical DML caller through the visitor, charge retained rows during growth, close on all Result exits, migrate every generic insert caller to explicit metadata.
-- [ ] Run scoped Rust tests, all-target checks, lint, and actual locked-build commit hook. Update both registers, durable receipt and cloud draft; no pushes.
+- [x] Run scoped Rust tests, all-target checks, lint, and actual locked-build commit hook. Update both registers, durable receipt and cloud draft; no pushes.
 
 ## Surprises & Discoveries
 
@@ -30,7 +30,7 @@ Go table AddRecord asserts Unknown for an optimistic lazy absence check, while c
 
 ## Outcomes & Retrospective
 
-E03 and T01 are partial. Eleven behavioral failures are repaired, while complete planner/matrix/system-index/pessimistic lifecycles remain. Registers agree: 58 unresolved (44 open, fourteen partial), 28 repaired. Wider driver/DDL runs have twelve/five failures reproduced with pre-batch subsystem behavior; they are not deleted or misreported as passing. Affected all-target checking, lint and enabled source-commit hooks passed. Production wire checks exposed and drove the final text-command recovery repair; its final check and local retention remain pending.
+E03 and T01 are partial. Eleven behavioral failures are repaired, while complete planner/matrix/system-index/pessimistic lifecycles remain. Registers agree: 58 unresolved (44 open, fourteen partial), 28 repaired. Wider driver/DDL runs have twelve/five failures reproduced with pre-batch subsystem behavior; they are not deleted or misreported as passing. Affected all-target checking, lint and enabled source-commit hooks passed. Production wire checks exposed and drove the final text-command recovery repair. Final wire cancellation/recovery plus normal-quota controls pass; cloud draft and recovery bundle preserve the local no-push handoff.
 
 ## Context and Orientation
 
@@ -68,3 +68,6 @@ The existing Go-based user-variable test exposed a skipped bare-word SET policy 
 
 
 Expanded SET/config validation discovers two genuine duplicate policies: an early float-only check blocks Go's valid GC-trigger percentage fallback, and an early session packet branch skips canonical upper-bound warnings. Both duplicate branches are removed; shared validation retains Go's parse-error behavior for invalid percentages. N03 remains partial. Two stale/harmful test expectations are corrected against live Go: classic kernels refuse flight recording, and query-info after completed statements includes global txn scope and RU v2 JSON. X-kernel success remains an upstream obligation, not an unsupported feature added here.
+
+
+Final validation: eleven fail-before/pass-after cases; 698 distinct passing Rust cases; seventeen controlled pre-existing broader failures retained; affected all-target checks, make lint and actual locked-build source hooks pass. Final real MySQL/unistore check verifies three 8175 cancellations with unchanged data and three successful default-quota controls. No pushes, whole-package acceptance, live multi-node TiKV or performance claims.
