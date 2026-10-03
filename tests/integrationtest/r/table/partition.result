@@ -18,7 +18,7 @@ id
 select * from partition_basic partition (p5);
 Error 1735 (HY000): Unknown partition 'p5' in table 'partition_basic'
 update partition_basic set id = 666 where id = 7;
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 666
 update partition_basic set id = 9 where id = 7;
 delete from partition_basic where id = 7;
 delete from partition_basic where id = 9;
@@ -33,7 +33,7 @@ PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
 PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
 );
 INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04');
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value '2019-04-04'
 drop table if exists t_range_locate;
 CREATE TABLE t_range_locate (
 id int(20) NOT NULL AUTO_INCREMENT,

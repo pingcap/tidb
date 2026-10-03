@@ -318,7 +318,7 @@ NULL	y
 15	a
 ## Test insert meet no partition error.
 insert into t values (100, 'd');
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 100
 ## --------------------------Test update---------------------------
 ## Test update 1 partition.
 delete from t;
@@ -376,7 +376,7 @@ id	name
 20	a
 ## Test update meet no partition error.
 update t set id=id*2 where id in (3,20);
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 40
 select * from t order by id;
 id	name
 3	a
@@ -416,7 +416,7 @@ id	name
 7	x
 ## Test replace meet no partition error.
 replace into t values  (10,'x'),(100,'x');
-Error 1526 (HY000): Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value 100
 select * from t order by id;
 id	name
 1	x
