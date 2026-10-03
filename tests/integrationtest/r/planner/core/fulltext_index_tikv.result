@@ -36,7 +36,7 @@ select id from articles where match(body) against('distrib*' in boolean mode) or
 id
 1
 3
-explain format = 'brief' select id from articles where match(body) against('+distributed' in boolean mode) and k > 1;
+explain format = 'brief' select id from articles use index (idx_body) where match(body) against('+distributed' in boolean mode) and k > 1;
 id	estRows	task	access object	operator info
 Projection	333.33	root		planner__core__fulltext_index_tikv.articles.id
 └─IndexMerge	333.33	root		type: union
@@ -46,7 +46,7 @@ Projection	333.33	root		planner__core__fulltext_index_tikv.articles.id
 select id from articles where match(body) against('+distributed' in boolean mode) and k > 1 order by id;
 id
 3
-explain format = 'brief' select id from articles where match(title) against('MySQL' in boolean mode);
+explain format = 'brief' select id from articles use index (idx_title) where match(title) against('MySQL' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1000.00	root		planner__core__fulltext_index_tikv.articles.id
 └─IndexMerge	1000.00	root		type: union
@@ -92,7 +92,7 @@ insert into tenant_docs values
 (3, 2, 'distributed sql for the second tenant'),
 (4, 2, 'the second tenant again'),
 (5, null, 'distributed sql without a tenant');
-explain format = 'brief' select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from tenant_docs use index (idx_body) where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__fulltext_index_tikv.tenant_docs.id
 └─IndexMerge	1.00	root		type: union
@@ -129,7 +129,7 @@ insert into clustered_docs values
 (2, 1, 'distributed sql for the second tenant'),
 (2, 2, 'the second tenant again'),
 (3, 1, 'distributed sql for the third tenant');
-explain format = 'brief' select id from clustered_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
 └─IndexMerge	1.00	root		type: union
@@ -138,7 +138,7 @@ Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
 select id from clustered_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
 id
 1
-explain format = 'brief' select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select tenant_id, id from clustered_docs use index (idx_body) where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	2.00	root		planner__core__fulltext_index_tikv.clustered_docs.tenant_id, planner__core__fulltext_index_tikv.clustered_docs.id
 └─IndexMerge	2.00	root		type: union
@@ -148,7 +148,7 @@ select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(bod
 tenant_id	id
 1	1
 3	1
-explain format = 'brief' select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
 └─IndexMerge	3.33	root		type: union
@@ -173,7 +173,7 @@ Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.id
 select id from clustered_docs where tenant_id = 2 and match(body) against('distrib*' in boolean mode) order by id;
 id
 1
-explain format = 'brief' select tenant_id from clustered_docs where id = 1 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select tenant_id from clustered_docs use index (idx_body) where id = 1 and match(body) against('+distributed' in boolean mode);
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__fulltext_index_tikv.clustered_docs.tenant_id
 └─IndexMerge	1.00	root		type: union

@@ -320,12 +320,19 @@ structure and is what MySQL's InnoDB FTS does too.
   the string-match default selectivity is used. Each term and handle range
   is also charged a seek, since each opens a scan of its own. The posting
   scans run one after another in one TiDB worker, so unlike a coprocessor
-  scan they are not divided by the scan concurrency. Every other path
+  scan they are not divided by the scan concurrency. The handles the search
+  yields are looked up one by one, anywhere in the table, so the path is
+  also charged an IndexLookUp's double-read cost for them (a request per
+  task and CPU per row, divided by the lookup concurrency). Every other path
   evaluates the `MATCH` in TiDB on the rows it returns, and the Selection
   doing so is charged for analyzing each document, in proportion to the
-  column's average size (about 100ns a byte measured for NGRAM, twice a
-  simple function per byte). A poorly filtering search therefore loses to a
-  scan, and a selective condition on another index wins over the search.
+  column's average size: 0.125 times the CPU factor per byte, calibrated so
+  that a root `MATCH` over a tenant weighs against the TiKV scan feeding it
+  as it did when measured on 10M rows (about 4.6 times the scan's time). A
+  poorly filtering search therefore loses to a scan, and a selective
+  condition on another index wins over the search. Statistics-based
+  string-match estimates, which planning requests once per access path and
+  task, are evaluated once per statement and reused.
   `USE INDEX` and `FORCE INDEX` naming the index force it, in both syntaxes;
   `IGNORE INDEX` forbids it. Invisible indexes follow
   `tidb_opt_use_invisible_indexes`. Under `tidb_opt_prefer_range_scan`

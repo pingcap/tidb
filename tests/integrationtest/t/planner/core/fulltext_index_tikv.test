@@ -20,11 +20,13 @@ select id from articles where match(body) against('+distributed -database' in bo
 select id from articles where match(body) against('distrib*' in boolean mode) order by id;
 
 # Other predicates are pushed to the table side.
-explain format = 'brief' select id from articles where match(body) against('+distributed' in boolean mode) and k > 1;
+# Without statistics every term is taken to be in a tenth of the rows, so a scan is cheaper;
+# the plans below force the index to show the shape of its path.
+explain format = 'brief' select id from articles use index (idx_body) where match(body) against('+distributed' in boolean mode) and k > 1;
 select id from articles where match(body) against('+distributed' in boolean mode) and k > 1 order by id;
 
 # NGRAM: a search is a phrase over grams.
-explain format = 'brief' select id from articles where match(title) against('MySQL' in boolean mode);
+explain format = 'brief' select id from articles use index (idx_title) where match(title) against('MySQL' in boolean mode);
 select id from articles where match(title) against('MySQL' in boolean mode) order by id;
 select id from articles where match(title) against('Optimi' in boolean mode) order by id;
 
@@ -46,7 +48,7 @@ insert into tenant_docs values
   (3, 2, 'distributed sql for the second tenant'),
   (4, 2, 'the second tenant again'),
   (5, null, 'distributed sql without a tenant');
-explain format = 'brief' select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from tenant_docs use index (idx_body) where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
 select id from tenant_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
 select id from tenant_docs where tenant_id is null and match(body) against('+distributed' in boolean mode) order by id;
 # Without one value for every key column the index cannot serve the search.
@@ -64,11 +66,11 @@ insert into clustered_docs values
   (2, 1, 'distributed sql for the second tenant'),
   (2, 2, 'the second tenant again'),
   (3, 1, 'distributed sql for the third tenant');
-explain format = 'brief' select id from clustered_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('+distributed' in boolean mode);
 select id from clustered_docs where tenant_id = 2 and match(body) against('+distributed' in boolean mode) order by id;
-explain format = 'brief' select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select tenant_id, id from clustered_docs use index (idx_body) where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode);
 select tenant_id, id from clustered_docs where tenant_id in (1, 3) and match(body) against('+distributed' in boolean mode) order by tenant_id, id;
-explain format = 'brief' select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
+explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode);
 select id from clustered_docs where tenant_id = 1 and id > 1 and match(body) against('+tenant' in boolean mode) order by id;
 # A prefix search cannot be confined, so the equality is also checked on the rows.
 # Reading the prefix across every tenant costs more than scanning the tenant.
@@ -76,6 +78,6 @@ explain format = 'brief' select id from clustered_docs where tenant_id = 2 and m
 explain format = 'brief' select id from clustered_docs use index (idx_body) where tenant_id = 2 and match(body) against('distrib*' in boolean mode);
 select id from clustered_docs where tenant_id = 2 and match(body) against('distrib*' in boolean mode) order by id;
 # A condition on a later column of the key alone confines nothing.
-explain format = 'brief' select tenant_id from clustered_docs where id = 1 and match(body) against('+distributed' in boolean mode);
+explain format = 'brief' select tenant_id from clustered_docs use index (idx_body) where id = 1 and match(body) against('+distributed' in boolean mode);
 select tenant_id from clustered_docs where id = 1 and match(body) against('+distributed' in boolean mode) order by tenant_id;
 drop table clustered_docs;

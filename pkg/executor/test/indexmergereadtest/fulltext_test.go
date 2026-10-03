@@ -106,8 +106,10 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 		`"distributed storage"`, `+"alpha beta" +rareword`, "rare*", "+rareword +epsi*",
 		"+nosuchword", "+of", "+rareword +of",
 	}
+	// The index competes on cost, so the result checks force it; the
+	// optimizer's own choice is checked for a rare term below.
 	for _, search := range searches {
-		sql := fmt.Sprintf("select id from t where match(body) against('%s' in boolean mode) order by id", search)
+		sql := fmt.Sprintf("select id from t use index (idx) where match(body) against('%s' in boolean mode) order by id", search)
 		mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
 		expected := tk.MustQuery(fmt.Sprintf("select id from t ignore index (idx) where match(body) against('%s' in boolean mode) order by id", search)).Rows()
 		tk.MustQuery(sql).Check(expected)
@@ -117,8 +119,10 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
 	mustScan(t, tk, "select id from t ignore index (idx) where match(body) against('+rareword' in boolean mode)")
 
+	mustUseFullTextIndex(t, tk, "select id from t where match(body) against('+rareword' in boolean mode)", "idx(body)", "+rareword")
+
 	// Other predicates ride along on the table side.
-	sql := "select id from t where match(body) against('+rareword' in boolean mode) and k = 3 order by id"
+	sql := "select id from t use index (idx) where match(body) against('+rareword' in boolean mode) and k = 3 order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	tk.MustQuery(sql).Check(tk.MustQuery("select id from t ignore index (idx) where match(body) against('+rareword' in boolean mode) and k = 3 order by id").Rows())
 	tk.MustQuery("select count(*) from t where match(body) against('+rareword' in boolean mode)").Check(testkit.Rows("15"))
@@ -134,7 +138,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	tk.MustQuery("execute stmt using @s").Check(tk.MustQuery("select id from t ignore index (idx) where match(body) against('+alpha +beta' in boolean mode) order by id").Rows())
 	// A user variable in a plain statement is folded at plan time, so the
 	// index serves it; only a prepared parameter stays unknown.
-	mustUseFullTextIndex(t, tk, "select id from t where match(body) against(@s in boolean mode)", "idx(body)", "+alpha +beta")
+	mustUseFullTextIndex(t, tk, "select id from t use index (idx) where match(body) against(@s in boolean mode)", "idx(body)", "+alpha +beta")
 	// Natural language mode is not a boolean predicate the index can serve.
 	mustScan(t, tk, "select id from t where match(body) against('rareword')")
 
@@ -149,7 +153,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 		require.FailNow(t, "no FullTextIndexScan in the plan", sql)
 		return nil
 	}
-	row := fullTextScanRow("select id from t where match(body) against('+rareword' in boolean mode)")
+	row := fullTextScanRow("select id from t use index (idx) where match(body) against('+rareword' in boolean mode)")
 	require.Equal(t, "15", row[2])
 	require.Contains(t, row[5], "time:")
 	require.Contains(t, row[5], "fulltext:{posting_entries:15, posting_scans:1}")
@@ -157,13 +161,13 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	both := tk.MustQuery("select count(*) from t where match(body) against('+rareword +alpha' in boolean mode)").Rows()[0][0]
 	// An intersection stops at the end of its shortest list, so it reads
 	// all of rareword's postings and alpha's only up to the last of them.
-	row = fullTextScanRow("select id from t where match(body) against('+rareword +alpha' in boolean mode)")
+	row = fullTextScanRow("select id from t use index (idx) where match(body) against('+rareword +alpha' in boolean mode)")
 	require.Equal(t, fmt.Sprint(both), row[2])
 	m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:2\}`).FindStringSubmatch(fmt.Sprint(row[5]))
 	require.Len(t, m, 2, row[5])
 	require.Greater(t, atoi(t, m[1]), 15)
 	require.LessOrEqual(t, atoi(t, m[1]), 15+atoi(t, alpha))
-	row = fullTextScanRow("select id from t where match(body) against('+nosuchword' in boolean mode)")
+	row = fullTextScanRow("select id from t use index (idx) where match(body) against('+nosuchword' in boolean mode)")
 	require.Equal(t, "0", row[2])
 	require.Contains(t, row[5], "fulltext:{posting_entries:0, posting_scans:1}")
 
@@ -174,7 +178,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	tk.MustExec("update t set body = 'no longer rare' where id = 97")
 	tk.MustExec("delete from t where id = 194")
 	tk.MustExec("update t set k = 99 where id = 291")
-	sql = "select id from t where match(body) against('+rareword' in boolean mode) order by id"
+	sql = "select id from t use index (idx) where match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(body)", "+rareword")
 	tk.MustQuery(sql).Check(tk.MustQuery("select id from t ignore index (idx) where match(body) against('+rareword' in boolean mode) order by id").Rows())
 	tk.MustQuery("select id, k from t where match(body) against('+rareword' in boolean mode) and id = 291").Check(testkit.Rows("291 99"))
@@ -208,7 +212,7 @@ func TestFullTextIndexMatchAgainstNgram(t *testing.T) {
 	tk.MustExec("analyze table ng")
 
 	for _, search := range []string{"数据库", "abcd", "库系统数", "+abc -数据", "abc 数据库系"} {
-		sql := fmt.Sprintf("select id from ng where match(body) against('%s' in boolean mode) order by id", search)
+		sql := fmt.Sprintf("select id from ng use index (idx) where match(body) against('%s' in boolean mode) order by id", search)
 		mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
 		tk.MustQuery(sql).Check(tk.MustQuery(fmt.Sprintf("select id from ng ignore index (idx) where match(body) against('%s' in boolean mode) order by id", search)).Rows())
 	}
@@ -229,7 +233,7 @@ func TestFullTextIndexMatchAgainstPartitioned(t *testing.T) {
 	for _, mode := range []string{"dynamic", "static"} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + mode + "'")
 		for _, search := range []string{"+rareword", "+rareword +alpha", `"distributed storage"`} {
-			sql := fmt.Sprintf("select id from pt where match(body) against('%s' in boolean mode) order by id", search)
+			sql := fmt.Sprintf("select id from pt use index (idx) where match(body) against('%s' in boolean mode) order by id", search)
 			mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
 			tk.MustQuery(sql).Check(tk.MustQuery(fmt.Sprintf("select id from pt ignore index (idx) where match(body) against('%s' in boolean mode) order by id", search)).Rows())
 		}
@@ -255,11 +259,11 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 	tk.MustExec("analyze table tn")
 
 	scanOf := func(sql string) string {
-		return strings.Replace(sql, "from tn where", "from tn ignore index (idx) where", 1)
+		return strings.Replace(strings.Replace(sql, "from tn use index (idx) where", "from tn where", 1), "from tn where", "from tn ignore index (idx) where", 1)
 	}
 	for _, search := range []string{"+rareword", "+rareword -alpha", "rareword theta", `"distributed storage"`, "rare*", "+of"} {
 		for _, tenantCond := range []string{"tenant = 3", "tenant is null", "3 = tenant", "tenant = '3'"} {
-			sql := fmt.Sprintf("select id from tn where %s and match(body) against('%s' in boolean mode) order by id", tenantCond, search)
+			sql := fmt.Sprintf("select id from tn use index (idx) where %s and match(body) against('%s' in boolean mode) order by id", tenantCond, search)
 			mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", search)
 			plan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			var text strings.Builder
@@ -309,10 +313,10 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 	// the sort key, so an equality finds every spelling, as the scan does.
 	tk.MustExec("create table ts (id int primary key, tenant varchar(16) collate utf8mb4_general_ci, body text, fulltext index idx (tenant, body))")
 	tk.MustExec("insert into ts values (1, 'acme', 'rareword one'), (2, 'Acme', 'rareword two'), (3, 'ACME ', 'rareword three'), (4, 'globex', 'rareword four'), (5, 'acme', 'nothing here')")
-	sql = "select id from ts where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
+	sql = "select id from ts use index (idx) where tenant = 'ACME' and match(body) against('+rareword' in boolean mode) order by id"
 	mustUseFullTextIndex(t, tk, sql, "idx(tenant, body)", "+rareword")
 	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ts where", "from ts ignore index (idx) where", 1)).Rows())
+	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from ts use index (idx) where", "from ts ignore index (idx) where", 1)).Rows())
 	tk.MustExec("admin check table ts")
 
 	// Several key columns, and a partitioned table.
@@ -321,9 +325,9 @@ func TestFullTextIndexMatchAgainstKeyColumns(t *testing.T) {
 	tk.MustExec("analyze table tp")
 	for _, mode := range []string{"dynamic", "static"} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + mode + "'")
-		sql = "select id from tp where tenant = 3 and region = 'eu' and match(body) against('+rareword' in boolean mode) order by id"
+		sql = "select id from tp use index (idx) where tenant = 3 and region = 'eu' and match(body) against('+rareword' in boolean mode) order by id"
 		mustUseFullTextIndex(t, tk, sql, "idx(tenant, region, body)", "+rareword")
-		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tp where", "from tp ignore index (idx) where", 1)).Rows())
+		tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tp use index (idx) where", "from tp ignore index (idx) where", 1)).Rows())
 		mustScan(t, tk, "select id from tp where tenant = 3 and match(body) against('+rareword' in boolean mode)")
 	}
 	tk.MustExec("admin check table tp")
