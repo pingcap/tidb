@@ -186,6 +186,48 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT2)))
 	})
 
+	t.Run("table: ignore drop table in schema file", func(t *testing.T) {
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t1-schema.sql"
+		require.NoError(t, os.WriteFile(
+			path.Join(tempDir, fileName),
+			[]byte("DROP TABLE t1; CREATE TABLE t1(a int);"),
+			0o644,
+		))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
+	})
+
+	t.Run("table: ignore drop database in schema file", func(t *testing.T) {
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t1-schema.sql"
+		require.NoError(t, os.WriteFile(
+			path.Join(tempDir, fileName),
+			[]byte("DROP DATABASE test01; CREATE TABLE t1(a int);"),
+			0o644,
+		))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
+	})
+
 	t.Run("view: get existing schema err", func(t *testing.T) {
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
