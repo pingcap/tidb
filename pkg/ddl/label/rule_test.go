@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbcodec "github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
@@ -138,20 +139,42 @@ func TestResetWithKeyspaceCodec(t *testing.T) {
 
 	nextGenRule := NewRule()
 	require.NoError(t, nextGenRule.ApplyAttributesSpec(spec))
-	nextGenRule.Reset(codecV2, "db1", "t1", "", 1)
+	nextGenRule.Reset(codecV2, "db1", "t1", "", 1, 2, 3)
 	require.Equal(t, "keyspace/42/schema/db1/t1", nextGenRule.ID)
 	require.Equal(t, "schema/db1/t1", RestoreRuleID(nextGenRule.ID))
 	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: keyspaceKey, Value: "42"})
 	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: dbKey, Value: "db1"})
 	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: tableKey, Value: "t1"})
+	require.Equal(t, ruleType, nextGenRule.RuleType)
 
-	startKey, endKey := codecV2.EncodeRegionRange(tablecodec.GenTablePrefix(1), tablecodec.GenTablePrefix(2))
-	data := nextGenRule.Data.([]any)[0].(map[string]string)
-	require.Equal(t, hex.EncodeToString(startKey), data["start_key"])
-	require.Equal(t, hex.EncodeToString(endKey), data["end_key"])
+	data := nextGenRule.Data.([]any)
+	require.Len(t, data, 3)
+	for i, tableID := range []int64{1, 2, 3} {
+		startKey, endKey := codecV2.EncodeRegionRange(tablecodec.GenTablePrefix(tableID), tablecodec.GenTablePrefix(tableID+1))
+		rangeData := data[i].(map[string]string)
+		require.Equal(t, hex.EncodeToString(startKey), rangeData["start_key"])
+		require.Equal(t, hex.EncodeToString(endKey), rangeData["end_key"])
+	}
+	startKeyBytes, err := hex.DecodeString(data[2].(map[string]string)["start_key"])
+	require.NoError(t, err)
+	_, decodedStartKey, err := tidbcodec.DecodeBytes(startKeyBytes, nil)
+	require.NoError(t, err)
+	require.Equal(t, codecV2.EncodeKey(tablecodec.GenTablePrefix(3)), decodedStartKey)
 
 	partitionRule := nextGenRule.Reset(codecV2, "db2", "t2", "p2", 2)
 	require.Equal(t, "keyspace/42/schema/db2/t2/p2", partitionRule.ID)
 	require.Equal(t, "schema/db2/t2/p2", RestoreRuleID(partitionRule.ID))
 	require.Contains(t, partitionRule.Labels, pd.RegionLabel{Key: partitionKey, Value: "p2"})
+	startKey, endKey := codecV2.EncodeRegionRange(tablecodec.GenTablePrefix(2), tablecodec.GenTablePrefix(3))
+	partData := partitionRule.Data.([]any)[0].(map[string]string)
+	require.Equal(t, hex.EncodeToString(startKey), partData["start_key"])
+	require.Equal(t, hex.EncodeToString(endKey), partData["end_key"])
+
+	spec = &ast.AttributesSpec{Default: true}
+	rule, expected := NewRule(), NewRule()
+	expected.ID, expected.Labels = "keyspace/42/schema/db3/t3/p3", []pd.RegionLabel{}
+	require.NoError(t, rule.ApplyAttributesSpec(spec))
+	r3 := rule.Reset(codecV2, "db3", "t3", "p3", 3)
+	require.Equal(t, r3, expected)
+	require.Equal(t, "schema/db3/t3/p3", RestoreRuleID(r3.ID))
 }
