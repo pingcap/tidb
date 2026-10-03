@@ -39,8 +39,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use chrono_tz::Tz;
 use tidb_datatype::Datum;
+use tidb_datatype::SessionTimeZone;
 use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
@@ -1012,7 +1012,7 @@ impl StmtScanWorker {
 struct StmtParseWorker {
     token: CancelToken,
     instance_addr: String,
-    time_location: Tz,
+    time_location: SessionTimeZone,
     checker: Arc<StmtChecker>,
     column_factories: Vec<ColumnFactory>,
 }
@@ -1022,8 +1022,8 @@ impl ColumnInfoSource for StmtParseWorker {
         self.instance_addr.clone()
     }
 
-    fn time_location(&self) -> Tz {
-        self.time_location
+    fn time_location(&self) -> SessionTimeZone {
+        self.time_location.clone()
     }
 }
 
@@ -1119,7 +1119,7 @@ impl StmtParseWorker {
 pub struct MemReader {
     s: Option<Arc<StmtSummary>>,
     instance_addr: String,
-    time_location: Tz,
+    time_location: SessionTimeZone,
     column_factories: Vec<ColumnFactory>,
     checker: Arc<StmtChecker>,
 }
@@ -1129,7 +1129,7 @@ pub fn new_mem_reader(
     s: Option<Arc<StmtSummary>>,
     columns: &[ColumnInfo],
     instance_addr: String,
-    time_location: Tz,
+    time_location: SessionTimeZone,
     user: Option<UserIdentity>,
     has_process_priv: bool,
     digests: Option<HashSet<String>>,
@@ -1154,8 +1154,8 @@ impl ColumnInfoSource for MemReader {
         self.instance_addr.clone()
     }
 
-    fn time_location(&self) -> Tz {
-        self.time_location
+    fn time_location(&self) -> SessionTimeZone {
+        self.time_location.clone()
     }
 }
 
@@ -1239,7 +1239,7 @@ impl HistoryReader {
         parent: Option<&CancelToken>,
         columns: &[ColumnInfo],
         instance_addr: String,
-        time_location: Tz,
+        time_location: SessionTimeZone,
         user: Option<UserIdentity>,
         has_process_priv: bool,
         digests: Option<HashSet<String>>,
@@ -1294,7 +1294,7 @@ impl HistoryReader {
         parent: Option<&CancelToken>,
         files: StmtFiles,
         instance_addr: String,
-        time_location: Tz,
+        time_location: SessionTimeZone,
         checker: StmtChecker,
         column_factories: Vec<ColumnFactory>,
         concurrent: usize,
@@ -1404,7 +1404,7 @@ fn schedule_tasks(
     mut files: StmtFiles,
     checker: Arc<StmtChecker>,
     instance_addr: String,
-    time_location: Tz,
+    time_location: SessionTimeZone,
     column_factories: Vec<ColumnFactory>,
     concurrent: usize,
     rows_tx: SyncSender<Vec<Vec<Datum>>>,
@@ -1853,7 +1853,7 @@ pub(crate) mod tests {
                 None,
                 files,
                 String::new(),
-                chrono_tz::Tz::UTC,
+                SessionTimeZone::utc(),
                 StmtChecker::default(),
                 make_column_factories(&[ColumnInfo {
                     name: CiString::new(DIGEST_STR),
@@ -1967,7 +1967,7 @@ pub(crate) mod tests {
             Some(Arc::clone(&ss)),
             &columns,
             String::new(),
-            chrono_tz::Tz::UTC,
+            SessionTimeZone::utc(),
             None,
             false,
             None,
@@ -2015,7 +2015,7 @@ pub(crate) mod tests {
                     None,
                     &columns,
                     String::new(),
-                    chrono_tz::Tz::UTC,
+                    SessionTimeZone::utc(),
                     None,
                     false,
                     $digests,
@@ -2135,7 +2135,7 @@ pub(crate) mod tests {
             None,
             &columns,
             String::new(),
-            chrono_tz::Tz::UTC,
+            SessionTimeZone::utc(),
             None,
             false,
             None,
@@ -2164,7 +2164,7 @@ pub(crate) mod tests {
             None,
             &[],
             String::new(),
-            chrono_tz::Tz::UTC,
+            SessionTimeZone::utc(),
             None,
             false,
             None,
@@ -2174,7 +2174,7 @@ pub(crate) mod tests {
             None,
             &[],
             String::new(),
-            chrono_tz::Tz::UTC,
+            SessionTimeZone::utc(),
             None,
             false,
             None,

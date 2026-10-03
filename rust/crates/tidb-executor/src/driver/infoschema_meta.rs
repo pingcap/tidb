@@ -133,6 +133,7 @@ impl InfoColumn {
 }
 
 include!("infoschema_workloadrepo.rs");
+include!("infoschema_statement_summary.rs");
 
 /// Go `infoschema.tableSchemataCols`.
 /// Go `charsetCols` (`infoschema/tables.go:568`).
@@ -4038,6 +4039,8 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
         "TIDB_STATEMENTS_STATS",
         WORKLOAD_TIDB_STATEMENTS_STATS_COLUMNS,
     ),
+    ("STATEMENTS_SUMMARY", STATEMENTS_SUMMARY_COLUMNS),
+    ("STATEMENTS_SUMMARY_HISTORY", STATEMENTS_SUMMARY_COLUMNS),
     ("TIDB_TRX", WORKLOAD_TIDB_TRX_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
     ("USER_ATTRIBUTES", USER_ATTRIBUTES_COLUMNS),

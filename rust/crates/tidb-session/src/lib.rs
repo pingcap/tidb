@@ -475,6 +475,10 @@ pub struct Session {
     /// start with its digest (Go `StmtCtx.SQLDigest`) and consumed by the
     /// memory arbitration key; `None` when arbitration is off.
     statement_normalized_sql: Option<String>,
+    statement_observation: Option<observation::StatementObservation>,
+    routed_statement_observation_depth: u32,
+    previous_summary_statement: Option<(String, String)>,
+    statement_stats: Arc<tidb_util::topsql_stmtstats::StatementStats>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
@@ -865,6 +869,10 @@ impl Session {
             statement_result_authority: std::cell::RefCell::new(None),
             current_sql_digest_key: String::new(),
             statement_normalized_sql: None,
+            statement_observation: None,
+            routed_statement_observation_depth: 0,
+            previous_summary_statement: None,
+            statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
             txn: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
@@ -1057,6 +1065,7 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        self.statement_stats.set_finished();
         if let Some(collector) = &self.session_index_usage_collector {
             collector
                 .lock()
@@ -1093,6 +1102,7 @@ mod bootstrap;
 mod classify;
 pub mod cursor;
 mod dispatch;
+mod observation;
 pub mod embedding;
 mod explain_arm;
 mod gcutil;
@@ -2147,6 +2157,7 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             tidb_executor::ProcessPlanInfo::default();
         self.check_sandbox_mode(sql)?;
+        self.begin_statement_observation(sql);
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
@@ -2366,6 +2377,7 @@ impl Session {
                 }
             }
         }
+        self.finish_statement_observation(result);
     }
 }
 
@@ -2550,6 +2562,8 @@ mod tests_column_prune;
 mod tests_compare_refinement;
 #[cfg(test)]
 mod tests_core;
+#[cfg(test)]
+mod tests_observation_batch;
 #[cfg(test)]
 mod tests_datetime_year_compare;
 #[cfg(test)]

@@ -201,10 +201,8 @@ fn the_bootstrap_tables_are_refused_by_name() {
 ///
 /// Captured from Go, `select schema_name from information_schema.schemata`:
 /// `INFORMATION_SCHEMA;METRICS_SCHEMA;PERFORMANCE_SCHEMA;mysql;sys;test`.
-/// This tier lists the three of those six it has -- `METRICS_SCHEMA`,
-/// `PERFORMANCE_SCHEMA` and `sys` are absent, a documented divergence on
-/// `Catalog::default` -- with `INFORMATION_SCHEMA` first, which is the
-/// ordering Go's `fetchShowDatabases` imposes.
+/// All six schema owners are now installed by `Catalog::default`, with
+/// `INFORMATION_SCHEMA` first as Go's `fetchShowDatabases` requires.
 #[test]
 fn the_system_schema_is_listed_among_the_databases() {
     let mut session = Session::new();
@@ -212,7 +210,17 @@ fn the_system_schema_is_listed_among_the_databases() {
         .into_iter()
         .map(|row| row[0].clone())
         .collect();
-    assert_eq!(names, vec!["INFORMATION_SCHEMA", "mysql", "test"]);
+    assert_eq!(
+        names,
+        vec![
+            "INFORMATION_SCHEMA",
+            "METRICS_SCHEMA",
+            "PERFORMANCE_SCHEMA",
+            "mysql",
+            "sys",
+            "test"
+        ]
+    );
 
     let names: Vec<String> = row_text(
         session.run("SELECT SCHEMA_NAME FROM information_schema.schemata ORDER BY SCHEMA_NAME"),
@@ -220,13 +228,23 @@ fn the_system_schema_is_listed_among_the_databases() {
     .into_iter()
     .map(|row| row[0].clone())
     .collect();
-    assert_eq!(names, vec!["INFORMATION_SCHEMA", "mysql", "test"]);
+    assert_eq!(
+        names,
+        vec![
+            "INFORMATION_SCHEMA",
+            "METRICS_SCHEMA",
+            "PERFORMANCE_SCHEMA",
+            "mysql",
+            "sys",
+            "test"
+        ]
+    );
 }
 
 /// DIVERGENCE, pinned: enumerating `mysql` under-reports.
 ///
 /// Captured from Go, `use mysql; show tables;` returns 61 names --
-/// `advisory_locks` through `user`. This tier returns the THREE it stores,
+/// `advisory_locks` through `user`. This tier returns the seven it stores,
 /// bootstrapped by `crate::bootstrap`. Under-reporting an enumeration is the
 /// price of refusing every absent name in it (see
 /// [`the_bootstrap_tables_are_refused_by_name_with_1146`]); the alternative,
@@ -234,11 +252,11 @@ fn the_system_schema_is_listed_among_the_databases() {
 /// into a silent zero-row answer.
 ///
 /// FLIPS TO SUPPORT as the bootstrap tables land: this count rises toward 61.
-/// It has risen three times so far -- `bind_info` for GLOBAL bindings, the two
+/// It has risen with the shared owners -- `bind_info` for GLOBAL bindings, the two
 /// blacklist tables `ADMIN RELOAD` reads (`crate::blacklist`), and now the
 /// statistics pair `stats_meta` + `stats_table_locked` that `ANALYZE` and
 /// `SHOW STATS_*` require -- and each arrival is a feature that needed the
-/// table, not a name added to make the count look better.
+/// table. Account history now also owns `password_history`.
 #[test]
 fn enumerating_the_system_schema_under_reports() {
     let mut session = Session::new();
@@ -247,6 +265,7 @@ fn enumerating_the_system_schema_under_reports() {
         ["bind_info"],
         ["expr_pushdown_blacklist"],
         ["opt_rule_blacklist"],
+        ["password_history"],
         ["stats_meta"],
         ["stats_table_locked"],
         ["user"],
@@ -1087,7 +1106,12 @@ fn tidb_index_usage_records_real_data_reads() {
                 .any(|row| row.first().is_some_and(|name| name.contains(expected_plan))),
             "expected {expected_plan} for {sql}: {plan:?}"
         );
-        assert_eq!(row_text(session.run(sql)), *expected_rows, "{sql}");
+        // SQL without ORDER BY does not promise index-merge arrival order.
+        let mut actual = row_text(session.run(sql));
+        let mut expected = expected_rows.clone();
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected, "{sql}");
     }
 
     for (index, (sql, _, expected_rows)) in cases.iter().enumerate() {
@@ -1096,11 +1120,11 @@ fn tidb_index_usage_records_real_data_reads() {
             .run(&format!("PREPARE {statement} FROM '{sql}'"))
             .unwrap();
         for _ in 0..2 {
-            assert_eq!(
-                row_text(session.run(&format!("EXECUTE {statement}"))),
-                *expected_rows,
-                "{sql}"
-            );
+            let mut actual = row_text(session.run(&format!("EXECUTE {statement}")));
+            let mut expected = expected_rows.clone();
+            actual.sort();
+            expected.sort();
+            assert_eq!(actual, expected, "{sql}");
         }
         session
             .run(&format!("DEALLOCATE PREPARE {statement}"))
@@ -1315,92 +1339,27 @@ fn tidb_index_usage_records_a_partitioned_global_index_point_read() {
 /// workload-repository sampling.
 #[test]
 fn tidb_statements_stats_reads_the_global_cumulative_summary() {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use tidb_stmtsummary::statement_summary::{
-        EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
-        STMT_SUMMARY_BY_DIGEST_MAP,
-    };
-
-    #[derive(Debug)]
-    struct LazyInfo;
-
-    impl StmtExecLazyInfo for LazyInfo {
-        fn original_sql(&self) -> String {
-            "select 1".to_owned()
-        }
-
-        fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
-            Ok((String::new(), String::new()))
-        }
-
-        fn binary_plan(&self) -> String {
-            String::new()
-        }
-
-        fn plan_digest(&self) -> String {
-            String::new()
-        }
-
-        fn binding_sql_and_digest(&self) -> (String, String) {
-            (String::new(), String::new())
-        }
-    }
-
-    STMT_SUMMARY_BY_DIGEST_MAP.clear();
-    let mut stmt_ctx = StmtSummaryStmtCtx::new();
-    stmt_ctx.stmt_type = "Select".to_owned();
-    STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&StmtExecInfo {
-        schema_name: "test".to_owned(),
-        charset: "utf8mb4".to_owned(),
-        collation: "utf8mb4_bin".to_owned(),
-        normalized_sql: "select ?".to_owned(),
-        digest: "workloadrepo-provider-regression".to_owned(),
-        prev_sql: String::new(),
-        prev_sql_digest: String::new(),
-        plan_digest: String::new(),
-        user: "root".to_owned(),
-        total_latency: Duration::from_millis(2),
-        parse_latency: Duration::ZERO,
-        compile_latency: Duration::ZERO,
-        stmt_ctx: Arc::new(stmt_ctx),
-        cop_tasks: None,
-        exec_detail: tidb_exec::exec_details::ExecDetails::default(),
-        mem_max: 0,
-        mem_arbitration: 0.0,
-        disk_max: 0,
-        start_time: chrono::Utc::now(),
-        is_internal: false,
-        succeed: true,
-        plan_in_cache: false,
-        plan_in_binding: false,
-        exec_retry_count: 0,
-        exec_retry_time: Duration::ZERO,
-        write_sql_resp_duration: Duration::ZERO,
-        result_rows: 1,
-        tikv_exec_details: None,
-        prepared: false,
-        keyspace_name: String::new(),
-        keyspace_id: 0,
-        resource_group_name: "default".to_owned(),
-        ru_detail: None,
-        total_ru_v2: 0.0,
-        cpu_usages: tidb_util::ppcpuusage::CpuUsages::default(),
-        plan_cache_unqualified: String::new(),
-        lazy_info: Arc::new(LazyInfo),
-    });
-
     let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let sql = "SELECT 101112 + 131415 AS observation_cumulative";
+    let (_, digest) = normalize_statement_digest(sql);
+    session.run(sql).unwrap();
+    session.run(sql).unwrap();
     let (_, rows) = query_text(
         &mut session,
-        "SELECT STMT_TYPE, SCHEMA_NAME, DIGEST_TEXT, EXEC_COUNT, RESULT_ROWS \
-         FROM information_schema.TIDB_STATEMENTS_STATS \
-         WHERE DIGEST='workloadrepo-provider-regression'",
+        &format!("SELECT STMT_TYPE, SCHEMA_NAME, DIGEST_TEXT, EXEC_COUNT, RESULT_ROWS FROM information_schema.TIDB_STATEMENTS_STATS WHERE DIGEST='{digest}'"),
     );
-    STMT_SUMMARY_BY_DIGEST_MAP.clear();
-
-    assert_eq!(rows, [["Select", "test", "select ?", "1", "1"]]);
+    assert!(
+        rows.iter().any(|row| row
+            == &[
+                "Select",
+                "test",
+                "select ? + ? as `observation_cumulative`",
+                "2",
+                "2"
+            ]),
+        "{rows:?}"
+    );
 }
 
 /// Pinned Go exposes the `pkg/errno` instance counters, lets a user read only

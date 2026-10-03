@@ -87,7 +87,7 @@ pub struct Aggregator {
 }
 
 /// Go's package-level `globalAggregator`.
-pub(super) fn global_aggregator() -> &'static Arc<Aggregator> {
+pub fn global_aggregator() -> &'static Arc<Aggregator> {
     static GLOBAL: OnceLock<Arc<Aggregator>> = OnceLock::new();
     GLOBAL.get_or_init(Aggregator::new)
 }

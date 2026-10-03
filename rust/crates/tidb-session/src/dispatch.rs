@@ -674,8 +674,11 @@ impl Session {
                 let visibility = self.schema_visibility();
                 let collector = std::sync::Arc::clone(&self.index_usage_collector);
                 infoschema::tidb_index_usage_rows(&scratch, &visibility, collector.as_ref())
-            } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS") {
-                self.tidb_statements_stats_table_rows(&columns)
+            } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS")
+                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY")
+                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
+            {
+                self.statement_summary_table_rows(&table_name, &columns)?
             } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
                 self.tidb_trx_table_rows()
             } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
@@ -835,16 +838,17 @@ impl Session {
 
     /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
     /// `TIDB_STATEMENTS_STATS` table used by the workload repository.
-    fn tidb_statements_stats_table_rows(
+    fn statement_summary_table_rows(
         &self,
+        table_name: &str,
         columns: &[(String, tidb_datatype::FieldType)],
-    ) -> Vec<Vec<tidb_datatype::Datum>> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_ast::CiString;
         use tidb_model::ColumnInfo;
         use tidb_parser::auth::UserIdentity;
         use tidb_stmtsummary::reader::StmtSummaryReader;
 
-        let columns = columns
+        let columns: Vec<ColumnInfo> = columns
             .iter()
             .enumerate()
             .map(|(offset, (name, _))| ColumnInfo {
@@ -866,14 +870,75 @@ impl Session {
                 auth_plugin: String::new(),
             }
         });
-        StmtSummaryReader::new(
+        let persistent = tidb_config::config_tree::config::get_global_config()
+            .instance
+            .stmt_summary_enable_persistent;
+        let cumulative = table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS");
+        let history = table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY");
+        if persistent {
+            // Go refuses cumulative retrieval in v2; never silently substitute
+            // an unrelated v1 map for the selected persistent owner.
+            if cumulative {
+                return Err(DriverError::NotSupportedYet(
+                    "cumulative statement summary table with persistent mode (v2)".into(),
+                ));
+            }
+            let mut rows = tidb_stmtsummary::v2::reader::new_mem_reader(
+                tidb_stmtsummary::v2::stmtsummary::global_stmt_summary(),
+                &columns,
+                String::new(),
+                self.session_time_zone(),
+                user.clone(),
+                self.has_process_privilege(),
+                None,
+                Vec::new(),
+            )
+            .rows();
+            if history {
+                let mut reader = tidb_stmtsummary::v2::reader::HistoryReader::new(
+                    None,
+                    &columns,
+                    String::new(),
+                    self.session_time_zone(),
+                    user,
+                    self.has_process_privilege(),
+                    None,
+                    Vec::new(),
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
+                        .expect("registered DistSQL scan concurrency")
+                        .parse::<usize>()
+                        .expect("validated positive scan concurrency"),
+                )
+                .map_err(|error| DriverError::Unsupported(error.into()))?;
+                let result = (|| {
+                    while let Some(batch) = reader
+                        .rows()
+                        .map_err(|error| DriverError::Unsupported(error.into()))?
+                    {
+                        rows.extend(batch);
+                    }
+                    Ok(rows)
+                })();
+                let _ = reader.close();
+                return result;
+            }
+            return Ok(rows);
+        }
+        let reader = StmtSummaryReader::new(
             user,
             self.has_process_privilege(),
             columns,
             String::new(),
             self.session_time_zone(),
-        )
-        .get_stmt_summary_cumulative_rows()
+        );
+        Ok(if cumulative {
+            reader.get_stmt_summary_cumulative_rows()
+        } else if history {
+            reader.get_stmt_summary_history_rows()
+        } else {
+            reader.get_stmt_summary_current_rows()
+        })
     }
 
     /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
@@ -1373,6 +1438,7 @@ impl Session {
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
         self.begin_statement_execution(prepared.sql())?;
+        self.observe_statement_node(prepared.statement(), true);
         let result = self.open_cached_prepared_select(execution, prepared)?;
         let result = match result {
             Some(result) => Ok(result),

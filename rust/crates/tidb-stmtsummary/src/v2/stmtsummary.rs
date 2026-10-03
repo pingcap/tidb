@@ -192,13 +192,66 @@ impl std::fmt::Display for EmptyFilename {
 
 impl std::error::Error for EmptyFilename {}
 
+/// Failure to initialize persistent statement-summary storage.
+#[derive(Debug)]
+pub enum InitError {
+    /// An empty filename cannot identify a persistent sink.
+    EmptyFilename(EmptyFilename),
+    /// Opening or inspecting the configured sink failed.
+    Storage(std::io::Error),
+}
+
+impl std::fmt::Display for InitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyFilename(error) => error.fmt(f),
+            Self::Storage(error) => write!(f, "init statement summary logger: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for InitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EmptyFilename(error) => Some(error),
+            Self::Storage(error) => Some(error),
+        }
+    }
+}
+
+/// Setup failure after switching persistent mode off, leaving v1 usable.
+#[derive(Debug)]
+pub struct SetupError(pub InitError);
+
+impl std::fmt::Display for SetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation: {}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for SetupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 /// Go `Setup`: initializes the `GlobalStmtSummary`.
 ///
 /// # Errors
 ///
-/// Returns [`EmptyFilename`] when `cfg.filename` is empty, as Go does.
-pub fn setup(cfg: &Config) -> Result<(), EmptyFilename> {
-    let summary = new_stmt_summary(cfg)?;
+/// Returns [`SetupError`] on empty filename or sink initialization failure,
+/// after disabling persistent mode so subsequent consumers use v1.
+pub fn setup(cfg: &Config) -> Result<(), SetupError> {
+    let summary = new_stmt_summary(cfg).map_err(|error| {
+        tidb_config::config_tree::config::update_global(|config| {
+            config.instance.stmt_summary_enable_persistent = false;
+        });
+        SetupError(error)
+    })?;
     set_global_stmt_summary(Some(summary));
     Ok(())
 }
@@ -876,18 +929,21 @@ impl StmtSummary {
 ///
 /// # Errors
 ///
-/// Returns [`EmptyFilename`] when `cfg.filename` is empty, as Go does.
-pub fn new_stmt_summary(cfg: &Config) -> Result<Arc<StmtSummary>, EmptyFilename> {
+/// Returns [`InitError`] on an empty filename or unusable sink, before
+/// publishing ownership or starting any workers.
+pub fn new_stmt_summary(cfg: &Config) -> Result<Arc<StmtSummary>, InitError> {
     if cfg.filename.is_empty() {
-        return Err(EmptyFilename);
+        return Err(InitError::EmptyFilename(EmptyFilename));
     }
 
     // These options can be changed dynamically at runtime. The default values
     // here are just placeholders, and the real values in
     // sessionctx/variables/tidb_vars.go will overwrite them after TiDB starts.
-    let storage: Arc<dyn StmtStorage> = Arc::new(StmtLogStorage::new(Arc::new(
-        RotatingFileLogWriter::from_config(cfg),
-    )));
+    let writer = RotatingFileLogWriter::from_config(cfg);
+    // Validate before publishing ownership or starting workers. Go initializes
+    // the logger synchronously and refuses a sink that would lose records.
+    writer.initialize().map_err(InitError::Storage)?;
+    let storage: Arc<dyn StmtStorage> = Arc::new(StmtLogStorage::new(Arc::new(writer)));
     let (summary, rx) = StmtSummary::with_options(
         DEFAULT_MAX_STMT_COUNT,
         DEFAULT_REFRESH_INTERVAL,
@@ -1227,6 +1283,22 @@ impl RotatingFileLogWriter {
             max_backups,
             state: Mutex::new(WriterState::default()),
         }
+    }
+
+    fn initialize(&self) -> std::io::Result<()> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        let size = file.metadata()?.len();
+        *self
+            .state
+            .lock()
+            .expect("statement log writer lock poisoned") = WriterState {
+            file: Some(file),
+            size,
+        };
+        Ok(())
     }
 
     fn open_state(&self, state: &mut WriterState) {
@@ -2066,6 +2138,35 @@ mod tests {
             .collect();
         backups.sort();
         backups
+    }
+
+    #[test]
+    fn observation_batch_unusable_sink_is_rejected() {
+        let cfg = Config {
+            filename: std::env::temp_dir().display().to_string(),
+            ..Config::default()
+        };
+        assert!(
+            new_stmt_summary(&cfg).is_err(),
+            "directory is not a writable statement log"
+        );
+    }
+
+    #[test]
+    fn observation_batch_setup_failure_disables_persistent_mode() {
+        let _guard = crate::v2::reader::tests::CONFIG_TEST_LOCK.lock().unwrap();
+        let previous = tidb_config::config_tree::config::get_global_config();
+        tidb_config::config_tree::config::update_global(|cfg| {
+            cfg.instance.stmt_summary_enable_persistent = true
+        });
+        let result = setup(&Config::default());
+        let persistent = enable_persistent();
+        tidb_config::config_tree::config::store_global_config((*previous).clone());
+        assert!(result.is_err());
+        assert!(
+            !persistent,
+            "failed startup must route subsequent SQL to v1"
+        );
     }
 
     /// Go's `NewStmtSummary` error path, which `TestDefaultConfig`'s

@@ -57,15 +57,15 @@
 //! - Go's package-level `columnFactoryMap` becomes the lookup function
 //!   [`column_factory`]; the arms are in Go's literal order.
 //! - `columnInfo`'s `getTimeLocation() *time.Location` narrows to
-//!   [`ColumnInfoSource::time_location`] returning `chrono_tz::Tz`.
+//!   [`ColumnInfoSource::time_location`] returning `tidb_datatype::SessionTimeZone`.
 //! - `[]*model.ColumnInfo` is the real `tidb_model::ColumnInfo`.
 //! - `logutil.BgLogger()` has no boundary here: a `plancodec::DecodePlan`
 //!   failure is not logged, it only yields Go's empty plan string — the same
 //!   treatment v1's `reader.rs` gives it.
 
 use chrono::{DateTime, TimeZone};
-use chrono_tz::Tz;
 use std::time::Duration;
+use tidb_datatype::SessionTimeZone;
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
 use tidb_model::ColumnInfo;
 use tidb_util::plancodec::decode_plan;
@@ -125,7 +125,7 @@ pub trait ColumnInfoSource {
     /// Go `getInstanceAddr`.
     fn instance_addr(&self) -> String;
     /// Go `getTimeLocation`.
-    fn time_location(&self) -> Tz;
+    fn time_location(&self) -> SessionTimeZone;
 }
 
 /// Go `columnFactory`.
@@ -159,7 +159,7 @@ pub(crate) fn timestamp_datum<TZ: TimeZone>(instant: DateTime<TZ>) -> Datum {
 }
 
 /// Go `time.Unix(seconds, 0).In(loc)`.
-fn unix_seconds_in(seconds: i64, tz: Tz) -> DateTime<Tz> {
+fn unix_seconds_in(seconds: i64, tz: SessionTimeZone) -> DateTime<SessionTimeZone> {
     DateTime::from_timestamp(seconds, 0)
         .unwrap_or_else(|| DateTime::from_timestamp_nanos(0))
         .with_timezone(&tz)
@@ -532,6 +532,26 @@ mod tests {
     use crate::v2::record::{generate_stmt_exec_info_4_test, new_stmt_record};
 
     /// Go `mockColumnInfo`.
+    #[test]
+    fn observation_batch_summary_timestamp_honors_fixed_session_offset() {
+        struct FixedOffset;
+        impl ColumnInfoSource for FixedOffset {
+            fn instance_addr(&self) -> String {
+                String::new()
+            }
+            fn time_location(&self) -> SessionTimeZone {
+                SessionTimeZone::Fixed {
+                    name: String::new(),
+                    offset_secs: 19_800,
+                }
+            }
+        }
+        let mut record = new_stmt_record(&generate_stmt_exec_info_4_test("fixed-offset"));
+        record.begin = 0;
+        let value = column_factory(SUMMARY_BEGIN_TIME_STR).unwrap()(&FixedOffset, &record);
+        assert_eq!(value.to_bytes().unwrap(), b"1970-01-01 05:30:00");
+    }
+
     struct MockColumnInfo;
 
     impl ColumnInfoSource for MockColumnInfo {
@@ -539,9 +559,9 @@ mod tests {
             "instance_addr".to_owned()
         }
 
-        fn time_location(&self) -> Tz {
+        fn time_location(&self) -> SessionTimeZone {
             // Go `time.LoadLocation("Asia/Shanghai")`.
-            Tz::Asia__Shanghai
+            SessionTimeZone::Named(chrono_tz::Tz::Asia__Shanghai)
         }
     }
 

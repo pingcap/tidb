@@ -326,6 +326,7 @@ impl Session {
                 _ => return Err(DriverError::WrongArguments("LIMIT".into())),
             }
         }
+        self.retarget_prepared_statement_observation(&prepared.sql);
         let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(&prepared.statement);
         let mut effective_statement = effective_statement.into_owned();

@@ -4448,6 +4448,175 @@ enum PessimisticStep {
 }
 
 impl ClusterServerSession {
+    fn control_transaction_parsed_inner(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<bool>, SqlQueryError> {
+        let control = classify_transaction_control_stmt(stmt);
+        if control.is_some() {
+            self.session.restore_statement_variables();
+        }
+        // Refused BEFORE the driver session is touched, which is the whole
+        // point: `Session::control_transaction` sets `in_transaction` for any
+        // BEGIN spelling, so honoring the refusal afterwards would leave the
+        // session inside a transaction that this node never opened -- no
+        // `self.explicit`, so every following statement reads at a fresh
+        // timestamp, its writes stay in the buffer, and its COMMIT publishes
+        // without a conflict check. The read-only node already refuses here
+        // (`real_tikv_node`); this one used to fall through an empty arm.
+        if let Some(TransactionControl::Unsupported(feature)) = control {
+            return Err(SqlQueryError::unknown(format!(
+                "{feature} is not supported yet"
+            )));
+        }
+        // Go's `BEGIN` inside an open transaction implicitly COMMITS it --
+        // and the commit must run BEFORE the schema refresh below, in Go's
+        // own order. The refresh replaces the session's shared catalog, and
+        // the driver session's commit checks that the catalog it opened on
+        // is the one it is committing into; refreshing first turned every
+        // implicit commit after a mid-run statistics republish into a
+        // phantom "Write conflict" at `BEGIN` (sysbench abandons a
+        // transaction on an ignorable 1213 and just issues the next BEGIN,
+        // which is exactly this shape).
+        if matches!(control, Some(TransactionControl::Begin { .. }))
+            && self.session.in_transaction()
+        {
+            self.session
+                .control_transaction("COMMIT")
+                .map_err(map_error)?;
+            self.commit_explicit()?;
+        }
+        // The refresh happens BEFORE the driver session pins its own schema
+        // view for the transaction: Go activates a transaction with the
+        // LATEST schema at start (`domain.GetSnapshotInfoSchema(startTS)`),
+        // so a table committed before BEGIN is visible to every statement of
+        // the new transaction, on a connection of any age.
+        if matches!(control, Some(TransactionControl::Begin { .. })) {
+            self.rebuild_catalog_now();
+        }
+        let state = self
+            .session
+            .control_transaction_stmt(stmt)
+            .map_err(map_error)?;
+        let Some(in_transaction) = state else {
+            return Ok(None);
+        };
+        match control {
+            Some(TransactionControl::Commit) => self.commit_explicit()?,
+            Some(TransactionControl::Rollback) => self.discard_explicit()?,
+            // A BEGIN drops the staged writes too: a leftover buffer at that
+            // point could only come from a statement outside any transaction
+            // whose autocommit already published it. Then it takes the one
+            // timestamp every statement of the new transaction reads at, and
+            // that its COMMIT will prewrite at.
+            Some(TransactionControl::Begin { .. }) => {
+                self.discard_explicit()?;
+                // NO refresh here, deliberately. The refresh for this BEGIN
+                // already ran above, BEFORE `session.control_transaction`
+                // pinned the driver transaction's `base_version` -- one
+                // refresh, then both pins, which is Go's shape (one
+                // `GetSnapshotInfoSchema(startTS)` per activation). A second
+                // rebuild HERE ran after that pin, so a reload or statistics
+                // republish landing in the microseconds between them swapped
+                // the connection's catalog under the just-opened transaction
+                // -- whose COMMIT then failed the base-version guard with a
+                // phantom 9007. Receipted live by the guard probe under rung
+                // 8: `shared_version:86, base_version:1910` -- a freshly
+                // rebuilt catalog (counter restarted) against a pin taken on
+                // the long-lived one, once per run, exactly one thread.
+                let resource_group = self.session.current_resource_group().to_owned();
+                self.open_explicit(&resource_group)?;
+            }
+            Some(
+                control @ (TransactionControl::Savepoint(_)
+                | TransactionControl::RollbackToSavepoint(_)
+                | TransactionControl::ReleaseSavepoint(_)),
+            ) => self.apply_savepoint(&control)?,
+            // Refused above, before the session was touched.
+            Some(TransactionControl::Unsupported(_)) | None => {}
+        }
+        // The control path bypasses the ordinary statement pipeline's finish
+        // publish, so the process row still carried the previous statement's
+        // status (`in transaction; autocommit` after a `ROLLBACK`). Refresh it
+        // from the live session state, Go's OK-packet status word.
+        self.session.refresh_process_status();
+        Ok(Some(in_transaction))
+    }
+
+    fn execute_ordinary_write_parsed(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let owned = sql.to_owned();
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        let prelock_keys = self.session.statement_prelock_keys(stmt, &[]);
+        // A write declares nothing. Its read-before-write reaches the snapshot
+        // as the same `get` a point-get SELECT issues, which is exactly why the
+        // declaration is made from the statement rather than from the read.
+        //
+        // Go's pessimistic point write also folds its row read INTO its lock
+        // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:612-624`)
+        // -- and the text protocol carries that fold too, because a client-side
+        // prepared driver (Connector/J without `useServerPrepStmts`) sends the
+        // very statements the prepared path folds as plain COM_QUERY. The
+        // classified keys are locked WITH their rows before any read exists;
+        // the statement's read then answers from the lock response exactly as
+        // in [`Self::execute_general`]'s prepared arm.
+        let read_keys = self.storage.read_keys();
+        let attempt_read_keys = read_keys.clone();
+        let affected_rows = match self.with_prelocked_statement(
+            StatementReadShape::Unknown,
+            |_session| prelock_keys.clone(),
+            &resource_group,
+            move |session| {
+                attempt_read_keys.begin();
+                match session
+                    .run_parsed(stmt.clone(), &owned)
+                    .map_err(map_error)?
+                {
+                    StmtResult::Affected(count) => Ok(count),
+                    StmtResult::Done(_) => Ok(0),
+                    StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                        "a write statement unexpectedly produced rows",
+                    )),
+                }
+            },
+        ) {
+            Ok(affected_rows) => affected_rows,
+            Err(error) => {
+                read_keys.cancel();
+                return Err(error);
+            }
+        };
+        let processed_keys = read_keys.finish().len() as i64;
+        if affected_rows > 0 && processed_keys > 0 {
+            self.session
+                .txn_write_throughput_sli()
+                .add_read_keys(processed_keys);
+        }
+        Ok(WriteOutcome {
+            affected_rows,
+            last_insert_id: self.session.statement_insert_id(),
+        })
+    }
+
+    fn observe_routed_write(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+        execute: impl FnOnce(&mut Self) -> Result<WriteOutcome, SqlQueryError>,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.session.begin_routed_statement_observation(sql, stmt);
+        let result = execute(self);
+        self.session.finish_routed_statement_observation(
+            result.is_ok(),
+            result.as_ref().map_or(0, |outcome| outcome.affected_rows),
+        );
+        result
+    }
+
     fn execute_timed<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let stmt = self.session.parse_statement(sql).map_err(|error| {
             self.session.record_parse_failure(&error);
@@ -6865,98 +7034,19 @@ impl QuerySession for ClusterServerSession {
 
     fn control_transaction_parsed(
         &mut self,
-        _sql: &str,
+        sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
-        let control = classify_transaction_control_stmt(stmt);
-        if control.is_some() {
-            self.session.restore_statement_variables();
+        let observed = classify_transaction_control_stmt(stmt).is_some();
+        if observed {
+            self.session.begin_routed_statement_observation(sql, stmt);
         }
-        // Refused BEFORE the driver session is touched, which is the whole
-        // point: `Session::control_transaction` sets `in_transaction` for any
-        // BEGIN spelling, so honoring the refusal afterwards would leave the
-        // session inside a transaction that this node never opened -- no
-        // `self.explicit`, so every following statement reads at a fresh
-        // timestamp, its writes stay in the buffer, and its COMMIT publishes
-        // without a conflict check. The read-only node already refuses here
-        // (`real_tikv_node`); this one used to fall through an empty arm.
-        if let Some(TransactionControl::Unsupported(feature)) = control {
-            return Err(SqlQueryError::unknown(format!(
-                "{feature} is not supported yet"
-            )));
-        }
-        // Go's `BEGIN` inside an open transaction implicitly COMMITS it --
-        // and the commit must run BEFORE the schema refresh below, in Go's
-        // own order. The refresh replaces the session's shared catalog, and
-        // the driver session's commit checks that the catalog it opened on
-        // is the one it is committing into; refreshing first turned every
-        // implicit commit after a mid-run statistics republish into a
-        // phantom "Write conflict" at `BEGIN` (sysbench abandons a
-        // transaction on an ignorable 1213 and just issues the next BEGIN,
-        // which is exactly this shape).
-        if matches!(control, Some(TransactionControl::Begin { .. }))
-            && self.session.in_transaction()
-        {
+        let result = self.control_transaction_parsed_inner(sql, stmt);
+        if observed {
             self.session
-                .control_transaction("COMMIT")
-                .map_err(map_error)?;
-            self.commit_explicit()?;
+                .finish_routed_statement_observation(result.is_ok(), 0);
         }
-        // The refresh happens BEFORE the driver session pins its own schema
-        // view for the transaction: Go activates a transaction with the
-        // LATEST schema at start (`domain.GetSnapshotInfoSchema(startTS)`),
-        // so a table committed before BEGIN is visible to every statement of
-        // the new transaction, on a connection of any age.
-        if matches!(control, Some(TransactionControl::Begin { .. })) {
-            self.rebuild_catalog_now();
-        }
-        let state = self
-            .session
-            .control_transaction_stmt(stmt)
-            .map_err(map_error)?;
-        let Some(in_transaction) = state else {
-            return Ok(None);
-        };
-        match control {
-            Some(TransactionControl::Commit) => self.commit_explicit()?,
-            Some(TransactionControl::Rollback) => self.discard_explicit()?,
-            // A BEGIN drops the staged writes too: a leftover buffer at that
-            // point could only come from a statement outside any transaction
-            // whose autocommit already published it. Then it takes the one
-            // timestamp every statement of the new transaction reads at, and
-            // that its COMMIT will prewrite at.
-            Some(TransactionControl::Begin { .. }) => {
-                self.discard_explicit()?;
-                // NO refresh here, deliberately. The refresh for this BEGIN
-                // already ran above, BEFORE `session.control_transaction`
-                // pinned the driver transaction's `base_version` -- one
-                // refresh, then both pins, which is Go's shape (one
-                // `GetSnapshotInfoSchema(startTS)` per activation). A second
-                // rebuild HERE ran after that pin, so a reload or statistics
-                // republish landing in the microseconds between them swapped
-                // the connection's catalog under the just-opened transaction
-                // -- whose COMMIT then failed the base-version guard with a
-                // phantom 9007. Receipted live by the guard probe under rung
-                // 8: `shared_version:86, base_version:1910` -- a freshly
-                // rebuilt catalog (counter restarted) against a pin taken on
-                // the long-lived one, once per run, exactly one thread.
-                let resource_group = self.session.current_resource_group().to_owned();
-                self.open_explicit(&resource_group)?;
-            }
-            Some(
-                control @ (TransactionControl::Savepoint(_)
-                | TransactionControl::RollbackToSavepoint(_)
-                | TransactionControl::ReleaseSavepoint(_)),
-            ) => self.apply_savepoint(&control)?,
-            // Refused above, before the session was touched.
-            Some(TransactionControl::Unsupported(_)) | None => {}
-        }
-        // The control path bypasses the ordinary statement pipeline's finish
-        // publish, so the process row still carried the previous statement's
-        // status (`in transaction; autocommit` after a `ROLLBACK`). Refresh it
-        // from the live session state, Go's OK-packet status word.
-        self.session.refresh_process_status();
-        Ok(Some(in_transaction))
+        result
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
@@ -6989,96 +7079,69 @@ impl QuerySession for ClusterServerSession {
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
         match self.schema_route(stmt)? {
-            StatementRoute::Ddl(statement) => return self.run_ddl(sql, &statement).map(Some),
-            StatementRoute::LocalTemporaryDdl => {
-                return self.run_local_temporary_ddl(sql).map(Some);
+            StatementRoute::Ddl(statement) => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, &statement))
+                    .map(Some)
             }
-            StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
-            StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
-            StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
+            StatementRoute::LocalTemporaryDdl => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql))
+                    .map(Some);
+            }
+            StatementRoute::Accounts => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))
+                    .map(Some)
+            }
+            StatementRoute::GlobalVars => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))
+                    .map(Some)
+            }
+            StatementRoute::Analyze(tables) => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
+                    .map(Some)
+            }
             StatementRoute::LoadStats => {
                 return Err(SqlQueryError::unknown(
                     "LOAD STATS requires client-local file transfer",
                 ))
             }
             StatementRoute::FlushStatsDelta(targets) => {
-                return self.run_flush_stats_delta(&targets).map(Some);
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))
+                    .map(Some);
             }
             StatementRoute::StatsLock(statement) => {
-                return self.run_stats_lock(&statement).map(Some)
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))
+                    .map(Some)
             }
             StatementRoute::Ordinary => {}
         }
-        if self
-            .session
-            .apply_set_stmt(stmt)
-            .map_err(map_error)?
-            .is_some()
+        if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
         {
-            // A `SET` takes no snapshot, so it does not go through
-            // `with_statement` -- but `SET autocommit = 1` ends the open
-            // transaction from the inside, and that has to be published here
-            // too or the write waits for a statement that may never come.
-            self.commit_if_session_left_transaction()?;
-            return Ok(Some(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            }));
+            let outcome = self.observe_routed_write(sql, stmt, |node| {
+                node.session.apply_set_stmt(stmt).map_err(map_error)?;
+                // SET autocommit=1 may commit the open transaction without
+                // entering the snapshot/executor path.
+                node.commit_if_session_left_transaction()?;
+                Ok(WriteOutcome {
+                    affected_rows: 0,
+                    last_insert_id: 0,
+                })
+            })?;
+            return Ok(Some(outcome));
         }
         if self.session.statement_kind_parsed(stmt) != StmtKind::Write {
             return Ok(None);
         }
-        let owned = sql.to_owned();
-        let resource_group = self.session.statement_resource_group(stmt).into_owned();
-        let prelock_keys = self.session.statement_prelock_keys(stmt, &[]);
-        // A write declares nothing. Its read-before-write reaches the snapshot
-        // as the same `get` a point-get SELECT issues, which is exactly why the
-        // declaration is made from the statement rather than from the read.
-        //
-        // Go's pessimistic point write also folds its row read INTO its lock
-        // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:612-624`)
-        // -- and the text protocol carries that fold too, because a client-side
-        // prepared driver (Connector/J without `useServerPrepStmts`) sends the
-        // very statements the prepared path folds as plain COM_QUERY. The
-        // classified keys are locked WITH their rows before any read exists;
-        // the statement's read then answers from the lock response exactly as
-        // in [`Self::execute_general`]'s prepared arm.
-        let read_keys = self.storage.read_keys();
-        let attempt_read_keys = read_keys.clone();
-        let affected_rows = match self.with_prelocked_statement(
-            StatementReadShape::Unknown,
-            |_session| prelock_keys.clone(),
-            &resource_group,
-            move |session| {
-                attempt_read_keys.begin();
-                match session
-                    .run_parsed(stmt.clone(), &owned)
-                    .map_err(map_error)?
-                {
-                    StmtResult::Affected(count) => Ok(count),
-                    StmtResult::Done(_) => Ok(0),
-                    StmtResult::Rows(_) => Err(SqlQueryError::unknown(
-                        "a write statement unexpectedly produced rows",
-                    )),
-                }
-            },
-        ) {
-            Ok(affected_rows) => affected_rows,
-            Err(error) => {
-                read_keys.cancel();
-                return Err(error);
-            }
-        };
-        let processed_keys = read_keys.finish().len() as i64;
-        if affected_rows > 0 && processed_keys > 0 {
-            self.session
-                .txn_write_throughput_sli()
-                .add_read_keys(processed_keys);
-        }
-        Ok(Some(WriteOutcome {
-            affected_rows,
-            last_insert_id: self.session.statement_insert_id(),
-        }))
+        self.observe_routed_write(sql, stmt, |node| {
+            node.execute_ordinary_write_parsed(sql, stmt)
+        })
+        .map(Some)
     }
 
     /// The catalog is refreshed first so a schema another node created since
@@ -7187,7 +7250,10 @@ impl QuerySession for ClusterServerSession {
         // transaction-control route.
         if statement.template().is_none() && classify_transaction_control(statement.sql()).is_some()
         {
-            self.control_transaction(statement.sql())?;
+            self.session.set_binary_prepared_execution(true);
+            let result = self.control_transaction(statement.sql());
+            self.session.set_binary_prepared_execution(false);
+            result?;
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,
@@ -7198,57 +7264,19 @@ impl QuerySession for ClusterServerSession {
         // parse the same SQL text on every EXECUTE (visible in YCSB insert
         // samples); only routed statements without a retained template need
         // the SQL route at execute time.
-        let route = if statement.template().is_some() {
-            StatementRoute::Ordinary
-        } else {
-            // A routed command retained only its text (no template), so it
-            // is parsed here, once, for its route.
+        if statement.template().is_none() {
+            // prepare_general retains only text for dedicated routes. Parse
+            // once and use the same completion/durability owner as COM_QUERY.
             let parsed = self
                 .session
                 .parse_statement(statement.sql())
                 .map_err(map_error)?;
-            self.schema_route(&parsed)?
-        };
-        match route {
-            StatementRoute::Ddl(ddl) => {
-                return self
-                    .run_ddl(statement.sql(), &ddl)
-                    .map(GeneralExecuteOutcome::Write)
+            self.session.set_binary_prepared_execution(true);
+            let result = self.execute_write_parsed(statement.sql(), &parsed);
+            self.session.set_binary_prepared_execution(false);
+            if let Some(outcome) = result? {
+                return Ok(GeneralExecuteOutcome::Write(outcome));
             }
-            StatementRoute::LocalTemporaryDdl => {
-                return self
-                    .run_local_temporary_ddl(statement.sql())
-                    .map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::Accounts => {
-                return self
-                    .run_account_statement(statement.sql())
-                    .map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::GlobalVars => {
-                return self
-                    .run_global_var_statement(statement.sql())
-                    .map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::Analyze(tables) => {
-                return self.run_analyze(&tables).map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::LoadStats => {
-                return Err(SqlQueryError::unknown(
-                    "LOAD STATS requires client-local file transfer",
-                ))
-            }
-            StatementRoute::FlushStatsDelta(targets) => {
-                return self
-                    .run_flush_stats_delta(&targets)
-                    .map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::StatsLock(statement) => {
-                return self
-                    .run_stats_lock(&statement)
-                    .map(GeneralExecuteOutcome::Write)
-            }
-            StatementRoute::Ordinary => {}
         }
         // Bind and classify against the catalog and transaction that this
         // execution will use, not the state preceding the statement refresh.
@@ -7429,6 +7457,13 @@ impl QuerySession for ClusterServerSession {
         }
         let write_read_keys = is_write.then(|| self.storage.read_keys());
         let attempt_read_keys = write_read_keys.clone();
+        // Session finishes its scratch execution inside the durable storage
+        // attempt. Retain one observation until commit/retry has completed.
+        let observed_write = is_write && effective.is_some();
+        if let Some(stmt) = effective.filter(|_| is_write) {
+            self.session
+                .begin_prepared_routed_statement_observation(&sql, stmt);
+        }
         self.session.set_binary_prepared_execution(true);
         let attempt =
             self.with_prelocked_statement(shape, bind_prelock_keys, &resource_group, |session| {
@@ -7463,6 +7498,14 @@ impl QuerySession for ClusterServerSession {
                 }
             });
         self.session.set_binary_prepared_execution(false);
+        if observed_write {
+            let affected_rows = match &attempt {
+                Ok(StmtOutput::Affected(count)) => *count,
+                _ => 0,
+            };
+            self.session
+                .finish_routed_statement_observation(attempt.is_ok(), affected_rows);
+        }
         let output = match attempt {
             Ok(output) => output,
             Err(error) => {
@@ -7552,31 +7595,31 @@ impl QuerySession for ClusterServerSession {
         // statement runs exactly once either way.
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
-                self.run_ddl(sql, &statement)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, &statement))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::LocalTemporaryDdl => {
-                self.run_local_temporary_ddl(sql)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::Accounts => {
-                self.run_account_statement(sql)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::GlobalVars => {
-                self.run_global_var_statement(sql)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::Analyze(tables) => {
-                self.run_analyze(&tables)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
@@ -7587,13 +7630,13 @@ impl QuerySession for ClusterServerSession {
                 ))
             }
             StatementRoute::FlushStatsDelta(targets) => {
-                self.run_flush_stats_delta(&targets)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::StatsLock(statement) => {
-                self.run_stats_lock(&statement)?;
+                self.observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

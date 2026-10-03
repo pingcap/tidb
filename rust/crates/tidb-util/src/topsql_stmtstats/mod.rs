@@ -84,9 +84,9 @@ mod stmtstats;
 mod test_support;
 
 pub use aggregator::{
-    bind_ru_version_provider, close_aggregator, register_collector, register_ru_collector,
-    setup_aggregator, unregister_collector, unregister_ru_collector, Aggregator, Collector,
-    RuCollector, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
+    bind_ru_version_provider, close_aggregator, global_aggregator, register_collector,
+    register_ru_collector, setup_aggregator, unregister_collector, unregister_ru_collector,
+    Aggregator, Collector, RuCollector, MAX_RU_KEYS_PER_AGGREGATE, MAX_STMT_STATS_SIZE,
 };
 pub use kv_exec_count::{KvExecCounter, RpcInterceptor, KV_EXEC_COUNTER_INTERCEPTOR_NAME};
 pub use rustats::{

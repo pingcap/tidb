@@ -297,6 +297,7 @@ impl Session {
                     return Err(mapped);
                 }
             };
+        self.observe_statement_node(&stmt, false);
         self.install_statement_warning_state(&stmt, previous);
         // go's recoverable parser diagnostics land as warning rows AFTER the
         // context reset: the `[parser:8061]`-prefixed hint refusals decode
@@ -328,6 +329,7 @@ impl Session {
     /// the front end already parsed: Go parses a command once
     /// (`session.ParseSQL`) and every later step reads that node.
     pub(crate) fn begin_text_statement_boundary(&mut self, stmt: &Stmt) {
+        self.observe_statement_node(stmt, false);
         // The front end's own parse already opened the boundary
         // (`parse_at_statement_boundary`); a second open would take the
         // (already-empty) buffer and reset the counts the first boundary
@@ -348,6 +350,7 @@ impl Session {
         stmt: &Stmt,
         parameters: Option<std::sync::Arc<[Datum]>>,
     ) {
+        self.observe_statement_node(stmt, true);
         self.prepared_params = parameters;
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);

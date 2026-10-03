@@ -242,6 +242,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     tidb_dxf::metrics::init_dashboard_series();
     tidb_stmtsummary::metrics::init_dashboard_series();
     tidb_util::topsql_reporter::metrics::init_metrics_vars();
+    let _statement_observation_cleanup = start_statement_observation();
     tidb_txnkv::client_go_metrics::init_dashboard_series();
     if config.store_kind == node_config::StoreKind::Unistore {
         // Go: `session.RegisterStore("unistore", mockstore.EmbedUnistoreDriver{})`
@@ -253,6 +254,35 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         );
     }
     run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
+}
+
+// The process, rather than an individual session or store, owns these workers.
+// This guard outlives both store runners and flushes after connections close.
+struct StatementObservationCleanup;
+
+fn start_statement_observation() -> StatementObservationCleanup {
+    let config = tidb_config::config_tree::config::get_global_config();
+    let instance = &config.instance;
+    if instance.stmt_summary_enable_persistent {
+        let summary_config = tidb_stmtsummary::v2::stmtsummary::Config {
+            filename: instance.stmt_summary_filename.clone(),
+            file_max_size: instance.stmt_summary_file_max_size,
+            file_max_days: instance.stmt_summary_file_max_days,
+            file_max_backups: instance.stmt_summary_file_max_backups,
+        };
+        if let Err(error) = tidb_stmtsummary::v2::stmtsummary::setup(&summary_config) {
+            eprintln!("{error}");
+        }
+    }
+    tidb_util::topsql_stmtstats::setup_aggregator();
+    StatementObservationCleanup
+}
+
+impl Drop for StatementObservationCleanup {
+    fn drop(&mut self) {
+        tidb_util::topsql_stmtstats::close_aggregator();
+        tidb_stmtsummary::v2::stmtsummary::close();
+    }
 }
 
 struct TempDirCleanup;

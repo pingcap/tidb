@@ -294,6 +294,17 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
     let config = tidb_config::config_tree::config::get_global_config();
     let instance = &config.instance;
     match def.name {
+        "tidb_stmt_summary_enable_persistent" => Some(if instance.stmt_summary_enable_persistent {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        "tidb_stmt_summary_filename" => Some(instance.stmt_summary_filename.clone()),
+        "tidb_stmt_summary_file_max_days" => Some(instance.stmt_summary_file_max_days.to_string()),
+        "tidb_stmt_summary_file_max_size" => Some(instance.stmt_summary_file_max_size.to_string()),
+        "tidb_stmt_summary_file_max_backups" => {
+            Some(instance.stmt_summary_file_max_backups.to_string())
+        }
         "tidb_general_log" => Some(if instance.tidb_general_log {
             "ON".to_owned()
         } else {

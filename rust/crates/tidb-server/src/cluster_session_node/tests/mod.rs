@@ -7,6 +7,7 @@
 mod mock_cluster;
 mod mock_seams;
 mod node_fixture;
+mod observation_batch;
 
 mod accounts;
 mod autocommit_transactions;

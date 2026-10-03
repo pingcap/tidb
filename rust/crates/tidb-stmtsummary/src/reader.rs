@@ -441,7 +441,7 @@ pub const AVG_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "AVG_ROCKSDB_BLOCK_READ_BYTE";
 /// Go `MaxRocksdbBlockReadByteStr`.
 pub const MAX_ROCKSDB_BLOCK_READ_BYTE_STR: &str = "MAX_ROCKSDB_BLOCK_READ_BYTE";
 /// Go `IAExecCountStr`.
-pub const IA_EXEC_COUNT_STR: &str = "IA_REMOTE_EXEC_COUNT";
+pub const IA_EXEC_COUNT_STR: &str = "IA_EXEC_COUNT";
 /// Go `AvgIARemoteReadSegmentCountStr`.
 pub const AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR: &str = "AVG_IA_REMOTE_READ_SEGMENT_COUNT";
 /// Go `MaxIARemoteReadSegmentCountStr`.

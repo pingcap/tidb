@@ -289,8 +289,9 @@ pub fn decide_summary_stmt(gate: &SummaryGate) -> SummaryAction {
 // reads ~30 session/stmt-context fields (`stmtCtx.SQLDigest`,
 // `stmtCtx.CopTasksSummary`, `sessVars.MemTracker`, `GetPlanDigest`,
 // `keyspace.GetKeyspaceNameBySettings`, `calculateStatementTotalRUV2`, ...).
-// The summary sink itself lives in the `tidb-stmtsummary` crate; only the
-// trigger conditions above are dependency-closed today.
+// The summary sink lives in `tidb-stmtsummary`. The live `tidb-session`
+// completion producer reuses `decide_summary_stmt`; detailed plan/RPC/phase
+// measurements remain explicit integration obligations, not package acceptance.
 
 // ---------------------------------------------------------------------------
 // FinishExecuteStmt accounting
