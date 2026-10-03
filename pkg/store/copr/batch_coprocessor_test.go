@@ -266,7 +266,7 @@ func TestDispatchPolicyRR(t *testing.T) {
 }
 
 func TestTopoFetcherBackoff(t *testing.T) {
-	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
 	expectErr := errors.New("Cannot find proper topo from AutoScaler")
 	var retryNum int
 	start := time.Now()
@@ -279,9 +279,9 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	}
 	dura := time.Since(start)
 	// fetchTopoMaxBackoff is milliseconds.
-	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
-	require.GreaterOrEqual(t, dura, 30*time.Second)
-	require.LessOrEqual(t, dura, 50*time.Second)
+	require.GreaterOrEqual(t, dura, 5*time.Second)
+	require.GreaterOrEqual(t, dura, 8*time.Second)
+	require.LessOrEqual(t, dura, 14*time.Second)
 }
 
 func TestGetAllUsedTiFlashStores(t *testing.T) {
