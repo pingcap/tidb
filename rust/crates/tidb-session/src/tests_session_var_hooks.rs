@@ -117,7 +117,7 @@ fn session_getter_functions_read_live_defaults() {
     assert_eq!(one(&mut session, "SELECT @@tidb_last_txn_info"), "");
     assert_eq!(
         one(&mut session, "SELECT @@tidb_last_query_info"),
-        "{\"txn_scope\":\"\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+        "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0,\"ru_v2_consumption\":0}"
     );
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_cache"), "0");
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_binding"), "0");

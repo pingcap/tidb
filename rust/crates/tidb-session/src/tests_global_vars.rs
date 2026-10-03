@@ -553,7 +553,7 @@ fn memory_limit_global_values_are_canonicalized_like_go() {
     let error = session
         .run("SET GLOBAL tidb_server_memory_limit_gc_trigger = '100%'")
         .expect_err("Go rejects the percent parser's 100% boundary");
-    assert_eq!(error.to_mysql_error().code, 1231);
+    assert_eq!(error.to_mysql_error().code, 1105);
     assert_eq!(
         scalar_text(
             &mut session,
@@ -593,33 +593,24 @@ fn remaining_optimizer_defaults_match_go() {
 }
 
 /// Transcreated from Go `TestTiDBTraceEventSysVar`: a valid JSON GLOBAL
-/// assignment starts the process recorder with the requested categories and
-/// sampling trigger, while an empty assignment closes it.
+/// assignment is refused on the classic kernel without starting a recorder.
+/// The X-kernel success branch remains an upstream obligation.
 #[test]
-fn trace_event_global_sysvar_controls_the_flight_recorder() {
+fn trace_event_global_sysvar_is_refused_on_the_classic_kernel() {
     if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
         recorder.close();
     }
     let (mut session, _, _) = two_sessions_sharing_globals();
-    session
+    let error = session
         .run(
             r#"SET GLOBAL tidb_trace_event = '{"enabled_categories":["*"],"dump_trigger":{"type":"sampling","sampling":1}}'"#,
         )
-        .unwrap();
-    let recorder = tidb_util::traceevent::get_flight_recorder().expect("recorder started");
-    assert_eq!(
-        recorder.config,
-        tidb_util::traceevent::FlightRecorderConfig {
-            enabled_categories: vec!["*".to_owned()],
-            dump_trigger: tidb_util::traceevent::DumpTriggerConfig {
-                kind: "sampling".to_owned(),
-                sampling: 1,
-                ..Default::default()
-            },
-        }
-    );
-    session.run("SET GLOBAL tidb_trace_event = ''").unwrap();
+        .expect_err("Go's classic kernel refuses trace-event assignments")
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert!(error.message.contains("can only be set for TiDB X kernel"));
     assert!(tidb_util::traceevent::get_flight_recorder().is_none());
+    assert!(session.run("SET GLOBAL tidb_trace_event = ''").is_err());
 }
 
 /// Transcreated from the real sysvar portion of Go `TestMockAPI`: the

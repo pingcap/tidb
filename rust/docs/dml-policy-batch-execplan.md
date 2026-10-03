@@ -30,7 +30,7 @@ Go table AddRecord asserts Unknown for an optimistic lazy absence check, while c
 
 ## Outcomes & Retrospective
 
-E03 and T01 are partial. Five behavioral failures are repaired, while complete planner/matrix/system-index/pessimistic lifecycles remain. Registers agree: 58 unresolved (44 open, fourteen partial), 28 repaired. Wider driver/DDL runs have twelve/five failures reproduced with pre-batch subsystem behavior; they are not deleted or misreported as passing. Final all-target/hook and local retention are pending.
+E03 and T01 are partial. Eleven behavioral failures are repaired, while complete planner/matrix/system-index/pessimistic lifecycles remain. Registers agree: 58 unresolved (44 open, fourteen partial), 28 repaired. Wider driver/DDL runs have twelve/five failures reproduced with pre-batch subsystem behavior; they are not deleted or misreported as passing. Affected all-target checking, lint and enabled source-commit hooks passed. Production wire checks exposed and drove the final text-command recovery repair; its final check and local retention remain pending.
 
 ## Context and Orientation
 
@@ -58,4 +58,13 @@ Logs and exact baseline failure names go under /workspace/.cloud-setup/dml-batch
 
 ## Interfaces and Dependencies
 
-Use existing Executor, StatementMemory, WriteMemory, BufferMutation and AssertionOp. No dependency version changes or new Go files are needed. The row visitor returns DriverError and runs before the next physical chunk. Metadata setters must preserve independent flags and assertions rather than inventing table policy in KV.
+Use existing Executor, StatementMemory, WriteMemory, BufferMutation and AssertionOp. No dependency versions or Go files change. Session adds a direct dependency on the existing tidb-expr owner; its lock entry records that edge only. The row visitor returns DriverError and runs before the next physical chunk. Metadata setters must preserve independent flags and assertions rather than inventing table policy in KV.
+
+
+The next wire run correctly cancelled DML but could not reset its quota through SET. The text parse boundary now retires the preceding authority even for SET/control routes that bypass execution. SET literal evaluation uses the existing scalar evaluator directly, following Go SetExecutor rather than constructing a SELECT result under the old tiny quota. Complex expression/subquery SET evaluation retains its existing path; full SET owner parity is not claimed. A third owner/recovery regression fails before this final repair.
+
+
+The existing Go-based user-variable test exposed a skipped bare-word SET policy on the pre-bound multi-assignment path. That policy now lives in the common bound-value evaluator, covering both ordinary and pre-bound assignments without duplicating evaluation semantics. Final quota/lifecycle/user-variable/hooks/global-variable checks run as one libtest invocation with multiple filters.
+
+
+Expanded SET/config validation discovers two genuine duplicate policies: an early float-only check blocks Go's valid GC-trigger percentage fallback, and an early session packet branch skips canonical upper-bound warnings. Both duplicate branches are removed; shared validation retains Go's parse-error behavior for invalid percentages. N03 remains partial. Two stale/harmful test expectations are corrected against live Go: classic kernels refuse flight recording, and query-info after completed statements includes global txn scope and RU v2 JSON. X-kernel success remains an upstream obligation, not an unsupported feature added here.

@@ -718,13 +718,6 @@ impl SysVarDef {
                 "can only be set for TiDB X kernel".to_owned(),
             ));
         }
-        // go `ValidateGetOriginValue` parses the trigger as a float and
-        // surfaces strconv's own error verbatim (1105).
-        if self.name == "tidb_server_memory_limit_gc_trigger" && value.parse::<f64>().is_err() {
-            return Err(ValidationError::Refused(format!(
-                "strconv.ParseFloat: parsing {value:?}: invalid syntax"
-            )));
-        }
         if self.name == "tidb_gogc_tuner_threshold" {
             let float_value = value.parse::<f64>().unwrap_or(0.6);
             return Ok(Validated {
@@ -1040,16 +1033,23 @@ impl SysVarDef {
         if self.name == "tidb_server_memory_limit_gc_trigger" {
             let text = validated.value.trim();
             let fraction = if let Some(percent) = text.strip_suffix('%') {
-                let percent = percent
-                    .parse::<u64>()
-                    .map_err(|_| ValidationError::WrongValue)?;
+                let percent = percent.parse::<u64>().map_err(|_| {
+                    ValidationError::Refused(format!(
+                        "strconv.ParseFloat: parsing {text:?}: invalid syntax"
+                    ))
+                })?;
                 if percent == 0 || percent >= 100 {
-                    return Err(ValidationError::WrongValue);
+                    return Err(ValidationError::Refused(format!(
+                        "strconv.ParseFloat: parsing {text:?}: invalid syntax"
+                    )));
                 }
                 percent as f64 / 100.0
             } else {
-                text.parse::<f64>()
-                    .map_err(|_| ValidationError::WrongValue)?
+                text.parse::<f64>().map_err(|_| {
+                    ValidationError::Refused(format!(
+                        "strconv.ParseFloat: parsing {text:?}: invalid syntax"
+                    ))
+                })?
             };
             if !fraction.is_finite() || fraction < 0.51 || fraction > 1.0 {
                 return Err(ValidationError::WrongValue);
@@ -2685,8 +2685,11 @@ mod tests {
                 .value,
             "0.51"
         );
-        assert_eq!(sv.validate("100%"), Err(ValidationError::WrongValue));
-        assert_eq!(sv.validate("101%"), Err(ValidationError::WrongValue));
+        for value in ["100%", "101%"] {
+            assert!(
+                matches!(sv.validate(value), Err(ValidationError::Refused(message)) if message.contains("strconv.ParseFloat"))
+            );
+        }
         assert_eq!(sv.validate("0.5"), Err(ValidationError::WrongValue));
     }
 

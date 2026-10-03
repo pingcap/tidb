@@ -29,6 +29,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }

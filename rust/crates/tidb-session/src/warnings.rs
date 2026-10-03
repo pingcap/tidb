@@ -272,6 +272,11 @@ impl Session {
     /// parse clearing it, which is what Go's failed parse does by never
     /// reaching the copy.
     pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
+        // Text SET/control routes can bypass begin_statement_execution.
+        // Retire their predecessor before evaluating the new command.
+        if let Some(previous) = self.statement_result_authority.get_mut().take() {
+            previous.statement_memory().finish_statement();
+        }
         self.prepared_params = None;
         self.statement_boundary_open = true;
         let previous = std::mem::take(&mut self.warnings);

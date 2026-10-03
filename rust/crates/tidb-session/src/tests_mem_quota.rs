@@ -517,3 +517,31 @@ fn dml_batch_live_quota_cancels_all_physical_write_sources_without_changes() {
         );
     }
 }
+
+#[test]
+fn dml_batch_text_set_after_oom_retires_the_previous_statement() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,42)").unwrap();
+    session.run("SET tidb_mem_quota_query=1").unwrap();
+    assert_eq!(
+        session
+            .run("UPDATE t SET v=v+1")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        8175
+    );
+    let stmt = session
+        .parse_at_statement_boundary("SET tidb_mem_quota_query=1073741824")
+        .unwrap();
+    session
+        .apply_set_stmt(&stmt)
+        .expect("the next text command must recover from the preceding OOM");
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT id,v FROM t")),
+        vec![vec!["1".to_owned(), "42".to_owned()]]
+    );
+}

@@ -436,30 +436,6 @@ impl Session {
         if is_global {
             self.require_set_global_privilege()?;
         }
-        // go `SetExecutor`: max_allowed_packet is SESSION-read-only — any
-        // session-scope assignment (including `= DEFAULT`) answers
-        // ErrReadOnlyVariable (1621) naming the variable. go validates the
-        // value BEFORE the scope refusal: a value below the 1024 floor
-        // truncates (1292) and both the warning row and the error land
-        // (oracle-captured on m6-accept).
-        if assignment.name.eq_ignore_ascii_case("max_allowed_packet") && !is_global {
-            if let tidb_ast::SetVariableValue::Expr(expr) = &assignment.value {
-                if let tidb_ast::Expr::Int(text) | tidb_ast::Expr::String(text) = expr {
-                    if text.parse::<i64>().is_ok_and(|value| value < 1024) {
-                        self.append_warning(
-                            crate::WarningLevel::Warning,
-                            1292,
-                            format!("Truncated incorrect max_allowed_packet value: '{text}'"),
-                        );
-                    }
-                }
-            }
-            return Err(DriverError::Var(
-                tidb_executor::VarErrorKind::SessionScopeIsReadOnly(
-                    "max_allowed_packet".to_owned(),
-                ),
-            ));
-        }
         self.require_sem_writable_sysvar(&assignment.name)?;
         // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
         // unqualified/SESSION reaches the tier only through the legacy
@@ -1212,15 +1188,6 @@ impl Session {
     /// user-facing query gets, for the same reason: the rewriter behind
     /// `run_select_on` knows literals and columns, not session state.
     pub(crate) fn eval_value(&mut self, expr: &tidb_ast::Expr) -> Result<Datum, DriverError> {
-        // An unquoted identifier is a bare word value such as `SET sql_mode =
-        // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally
-        // (`SET @x = ANSI_QUOTES` stores the string too, confirmed via
-        // `gorun`).
-        if let tidb_ast::Expr::Column(path) = expr {
-            if let [word] = path.as_slice() {
-                return Ok(Datum::new_string(word.clone()));
-            }
-        }
         let bound = self.bind_variables_in(expr)?;
         self.eval_bound_value(&bound)
     }
@@ -1229,6 +1196,33 @@ impl Session {
     /// [`Self::eval_value`] so a multi-assignment `SET` can bind every
     /// expression against the PRE-statement variable state first.
     fn eval_bound_value(&mut self, bound: &tidb_ast::Expr) -> Result<Datum, DriverError> {
+        // An unquoted identifier is a bare word value such as `SET sql_mode =
+        // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally
+        // (`SET @x = ANSI_QUOTES` stores the string too, confirmed via
+        // `gorun`).
+        if let tidb_ast::Expr::Column(path) = bound {
+            if let [word] = path.as_slice() {
+                return Ok(Datum::new_string(word.clone()));
+            }
+        }
+        // Go SetExecutor evaluates constants directly, without allocating a
+        // SELECT result under the previous query quota. In particular, SET
+        // must be able to raise a quota after a cancelled query.
+        if matches!(
+            bound,
+            tidb_ast::Expr::Int(_)
+                | tidb_ast::Expr::Decimal(_)
+                | tidb_ast::Expr::Float(_)
+                | tidb_ast::Expr::Hex(_)
+                | tidb_ast::Expr::Bit(_)
+                | tidb_ast::Expr::String(_)
+                | tidb_ast::Expr::RawString(_)
+                | tidb_ast::Expr::Bool(_)
+                | tidb_ast::Expr::Null
+        ) {
+            return tidb_expr::eval(bound)
+                .map_err(|error| DriverError::Exec(tidb_executor::ExecError::Eval(error)));
+        }
         // A scalar subquery value runs as its own SELECT: Go's executor
         // evaluates the subplan and enforces the one-row scalar contract
         // (1242 on more than one row, NULL on none). The surrounding

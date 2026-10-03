@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-The [DML policy batch](dml-policy-batch-repair.md) advances **E03 and T01 together** to partial: physical row consumption/early quota/cleanup and explicit caller-owned absence/assertion metadata. **58 unresolved (44 open, fourteen partial), 28 repaired, 86 tracked.** Complete planner/matrix/system-index/pessimistic owners remain open; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
+The [DML policy batch](dml-policy-batch-repair.md) advances **E03 and T01 together** to partial: physical row consumption/early quota/cleanup, shared statement retirement/recovery and explicit caller-owned absence/assertion metadata. The connected SET/config checks remove duplicate GC-trigger/packet validation under N03, which remains partial, and correct stale classic-kernel/query-info tests. **58 unresolved (44 open, fourteen partial), 28 repaired, 86 tracked.** Complete planner/matrix/system-index/pessimistic owners remain open; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
 
 The MPP checkpoint below is historical.
 
