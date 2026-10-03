@@ -1,0 +1,57 @@
+[
+  {
+    "Name": "TestLogicalExpandBuildKeyInfo",
+    "Cases": [
+      {
+        "SQL": "SELECT * FROM (   SELECT     SUM(IFNULL(pay.payamt, 0)) AS payamt,     SUM(IFNULL(ret.retamt, 0)) AS retamt,     GROUPING(org.org_type) AS grouptype,     org.org_type,     GROUPING(org.org_id) AS groupid,     org.org_id,     org.org_name   FROM testorg org   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS payamt,       org_id     FROM testpay tp     WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) pay ON pay.org_id = org.org_id   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS retamt,       org_id     FROM testreturn tr     WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) ret ON ret.org_id = org.org_id   GROUP BY org.org_type, org.org_id WITH ROLLUP ) t WHERE groupid = 1 AND grouptype = 1;",
+        "Plan": [
+          "Projection 6400.00 root  Column#18->Column#22, Column#19->Column#23, grouping(gid)->Column#24, Column#15->Column#25, grouping(gid)->Column#26, Column#16->Column#27, test.testorg.org_name",
+          "└─HashAgg 6400.00 root  group by:Column#45, Column#46, Column#47, funcs:sum(Column#42)->Column#18, funcs:sum(Column#43)->Column#19, funcs:firstrow(Column#44)->test.testorg.org_name, funcs:firstrow(Column#45)->Column#15, funcs:firstrow(Column#46)->Column#16, funcs:firstrow(Column#47)->gid",
+          "  └─Projection 8000.00 root  ifnull(Column#9, 0.00)->Column#42, ifnull(Column#14, 0.00)->Column#43, test.testorg.org_name->Column#44, Column#15->Column#45, Column#16->Column#46, gid->Column#47",
+          "    └─Selection 8000.00 root  eq(grouping(gid), 1), eq(grouping(gid), 1)",
+          "      └─Expand 10000.00 root  level-projection:[test.testorg.org_name, Column#9, Column#14, <nil>->Column#15, <nil>->Column#16, 0->gid],[test.testorg.org_name, Column#9, Column#14, Column#15, <nil>->Column#16, 1->gid],[test.testorg.org_name, Column#9, Column#14, Column#15, Column#16, 3->gid]; schema: [test.testorg.org_name,Column#9,Column#14,Column#15,Column#16,gid]",
+          "        └─Projection 10000.00 root  test.testorg.org_name, Column#9, Column#14, test.testorg.org_type->Column#15, test.testorg.org_id->Column#16",
+          "          └─HashJoin 10000.00 root  left outer join, left side:HashJoin, equal:[eq(test.testorg.org_id, test.testreturn.org_id)]",
+          "            ├─HashAgg(Build) 199.80 root  group by:test.testreturn.org_id, funcs:sum(Column#40)->Column#14, funcs:firstrow(test.testreturn.org_id)->test.testreturn.org_id",
+          "            │ └─TableReader 199.80 root  data:HashAgg",
+          "            │   └─HashAgg 199.80 cop[tikv]  group by:test.testreturn.org_id, funcs:sum(ifnull(test.testreturn.amt, 0.00))->Column#40",
+          "            │     └─Selection 249.75 cop[tikv]  ge(test.testreturn.ret_date, \"2024-06-01\"), le(test.testreturn.ret_date, \"2024-07-31\"), not(isnull(test.testreturn.org_id))",
+          "            │       └─TableFullScan 10000.00 cop[tikv] table:tr keep order:false, stats:pseudo",
+          "            └─HashJoin(Probe) 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.testorg.org_id, test.testpay.org_id)]",
+          "              ├─HashAgg(Build) 199.80 root  group by:test.testpay.org_id, funcs:sum(Column#38)->Column#9, funcs:firstrow(test.testpay.org_id)->test.testpay.org_id",
+          "              │ └─TableReader 199.80 root  data:HashAgg",
+          "              │   └─HashAgg 199.80 cop[tikv]  group by:test.testpay.org_id, funcs:sum(ifnull(test.testpay.amt, 0.00))->Column#38",
+          "              │     └─Selection 249.75 cop[tikv]  ge(test.testpay.pay_date, \"2024-06-01\"), le(test.testpay.pay_date, \"2024-07-31\"), not(isnull(test.testpay.org_id))",
+          "              │       └─TableFullScan 10000.00 cop[tikv] table:tp keep order:false, stats:pseudo",
+          "              └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "                └─TableFullScan 10000.00 cop[tikv] table:org keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "SELECT SUM(IFNULL(pay.payamt, 0)) AS payamt,     SUM(IFNULL(ret.retamt, 0)) AS retamt,     GROUPING(org.org_type) AS grouptype,     org.org_type,     GROUPING(org.org_id) AS groupid,     org.org_id,     org.org_name   FROM testorg org   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS payamt,       org_id     FROM testpay tp     WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) pay ON pay.org_id = org.org_id   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS retamt,       org_id     FROM testreturn tr     WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) ret ON ret.org_id = org.org_id   GROUP BY org.org_type, org.org_id WITH ROLLUP having  groupid = 1 AND grouptype = 1;",
+        "Plan": [
+          "Projection 6400.00 root  Column#18->Column#22, Column#19->Column#23, grouping(gid)->Column#24, Column#15->Column#25, grouping(gid)->Column#26, Column#16->Column#27, test.testorg.org_name",
+          "└─HashAgg 6400.00 root  group by:Column#38, Column#39, Column#40, funcs:sum(Column#35)->Column#18, funcs:sum(Column#36)->Column#19, funcs:firstrow(Column#37)->test.testorg.org_name, funcs:firstrow(Column#38)->Column#15, funcs:firstrow(Column#39)->Column#16, funcs:firstrow(Column#40)->gid",
+          "  └─Projection 8000.00 root  ifnull(Column#9, 0.00)->Column#35, ifnull(Column#14, 0.00)->Column#36, test.testorg.org_name->Column#37, Column#15->Column#38, Column#16->Column#39, gid->Column#40",
+          "    └─Selection 8000.00 root  eq(grouping(gid), 1), eq(grouping(gid), 1)",
+          "      └─Expand 10000.00 root  level-projection:[test.testorg.org_name, Column#9, Column#14, <nil>->Column#15, <nil>->Column#16, 0->gid],[test.testorg.org_name, Column#9, Column#14, Column#15, <nil>->Column#16, 1->gid],[test.testorg.org_name, Column#9, Column#14, Column#15, Column#16, 3->gid]; schema: [test.testorg.org_name,Column#9,Column#14,Column#15,Column#16,gid]",
+          "        └─Projection 10000.00 root  test.testorg.org_name, Column#9, Column#14, test.testorg.org_type->Column#15, test.testorg.org_id->Column#16",
+          "          └─HashJoin 10000.00 root  left outer join, left side:HashJoin, equal:[eq(test.testorg.org_id, test.testreturn.org_id)]",
+          "            ├─HashAgg(Build) 199.80 root  group by:test.testreturn.org_id, funcs:sum(Column#33)->Column#14, funcs:firstrow(test.testreturn.org_id)->test.testreturn.org_id",
+          "            │ └─TableReader 199.80 root  data:HashAgg",
+          "            │   └─HashAgg 199.80 cop[tikv]  group by:test.testreturn.org_id, funcs:sum(ifnull(test.testreturn.amt, 0.00))->Column#33",
+          "            │     └─Selection 249.75 cop[tikv]  ge(test.testreturn.ret_date, \"2024-06-01\"), le(test.testreturn.ret_date, \"2024-07-31\"), not(isnull(test.testreturn.org_id))",
+          "            │       └─TableFullScan 10000.00 cop[tikv] table:tr keep order:false, stats:pseudo",
+          "            └─HashJoin(Probe) 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.testorg.org_id, test.testpay.org_id)]",
+          "              ├─HashAgg(Build) 199.80 root  group by:test.testpay.org_id, funcs:sum(Column#31)->Column#9, funcs:firstrow(test.testpay.org_id)->test.testpay.org_id",
+          "              │ └─TableReader 199.80 root  data:HashAgg",
+          "              │   └─HashAgg 199.80 cop[tikv]  group by:test.testpay.org_id, funcs:sum(ifnull(test.testpay.amt, 0.00))->Column#31",
+          "              │     └─Selection 249.75 cop[tikv]  ge(test.testpay.pay_date, \"2024-06-01\"), le(test.testpay.pay_date, \"2024-07-31\"), not(isnull(test.testpay.org_id))",
+          "              │       └─TableFullScan 10000.00 cop[tikv] table:tp keep order:false, stats:pseudo",
+          "              └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "                └─TableFullScan 10000.00 cop[tikv] table:org keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]
