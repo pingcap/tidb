@@ -8,8 +8,9 @@ This living ExecPlan follows root PLANS.md. Disjoint TiFlash scan ranges must no
 - [x] Capture three fail-before exact-range/unrelated-region/delayed-stream regressions; they pass after repair.
 - [x] Compose canonical process PD/cache capabilities, shared traversal with I/O outside the cache lock, exact intersections, query lease, live pull stream, shared cancellation/quota and bounded cleanup.
 - [x] Validate 37 targeted Rust cases, five affected crates/all targets and root lint.
-- [ ] Pass the actual locked-server precommit hook and run the new binary wire smoke.
-- [ ] Update both finding registers and durable receipts, commit locally and preserve the recovery bundle/startup draft.
+- [x] Source commit 3b4a28ebdd7c1d008fcc139ad2c47fb884da8aca passes the actual locked-server precommit hook (1m28s); new binary real MySQL/unistore smoke passes and its fixture process is stopped/joined.
+- [x] Update both finding registers and durable receipts; commit source locally.
+- [x] Prepare the source hook/wire delivery receipt and normal-hook local follow-up; execute the exact-HEAD retention procedure below after that hook succeeds.
 
 ## Context and Orientation
 
@@ -39,4 +40,10 @@ Preserve concurrent repository changes. Tests use ephemeral joined gRPC fixtures
 
 ## Outcomes & Retrospective
 
-The three initial regressions now pass along with quota, kill, cleanup, EOF, shared-cache pagination/invalidation and identity tests. Five affected crates/all targets pass. Shared traversal and shutdown tests pass (fourteen plus three), and four executable MPP planner cases remain passing. Lint passes. Completion still requires the actual locked-server commit hook and final register/receipt delivery. No full package or live multi-node acceptance is claimed.
+The three initial regressions now pass along with quota, kill, cleanup, EOF, shared-cache pagination/invalidation and identity tests. Five affected crates/all targets pass. Shared traversal and shutdown tests pass (fourteen plus three), and four executable MPP planner cases remain passing. Lint passes. Source commit 3b4a28ebdd7c1d008fcc139ad2c47fb884da8aca passed the actual locked-server commit hook and new-binary wire smoke. Both registers and receipts are synchronized. The final local receipt is prepared. Its normal hook remains enforced; the delivery procedure retains its exact HEAD before reporting completion. No full package or live multi-node acceptance is claimed.
+
+Revision (2026-10-03): the source review migrated MPP to the canonical process PD/cache, retained a foreground cache lease through query cleanup, and exposed the existing background traversal with caller-owned backoff. Thirty empty planner shells are removed with all original obligations retained. Thirty-seven Rust cases, all-target checks and lint pass; source commit 3b4a28ebdd7c1d008fcc139ad2c47fb884da8aca also passes the actual locked build and wire smoke. Push remains forbidden.
+
+## Delivery retention procedure
+
+After the receipt-only normal commit succeeds, create /workspace/.cloud-setup/tidb-unpublished.pending.bundle with git bundle create over HEAD excluding origin/hparser-integration, b6520ebe83c992a34cf75dc7e381b1eef20e288f and ee637c3a3992dc6acb4a669e9a5dbba846573474. Verify the bundle, atomically replace tidb-unpublished.bundle and record its SHA256. Inspect every workspace Git marker (including dependency/scratch repositories and the invalid root marker); only tidb and client-rust are project declarations. Save both exact local HEADs and complete current startup instructions in the existing cloud configuration draft. Preserve its install/network settings. Do not push, finalize or claim a fresh-task restore. The final response must report whether this retention succeeded.

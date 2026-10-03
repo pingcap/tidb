@@ -188,12 +188,21 @@
       "log": "lint.log",
       "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
       "rust_cases": []
+    },
+    {
+      "command": "new-source tidb-server --store unistore plus stock PyMySQL authentication/SELECT/DDL/INSERT/read/drop smoke",
+      "result": "passed",
+      "log": "wire-smoke.log",
+      "sha256": "73562100ca5d231c25d5f68c87d1fa170934953a2ed0817e2bd6275f6e8f8aab",
+      "scope": "Real MySQL wire/unistore process; not live TiFlash or multi-node proof. Fixture server stopped and joined."
     }
   ],
   "commit_gate": {
     "command": "cd rust && cargo build --locked -p tidb-server",
     "actual_hook": "hooks/pre-commit",
-    "result": "pending_normal_commit_hook; delivery follow-up records outcome"
+    "result": "passed",
+    "log": "commit.log",
+    "sha256": "632655f358f4392b9ccc2f4bd2106381ff7d981de51a8eccab03cd8b1fb7764c"
   },
   "publication": {
     "push": "disabled by explicit user instruction; neither repository pushed",
@@ -209,5 +218,6 @@
     "shared gRPC TLS/security/dispatch/establish recovery",
     "full MPP graph, balancing, compute topology and package acceptance",
     "sysbench/TPC-C/TPC-H/YCSB measurements"
-  ]
+  ],
+  "source_commit": "3b4a28ebdd7c1d008fcc139ad2c47fb884da8aca"
 }
