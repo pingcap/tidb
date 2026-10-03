@@ -31,14 +31,21 @@ func BuildAlterTableModeJob(
 		return nil, nil, false, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(
 			target.CurrentMode, target.TargetMode, target.TableName.O)
 	}
-	if target.CurrentMode == target.TargetMode {
+	// A caller with ExpectedRevision set must always go through a real job:
+	// CurrentMode here is only a cache-freshness read (via infoschema), so
+	// skipping the job just because the mode already matches would let a
+	// stale caller (e.g. IMPORT INTO racing a concurrent schema change)
+	// slip through without ever having its Revision checked atomically in
+	// onAlterTableMode.
+	if target.CurrentMode == target.TargetMode && target.ExpectedRevision == nil {
 		return nil, nil, true, nil
 	}
 
 	args := &model.AlterTableModeArgs{
-		TableMode: target.TargetMode,
-		SchemaID:  target.SchemaID,
-		TableID:   target.TableID,
+		TableMode:        target.TargetMode,
+		SchemaID:         target.SchemaID,
+		TableID:          target.TableID,
+		ExpectedRevision: target.ExpectedRevision,
 	}
 	job := &model.Job{
 		Version:    model.JobVersion2,
