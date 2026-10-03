@@ -833,3 +833,285 @@ select a from t group by ((+a));
 -- error 1055
 select a from t group by (-a);
 set sql_mode = default;
+<<<<<<< HEAD
+=======
+
+# TestGroupConcatAggr
+## issue #5411
+drop table if exists test;
+create table test(id int, name int);
+insert into test values(1, 10);
+insert into test values(1, 20);
+insert into test values(1, 30);
+insert into test values(2, 20);
+insert into test values(3, 200);
+insert into test values(3, 500);
+select id, group_concat(name) from test group by id order by id;
+select id, group_concat(name SEPARATOR ';') from test group by id order by id;
+select id, group_concat(name SEPARATOR ',') from test group by id order by id;
+select id, group_concat(name SEPARATOR '%') from test group by id order by id;
+select id, group_concat(name SEPARATOR '') from test group by id order by id;
+select id, group_concat(name SEPARATOR '123') from test group by id order by id;
+select group_concat(id ORDER BY name) from (select * from test order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++') from test;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(distinct name order by name desc) from test;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=default;
+
+## test varchar table
+drop table if exists test2;
+create table test2(id varchar(20), name varchar(20));
+insert into test2 select * from test;
+select group_concat(id ORDER BY name) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;
+
+## test Position Expr
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;
+-- error 1054
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;
+
+## test Param Marker
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+set @a=3;
+-- error 1054
+execute s1 using @a;
+set @a=3.0;
+execute s1 using @a;
+
+## test partition table
+drop table if exists ptest;
+CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) (PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11));
+insert into ptest select * from test;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = default;
+set session tidb_opt_agg_push_down = default;
+
+## issue #9920
+select group_concat(123, null);
+
+## issue #23129
+drop table if exists t1;
+create table t1(cid int, sname varchar(100));
+insert into t1 values(1, 'Bob'), (1, 'Alice');
+insert into t1 values(3, 'Ace');
+set @@group_concat_max_len=5;
+select group_concat(sname order by sname) from t1 group by cid;
+drop table if exists t1;
+create table t1(c1 varchar(10));
+insert into t1 values('0123456789');
+insert into t1 values('12345');
+set @@group_concat_max_len=8;
+select group_concat(c1 order by c1) from t1 group by c1;
+set @@group_concat_max_len=default;
+
+# TestSelectDistinct
+drop table if exists select_distinct_test;
+create table select_distinct_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO select_distinct_test VALUES (1, "hello");
+insert into select_distinct_test values (2, "hello");
+begin;
+select distinct name from select_distinct_test;
+commit;
+
+# TestInjectProjBelowTopN
+drop table if exists t;
+create table t (i int);
+insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
+explain format = 'brief' select * from t order by i + 1;
+select * from t order by i + 1;
+explain format = 'brief' select * from t order by i + 1 limit 2;
+select * from t order by i + 1 limit 2;
+select i, i, i from t order by i + 1;
+
+# TestIssue12759HashAggCalledByApply
+insert into mysql.opt_rule_blacklist value("decorrelate");
+drop table if exists test;
+create table test (a int);
+insert into test value(1);
+analyze table test;
+select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+delete from mysql.opt_rule_blacklist where name = "decorrelate";
+admin reload opt_rule_blacklist;
+
+# TestIssue61735AggregateTruncatedDecimal
+--enable_warnings
+select distinct avg(nullif(77.15, PI()));
+--disable_warnings
+
+# TestIssue62672
+drop table if exists t_a;
+CREATE TABLE `t_a` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
+  `a` bigint(20) unsigned NOT NULL DEFAULT '0' COMMENT 'merchant id',
+  `b` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total amount',
+  `c` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'settlement amount',
+  `d` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total fee',
+  `e` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'settle time',
+  `f` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'create time',
+  `g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
+
+explain format = 'brief' SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+>>>>>>> 463f7a9a6d2 (planner: fix the old only full group check should be case-insensitive. (#62751))
