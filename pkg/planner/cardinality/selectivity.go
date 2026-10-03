@@ -20,12 +20,14 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -909,6 +911,45 @@ func getMaskAndSelectivityForMVIndex(
 	return totalSelectivity, mask, true
 }
 
+// selectivityByFilterKey identifies one evaluation of GetSelectivityByFilter: the
+// filter, by its hash code (function, column, constants), and the statistics it is
+// evaluated against. The result is a pure function of the two, since filters with
+// mutable effects are never evaluated.
+type selectivityByFilterKey struct {
+	filter  string
+	hist    *statistics.Histogram
+	topn    *statistics.TopN
+	nullCnt int64
+}
+
+// selectivityByFilterCache keeps one statement's results of GetSelectivityByFilter.
+// Planning a statement estimates the same string-match filter for every access path
+// and every task it builds, and each estimate evaluates the filter against every
+// TopN value and histogram bound of the column; a LIKE '%...%' or a MATCH against
+// a long text column makes that the bulk of the planning time.
+type selectivityByFilterCache struct {
+	mu sync.Mutex
+	m  map[selectivityByFilterKey]float64
+}
+
+func selectivityByFilterCacheOf(sctx planctx.PlanContext) *selectivityByFilterCache {
+	return sctx.GetSessionVars().StmtCtx.GetOrStoreStmtCache(stmtctx.StmtSelectivityByFilterCacheKey,
+		&selectivityByFilterCache{m: make(map[selectivityByFilterKey]float64)}).(*selectivityByFilterCache)
+}
+
+func (c *selectivityByFilterCache) get(key selectivityByFilterKey) (float64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sel, ok := c.m[key]
+	return sel, ok
+}
+
+func (c *selectivityByFilterCache) put(key selectivityByFilterKey, sel float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = sel
+}
+
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
@@ -963,6 +1004,17 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if statsVer != statistics.Version2 {
 		return false, 0, nil
 	}
+	cache, key := selectivityByFilterCacheOf(sctx), selectivityByFilterKey{
+		filter: string(filters.HashCode()), hist: hist, topn: topn, nullCnt: nullCnt,
+	}
+	if sel, ok := cache.get(key); ok {
+		return true, sel, nil
+	}
+	defer func() {
+		if ok && err == nil {
+			cache.put(key, selectivity)
+		}
+	}()
 	topnTotalCnt = topn.TotalCount()
 	histTotalCnt = hist.NotNullCount()
 	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
