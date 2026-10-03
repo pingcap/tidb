@@ -66,14 +66,9 @@ const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
 /// job's. The map lives exactly as long as the transaction
 /// (`TransactionContext.Cleanup` drops it, `session.go:451`).
 ///
-/// One divergence, deliberately conservative: Go records tables while the
-/// PLANNER resolves them, so a view's underlying tables are recorded too.
-/// This port records from the parsed statement's names, which see the view,
-/// not its bases -- so a name that does not resolve to a stored table marks
-/// the connection `unresolved`, and an unresolved connection blocks every
-/// job below its pinned version, the whole-transaction rule this replaces.
-/// Blocking longer than Go is a slow ack; blocking shorter would let a DDL
-/// publish under a transaction still reading the old schema.
+/// Go records tables while the planner resolves them, including base tables
+/// behind views. This registry only blocks jobs for concrete table IDs; an
+/// unresolved name has no table ID and must not become an all-table pin.
 #[derive(Debug, Default)]
 pub struct SchemaPinRegistry {
     pins: Mutex<HashMap<u64, ConnPins>>,
@@ -84,14 +79,10 @@ pub struct SchemaPinRegistry {
 struct ConnPins {
     /// Nesting count: a statement inside an explicit transaction holds too.
     count: u32,
-    /// The catalog version of the OUTERMOST live hold -- the fallback bound
-    /// when `unresolved` is set.
+    /// The catalog version of the OUTERMOST live hold.
     version: i64,
     /// Go `GetRelatedTableForMDL`: table id -> version at first use.
     tables: HashMap<i64, i64>,
-    /// A statement referenced a name this node could not resolve to a stored
-    /// table id; block conservatively below `version`.
-    unresolved: bool,
 }
 
 impl SchemaPinRegistry {
@@ -127,30 +118,20 @@ impl SchemaPinRegistry {
         }
     }
 
-    /// A statement referenced a name that resolves to no stored table; the
-    /// connection falls back to the whole-transaction rule.
-    pub fn record_unresolved(&self, connection_id: u64) {
-        let mut pins = self.pins.lock().expect("schema pin registry poisoned");
-        if let Some(entry) = pins.get_mut(&connection_id) {
-            entry.unresolved = true;
-        }
-    }
-
     /// Go `RemoveLockDDLJobs`'s per-session test, over every live
     /// connection: blocked iff some connection used one of the job's tables
-    /// at a version below the job's -- or is `unresolved` below it.
+    /// at a version below the job's.
     #[must_use]
     pub fn blocks(&self, job_version: i64, job_table_ids: &[i64]) -> bool {
         let pins = self.pins.lock().expect("schema pin registry poisoned");
         pins.values().any(|entry| {
             entry.count > 0
-                && ((entry.unresolved && entry.version < job_version)
-                    || job_table_ids.iter().any(|table| {
-                        entry
-                            .tables
-                            .get(table)
-                            .is_some_and(|&used| used < job_version)
-                    }))
+                && job_table_ids.iter().any(|table| {
+                    entry
+                        .tables
+                        .get(table)
+                        .is_some_and(|&used| used < job_version)
+                })
         })
     }
 
@@ -200,8 +181,7 @@ fn acks_due(
                 // job's tables on an older schema holds the job back.
                 // A zero table id is Go's sentinel for a schema-level DDL
                 // job (for example CREATE DATABASE). It has no table lock
-                // conflict, so an unresolved table reference must not hold
-                // its acknowledgement back.
+                // conflict.
                 && (job.table_ids.iter().all(|&table_id| table_id == 0)
                     || !pins.blocks(job.version, &job.table_ids))
                 // Go's `jobCache`: one ack per (job, version).
@@ -242,7 +222,8 @@ impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
     }
 
     fn record_unresolved(&self) {
-        self.registry.record_unresolved(self.connection_id);
+        // Go's related-table map contains only concrete table IDs. An
+        // unresolved name does not add a synthetic all-table dependency.
     }
 }
 
@@ -835,16 +816,13 @@ mod tests {
         assert!(!pins.blocks(5, &[100]));
     }
 
-    /// A name this node cannot resolve to a stored table (Go's planner sees
-    /// through views; this port's statement names do not) falls back to the
-    /// whole-transaction rule: block everything below the pinned version.
+    /// An unresolved name has no concrete table ID. Go only blocks jobs whose
+    /// table IDs are present in the transaction's related-table map.
     #[test]
-    fn an_unresolved_name_blocks_conservatively() {
+    fn an_unresolved_name_does_not_block_unrelated_work() {
         let pins = Arc::new(SchemaPinRegistry::default());
         let txn = pins.hold(7, 4);
-        pins.record_unresolved(7);
-        assert!(pins.blocks(5, &[999]), "unresolved blocks any table");
-        assert!(!pins.blocks(4, &[999]), "but not a job at its own version");
+        assert!(!pins.blocks(5, &[999]), "unresolved names have no table ID");
         drop(txn);
         assert!(!pins.blocks(5, &[999]));
     }
@@ -853,7 +831,6 @@ mod tests {
     fn a_schema_job_is_not_blocked_by_unresolved_work() {
         let pins = Arc::new(SchemaPinRegistry::default());
         let txn = pins.hold(7, 1);
-        pins.record_unresolved(7);
         assert_eq!(
             acks_due(2, &pins, &[job(1, 2, &[0])], &BTreeMap::new()),
             vec![job(1, 2, &[0])]
