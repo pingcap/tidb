@@ -36,6 +36,8 @@ var (
 	_ StmtNode = &ProcedureLabelBlock{}
 	_ StmtNode = &ProcedureLabelLoop{}
 	_ StmtNode = &ProcedureJump{}
+	_ StmtNode = &ReturnStmt{}
+	_ StmtNode = &ProcedureLoopStmt{}
 
 	_ DeclNode = &ProcedureErrorControl{}
 	_ DeclNode = &ProcedureCursor{}
@@ -783,6 +785,58 @@ func (n *ProcedureWhileStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// ProcedureLoopStmt stores `LOOP ... END LOOP` statement.
+// Unlike WHILE and REPEAT, this is an infinite loop that must be
+// exited using LEAVE statement.
+type ProcedureLoopStmt struct {
+	stmtNode
+
+	Body []StmtNode
+}
+
+// Restore implements ProcedureLoopStmt interface.
+func (n *ProcedureLoopStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("LOOP ")
+	for _, stmt := range n.Body {
+		err := stmt.Restore(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.WriteKeyWord(";")
+	}
+	ctx.WriteKeyWord("END LOOP")
+	return nil
+}
+
+// Accept implements ProcedureLoopStmt Accept interface.
+func (n *ProcedureLoopStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureLoopStmt)
+
+	for i, stmt := range n.Body {
+		node, ok := stmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Body[i] = node.(StmtNode)
+	}
+	return v.Leave(n)
+}
+
+// AcceptInPlace implements Node AcceptInPlace interface.
+func (n *ProcedureLoopStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if v.Enter(n) {
+		return v.Leave(n)
+	}
+	for _, stmt := range n.Body {
+		stmt.AcceptInPlace(v)
+	}
+	return v.Leave(n)
+}
+
 // ProcedureCursor stores procedure cursor statement.
 type ProcedureCursor struct {
 	ProcedureDeclInfo
@@ -1173,5 +1227,52 @@ func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ProcedureJump)
+	return v.Leave(n)
+}
+
+// ReturnStmt represents a RETURN statement in a stored function.
+// MySQL syntax: RETURN expr
+type ReturnStmt struct {
+	stmtNode
+
+	ReturnValue ExprNode
+}
+
+// Restore implements ReturnStmt interface.
+func (n *ReturnStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RETURN ")
+	if n.ReturnValue != nil {
+		if err := n.ReturnValue.Restore(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Accept implements ReturnStmt Accept interface.
+func (n *ReturnStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ReturnStmt)
+	if n.ReturnValue != nil {
+		node, ok := n.ReturnValue.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ReturnValue = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+// AcceptInPlace implements Node AcceptInPlace interface.
+func (n *ReturnStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if v.Enter(n) {
+		return v.Leave(n)
+	}
+	if n.ReturnValue != nil {
+		n.ReturnValue.AcceptInPlace(v)
+	}
 	return v.Leave(n)
 }

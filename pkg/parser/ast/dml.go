@@ -3229,6 +3229,7 @@ const (
 	ShowImportJobs
 	ShowImportGroups
 	ShowCreateProcedure
+	ShowCreateFunction
 	ShowBinlogStatus
 	ShowReplicaStatus
 	ShowDistributions
@@ -3262,6 +3263,8 @@ type ShowStmt struct {
 	Table  *TableName // Used for showing columns.
 	// Procedure's naming method is consistent with the table name
 	Procedure         *TableName
+	// FuncName is used for SHOW CREATE FUNCTION
+	FuncName          *TableName
 	Partition         CIStr       // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         CIStr
@@ -3342,6 +3345,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE PROCEDURE ")
 		if err := n.Procedure.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Procedure")
+		}
+	case ShowCreateFunction:
+		ctx.WriteKeyWord("CREATE FUNCTION ")
+		if err := n.FuncName.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.FuncName")
 		}
 	case ShowCreateView:
 		ctx.WriteKeyWord("CREATE VIEW ")

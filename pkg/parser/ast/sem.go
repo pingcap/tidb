@@ -488,6 +488,8 @@ const (
 	// ProcedureCommand represents all statements in procedure. It's too rough
 	// but still fine for now.
 	ProcedureCommand = "PROCEDURE"
+	// FunctionCommand represents CREATE/DROP FUNCTION statements
+	FunctionCommand = "FUNCTION"
 	// UnknownCommand represents unknown statements
 	UnknownCommand = "UNKNOWN"
 	// SetOprCommand represents UNION/INTERSECT/EXCEPT statement
@@ -1415,4 +1417,24 @@ func (n *ProcedureErrorVal) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ProcedureErrorState) SEMCommand() string {
 	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ProcedureLoopStmt) SEMCommand() string {
+	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateFunctionStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropFunctionStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ReturnStmt) SEMCommand() string {
+	return FunctionCommand
 }

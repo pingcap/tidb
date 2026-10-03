@@ -430,6 +430,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	deallocate                 "DEALLOCATE"
 	declare                    "DECLARE"
 	definer                    "DEFINER"
+	deterministic              "DETERMINISTIC"
 	delayKeyWrite              "DELAY_KEY_WRITE"
 	delta                      "DELTA"
 	digest                     "DIGEST"
@@ -628,6 +629,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	returnKwd                  "RETURN"
+	returns                    "RETURNS"
 	retain                     "RETAIN"
 	returning                  "RETURNING"
 	reuse                      "REUSE"
@@ -1066,6 +1069,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	CreatePolicyStmt              "CREATE PLACEMENT POLICY statement"
 	CreateMaskingPolicyStmt       "CREATE MASKING POLICY statement"
 	CreateProcedureStmt           "CREATE PROCEDURE statement"
+	CreateFunctionStmt            "CREATE FUNCTION statement"
 	AddQueryWatchStmt             "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt       "CREATE RESOURCE GROUP statement"
 	CreateSequenceStmt            "CREATE SEQUENCE statement"
@@ -1074,6 +1078,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	DropDatabaseStmt              "DROP DATABASE statement"
 	DropIndexStmt                 "DROP INDEX statement"
 	DropProcedureStmt             "DROP PROCEDURE statement"
+	DropFunctionStmt              "DROP FUNCTION statement"
 	DropQueryWatchStmt            "DROP QUERY WATCH statement"
 	DropResourceGroupStmt         "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt            "DROP STATISTICS statement"
@@ -1177,8 +1182,14 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ProcedurelabeledLoopStmt      "The loop block with label in procedure"
 	ProcedureIterate              "The iterate statement in procedure, expressed by `iterate ...`"
 	ProcedureLeave                "The leave statement in procedure, expressed by `leave ...`"
+	ProcedureReturn               "The return statement in function, expressed by `return expr`"
 
 %type	<item>
+	OptFunctionParams             "Optional function parameters"
+	FunctionParams                "Function parameters list"
+	FunctionParam                 "Function parameter"
+	OptFunctionCharacteristics    "Optional function characteristics"
+	FunctionCharacteristic        "Function characteristic"
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
@@ -12960,6 +12971,13 @@ ShowStmt:
 			Procedure: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "FUNCTION" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:       ast.ShowCreateFunction,
+			FuncName: $4.(*ast.TableName),
+		}
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -13596,6 +13614,7 @@ Statement:
 |	CreatePolicyStmt
 |	CreateMaskingPolicyStmt
 |	CreateProcedureStmt
+|	CreateFunctionStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
@@ -13611,6 +13630,7 @@ Statement:
 |	DropIndexStmt
 |	DropTableStmt
 |	DropProcedureStmt
+|	DropFunctionStmt
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
@@ -18239,6 +18259,15 @@ ProcedureProcStmt:
 |	ProcedurelabeledLoopStmt
 |	ProcedureIterate
 |	ProcedureLeave
+|	ProcedureReturn
+
+ProcedureReturn:
+	"RETURN" Expression
+	{
+		$$ = &ast.ReturnStmt{
+			ReturnValue: $2,
+		}
+	}
 
 /********************************************************************************************
  *
@@ -18288,6 +18317,162 @@ DropProcedureStmt:
 		$$ = &ast.DropProcedureStmt{
 			IfExists:      $3.(bool),
 			ProcedureName: $4.(*ast.TableName),
+		}
+	}
+
+/********************************************************************************************
+ *
+ *  Create Function Statement (MySQL SQL functions with BEGIN...END)
+ *
+ *  Syntax:
+ *    CREATE [OR REPLACE]
+ *    FUNCTION [IF NOT EXISTS] func_name ([param_name type[,...]])
+ *    RETURNS type
+ *    [characteristic ...]
+ *    BEGIN ... END
+ *
+ *  characteristic:
+ *    COMMENT 'string'
+ *    | DETERMINISTIC | NOT DETERMINISTIC
+ *    | NO SQL
+ *    | SQL SECURITY { DEFINER | INVOKER }
+ ********************************************************************************************/
+CreateFunctionStmt:
+	"CREATE" OrReplace "FUNCTION" IfNotExists TableName '(' OptFunctionParams ')' "RETURNS" Type OptFunctionCharacteristics ProcedureBlockContent
+	{
+		chars := $11.(map[string]interface{})
+		$$ = &ast.CreateFunctionStmt{
+			OrReplace:       $2.(bool),
+			IfNotExists:     $4.(bool),
+			FuncName:        $5.(*ast.TableName),
+			Parameters:      $7.([]*ast.FunctionParam),
+			ReturnType:      $10.(*types.FieldType),
+			IsDeterministic: chars["deterministic"].(bool),
+			Comment:         chars["comment"].(string),
+			DataAccess:      chars["data_access"].(string),
+			SQLSecurity:     chars["sql_security"].(string),
+			SQLBody:         $12,
+		}
+	}
+
+OptFunctionCharacteristics:
+	/* Empty */
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	OptFunctionCharacteristics FunctionCharacteristic
+	{
+		chars := $1.(map[string]interface{})
+		newChar := $2.(map[string]interface{})
+		for k, v := range newChar {
+			if v != "" && v != false {
+				chars[k] = v
+			}
+		}
+		$$ = chars
+	}
+
+FunctionCharacteristic:
+	"COMMENT" stringLit
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       $2,
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": true,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"NOT" "DETERMINISTIC"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "",
+		}
+	}
+|	"NO" "SQL"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "NO SQL",
+			"sql_security":  "",
+		}
+	}
+|	"SQL" "SECURITY" "DEFINER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "DEFINER",
+		}
+	}
+|	"SQL" "SECURITY" "INVOKER"
+	{
+		$$ = map[string]interface{}{
+			"deterministic": false,
+			"comment":       "",
+			"data_access":   "",
+			"sql_security":  "INVOKER",
+		}
+	}
+
+OptFunctionParams:
+	/* Empty */
+	{
+		$$ = []*ast.FunctionParam{}
+	}
+|	FunctionParams
+	{
+		$$ = $1
+	}
+
+FunctionParams:
+	FunctionParams ',' FunctionParam
+	{
+		l := $1.([]*ast.FunctionParam)
+		l = append(l, $3.(*ast.FunctionParam))
+		$$ = l
+	}
+|	FunctionParam
+	{
+		$$ = []*ast.FunctionParam{$1.(*ast.FunctionParam)}
+	}
+
+FunctionParam:
+	Identifier Type
+	{
+		$$ = &ast.FunctionParam{
+			Name: $1,
+			Type: $2.(*types.FieldType),
+		}
+	}
+
+/********************************************************************************************
+ *  DROP FUNCTION [IF EXISTS] func_name
+ ********************************************************************************************/
+DropFunctionStmt:
+	"DROP" "FUNCTION" IfExists TableName
+	{
+		$$ = &ast.DropFunctionStmt{
+			IfExists: $3.(bool),
+			FuncName: $4.(*ast.TableName),
 		}
 	}
 
