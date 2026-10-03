@@ -75,6 +75,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBadTable:                                 mysql.Message("Unknown table '%-.100s'", nil),
 	ErrNonUniq:                                  mysql.Message("Column '%-.192s' in %-.192s is ambiguous", nil),
 	ErrServerShutdown:                           mysql.Message("Server shutdown in progress", nil),
+	ErrServerOfflineMode:                        mysql.Message("The server is currently in offline mode", nil),
 	ErrBadField:                                 mysql.Message("Unknown column '%-.192s' in '%-.192s'", nil),
 	ErrFieldNotInGroupBy:                        mysql.Message("Expression #%d of %s is not in GROUP BY clause and contains nonaggregated column '%s' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrWrongGroupField:                          mysql.Message("Can't group on '%-.192s'", nil),

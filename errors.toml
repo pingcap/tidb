@@ -3136,6 +3136,11 @@ error = '''
 User name prefix does not match the assigned keyspace.
 '''
 
+["server:3032"]
+error = '''
+The server is currently in offline mode
+'''
+
 ["server:3159"]
 error = '''
 Connections using insecure transport are prohibited while --require_secure_transport=ON.

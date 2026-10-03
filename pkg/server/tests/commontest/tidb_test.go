@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -992,6 +994,87 @@ func TestClientErrors(t *testing.T) {
 func TestInitConnect(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestInitConnect(t)
+}
+
+func TestOfflineMode(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ctx := context.Background()
+
+	requireOfflineErr := func(err error) {
+		var mysqlErr *mysql.MySQLError
+		require.ErrorAs(t, err, &mysqlErr)
+		require.Equal(t, uint16(errno.ErrServerOfflineMode), mysqlErr.Number)
+	}
+	openDB := func(user string) *sql.DB {
+		db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+			config.User = user
+		}))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		return db
+	}
+
+	rootDB := openDB("root")
+	_, err := rootDB.Exec("CREATE USER offline_user, offline_admin")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("GRANT SELECT ON test.* TO offline_user, offline_admin")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("GRANT CONNECTION_ADMIN ON *.* TO offline_admin")
+	require.NoError(t, err)
+
+	userDB := openDB("offline_user")
+	idleConn, err := userDB.Conn(ctx)
+	require.NoError(t, err)
+	defer idleConn.Close()
+	txnConn, err := userDB.Conn(ctx)
+	require.NoError(t, err)
+	defer txnConn.Close()
+	_, err = txnConn.ExecContext(ctx, "BEGIN")
+	require.NoError(t, err)
+
+	_, err = rootDB.Exec("SET GLOBAL offline_mode = ON")
+	require.NoError(t, err)
+	defer func() {
+		_, err := rootDB.Exec("SET GLOBAL offline_mode = OFF")
+		require.NoError(t, err)
+	}()
+	var val string
+	require.NoError(t, rootDB.QueryRow("SELECT @@global.offline_mode").Scan(&val))
+	require.Equal(t, "1", val)
+
+	// An idle non-admin connection is closed at its next command.
+	_, err = idleConn.ExecContext(ctx, "SELECT 1")
+	requireOfflineErr(err)
+
+	// A non-admin connection in a transaction can finish the transaction, then it is closed.
+	_, err = txnConn.ExecContext(ctx, "SELECT 1")
+	require.NoError(t, err)
+	_, err = txnConn.ExecContext(ctx, "COMMIT")
+	require.NoError(t, err)
+	_, err = txnConn.ExecContext(ctx, "SELECT 1")
+	requireOfflineErr(err)
+
+	// New non-admin connections are rejected.
+	requireOfflineErr(openDB("offline_user").Ping())
+
+	// Connections with CONNECTION_ADMIN or SUPER are not affected.
+	require.NoError(t, openDB("offline_admin").Ping())
+	_, err = rootDB.Exec("SELECT 1")
+	require.NoError(t, err)
+
+	// The status API reports unhealthy so that load balancers stop routing to this server.
+	resp, err := ts.FetchStatus("/status")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	_, err = rootDB.Exec("SET GLOBAL offline_mode = OFF")
+	require.NoError(t, err)
+	require.NoError(t, openDB("offline_user").Ping())
+	resp, err = ts.FetchStatus("/status")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
 }
 
 func TestSumAvg(t *testing.T) {
