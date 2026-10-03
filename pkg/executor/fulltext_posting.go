@@ -16,6 +16,7 @@ package executor
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // tikvPostingSource opens the posting lists of a FULLTEXT index built in TiKV.
@@ -50,6 +52,45 @@ type tikvPostingSource struct {
 	// a term's postings are read whole. A prefix scan is never confined, see
 	// Prefix.
 	handleRanges []fullTextHandleRange
+	// stats counts the scans opened and the entries read, for EXPLAIN
+	// ANALYZE; nil when runtime statistics are not collected.
+	stats *fullTextScanRuntimeStats
+}
+
+// fullTextScanRuntimeStats is what reading a FULLTEXT index built in TiKV
+// costs: the posting entries read, which every posting list the search opens
+// contributes in full whatever the size of the result, and the posting scans
+// opened, each at least one kv_scan request. A partial worker owns it while it
+// runs and registers it when done, so it needs no locking.
+type fullTextScanRuntimeStats struct {
+	entries int64
+	scans   int64
+}
+
+// String implements execdetails.RuntimeStats.
+func (s *fullTextScanRuntimeStats) String() string {
+	return fmt.Sprintf("fulltext:{posting_entries:%d, posting_scans:%d}", s.entries, s.scans)
+}
+
+// Merge implements execdetails.RuntimeStats.
+func (s *fullTextScanRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	o, ok := other.(*fullTextScanRuntimeStats)
+	if !ok {
+		return
+	}
+	s.entries += o.entries
+	s.scans += o.scans
+}
+
+// Clone implements execdetails.RuntimeStats.
+func (s *fullTextScanRuntimeStats) Clone() execdetails.RuntimeStats {
+	cloned := *s
+	return &cloned
+}
+
+// Tp implements execdetails.RuntimeStats.
+func (*fullTextScanRuntimeStats) Tp() int {
+	return execdetails.TpFullTextScanRuntimeStats
 }
 
 // fullTextHandleRange is a range of the clustered handle, with its bounds
@@ -108,7 +149,10 @@ func (s *tikvPostingSource) open(start, end kv.Key, prefix string) (fulltext.Pos
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &tikvPostingCursor{iter: iter, index: s.index, prefix: prefix}, nil
+	if s.stats != nil {
+		s.stats.scans++
+	}
+	return &tikvPostingCursor{iter: iter, index: s.index, prefix: prefix, stats: s.stats}, nil
 }
 
 type tikvPostingCursor struct {
@@ -116,6 +160,7 @@ type tikvPostingCursor struct {
 	index  *model.IndexInfo
 	prefix string
 	done   bool
+	stats  *fullTextScanRuntimeStats
 }
 
 // Next implements fulltext.PostingCursor.
@@ -124,6 +169,9 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 		key, value := c.iter.Key(), c.iter.Value()
 		if err := c.iter.Next(); err != nil {
 			return fulltext.Posting{}, false, errors.Trace(err)
+		}
+		if c.stats != nil {
+			c.stats.entries++
 		}
 		if len(value) == 0 {
 			continue

@@ -157,12 +157,23 @@ func (e *IndexMergeReaderExecutor) startPartialFullTextWorker(ctx context.Contex
 		batchSize:    e.MaxChunkSize(),
 		maxBatch:     e.Ctx().GetSessionVars().IndexLookupSize,
 	}
+	// The scan runs in TiDB, so no coprocessor summary reports its rows and
+	// time; the worker records them on the partial plan itself, with what the
+	// posting reads cost.
+	if e.stats != nil {
+		worker.planID = e.getPartitalPlanID(workID)
+		worker.scanStats = &fullTextScanRuntimeStats{}
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.planID, true)
+	}
 
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialFullTextWorker").End()
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				if worker.scanStats != nil {
+					defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(worker.planID, worker.scanStats)
+				}
 				if err := worker.run(ctx, exitCh, fetchCh); err != nil {
 					syncErr(ctx, e.finished, fetchCh, err)
 				}
@@ -186,6 +197,10 @@ type partialFullTextWorker struct {
 	handleRanges []fullTextHandleRange
 	batchSize    int
 	maxBatch     int
+	// planID and scanStats record the scan's runtime statistics on the
+	// partial plan; scanStats is nil when they are not collected.
+	planID    int
+	scanStats *fullTextScanRuntimeStats
 }
 
 // run scans each physical table's index in turn. Handles are batched into
@@ -225,6 +240,7 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 		index:           w.index,
 		keyPrefix:       w.keyPrefix,
 		handleRanges:    w.handleRanges,
+		stats:           w.scanStats,
 	}
 	iter, err := w.query.OpenPostings(source)
 	if err != nil {
@@ -248,6 +264,9 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 				break
 			}
 			handles = append(handles, handle)
+		}
+		if w.scanStats != nil {
+			e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.planID, false).Record(time.Since(start), len(handles))
 		}
 		if len(handles) == 0 {
 			return nil

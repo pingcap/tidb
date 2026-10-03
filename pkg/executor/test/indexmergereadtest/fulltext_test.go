@@ -17,6 +17,7 @@ package indexmergereadtest
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,6 +47,12 @@ func fullTextCorpus(t *testing.T, tk *testkit.TestKit, table string, rows int, s
 		values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i%7, strings.Join(parts, " ")))
 	}
 	tk.MustExec(fmt.Sprintf("insert into %s values %s", table, strings.Join(values, ",")))
+}
+
+func atoi(t *testing.T, v any) int {
+	n, err := strconv.Atoi(fmt.Sprint(v))
+	require.NoError(t, err)
+	return n
 }
 
 // mustUseFullTextIndex asserts that the plan reads the FULLTEXT index under an
@@ -130,6 +137,35 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	mustUseFullTextIndex(t, tk, "select id from t where match(body) against(@s in boolean mode)", "idx(body)", "+alpha +beta")
 	// Natural language mode is not a boolean predicate the index can serve.
 	mustScan(t, tk, "select id from t where match(body) against('rareword')")
+
+	// EXPLAIN ANALYZE shows on the scan the rows it yielded and what reading
+	// the index cost: every posting list the search opens, read in full.
+	fullTextScanRow := func(sql string) []any {
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+				return row
+			}
+		}
+		require.FailNow(t, "no FullTextIndexScan in the plan", sql)
+		return nil
+	}
+	row := fullTextScanRow("select id from t where match(body) against('+rareword' in boolean mode)")
+	require.Equal(t, "15", row[2])
+	require.Contains(t, row[5], "time:")
+	require.Contains(t, row[5], "fulltext:{posting_entries:15, posting_scans:1}")
+	alpha := tk.MustQuery("select count(*) from t ignore index (idx) where match(body) against('+alpha' in boolean mode)").Rows()[0][0]
+	both := tk.MustQuery("select count(*) from t where match(body) against('+rareword +alpha' in boolean mode)").Rows()[0][0]
+	// An intersection stops at the end of its shortest list, so it reads
+	// all of rareword's postings and alpha's only up to the last of them.
+	row = fullTextScanRow("select id from t where match(body) against('+rareword +alpha' in boolean mode)")
+	require.Equal(t, fmt.Sprint(both), row[2])
+	m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:2\}`).FindStringSubmatch(fmt.Sprint(row[5]))
+	require.Len(t, m, 2, row[5])
+	require.Greater(t, atoi(t, m[1]), 15)
+	require.LessOrEqual(t, atoi(t, m[1]), 15+atoi(t, alpha))
+	row = fullTextScanRow("select id from t where match(body) against('+nosuchword' in boolean mode)")
+	require.Equal(t, "0", row[2])
+	require.Contains(t, row[5], "fulltext:{posting_entries:0, posting_scans:1}")
 
 	// Changes made earlier in the same transaction are visible through the
 	// index, both ways.
