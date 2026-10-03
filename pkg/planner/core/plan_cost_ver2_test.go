@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -976,4 +977,64 @@ func TestHashAggMemCostGatedOnFreeOrdering(t *testing.T) {
 		require.NotRegexp(t, hashAggMemPattern, traceJoin,
 			"HashAgg over a join output must NOT include the memory penalty (gated on free ordering), got: %s", traceJoin)
 	})
+}
+
+// TestDescScanFactorSkippedUnderSmallLimit checks that a descending scan bounded by a small limit
+// is not charged the reverse-iteration premium, while a descending scan that may read a large
+// number of rows still is. Cost model ver1 has always drawn the line at cost.SmallScanThreshold
+// (see getPlanCostVer14PhysicalTableScan); this pins the same behaviour for ver2, so that an
+// ordered descending scan is not priced out of plans like MAX(col) or ORDER BY col DESC LIMIT n.
+func TestDescScanFactorSkippedUnderSmallLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null, primary key (a, b) clustered)")
+	var values strings.Builder
+	for i := range 3000 {
+		if i > 0 {
+			values.WriteString(",")
+		}
+		fmt.Fprintf(&values, "(%d,%d)", i%3, i)
+	}
+	tk.MustExec("insert into t values " + values.String())
+	tk.MustExec("analyze table t all columns")
+
+	// scanCostAndRows returns the estimated cost and row count of the table range scan of an
+	// ordered plan. ORDER_INDEX keeps the ordered scan in the plan regardless of what the
+	// comparison below is measuring.
+	scanCostAndRows := func(desc bool, limit int) (float64, float64) {
+		t.Helper()
+		direction := ""
+		if desc {
+			direction = "desc"
+		}
+		sql := fmt.Sprintf("explain format='verbose' select /*+ ORDER_INDEX(t, `primary`) */ b "+
+			"from t where a = 1 order by b %s limit %d", direction, limit)
+		for _, row := range tk.MustQuery(sql).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", row[0]), "TableRangeScan") {
+				continue
+			}
+			rows, err := strconv.ParseFloat(fmt.Sprintf("%v", row[1]), 64)
+			require.NoError(t, err)
+			cost, err := strconv.ParseFloat(fmt.Sprintf("%v", row[2]), 64)
+			require.NoError(t, err)
+			return cost, rows
+		}
+		require.FailNow(t, "no TableRangeScan in plan", sql)
+		return 0, 0
+	}
+
+	// A limit far below the threshold: the scan reads few rows either way, so reading them
+	// backwards must cost the same as reading them forwards.
+	ascCost, ascRows := scanCostAndRows(false, 1)
+	descCost, descRows := scanCostAndRows(true, 1)
+	require.Equal(t, ascRows, descRows, "the two directions must scan the same estimated rows")
+	require.Equal(t, ascCost, descCost, "a descending scan under a small limit must not be charged the desc factor")
+
+	// Above the threshold the premium still applies, so the descending scan stays more expensive.
+	largeLimit := 2 * int(cost.SmallScanThreshold)
+	ascCost, ascRows = scanCostAndRows(false, largeLimit)
+	descCost, descRows = scanCostAndRows(true, largeLimit)
+	require.Equal(t, ascRows, descRows, "the two directions must scan the same estimated rows")
+	require.Greater(t, descCost, ascCost, "a descending scan that may read many rows keeps the desc factor")
 }
