@@ -2334,6 +2334,41 @@ func evaluateFuncCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[string]t
 			result.SetString(string(runes), mysql.DefaultCollationName)
 		}
 
+	case "ASCII", "ORD":
+		if len(args) != 1 {
+			return result, true, errors.Errorf("%s requires exactly 1 argument", funcName)
+		}
+		if args[0].IsNull() {
+			return result, true, nil
+		}
+		str, err := args[0].ToString()
+		if err != nil {
+			return result, true, err
+		}
+		if len(str) == 0 {
+			result.SetInt64(0)
+		} else {
+			result.SetInt64(int64(str[0]))
+		}
+
+	case "STRCMP":
+		if len(args) != 2 {
+			return result, true, errors.New("STRCMP requires exactly 2 arguments")
+		}
+		if args[0].IsNull() || args[1].IsNull() {
+			return result, true, nil
+		}
+		str1, err := args[0].ToString()
+		if err != nil {
+			return result, true, err
+		}
+		str2, err := args[1].ToString()
+		if err != nil {
+			return result, true, err
+		}
+		cmp := strings.Compare(str1, str2)
+		result.SetInt64(int64(cmp))
+
 	case "COALESCE":
 		if len(args) == 0 {
 			return result, true, errors.New("COALESCE requires at least 1 argument")

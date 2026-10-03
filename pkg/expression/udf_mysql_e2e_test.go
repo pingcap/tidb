@@ -4870,3 +4870,992 @@ func TestMySQLCompatTypeConversions(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Tests ported from MySQL sp.test
+// Source: https://github.com/mysql/mysql-server/blob/8.0/mysql-test/t/sp.test
+// =============================================================================
+
+// TestMySQLSPSimpleFunctions tests simple stored functions from MySQL sp.test.
+// These are the basic function tests from the MySQL test suite.
+func TestMySQLSPSimpleFunctions(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   interface{}
+		isFloat    bool
+		isString   bool
+	}{
+		// MySQL sp.test: CREATE FUNCTION e() RETURNS double RETURN 2.7182818284590452354
+		{
+			name:       "euler_constant",
+			sourceCode: "BEGIN RETURN 2.7182818284590452354; END",
+			params:     map[string]types.Datum{},
+			expected:   2.7182818284590452354,
+			isFloat:    true,
+		},
+		// MySQL sp.test: CREATE FUNCTION inc(i int) RETURNS int RETURN i+1
+		{
+			name:       "increment_function",
+			sourceCode: "BEGIN RETURN i + 1; END",
+			params:     map[string]types.Datum{"i": types.NewIntDatum(1)},
+			expected:   int64(2),
+		},
+		{
+			name:       "increment_99",
+			sourceCode: "BEGIN RETURN i + 1; END",
+			params:     map[string]types.Datum{"i": types.NewIntDatum(99)},
+			expected:   int64(100),
+		},
+		{
+			name:       "increment_negative",
+			sourceCode: "BEGIN RETURN i + 1; END",
+			params:     map[string]types.Datum{"i": types.NewIntDatum(-71)},
+			expected:   int64(-70),
+		},
+		// MySQL sp.test: CREATE FUNCTION mul(x int, y int) RETURNS int RETURN x*y
+		{
+			name:       "multiply_1_1",
+			sourceCode: "BEGIN RETURN x * y; END",
+			params: map[string]types.Datum{
+				"x": types.NewIntDatum(1),
+				"y": types.NewIntDatum(1),
+			},
+			expected: int64(1),
+		},
+		{
+			name:       "multiply_3_5",
+			sourceCode: "BEGIN RETURN x * y; END",
+			params: map[string]types.Datum{
+				"x": types.NewIntDatum(3),
+				"y": types.NewIntDatum(5),
+			},
+			expected: int64(15),
+		},
+		{
+			name:       "multiply_large",
+			sourceCode: "BEGIN RETURN x * y; END",
+			params: map[string]types.Datum{
+				"x": types.NewIntDatum(4711),
+				"y": types.NewIntDatum(666),
+			},
+			expected: int64(3137526),
+		},
+		// MySQL sp.test: CREATE FUNCTION append(s1 char(8), s2 char(8)) RETURNS char(16) RETURN concat(s1, s2)
+		{
+			name:       "string_concat",
+			sourceCode: "BEGIN RETURN CONCAT(s1, s2); END",
+			params: map[string]types.Datum{
+				"s1": types.NewStringDatum("foo"),
+				"s2": types.NewStringDatum("bar"),
+			},
+			expected: "foobar",
+			isString: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+
+			if tc.isString {
+				require.Equal(t, tc.expected, result.GetString())
+			} else if tc.isFloat {
+				floatVal, err := result.ToFloat64(types.DefaultStmtNoWarningContext)
+				require.NoError(t, err)
+				require.InDelta(t, tc.expected, floatVal, 0.0000001)
+			} else {
+				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, intVal)
+			}
+		})
+	}
+}
+
+// TestMySQLSPFactorial tests the factorial function from MySQL sp.test.
+// MySQL sp.test: CREATE FUNCTION fac(n int unsigned) RETURNS bigint unsigned
+func TestMySQLSPFactorial(t *testing.T) {
+	p := parser.New()
+
+	sourceCode := `BEGIN
+		DECLARE f INT DEFAULT 1;
+		WHILE n > 1 DO
+			SET f = f * n;
+			SET n = n - 1;
+		END WHILE;
+		RETURN f;
+	END`
+
+	tests := []struct {
+		name     string
+		n        int64
+		expected int64
+	}{
+		{"fac_1", 1, 1},
+		{"fac_2", 2, 2},
+		{"fac_5", 5, 120},
+		{"fac_10", 10, 3628800},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, sourceCode)
+			require.NoError(t, err)
+			params := map[string]types.Datum{"n": types.NewIntDatum(tc.n)}
+			result, isNull, err := executeSQLFunctionBody(nil, body, params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, intVal)
+		})
+	}
+}
+
+// TestMySQLSPConditionalFunction tests IF/ELSE control flow from MySQL sp.test.
+func TestMySQLSPConditionalFunction(t *testing.T) {
+	p := parser.New()
+
+	// Similar to MySQL's conditional functions
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   interface{}
+		isString   bool
+	}{
+		{
+			name: "simple_if_true",
+			sourceCode: `BEGIN
+				IF n > 0 THEN
+					RETURN 1;
+				ELSE
+					RETURN 0;
+				END IF;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(5)},
+			expected: int64(1),
+		},
+		{
+			name: "simple_if_false",
+			sourceCode: `BEGIN
+				IF n > 0 THEN
+					RETURN 1;
+				ELSE
+					RETURN 0;
+				END IF;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(-5)},
+			expected: int64(0),
+		},
+		{
+			name: "elseif_chain",
+			sourceCode: `BEGIN
+				IF n > 100 THEN
+					RETURN 3;
+				ELSEIF n > 10 THEN
+					RETURN 2;
+				ELSEIF n > 0 THEN
+					RETURN 1;
+				ELSE
+					RETURN 0;
+				END IF;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(50)},
+			expected: int64(2),
+		},
+		{
+			name: "nested_if",
+			sourceCode: `BEGIN
+				DECLARE result INT DEFAULT 0;
+				IF x > 0 THEN
+					IF y > 0 THEN
+						SET result = 1;
+					ELSE
+						SET result = 2;
+					END IF;
+				ELSE
+					IF y > 0 THEN
+						SET result = 3;
+					ELSE
+						SET result = 4;
+					END IF;
+				END IF;
+				RETURN result;
+			END`,
+			params: map[string]types.Datum{
+				"x": types.NewIntDatum(1),
+				"y": types.NewIntDatum(-1),
+			},
+			expected: int64(2),
+		},
+		// Customer level function from MySQL tutorial
+		{
+			name: "customer_level_platinum",
+			sourceCode: `BEGIN
+				DECLARE customerLevel VARCHAR(20);
+				IF credit > 50000 THEN
+					SET customerLevel = 'PLATINUM';
+				ELSEIF credit >= 10000 THEN
+					SET customerLevel = 'GOLD';
+				ELSE
+					SET customerLevel = 'SILVER';
+				END IF;
+				RETURN customerLevel;
+			END`,
+			params:   map[string]types.Datum{"credit": types.NewFloat64Datum(60000)},
+			expected: "PLATINUM",
+			isString: true,
+		},
+		{
+			name: "customer_level_gold",
+			sourceCode: `BEGIN
+				DECLARE customerLevel VARCHAR(20);
+				IF credit > 50000 THEN
+					SET customerLevel = 'PLATINUM';
+				ELSEIF credit >= 10000 THEN
+					SET customerLevel = 'GOLD';
+				ELSE
+					SET customerLevel = 'SILVER';
+				END IF;
+				RETURN customerLevel;
+			END`,
+			params:   map[string]types.Datum{"credit": types.NewFloat64Datum(25000)},
+			expected: "GOLD",
+			isString: true,
+		},
+		{
+			name: "customer_level_silver",
+			sourceCode: `BEGIN
+				DECLARE customerLevel VARCHAR(20);
+				IF credit > 50000 THEN
+					SET customerLevel = 'PLATINUM';
+				ELSEIF credit >= 10000 THEN
+					SET customerLevel = 'GOLD';
+				ELSE
+					SET customerLevel = 'SILVER';
+				END IF;
+				RETURN customerLevel;
+			END`,
+			params:   map[string]types.Datum{"credit": types.NewFloat64Datum(5000)},
+			expected: "SILVER",
+			isString: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+
+			if tc.isString {
+				require.Equal(t, tc.expected, result.GetString())
+			} else {
+				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, intVal)
+			}
+		})
+	}
+}
+
+// TestMySQLSPLoopConstructs tests various loop constructs from MySQL sp.test.
+func TestMySQLSPLoopConstructs(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   int64
+	}{
+		// Sum using WHILE loop
+		{
+			name: "while_sum_1_to_10",
+			sourceCode: `BEGIN
+				DECLARE total INT DEFAULT 0;
+				DECLARE i INT DEFAULT 1;
+				WHILE i <= n DO
+					SET total = total + i;
+					SET i = i + 1;
+				END WHILE;
+				RETURN total;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(10)},
+			expected: 55,
+		},
+		// Sum using REPEAT loop
+		{
+			name: "repeat_sum_1_to_10",
+			sourceCode: `BEGIN
+				DECLARE total INT DEFAULT 0;
+				DECLARE i INT DEFAULT 1;
+				REPEAT
+					SET total = total + i;
+					SET i = i + 1;
+				UNTIL i > n END REPEAT;
+				RETURN total;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(10)},
+			expected: 55,
+		},
+		// WHILE with early exit (no iterations)
+		{
+			name: "while_no_iterations",
+			sourceCode: `BEGIN
+				DECLARE count INT DEFAULT 0;
+				WHILE n > 100 DO
+					SET count = count + 1;
+					SET n = n - 1;
+				END WHILE;
+				RETURN count;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(50)},
+			expected: 0,
+		},
+		// Countdown using WHILE
+		{
+			name: "while_countdown",
+			sourceCode: `BEGIN
+				DECLARE result INT DEFAULT 0;
+				WHILE n > 0 DO
+					SET result = result + n;
+					SET n = n - 1;
+				END WHILE;
+				RETURN result;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(5)},
+			expected: 15, // 5+4+3+2+1
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, intVal)
+		})
+	}
+}
+
+// TestMySQLSPStringFunctions tests string manipulation from MySQL sp.test.
+func TestMySQLSPStringFunctions(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   string
+	}{
+		{
+			name:       "upper_case",
+			sourceCode: "BEGIN RETURN UPPER(s); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("hello")},
+			expected:   "HELLO",
+		},
+		{
+			name:       "lower_case",
+			sourceCode: "BEGIN RETURN LOWER(s); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("WORLD")},
+			expected:   "world",
+		},
+		{
+			name:       "concat_three",
+			sourceCode: "BEGIN RETURN CONCAT(a, b, c); END",
+			params: map[string]types.Datum{
+				"a": types.NewStringDatum("Hello"),
+				"b": types.NewStringDatum(" "),
+				"c": types.NewStringDatum("World"),
+			},
+			expected: "Hello World",
+		},
+		{
+			name:       "substring_from_start",
+			sourceCode: "BEGIN RETURN SUBSTRING(s, 1, 5); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("Hello World")},
+			expected:   "Hello",
+		},
+		{
+			name:       "left_function",
+			sourceCode: "BEGIN RETURN LEFT(s, 3); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("Hello")},
+			expected:   "Hel",
+		},
+		{
+			name:       "right_function",
+			sourceCode: "BEGIN RETURN RIGHT(s, 3); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("Hello")},
+			expected:   "llo",
+		},
+		{
+			name:       "trim_function",
+			sourceCode: "BEGIN RETURN TRIM(s); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("  hello  ")},
+			expected:   "hello",
+		},
+		{
+			name:       "reverse_function",
+			sourceCode: "BEGIN RETURN REVERSE(s); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("hello")},
+			expected:   "olleh",
+		},
+		{
+			name:       "replace_function",
+			sourceCode: "BEGIN RETURN REPLACE(s, 'world', 'MySQL'); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("Hello world")},
+			expected:   "Hello MySQL",
+		},
+		{
+			name:       "repeat_function",
+			sourceCode: "BEGIN RETURN REPEAT(s, 3); END",
+			params:     map[string]types.Datum{"s": types.NewStringDatum("ab")},
+			expected:   "ababab",
+		},
+		// Variable manipulation with strings
+		{
+			name: "string_variable_manipulation",
+			sourceCode: `BEGIN
+				DECLARE result VARCHAR(100);
+				SET result = UPPER(s);
+				SET result = CONCAT(result, '!');
+				RETURN result;
+			END`,
+			params:   map[string]types.Datum{"s": types.NewStringDatum("hello")},
+			expected: "HELLO!",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tc.expected, result.GetString())
+		})
+	}
+}
+
+// TestMySQLSPMathFunctions tests math operations from MySQL sp.test.
+func TestMySQLSPMathFunctions(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   float64
+	}{
+		{
+			name:       "abs_negative",
+			sourceCode: "BEGIN RETURN ABS(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(-42)},
+			expected:   42,
+		},
+		{
+			name:       "abs_positive",
+			sourceCode: "BEGIN RETURN ABS(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(42)},
+			expected:   42,
+		},
+		{
+			name:       "mod_function",
+			sourceCode: "BEGIN RETURN MOD(a, b); END",
+			params: map[string]types.Datum{
+				"a": types.NewIntDatum(17),
+				"b": types.NewIntDatum(5),
+			},
+			expected: 2,
+		},
+		{
+			name:       "power_function",
+			sourceCode: "BEGIN RETURN POWER(base, exp); END",
+			params: map[string]types.Datum{
+				"base": types.NewIntDatum(2),
+				"exp":  types.NewIntDatum(10),
+			},
+			expected: 1024,
+		},
+		{
+			name:       "sqrt_function",
+			sourceCode: "BEGIN RETURN SQRT(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(16)},
+			expected:   4,
+		},
+		{
+			name:       "floor_function",
+			sourceCode: "BEGIN RETURN FLOOR(n); END",
+			params:     map[string]types.Datum{"n": types.NewFloat64Datum(3.7)},
+			expected:   3,
+		},
+		{
+			name:       "ceil_function",
+			sourceCode: "BEGIN RETURN CEIL(n); END",
+			params:     map[string]types.Datum{"n": types.NewFloat64Datum(3.2)},
+			expected:   4,
+		},
+		{
+			name:       "round_function",
+			sourceCode: "BEGIN RETURN ROUND(n); END",
+			params:     map[string]types.Datum{"n": types.NewFloat64Datum(3.5)},
+			expected:   4,
+		},
+		{
+			name:       "sign_negative",
+			sourceCode: "BEGIN RETURN SIGN(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(-42)},
+			expected:   -1,
+		},
+		{
+			name:       "sign_positive",
+			sourceCode: "BEGIN RETURN SIGN(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(42)},
+			expected:   1,
+		},
+		{
+			name:       "sign_zero",
+			sourceCode: "BEGIN RETURN SIGN(n); END",
+			params:     map[string]types.Datum{"n": types.NewIntDatum(0)},
+			expected:   0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			floatVal, err := result.ToFloat64(types.DefaultStmtNoWarningContext)
+			require.NoError(t, err)
+			require.InDelta(t, tc.expected, floatVal, 0.0001)
+		})
+	}
+}
+
+// TestMySQLSPCASEExpression tests CASE expressions from MySQL sp.test.
+func TestMySQLSPCASEExpression(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   interface{}
+		isString   bool
+	}{
+		{
+			name: "case_when_simple",
+			sourceCode: `BEGIN
+				DECLARE result VARCHAR(20);
+				CASE n
+					WHEN 1 THEN SET result = 'one';
+					WHEN 2 THEN SET result = 'two';
+					WHEN 3 THEN SET result = 'three';
+					ELSE SET result = 'other';
+				END CASE;
+				RETURN result;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(2)},
+			expected: "two",
+			isString: true,
+		},
+		{
+			name: "case_when_else",
+			sourceCode: `BEGIN
+				DECLARE result VARCHAR(20);
+				CASE n
+					WHEN 1 THEN SET result = 'one';
+					WHEN 2 THEN SET result = 'two';
+					ELSE SET result = 'unknown';
+				END CASE;
+				RETURN result;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(99)},
+			expected: "unknown",
+			isString: true,
+		},
+		{
+			name: "searched_case",
+			sourceCode: `BEGIN
+				DECLARE result VARCHAR(20);
+				CASE
+					WHEN n < 0 THEN SET result = 'negative';
+					WHEN n = 0 THEN SET result = 'zero';
+					WHEN n > 0 THEN SET result = 'positive';
+				END CASE;
+				RETURN result;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(-5)},
+			expected: "negative",
+			isString: true,
+		},
+		{
+			name: "case_with_return",
+			sourceCode: `BEGIN
+				CASE
+					WHEN n > 100 THEN RETURN 'high';
+					WHEN n > 50 THEN RETURN 'medium';
+					ELSE RETURN 'low';
+				END CASE;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(75)},
+			expected: "medium",
+			isString: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+
+			if tc.isString {
+				require.Equal(t, tc.expected, result.GetString())
+			} else {
+				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, intVal)
+			}
+		})
+	}
+}
+
+// TestMySQLSPLabeledLoops tests LEAVE and ITERATE with labeled blocks.
+func TestMySQLSPLabeledLoops(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   int64
+	}{
+		{
+			name: "leave_while_loop",
+			sourceCode: `BEGIN
+				DECLARE i INT DEFAULT 0;
+				DECLARE total INT DEFAULT 0;
+				myloop: WHILE i < 100 DO
+					SET i = i + 1;
+					SET total = total + i;
+					IF i >= 5 THEN
+						LEAVE myloop;
+					END IF;
+				END WHILE;
+				RETURN total;
+			END`,
+			params:   map[string]types.Datum{},
+			expected: 15, // 1+2+3+4+5
+		},
+		{
+			name: "iterate_skip_odds",
+			sourceCode: `BEGIN
+				DECLARE i INT DEFAULT 0;
+				DECLARE total INT DEFAULT 0;
+				myloop: WHILE i < 10 DO
+					SET i = i + 1;
+					IF MOD(i, 2) = 1 THEN
+						ITERATE myloop;
+					END IF;
+					SET total = total + i;
+				END WHILE;
+				RETURN total;
+			END`,
+			params:   map[string]types.Datum{},
+			expected: 30, // 2+4+6+8+10
+		},
+		{
+			name: "leave_repeat_loop",
+			sourceCode: `BEGIN
+				DECLARE i INT DEFAULT 0;
+				DECLARE total INT DEFAULT 0;
+				myloop: REPEAT
+					SET i = i + 1;
+					SET total = total + i;
+					IF i >= 3 THEN
+						LEAVE myloop;
+					END IF;
+				UNTIL i > 100 END REPEAT;
+				RETURN total;
+			END`,
+			params:   map[string]types.Datum{},
+			expected: 6, // 1+2+3
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, intVal)
+		})
+	}
+}
+
+// TestMySQLSPNullHandling tests NULL handling from MySQL sp.test.
+func TestMySQLSPNullHandling(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   interface{}
+		expectNull bool
+		isString   bool
+	}{
+		{
+			name:       "coalesce_with_null",
+			sourceCode: "BEGIN RETURN COALESCE(a, b, c); END",
+			params: map[string]types.Datum{
+				"a": types.NewDatum(nil),
+				"b": types.NewDatum(nil),
+				"c": types.NewIntDatum(42),
+			},
+			expected: int64(42),
+		},
+		{
+			name:       "ifnull_null_first",
+			sourceCode: "BEGIN RETURN IFNULL(a, b); END",
+			params: map[string]types.Datum{
+				"a": types.NewDatum(nil),
+				"b": types.NewIntDatum(100),
+			},
+			expected: int64(100),
+		},
+		{
+			name:       "ifnull_non_null_first",
+			sourceCode: "BEGIN RETURN IFNULL(a, b); END",
+			params: map[string]types.Datum{
+				"a": types.NewIntDatum(50),
+				"b": types.NewIntDatum(100),
+			},
+			expected: int64(50),
+		},
+		{
+			name:       "nullif_equal",
+			sourceCode: "BEGIN RETURN NULLIF(a, b); END",
+			params: map[string]types.Datum{
+				"a": types.NewIntDatum(5),
+				"b": types.NewIntDatum(5),
+			},
+			expectNull: true,
+		},
+		{
+			name:       "nullif_not_equal",
+			sourceCode: "BEGIN RETURN NULLIF(a, b); END",
+			params: map[string]types.Datum{
+				"a": types.NewIntDatum(5),
+				"b": types.NewIntDatum(10),
+			},
+			expected: int64(5),
+		},
+		{
+			name: "null_check_with_if",
+			sourceCode: `BEGIN
+				IF val IS NULL THEN
+					RETURN 0;
+				ELSE
+					RETURN 1;
+				END IF;
+			END`,
+			params: map[string]types.Datum{
+				"val": types.NewDatum(nil),
+			},
+			expected: int64(0),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+
+			if tc.expectNull {
+				require.True(t, isNull)
+			} else {
+				require.False(t, isNull)
+				if tc.isString {
+					require.Equal(t, tc.expected, result.GetString())
+				} else {
+					intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+					require.NoError(t, err)
+					require.Equal(t, tc.expected, intVal)
+				}
+			}
+		})
+	}
+}
+
+// TestMySQLSPComplexAlgorithms tests more complex algorithms from MySQL sp.test.
+func TestMySQLSPComplexAlgorithms(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name       string
+		sourceCode string
+		params     map[string]types.Datum
+		expected   interface{}
+		isString   bool
+	}{
+		// Fibonacci calculation
+		{
+			name: "fibonacci_10",
+			sourceCode: `BEGIN
+				DECLARE a INT DEFAULT 0;
+				DECLARE b INT DEFAULT 1;
+				DECLARE temp INT;
+				DECLARE i INT DEFAULT 0;
+				IF n <= 0 THEN
+					RETURN 0;
+				END IF;
+				IF n = 1 THEN
+					RETURN 1;
+				END IF;
+				WHILE i < n - 1 DO
+					SET temp = a + b;
+					SET a = b;
+					SET b = temp;
+					SET i = i + 1;
+				END WHILE;
+				RETURN b;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(10)},
+			expected: int64(55),
+		},
+		// GCD calculation
+		{
+			name: "gcd_48_18",
+			sourceCode: `BEGIN
+				DECLARE temp INT;
+				WHILE b != 0 DO
+					SET temp = b;
+					SET b = MOD(a, b);
+					SET a = temp;
+				END WHILE;
+				RETURN a;
+			END`,
+			params: map[string]types.Datum{
+				"a": types.NewIntDatum(48),
+				"b": types.NewIntDatum(18),
+			},
+			expected: int64(6),
+		},
+		// Prime check
+		{
+			name: "is_prime_17",
+			sourceCode: `BEGIN
+				DECLARE i INT DEFAULT 2;
+				IF n < 2 THEN
+					RETURN 0;
+				END IF;
+				WHILE i * i <= n DO
+					IF MOD(n, i) = 0 THEN
+						RETURN 0;
+					END IF;
+					SET i = i + 1;
+				END WHILE;
+				RETURN 1;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(17)},
+			expected: int64(1),
+		},
+		{
+			name: "is_prime_15",
+			sourceCode: `BEGIN
+				DECLARE i INT DEFAULT 2;
+				IF n < 2 THEN
+					RETURN 0;
+				END IF;
+				WHILE i * i <= n DO
+					IF MOD(n, i) = 0 THEN
+						RETURN 0;
+					END IF;
+					SET i = i + 1;
+				END WHILE;
+				RETURN 1;
+			END`,
+			params:   map[string]types.Datum{"n": types.NewIntDatum(15)},
+			expected: int64(0),
+		},
+		// String palindrome check (using STRCMP for comparison)
+		{
+			name: "is_palindrome_racecar",
+			sourceCode: `BEGIN
+				DECLARE original VARCHAR(100);
+				DECLARE reversed VARCHAR(100);
+				SET original = LOWER(s);
+				SET reversed = REVERSE(original);
+				IF STRCMP(original, reversed) = 0 THEN
+					RETURN 1;
+				END IF;
+				RETURN 0;
+			END`,
+			params:   map[string]types.Datum{"s": types.NewStringDatum("racecar")},
+			expected: int64(1),
+		},
+		{
+			name: "is_palindrome_hello",
+			sourceCode: `BEGIN
+				DECLARE original VARCHAR(100);
+				DECLARE reversed VARCHAR(100);
+				SET original = LOWER(s);
+				SET reversed = REVERSE(original);
+				IF STRCMP(original, reversed) = 0 THEN
+					RETURN 1;
+				END IF;
+				RETURN 0;
+			END`,
+			params:   map[string]types.Datum{"s": types.NewStringDatum("hello")},
+			expected: int64(0),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			require.NoError(t, err)
+			result, isNull, err := executeSQLFunctionBody(nil, body, tc.params)
+			require.NoError(t, err)
+			require.False(t, isNull)
+
+			if tc.isString {
+				require.Equal(t, tc.expected, result.GetString())
+			} else {
+				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, intVal)
+			}
+		})
+	}
+}
