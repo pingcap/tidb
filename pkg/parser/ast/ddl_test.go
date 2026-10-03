@@ -934,6 +934,34 @@ func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
 	}
 }
 
+func TestPresplitIndexSpecialComments(t *testing.T) {
+	specialCmtFlag := format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] NONCLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", specialCmtFlag, "ALTER TABLE `t` ADD INDEX `idx`(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 100 */, ADD INDEX `idx2`(`b`) /*T![pre_split] PRE_SPLIT_REGIONS = (BY (1),(2),(3)) */"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
 func TestResourceGroupDDLStmtRestore(t *testing.T) {
 	createTestCases := []NodeRestoreTestCase{
 		{
