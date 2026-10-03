@@ -286,6 +286,14 @@ func DoMatchBinary(str string, patChars, patTypes []byte) bool {
 	return doMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
 }
 
+// DoMatchCustomizedBinary is the byte-oriented counterpart of `DoMatchCustomized`:
+// it matches `str` one byte at a time using a caller-supplied comparator. It exists
+// for collations whose weights are defined per byte rather than per rune, such as
+// latin1_swedish_ci.
+func DoMatchCustomizedBinary(str string, patWeights, patTypes []byte, matcher func(a, b byte) bool) bool {
+	return doMatchInner(len(patWeights), len(str), patTypes, func(a, b int) bool { return matcher(str[a], patWeights[b]) })
+}
+
 // DoMatch is an adapter for `DoMatchCustomized`, `str` can be any unicode string.
 func DoMatch(str string, patChars []rune, patTypes []byte) bool {
 	return DoMatchCustomized(str, patChars, patTypes, matchRune)
