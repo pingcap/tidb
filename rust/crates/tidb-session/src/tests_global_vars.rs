@@ -168,6 +168,19 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
     assert!(!tidb_vardef::is_mdl_enabled(false));
 }
 
+#[test]
+fn replacing_empty_global_image_uses_mdl_default() {
+    let _serialised = crate::tests_support::process_switch_tests();
+    let original = tidb_vardef::is_mdl_enabled(false);
+    tidb_vardef::set_enable_mdl(false);
+
+    let globals = vars::GlobalSysvars::new();
+    globals.replace_from(&vars::GlobalSysvars::from_cluster_rows([]));
+
+    assert!(tidb_vardef::is_mdl_enabled(false));
+    tidb_vardef::set_enable_mdl(original);
+}
+
 // Transcreated from pinned Go `pkg/util/workloadrepo.TestSettingSQLVariables`.
 #[test]
 fn test_setting_sql_variables() {

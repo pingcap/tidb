@@ -205,7 +205,7 @@ fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
         Arc::new(RwLock::new(Vec::new())),
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
-            shared_cache: Some(shared_cache),
+            shared_cache: Some(shared_cache.clone()),
             observation_time,
             ..Default::default()
         },
@@ -218,6 +218,7 @@ fn process_time_admits_a_response_for_the_next_query_on_the_shared_cache() {
     let mut first = select_result(&mut runtime, &request);
     assert_eq!(first.next_raw().unwrap(), Some(b"cached-result".to_vec()));
     assert_eq!(first.next_raw().unwrap(), None);
+    shared_cache.wait();
     let mut second = select_result(&mut runtime, &request);
     assert_eq!(second.next_raw().unwrap(), Some(b"cached-result".to_vec()));
     assert_eq!(second.next_raw().unwrap(), None);

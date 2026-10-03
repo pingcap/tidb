@@ -175,13 +175,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
-    let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
-        authority.transaction_opener(),
-        Arc::clone(&catalog),
-        users.global_vars(),
-        CONTROL_PLANE_TIMEOUT,
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // The node's coprocessor: base-table scans now carry their predicate,
     // their row cap and their column list to the region, and only the
     // surviving rows come back. The session's own staged writes are merged on
@@ -253,6 +246,31 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 super::STATS_OWNER_KEY,
             )),
         };
+    let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
+        authority.transaction_opener(),
+        Arc::clone(&catalog),
+        users.global_vars(),
+        CONTROL_PLANE_TIMEOUT,
+        match crate::real_tikv_node::connect_schema_notifier(&config) {
+            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                client as Arc<dyn tidb_owner::OwnerStore>,
+                "bindinfo",
+                server_info.local_server_info().static_info.id.clone(),
+                "/tidb/bindinfo/owner",
+            )),
+            None => Arc::new(tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                server_info.local_server_info().static_info.id.clone(),
+                Some(&format!(
+                    "embedded-authority-{}",
+                    authority.transaction_opener().authority_id()
+                )),
+                "/tidb/bindinfo/owner",
+            )),
+        },
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // The other half of being registered: a node the owner can SEE must also
     // ANSWER. Go's `WaitVersionSynced` waits on every `/tidb/server/info`
     // entry, so this acknowledger is spawned exactly when the registration

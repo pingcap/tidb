@@ -1,0 +1,16 @@
+[package]
+name = "tidb-ristretto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native owner of the pinned Ristretto v0.1.1 cache contract"
+
+[lints]
+workspace = true
+
+[dependencies]
+crossbeam-channel = "0.5"
+rand = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }

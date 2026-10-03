@@ -17,14 +17,12 @@
 //!
 //! [`CoprCache`] is the single owner for key construction, admission, bounded
 //! storage, request preparation, collision-safe lookup, and response handling.
-//! Its deterministic eviction order is intentionally not presented as
-//! Ristretto's sampled LFU admission or asynchronous write buffer.
-//! The crate still has no TiKV RPC owner, so these request/response methods are
-//! the callable worker boundary rather than a claim that transport invokes it.
+//! The process store supplies effective TiKV settings and owns Close. Values
+//! are shared through Arc; admission/publication belongs to tidb-ristretto.
 
-use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tidb_ristretto::{Cache, Callback, Config, Item};
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
@@ -51,6 +49,8 @@ pub enum CoprCacheError {
     AdmissionMaxResultMustBePositive,
     /// TiKV reported a cache hit without a matching local cache value.
     IllegalCacheHit,
+    /// The shared cache could not start its workers.
+    CacheInitializationFailed,
 }
 
 impl fmt::Display for CoprCacheError {
@@ -64,6 +64,7 @@ impl fmt::Display for CoprCacheError {
             Self::AdmissionMaxResultMustBePositive => {
                 "AdmissionMaxResultMB must be > 0 to enable the cache"
             }
+            Self::CacheInitializationFailed => "coprocessor cache initialization failed",
             Self::IllegalCacheHit => "Internal error: received illegal TiKV response",
         })
     }
@@ -186,7 +187,7 @@ pub struct CoprCacheAdmission {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CoprCacheLookup {
     key: Vec<u8>,
-    value: Option<CoprCacheValue>,
+    value: Option<Arc<CoprCacheValue>>,
 }
 
 impl CoprCacheLookup {
@@ -198,8 +199,8 @@ impl CoprCacheLookup {
 
     /// Valid same-region, old-enough value sent as the match predicate.
     #[must_use]
-    pub const fn value(&self) -> Option<&CoprCacheValue> {
-        self.value.as_ref()
+    pub fn value(&self) -> Option<&CoprCacheValue> {
+        self.value.as_deref()
     }
 }
 
@@ -242,23 +243,18 @@ pub enum CoprCacheResponseOutcome {
     Stored,
 }
 
-/// Bounded deterministic cache owner.
-///
-/// Exact byte keys are retained by the map and again inside each value, so a
-/// hash collision cannot return another request's response. FIFO eviction is a
-/// deterministic Rust backend, not a claim of Ristretto eviction equivalence.
+/// Process-owned coprocessor cache. Clones share values and admission history.
 #[derive(Clone, Debug)]
 pub struct CoprCache {
     admission: CoprCacheAdmission,
-    capacity_bytes: usize,
-    state: Arc<Mutex<CoprCacheState>>,
+    cache: Arc<Cache<Arc<CoprCacheValue>>>,
 }
 
-#[derive(Debug, Default)]
-struct CoprCacheState {
-    cost_bytes: usize,
-    values: HashMap<Vec<u8>, CoprCacheValue>,
-    insertion_order: VecDeque<Vec<u8>>,
+struct CoprCallbacks;
+impl Callback<Arc<CoprCacheValue>> for CoprCallbacks {
+    fn on_evict(&self, _: &Item<Arc<CoprCacheValue>>) {
+        record_evict();
+    }
 }
 
 impl CoprCacheAdmission {
@@ -341,31 +337,38 @@ impl CoprCache {
             return Ok(None);
         };
         let capacity_bytes = (config.capacity_mb * MEBIBYTE) as i64;
+        let max_entity_bytes = (config.admission_max_result_mb * MEBIBYTE) as i64;
+        let estimated_entities = (capacity_bytes / max_entity_bytes * 2).max(10);
+        let mut cache_config = Config::new(estimated_entities as usize * 10, capacity_bytes, 64);
+        cache_config.callback = Arc::new(CoprCallbacks);
+        let cache =
+            Cache::new(cache_config).map_err(|_| CoprCacheError::CacheInitializationFailed)?;
         Ok(Some(Self {
             admission,
-            capacity_bytes: capacity_bytes as usize,
-            state: Arc::default(),
+            cache: Arc::new(cache),
         }))
     }
 
-    /// Number of values currently retained by the deterministic backend.
+    /// Resident entries; pending and rejected writes are not residents.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values
-            .len()
+        self.cache.len()
     }
 
-    /// Returns whether the cache currently holds no values.
+    /// Whether the shared cache has no resident entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values
-            .is_empty()
+        self.cache.is_empty()
+    }
+
+    /// Wait for buffered writes, as used by Go's cache tests and load phases.
+    pub fn wait(&self) {
+        self.cache.wait();
+    }
+
+    /// Join the cache workers when the process store closes.
+    pub fn close(&self) {
+        self.cache.close();
     }
 
     /// Applies the source request-admission policy through the cache owner.
@@ -390,49 +393,19 @@ impl CoprCache {
             .check_response(data_size, process_time_nanos, paging_task_index)
     }
 
-    /// Gets an exact-key value. `HashMap` equality plus the retained value key
-    /// is the source's post-hash collision check at this boundary.
+    /// Read frequency participates in admission; retained bytes additionally
+    /// reject a primary/conflict collision exactly as Go's Get does.
     #[must_use]
-    pub fn get(&self, key: &[u8]) -> Option<CoprCacheValue> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values
-            .get(key)
-            .filter(|value| value.key == key)
-            .cloned()
+    pub fn get(&self, key: &[u8]) -> Option<Arc<CoprCacheValue>> {
+        self.cache.get(key).filter(|value| value.key == key)
     }
 
-    /// Inserts a value after forcing its retained collision-check key to equal
-    /// the caller's key. Values larger than the configured capacity are denied.
+    /// Queue a value after retaining its exact collision-check key. True means
+    /// queued (or resident replacement), not a guarantee of policy admission.
     pub fn set(&self, key: Vec<u8>, mut value: CoprCacheValue) -> bool {
         value.key.clone_from(&key);
-        let cost = value.len();
-        if cost > self.capacity_bytes {
-            return false;
-        }
-
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(replaced) = state.values.remove(key.as_slice()) {
-            state.cost_bytes -= replaced.len();
-            state.insertion_order.retain(|candidate| candidate != &key);
-        }
-        while state.cost_bytes + cost > self.capacity_bytes {
-            let Some(evicted_key) = state.insertion_order.pop_front() else {
-                break;
-            };
-            if let Some(evicted) = state.values.remove(evicted_key.as_slice()) {
-                state.cost_bytes -= evicted.len();
-                record_evict();
-            }
-        }
-        state.cost_bytes += cost;
-        state.insertion_order.push_back(key.clone());
-        state.values.insert(key, value);
-        true
+        let cost = value.len() as i64;
+        self.cache.set(key.as_slice(), Arc::new(value), cost)
     }
 
     /// Applies Go's `buildCacheKey` eligibility and match-version rules to one

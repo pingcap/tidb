@@ -9,8 +9,8 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 65,
-    "repaired": 21
+    "unresolved": 61,
+    "repaired": 25
   },
   "findings": [
     {
@@ -51,21 +51,21 @@
     },
     {
       "id": "B01",
-      "status": "open",
+      "status": "repaired",
       "group": "Binding cache and maintenance",
-      "finding": "**P2; source-confirmed:** live BindingCache uses an insertion-order CostLruStore; reads never influence admission/eviction. Every fitting insertion is admitted. Go's Ristretto cache has frequency admission and asynchronous Set/Wait. This can retain different hints under pressure, affecting chosen plans.",
-      "rust_evidence": "`rust/crates/tidb-session/src/binding_cache.rs:283`, `:313`, `:317`, `:413`; cluster binding image publication",
+      "finding": "**Repaired in the shared cache batch:** Binding cache uses the shared pinned Ristretto owner for frequency admission, buffered publication, deferred cost, metrics, reject/evict callbacks and joined close. One live cache and retained binding Arcs preserve frequency and usage across reloads; CostLruStore and BindingStore are removed.",
+      "rust_evidence": "`rust/crates/tidb-session/src/binding_cache.rs`; `rust/crates/tidb-ristretto`; hot-binding red/green regression and original binding cache cases; [receipt](shared-cache-batch-repair.md)",
       "go_owner": "`pkg/bindinfo/binding_cache.go::newBindingCache`, `GetBinding`, `SetBinding`. Preserve the complete admission, access, replacement, accounting and publication contract. No particular probabilistic Go victim or measured workload slowdown is claimed.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. CostLruStore.get only reads the map; insertion-order eviction and unconditional fitting admission remain the live binding store. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from b38a25eb0e against fresh master 93a01d31f6 and native 19a56cc. Live source and failing admission/hot-key regressions confirmed these findings before repair. See shared-cache-batch-repair.md and shared-cache-batch-validation.json. Binding/copr/Domain whole-package acceptance and workload performance are not inferred."
     },
     {
       "id": "B02",
-      "status": "open",
+      "status": "repaired",
       "group": "Binding cache and maintenance",
-      "finding": "**P2; source-confirmed:** the binding worker rebuilds the full table/cache image every lease; it has no incremental watermark, binding owner GC timer or usage persistence loop. A new cache on every reload would discard access history even after replacing the FIFO engine. Tombstone GC instead runs on subsequent global-binding writes; usage helper code has no production caller.",
-      "rust_evidence": "`rust/crates/tidb-server/src/cluster_binding_seam.rs:76`, `:169`; `rust/crates/tidb-session/src/binding_arm.rs:684`; `binding_utils.rs:459`",
+      "finding": "**Repaired in the shared cache batch:** The node binding worker maintains a ten-second-overlap incremental watermark, owner-gated GC and periodic usage persistence through independent internal sessions. It retains binding references, honors the live usage switch and acknowledges each successful usage batch. Write-triggered GC and full-image replacement are removed.",
+      "rust_evidence": "`rust/crates/tidb-server/src/cluster_binding_seam.rs`; `cluster_session_node/binding_maintenance.rs`; `rust/crates/tidb-session/src/binding_utils.rs`; production unistore usage/GC and worker/owner retirement tests; [receipt](shared-cache-batch-repair.md)",
       "go_owner": "`pkg/bindinfo/binding_cache.go::LoadFromStorageToCache`, `UpdateBindingUsageInfoToStorage`, `pkg/domain/domain.go::globalBindHandleWorkerLoop`. Keep the existing independent global-binding writer; migrate refresh/GC/usage scheduling to the shared owner before deleting write-triggered GC.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. The lease reloader still constructs a full BindingCache from storage rows; no incremental watermark, usage writer or owner GC loop was added. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from b38a25eb0e against fresh master 93a01d31f6 and native 19a56cc. Live source and failing admission/hot-key regressions confirmed these findings before repair. See shared-cache-batch-repair.md and shared-cache-batch-validation.json. Binding/copr/Domain whole-package acceptance and workload performance are not inferred."
     },
     {
       "id": "N01",
@@ -222,12 +222,12 @@
     },
     {
       "id": "C04",
-      "status": "partial",
+      "status": "repaired",
       "group": "Session plan-cache ownership",
-      "finding": "**P2; partially repaired, dependency mismatch reproduced:** statistics LFU now uses nil trigger payloads, sharded storage, callback recovery and a shared lifetime with joined close. Stretto still eagerly publishes nonresident entries, unlike Ristretto's buffered admission. Under the original low-capacity concurrent workload, Rust retains a full 136-byte payload after Wait; Go's retained tables are evicted. A [controlled follow-up](lfu-review-followup.md) also proves eager primary visibility with the admission worker paused and fixes two public paths missed by the shutdown guard. Native policy metrics are also not exposed.",
-      "rust_evidence": "`rust/crates/tidb-stats-handle-cache-internal-lfu/src/lib.rs` and `source_tests.rs::concurrent_small_capacity`; complete inventory and red/green evidence in [receipt](lfu-lifecycle-repair.md)",
-      "go_owner": "Complete `pkg/statistics/handle/cache/internal/lfu` plus pinned `github.com/dgraph-io/ristretto v0.1.1`. Accept or replace the whole dependency lifecycle/admission owner; do not add special-case eviction in the TiDB wrapper. Native lifetime repairs are not package acceptance.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained explicit ignored admission regression still fails: a nonresident primary is visible before Stretto admission. The published lifecycle and shard-index repairs remain intact. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Repaired in the shared cache batch:** The complete pinned Ristretto root replaces Stretto. Nonresident entries stay unpublished until admission; the original pressure workload retains evicted fallback metadata. Nil triggers, reference identity, callback recovery/accounting and joined close are retained, with original policy metrics assertions restored. Both retained dependency regressions now execute and pass.",
+      "rust_evidence": "`rust/crates/tidb-stats-handle-cache-internal-lfu`; `rust/crates/tidb-ristretto`; complete five-artifact LFU inventory and 91-artifact dependency integration decisions; [receipt](shared-cache-batch-repair.md)",
+      "go_owner": "Complete `pkg/statistics/handle/cache/internal/lfu` and pinned `github.com/dgraph-io/ristretto v0.1.1` root package; source tests, support/build/platform decisions and production caller validation are mapped in the shared-cache receipt. Parent statistics packages retain separate acceptance boundaries.",
+      "review_basis": "Cloud batch from b38a25eb0e against fresh master 93a01d31f6 and native 19a56cc. Live source and failing admission/hot-key regressions confirmed these findings before repair. See shared-cache-batch-repair.md and shared-cache-batch-validation.json. Binding/copr/Domain whole-package acceptance and workload performance are not inferred."
     },
     {
       "id": "E01",
@@ -645,12 +645,12 @@
     },
     {
       "id": "C03",
-      "status": "open",
+      "status": "repaired",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; source-confirmed:** coprocessor cache reads do not influence admission/eviction; the store is insertion-order FIFO. Its production reader hardcodes capacity/admission thresholds and requires an enabled cache.",
-      "rust_evidence": "`rust/crates/tidb-distsql/src/copr_cache.rs:396`, `:408`; `rust/crates/tidb-exec/src/real_tikv_read.rs:702`",
+      "finding": "**Repaired in the shared cache batch:** Coprocessor results use the shared Ristretto owner and Arc payloads. Production construction reads effective TiKV configuration, accepts a disabled cache, and store shutdown closes the shared owner. Private FIFO admission/accounting and hardcoded enabled defaults are removed.",
+      "rust_evidence": "`rust/crates/tidb-distsql/src/copr_cache.rs`; `rust/crates/tidb-exec/src/real_tikv_read.rs`; hot-result red/green, direct-unary and enabled/disabled configuration tests; [receipt](shared-cache-batch-repair.md)",
       "go_owner": "`pkg/store/copr/coprocessor_cache.go::newCoprCache` constructs Ristretto from effective TiKV cache configuration, including disabled capacity. Preserve configuration, frequency admission, access, cost and publication as one owner. B01 records the separate binding-cache consumer. No exact probabilistic victim or measured workload delta is claimed.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. CoprCache.get does not update admission/recency; set evicts insertion_order and the read authority retains fixed configuration. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from b38a25eb0e against fresh master 93a01d31f6 and native 19a56cc. Live source and failing admission/hot-key regressions confirmed these findings before repair. See shared-cache-batch-repair.md and shared-cache-batch-validation.json. Binding/copr/Domain whole-package acceptance and workload performance are not inferred."
     },
     {
       "id": "K01",
@@ -791,14 +791,21 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "ids": [
-      "A02"
+      "B01",
+      "B02",
+      "C03",
+      "C04"
     ],
     "statuses": {
-      "A02": "partial"
+      "B01": "repaired",
+      "B02": "repaired",
+      "C03": "repaired",
+      "C04": "repaired"
     },
-    "scope": "Typed password-expiry read/publication/writeback, NULL/NEVER and original epoch preservation",
-    "integration_start": "05ed8bc4606dcf592258b96c5ac72a3bbb28d2b6",
+    "scope": "Shared Ristretto root plus binding/LFU/coprocessor production owners; no parent bindinfo/copr/Domain package acceptance",
+    "integration_start": "b38a25eb0e361739460d81263a17bc75455a3974",
+    "concurrent_integration": "7b991676da79f044774caf6da4dfffe247160feb",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "account-expiry-durability-repair.md"
+    "receipt": "shared-cache-batch-repair.md"
   }
 }

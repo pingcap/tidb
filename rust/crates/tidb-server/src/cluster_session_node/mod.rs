@@ -358,6 +358,7 @@ fn jitter_below(upper: u32) -> u32 {
     })
 }
 
+mod binding_maintenance;
 mod boot;
 mod ddl;
 mod ddl_notifier;
@@ -1121,11 +1122,15 @@ impl ClusterSessionFactory {
         mut self,
         bindings: Arc<dyn crate::cluster_binding_seam::ClusterBindings>,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|factory| {
-            self.bindings = Some(bindings);
+        let factory = Arc::new_cyclic(|factory| {
+            self.bindings = Some(Arc::clone(&bindings));
             self.binding_session_factory = factory.clone();
             self
-        })
+        });
+        bindings.attach_session_pool(Arc::new(binding_maintenance::BindingSessions::new(
+            &factory,
+        )));
+        factory
     }
 
     /// Binds the factory to an authority that has already read the cluster's

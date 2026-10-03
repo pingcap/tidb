@@ -499,7 +499,8 @@ pub mod disconnect {
 // ---------------------------------------------------------------------------
 // Dashboard-surface families whose Go homes sit in pkg/metrics/bindinfo.go,
 // resource_group.go, ttl.go, and pkg/timer/metrics. The Rust node has no
-// binding-cache, runaway-watcher, TTL, or timer subsystem yet; the families
+// runaway-watcher, TTL, or timer subsystem yet; binding gauges share the
+// live session owner. The remaining dashboard families
 // register and materialize the same startup series Go writes, so dashboard
 // queries resolve identically.
 
@@ -512,20 +513,10 @@ pub static TIDB_SERVER_BINDING_CACHE_HIT_TOTAL: LazyLock<Counter> = LazyLock::ne
 });
 
 /// Go `BindingCacheMemLimit` (`pkg/metrics`).
-pub static TIDB_SERVER_BINDING_CACHE_MEM_LIMIT: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(Opts::new(
-        "tidb_server_binding_cache_mem_limit",
-        "Memory limit of binding cache.",
-    )))
-});
+pub use tidb_session::metrics::BINDING_CACHE_MEM_LIMIT as TIDB_SERVER_BINDING_CACHE_MEM_LIMIT;
 
 /// Go `BindingCacheMemUsage` (`pkg/metrics`).
-pub static TIDB_SERVER_BINDING_CACHE_MEM_USAGE: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(Opts::new(
-        "tidb_server_binding_cache_mem_usage",
-        "Memory usage of binding cache.",
-    )))
-});
+pub use tidb_session::metrics::BINDING_CACHE_MEM_USAGE as TIDB_SERVER_BINDING_CACHE_MEM_USAGE;
 
 /// Go `BindingCacheMissCounter` (`pkg/metrics`).
 pub static TIDB_SERVER_BINDING_CACHE_MISS_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
@@ -536,12 +527,7 @@ pub static TIDB_SERVER_BINDING_CACHE_MISS_TOTAL: LazyLock<Counter> = LazyLock::n
 });
 
 /// Go `BindingCacheNumBindings` (`pkg/metrics`).
-pub static TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS: LazyLock<Gauge> = LazyLock::new(|| {
-    register(Gauge::with_opts(Opts::new(
-        "tidb_server_binding_cache_num_bindings",
-        "Number of bindings in binding cache.",
-    )))
-});
+pub use tidb_session::metrics::BINDING_CACHE_NUM_BINDINGS as TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS;
 
 /// Go `RunawayFlusherAddCounter` (`pkg/metrics`).
 pub static TIDB_SERVER_RUNAWAY_FLUSHER_ADD_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
@@ -820,6 +806,25 @@ pub(crate) fn family_catalog() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_cache_and_dashboard_share_metric_ownership() {
+        init_dashboard_series();
+        let cache = tidb_session::binding_cache::BindingCache::from_storage_rows(Vec::new(), 4096);
+        assert!(std::ptr::eq(
+            &*TIDB_SERVER_BINDING_CACHE_MEM_LIMIT,
+            &*tidb_session::metrics::BINDING_CACHE_MEM_LIMIT
+        ));
+        assert!(std::ptr::eq(
+            &*TIDB_SERVER_BINDING_CACHE_MEM_USAGE,
+            &*tidb_session::metrics::BINDING_CACHE_MEM_USAGE
+        ));
+        assert!(std::ptr::eq(
+            &*TIDB_SERVER_BINDING_CACHE_NUM_BINDINGS,
+            &*tidb_session::metrics::BINDING_CACHE_NUM_BINDINGS
+        ));
+        cache.close();
+    }
 
     #[test]
     fn server_families_expose_go_names_and_labels() {

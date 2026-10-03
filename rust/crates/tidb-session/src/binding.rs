@@ -336,9 +336,7 @@ pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<
     Ok(())
 }
 
-/// Go's `bindinfo.Binding`, minus the fields only a stored global binding
-/// has (`PlanDigest` from a captured plan, `SourceHistory`, the usage
-/// counters `mysql.bind_info` carries).
+/// Go's shared binding, including stored plan digest and live usage times.
 ///
 /// `Default` is derived so [`crate::binding_cache`]'s ported Go tests can
 /// build the same partially-filled literals they do (`&Binding{BindSQL: ...,
@@ -362,6 +360,8 @@ pub struct Binding {
     pub(crate) source: &'static str,
     /// Digest of [`Self::original_sql`], and the store's own key.
     pub(crate) sql_digest: String,
+    pub(crate) plan_digest: String,
+    pub(crate) usage: std::sync::Arc<std::sync::Mutex<BindingUsageTimes>>,
     pub(crate) create_time: String,
     pub(crate) update_time: String,
     /// Digest of the HINTED statement restored WITHOUT its schema, which is
@@ -372,6 +372,14 @@ pub struct Binding {
     pub(crate) no_db_digest: String,
     pub(crate) table_names: Vec<(String, String)>,
     pub(crate) hints: HintsSet,
+}
+
+/// Mutable usage belongs to a shared binding, so reloads of the same version
+/// retain activity recorded by planners holding that binding reference.
+#[derive(Debug, Default)]
+pub(crate) struct BindingUsageTimes {
+    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_saved_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Executes one global-binding storage operation in an independent transaction.
@@ -386,6 +394,24 @@ pub trait GlobalBindingWriter: Send + Sync {
 }
 
 impl Binding {
+    /// Go UpdateLastUsedAt on a successful global match.
+    pub fn mark_used(&self) {
+        self.usage.lock().unwrap().last_used_at = Some(chrono::Utc::now());
+    }
+    /// Snapshot fields required by Go's batched usage writer.
+    pub fn usage_snapshot(&self) -> crate::binding_utils::BindingUsage {
+        let usage = self.usage.lock().unwrap();
+        crate::binding_utils::BindingUsage {
+            sql_digest: self.sql_digest.clone(),
+            plan_digest: self.plan_digest.clone(),
+            last_used_at: usage.last_used_at,
+            last_saved_at: usage.last_saved_at,
+        }
+    }
+    /// Publish a successful storage write without losing newer planner usage.
+    pub fn mark_usage_saved(&self, saved: chrono::DateTime<chrono::Utc>) {
+        self.usage.lock().unwrap().last_saved_at = Some(saved);
+    }
     /// Decode the stored binding projection used by both catalog and node loaders.
     /// Invalid SQL and builtin rows are ignored; tombstones reach cache resolution.
     pub fn from_storage_row(
@@ -411,6 +437,8 @@ impl Binding {
             collation: text(7).unwrap_or_default(),
             source: SOURCE_MANUAL,
             sql_digest: text(9)?,
+            plan_digest: text(10).unwrap_or_default(),
+            usage: Default::default(),
             create_time: text(4).unwrap_or_default(),
             update_time: text(5).unwrap_or_default(),
             no_db_digest: no_db_digest(&hinted),

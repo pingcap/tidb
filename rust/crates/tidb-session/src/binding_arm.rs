@@ -108,7 +108,6 @@ impl Session {
             ),
         };
         let changed = self.with_global_binding_storage(|storage| {
-            storage.gc_global_bindings()?;
             let now = storage.global_binding_timestamp();
             storage.bind_info_exec(
                 "UPDATE mysql.bind_info SET status = ?, update_time = ? \
@@ -207,6 +206,8 @@ impl Session {
             collation: self.binding_collation(),
             source: SOURCE_MANUAL,
             sql_digest,
+            plan_digest: String::new(),
+            usage: Default::default(),
             create_time: now.clone(),
             update_time: now,
             no_db_digest: binding::no_db_digest(hinted),
@@ -273,7 +274,6 @@ impl Session {
     /// inserted `enabled`. The timestamps print with SIX fractional digits
     /// (`types.NewTime(..., 6)` there, against the session handle's 3).
     fn create_global_binding(&mut self, binding: &Binding) -> Result<(), DriverError> {
-        self.gc_global_bindings()?;
         let now = self.global_binding_timestamp();
         self.bind_info_exec(
             "UPDATE mysql.bind_info SET status = ?, update_time = ? \
@@ -352,7 +352,6 @@ impl Session {
             // Go `bindingOperator.DropBinding`: a drop is an UPDATE to
             // `deleted`, and the affected count is the answer.
             let dropped = self.with_global_binding_storage(|storage| {
-                storage.gc_global_bindings()?;
                 let now = storage.global_binding_timestamp();
                 let mut dropped = 0u64;
                 for digest in &digests {
@@ -526,6 +525,15 @@ impl Session {
                     &self.current_db,
                     fuzzy_enabled,
                 )?;
+                if self
+                    .vars
+                    .global_sysvars()
+                    .get("tidb_enable_binding_usage")
+                    .ok()
+                    .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+                {
+                    matched.mark_used();
+                }
                 (matched.hints.clone(), matched.bind_sql.clone())
             }
             None => {
@@ -677,11 +685,9 @@ impl Session {
 
     /// Go `bindingOperator.GCBinding`: `deleted` tombstones whose
     /// `update_time` is older than TEN LEASES (`bindinfo.Lease` = 3s) are
-    /// physically removed, so every peer's cache has long acknowledged the
-    /// drop. Go's owner runs it on a timer; this tier has no background
-    /// loop, so every global-binding WRITE sweeps first -- the same rows
-    /// are gone at the same observable ages, without a goroutine to port.
-    fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
+    /// physically removed after peers can observe them. The Domain binding
+    /// owner invokes this through the shared internal writer and lock row.
+    pub fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
         let cutoff = self.global_binding_timestamp_offset(-30);
         self.bind_info_exec(
             "DELETE FROM mysql.bind_info WHERE status = ? AND update_time < ?",
@@ -718,7 +724,7 @@ impl Session {
         if let Some(shared) = &self.global_binding_cache {
             let mut loaded = binding::SessionBindings::default();
             for binding in shared.load().get_all_bindings() {
-                loaded.create(binding.clone());
+                loaded.create(binding.as_ref().clone());
             }
             return Ok(loaded);
         }

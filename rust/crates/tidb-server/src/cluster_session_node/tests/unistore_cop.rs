@@ -770,7 +770,7 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         .expect("begin writer");
     rows(
         &mut writer,
-        "UPDATE mysql.bind_info SET status='disabled' WHERE sql_digest='binding_visibility_probe'",
+        "UPDATE mysql.bind_info SET status='disabled', update_time='2026-09-07 00:00:01' WHERE sql_digest='binding_visibility_probe'",
     );
     assert_binding(&mut reader, "1", "reader during uncommitted disable");
     assert_binding(&mut writer, "1", "writer during uncommitted disable");
@@ -779,11 +779,14 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         .expect("rollback writer");
     assert_binding(&mut reader, "1", "after rollback");
 
-    for (status, expected) in [("disabled", "0"), ("enabled", "1"), ("deleted", "0")] {
+    for (version, (status, expected)) in [("disabled", "0"), ("enabled", "1"), ("deleted", "0")]
+        .into_iter()
+        .enumerate()
+    {
         writer
             .control_transaction("BEGIN PESSIMISTIC")
             .expect("begin writer");
-        rows(&mut writer, &format!("UPDATE mysql.bind_info SET status='{status}' WHERE sql_digest='binding_visibility_probe'"));
+        rows(&mut writer, &format!("UPDATE mysql.bind_info SET status='{status}', update_time='2026-09-07 00:00:0{}' WHERE sql_digest='binding_visibility_probe'", version + 1));
         writer.control_transaction("COMMIT").expect("commit writer");
         for _ in 0..3 {
             assert_binding(&mut reader, expected, status);
@@ -9846,4 +9849,65 @@ fn analyze_preserves_generated_execution_error() {
         "SHOW STATS_HISTOGRAMS WHERE table_name = 'analyze_error'"
     )
     .is_empty());
+}
+
+#[test]
+fn binding_maintenance_preserves_usage_and_collects_tombstones_without_writes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(128)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.binding_maintenance (id INT PRIMARY KEY, v INT, KEY iv(v))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.binding_maintenance VALUES (1,10)",
+    );
+    rows(&mut session, "CREATE GLOBAL BINDING FOR SELECT * FROM test.binding_maintenance WHERE v=10 USING SELECT * FROM test.binding_maintenance USE INDEX(iv) WHERE v=10");
+    rows(
+        &mut session,
+        "SELECT * FROM test.binding_maintenance WHERE v=10",
+    );
+    let bindings = stack.factory.bindings.as_ref().unwrap();
+    let owner = bindings.cache().load();
+    let binding = owner
+        .get_all_bindings()
+        .into_iter()
+        .find(|b| b.usage_snapshot().last_used_at.is_some())
+        .expect("matching records shared usage");
+    let digest = binding.usage_snapshot().sql_digest;
+    bindings.reload().unwrap();
+    assert!(Arc::ptr_eq(&owner, &bindings.cache().load()));
+    assert!(Arc::ptr_eq(&binding, &owner.get_binding(&digest).unwrap()));
+    rows(&mut session, "SET GLOBAL tidb_enable_binding_usage=OFF");
+    bindings.write_usage().unwrap();
+    assert!(binding.usage_snapshot().last_saved_at.is_none());
+    rows(&mut session, "SET GLOBAL tidb_enable_binding_usage=ON");
+    bindings.write_usage().expect("usage storage transaction");
+    assert!(binding.usage_snapshot().last_saved_at.is_some());
+    assert_eq!(displayed(rows(&mut session, &format!("SELECT last_used_date IS NOT NULL FROM mysql.bind_info WHERE sql_digest='{digest}'"))), [["1"]]);
+    rows(&mut session, "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest) VALUES ('aged binding', 'SELECT 1', 'test', 'deleted', '2001-01-01 00:00:00', '2001-01-01 00:00:00', 'utf8mb4', 'utf8mb4_bin', 'manual', 'aged_binding_maintenance')");
+    rows(&mut session, "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest) VALUES ('young binding', 'SELECT 1', 'test', 'deleted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'utf8mb4', 'utf8mb4_bin', 'manual', 'young_binding_maintenance')");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.bind_info WHERE sql_digest='aged_binding_maintenance'"
+        )),
+        [["1"]]
+    );
+    bindings.gc().expect("owner GC independent of writes");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.bind_info WHERE sql_digest='aged_binding_maintenance'"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM mysql.bind_info WHERE sql_digest='young_binding_maintenance'"
+        )),
+        [["1"]]
+    );
 }

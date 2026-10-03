@@ -306,3 +306,25 @@ pub fn histogram_definitions() -> Vec<(&'static str, &'static str)> {
         ),
     ]
 }
+
+/// Go BindingCacheMemUsage, published after each binding refresh.
+pub static BINDING_CACHE_MEM_USAGE: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::new(
+        "tidb_server_binding_cache_mem_usage",
+        "Memory usage of binding cache.",
+    ))
+});
+/// Go BindingCacheMemLimit.
+pub static BINDING_CACHE_MEM_LIMIT: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::new(
+        "tidb_server_binding_cache_mem_limit",
+        "Memory limit of binding cache.",
+    ))
+});
+/// Go BindingCacheNumBindings; evicted side-index entries do not count.
+pub static BINDING_CACHE_NUM_BINDINGS: LazyLock<Gauge> = LazyLock::new(|| {
+    register(Gauge::new(
+        "tidb_server_binding_cache_num_bindings",
+        "Number of bindings in binding cache.",
+    ))
+});

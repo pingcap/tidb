@@ -195,6 +195,7 @@ fn cache_is_prepared_per_attempt_restored_before_paging_and_rebuilt_for_continua
         )
         .unwrap();
     let cache = runtime.into_cache().unwrap().unwrap();
+    cache.wait();
 
     let mut replay = prepare(&metadata, &topology, Some(cache)).unwrap();
     assert_eq!(
@@ -646,5 +647,6 @@ fn backpressure_rejects_before_cache_or_paging_mutation() {
         accepted.cache_outcome,
         Some(CoprCacheResponseOutcome::Stored)
     );
+    runtime.cache().unwrap().wait();
     assert!(runtime.cache().unwrap().get(&failed_key).is_some());
 }

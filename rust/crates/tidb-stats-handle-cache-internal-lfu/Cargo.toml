@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 rand = "0.10"
-stretto = "0.9"
+tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-log = { path = "../tidb-log" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }

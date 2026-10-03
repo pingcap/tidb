@@ -105,6 +105,12 @@ The concurrent configured-TopN commit 0b2cf64069 leaves two exact tie-order test
 
 ## W07 — Shared cache dependency and consumers
 
+Current checkpoint: the [shared cache batch](shared-cache-batch-repair.md)
+closes B01, B02, C03 and C04. The pinned root and LFU package obligations have
+receipts; C02 and W12 inference remain unresolved. Broader bindinfo/copr/Domain
+acceptance still requires their other package obligations. The original five-ID
+ownership table remains the historical workstream allocation.
+
 
 **Complete source owners to scope:** Pinned Ristretto root/dependencies, TiDB `pkg/statistics/handle/cache/internal/lfu` and parents, `pkg/bindinfo`, `pkg/store/copr`, `pkg/planner/core` and Domain.
 

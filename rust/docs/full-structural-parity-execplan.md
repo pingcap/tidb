@@ -70,10 +70,10 @@ The entries below preserve earlier completed work and still-open obligations.
 - [x] Complete A01 runtime regression validation and correct the audit: 20 table-privilege tests and the Go oracle pass; five fail-before regressions are repaired. Broad grant/prepared/EXPLAIN suites have no new failures versus HEAD (31/1/12 remain). All-target compilation and root lint pass. Publication uses both locked build gates; full planner/session package acceptance remains open.
 - [x] (2026-10-01, system-wide design review) Recheck selectable SQL entrypoints, compiler/transaction boundaries, DML handoff, DDL dispatch, boot composition and client routing. Put the shared cache work inside the wider dependency/risk order below. This source review changes the implementation plan only; no runtime finding is repaired or package accepted.
 - [x] (2026-10-01, shared cache design review) Refresh integration/master; trace all four production Ristretto importers, their configuration and owning lifetimes. Recheck 98 consumer/subpackage artifacts against the existing inventory. Include inference, which is absent from this branch's Go checkout. Record the shared dependency and consumer retirement sequence in `parity/current-audit/shared-cache-owner-review.md`; no runtime/package acceptance is claimed.
-- [ ] Implement and validate the complete pinned Ristretto root package before consumer migration. Remove Stretto and both private FIFO stores only as their whole Go owners and production callers acquire equivalent validated behavior. Keep B01/B02, C03, C04 and inference acceptance separate.
+- [x] (2026-10-03, shared cache batch) Implement and validate the complete pinned Ristretto root, migrate all three existing cache owners, remove Stretto and both FIFO stores, and repair B01/B02/C03/C04. Root and LFU have atomic package receipts; broader bindinfo/copr/Domain and inference acceptance remains separate.
 - [x] (2026-10-01, LFU review follow-up) Recheck all five LFU artifacts and inventory all 91 artifacts of pinned Ristretto v0.1.1. Reproduce unguarded public eviction lifetime and fix TriggerEvict/SetCapacity; both are exercised by the passing regression. Add a deterministic primary-admission failure and restore the pressure test's Go Get observation path (still fails). Native owner/parent suites pass 33 tests; two dependency probes remain ignored and unaccepted. The original 10 LFU and 73 Ristretto tests pass with race detection. All-target compilation, lint, formatting and inventory checks pass. Both locked publication builds remain required.
 - [x] (2026-10-01, LFU owner review/native repair) Review all five artifacts at current master; reproduce and repair premature Close, fake-table/negative-key classification, and signed-shard drift; remove the exclusive per-access primary mutex/clones and synthetic trigger tables. Map all ten original tests; 19 LFU and 13 parent tests, original Go race suite, all-target compilation and lint pass. Publication still requires both locked server builds.
-- [ ] (2026-10-01, C04 external boundary) Replace or accept the complete pinned Ristretto dependency owner. The original low-capacity concurrent workload retains full payloads in Stretto after Wait; its failing native reproduction is explicitly ignored, not accepted. Policy-metric assertions also remain unavailable in its synchronous public API. Do not claim complete LFU package parity.
+- [x] (2026-10-03, C04 external boundary) Replace Stretto with the complete pinned root owner. Both retained admission/pressure regressions execute and pass; original policy metrics assertions are restored. See `parity/current-audit/shared-cache-batch-repair.md` and the atomic LFU receipt.
 
 - [x] (2026-10-01, retained progress ownership) Recheck the complete seven-artifact `br/pkg/rtree` package against master; reproduce stale retained progress records; replace value copies with shared handles through insertion, lookup, collection and deletion; restore original retained-pointer tests. Forty Rust tests, all original Go race tests, all-target compilation and lint pass. Both locked server-build gates remain required for publication.
 
@@ -267,7 +267,7 @@ Implement the full pinned Ristretto root and dependency decisions, then complete
 LFU/parent, binding and coprocessor consumer packages. Admission, publication,
 queues, TTL, callbacks, metrics and close belong together. Both red C04 probes
 must pass without compensating wrapper policy. The proposed
-`rust/crates/tidb-ristretto` is a design target, not an existing accepted crate.
+`rust/crates/tidb-ristretto` now implements the pinned root; the 2026-10-03 shared-cache receipt records package acceptance and native decisions.
 Keep four independent cache instances/budgets/lifetimes including W12 inference.
 Migrate binding refresh/GC/usage persistence and effective coprocessor config
 along with storage. Remove Stretto and private FIFO stores when callers migrate.
@@ -2536,3 +2536,19 @@ are repaired through shared owners. See current-audit/account-history-locking-
 repair.md and account-history-locking-validation.json for gates and limits. This
 maintenance batch accepts no complete executor/privilege package, platform or
 mixed-node security contract and claims no workload performance improvement.
+
+
+### 2026-10-03: shared cache batch closes four existing findings
+
+Starting at b38a25eb0e and preserving concurrent MDL-default commit 7b991676da,
+with unchanged freshly fetched Go master 93a01d31f6 and native 19a56cc, the
+[batch receipt](parity/current-audit/shared-cache-batch-repair.md) repairs B01,
+B02, C03 and C04. Ristretto owns the common admission/publication/lifetime;
+bindings retain one live owner with incremental reload, owner GC and usage
+writes; coprocessor construction uses effective optional configuration; LFU
+preserves fallback identity/accounting and both original dependency regressions
+pass. Stretto, both FIFO stores and write-triggered binding GC are removed.
+The stale negative-ID panic test is retired and FIFO/whole-image test assumptions
+are corrected to Go's source contract. Counts: 61 unresolved (52 open/nine
+partial), 25 repaired, 86 tracked. C02, X02 and broader parent-package obligations
+remain distinct. Detailed checks and publication state are in the validation JSON.

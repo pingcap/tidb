@@ -788,13 +788,16 @@ fn dropped_binding_tombstones_are_swept_after_ten_leases() {
         ),
         "1"
     );
-    // Thirty-two seconds after the drop, the next write sweeps it.
+    // An ordinary write no longer performs Domain maintenance. The owner
+    // invokes GC after the ten-lease visibility window.
     session
         .run("set timestamp = 1000000033")
         .expect("advance clock");
     session
         .run("drop global binding for select * from t where b = 5")
         .expect("drop second");
+    assert_eq!(joined(&mut session, "select count(*) from mysql.bind_info where status = 'deleted' and original_sql like '%`a`%'"), "1");
+    session.gc_global_bindings().expect("owner GC");
     assert_eq!(
         joined(
             &mut session,

@@ -1,0 +1,1299 @@
+{
+  "module": "github.com/dgraph-io/ristretto",
+  "version": "v0.1.1",
+  "module_sum": "h1:6CWw5tJNgpegArSHpNHJKldNeq03FQCwYvfMVWajOK8=",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_crate": "rust/crates/tidb-ristretto",
+  "acceptance_status": "accepted_root_package_linux_x86_64",
+  "root_production_sources": [
+    "cache.go",
+    "policy.go",
+    "ring.go",
+    "sketch.go",
+    "store.go",
+    "ttl.go"
+  ],
+  "original_tests": 73,
+  "original_benchmarks": 5,
+  "tests_and_benchmarks": [
+    {
+      "source": "cache_test.go::TestCacheKeyToHash",
+      "native": "src/tests.rs::test_cache_key_to_hash"
+    },
+    {
+      "source": "cache_test.go::TestCacheMaxCost",
+      "native": "src/tests.rs::test_cache_max_cost"
+    },
+    {
+      "source": "cache_test.go::TestUpdateMaxCost",
+      "native": "src/tests.rs::test_update_max_cost"
+    },
+    {
+      "source": "cache_test.go::TestNewCache",
+      "native": "src/tests.rs::test_new_cache"
+    },
+    {
+      "source": "cache_test.go::TestNilCache",
+      "native": "src/tests.rs::test_nil_cache"
+    },
+    {
+      "source": "cache_test.go::TestMultipleClose",
+      "native": "src/tests.rs::test_multiple_close"
+    },
+    {
+      "source": "cache_test.go::TestSetAfterClose",
+      "native": "src/tests.rs::test_set_after_close"
+    },
+    {
+      "source": "cache_test.go::TestClearAfterClose",
+      "native": "src/tests.rs::test_clear_after_close"
+    },
+    {
+      "source": "cache_test.go::TestGetAfterClose",
+      "native": "src/tests.rs::test_get_after_close"
+    },
+    {
+      "source": "cache_test.go::TestDelAfterClose",
+      "native": "src/tests.rs::test_del_after_close"
+    },
+    {
+      "source": "cache_test.go::TestCacheProcessItems",
+      "native": "src/tests.rs::test_cache_process_items"
+    },
+    {
+      "source": "cache_test.go::TestCacheGet",
+      "native": "src/tests.rs::test_cache_get"
+    },
+    {
+      "source": "cache_test.go::TestCacheSet",
+      "native": "src/tests.rs::test_cache_set"
+    },
+    {
+      "source": "cache_test.go::TestCacheInternalCost",
+      "native": "src/tests.rs::test_cache_internal_cost"
+    },
+    {
+      "source": "cache_test.go::TestRecacheWithTTL",
+      "native": "src/tests.rs::test_recache_with_ttl"
+    },
+    {
+      "source": "cache_test.go::TestCacheSetWithTTL",
+      "native": "src/tests.rs::test_cache_set_with_ttl"
+    },
+    {
+      "source": "cache_test.go::TestCacheDel",
+      "native": "src/tests.rs::test_cache_del"
+    },
+    {
+      "source": "cache_test.go::TestCacheDelWithTTL",
+      "native": "src/tests.rs::test_cache_del_with_ttl"
+    },
+    {
+      "source": "cache_test.go::TestCacheGetTTL",
+      "native": "src/tests.rs::test_cache_get_ttl"
+    },
+    {
+      "source": "cache_test.go::TestCacheClear",
+      "native": "src/tests.rs::test_cache_clear"
+    },
+    {
+      "source": "cache_test.go::TestCacheMetrics",
+      "native": "src/tests.rs::test_cache_metrics"
+    },
+    {
+      "source": "cache_test.go::TestMetrics",
+      "native": "src/tests.rs::test_metrics"
+    },
+    {
+      "source": "cache_test.go::TestNilMetrics",
+      "native": "src/tests.rs::test_nil_metrics"
+    },
+    {
+      "source": "cache_test.go::TestMetricsAddGet",
+      "native": "src/tests.rs::test_metrics_add_get"
+    },
+    {
+      "source": "cache_test.go::TestMetricsRatio",
+      "native": "src/tests.rs::test_metrics_ratio"
+    },
+    {
+      "source": "cache_test.go::TestMetricsString",
+      "native": "src/tests.rs::test_metrics_string"
+    },
+    {
+      "source": "cache_test.go::TestCacheMetricsClear",
+      "native": "src/tests.rs::test_cache_metrics_clear"
+    },
+    {
+      "source": "cache_test.go::TestBlockOnClear",
+      "native": "src/tests.rs::test_block_on_clear"
+    },
+    {
+      "source": "cache_test.go::TestDropUpdates",
+      "native": "src/tests.rs::test_drop_updates"
+    },
+    {
+      "source": "cache_test.go::TestRistrettoCalloc",
+      "native": "src/tests.rs::test_ristretto_calloc"
+    },
+    {
+      "source": "cache_test.go::TestRistrettoCallocTTL",
+      "native": "src/tests.rs::test_ristretto_calloc_ttl"
+    },
+    {
+      "source": "cache_test.go::TestCacheWithTTL",
+      "native": "src/tests.rs::test_cache_with_ttl"
+    },
+    {
+      "source": "policy_test.go::TestPolicy",
+      "native": "src/tests.rs::test_policy"
+    },
+    {
+      "source": "policy_test.go::TestPolicyMetrics",
+      "native": "src/tests.rs::test_policy_metrics"
+    },
+    {
+      "source": "policy_test.go::TestPolicyProcessItems",
+      "native": "src/tests.rs::test_policy_process_items"
+    },
+    {
+      "source": "policy_test.go::TestPolicyPush",
+      "native": "src/tests.rs::test_policy_push"
+    },
+    {
+      "source": "policy_test.go::TestPolicyAdd",
+      "native": "src/tests.rs::test_policy_add"
+    },
+    {
+      "source": "policy_test.go::TestPolicyHas",
+      "native": "src/tests.rs::test_policy_has"
+    },
+    {
+      "source": "policy_test.go::TestPolicyDel",
+      "native": "src/tests.rs::test_policy_del"
+    },
+    {
+      "source": "policy_test.go::TestPolicyCap",
+      "native": "src/tests.rs::test_policy_cap"
+    },
+    {
+      "source": "policy_test.go::TestPolicyUpdate",
+      "native": "src/tests.rs::test_policy_update"
+    },
+    {
+      "source": "policy_test.go::TestPolicyCost",
+      "native": "src/tests.rs::test_policy_cost"
+    },
+    {
+      "source": "policy_test.go::TestPolicyClear",
+      "native": "src/tests.rs::test_policy_clear"
+    },
+    {
+      "source": "policy_test.go::TestPolicyClose",
+      "native": "src/tests.rs::test_policy_close"
+    },
+    {
+      "source": "policy_test.go::TestPushAfterClose",
+      "native": "src/tests.rs::test_push_after_close"
+    },
+    {
+      "source": "policy_test.go::TestAddAfterClose",
+      "native": "src/tests.rs::test_add_after_close"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFUAdd",
+      "native": "src/tests.rs::test_sampled_lfu_add"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFUDel",
+      "native": "src/tests.rs::test_sampled_lfu_del"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFUUpdate",
+      "native": "src/tests.rs::test_sampled_lfu_update"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFUClear",
+      "native": "src/tests.rs::test_sampled_lfu_clear"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFURoom",
+      "native": "src/tests.rs::test_sampled_lfu_room"
+    },
+    {
+      "source": "policy_test.go::TestSampledLFUSample",
+      "native": "src/tests.rs::test_sampled_lfu_sample"
+    },
+    {
+      "source": "policy_test.go::TestTinyLFUIncrement",
+      "native": "src/tests.rs::test_tiny_lfu_increment"
+    },
+    {
+      "source": "policy_test.go::TestTinyLFUEstimate",
+      "native": "src/tests.rs::test_tiny_lfu_estimate"
+    },
+    {
+      "source": "policy_test.go::TestTinyLFUPush",
+      "native": "src/tests.rs::test_tiny_lfu_push"
+    },
+    {
+      "source": "policy_test.go::TestTinyLFUClear",
+      "native": "src/tests.rs::test_tiny_lfu_clear"
+    },
+    {
+      "source": "ring_test.go::TestRingDrain",
+      "native": "src/tests.rs::test_ring_drain"
+    },
+    {
+      "source": "ring_test.go::TestRingReset",
+      "native": "src/tests.rs::test_ring_reset"
+    },
+    {
+      "source": "ring_test.go::TestRingConsumer",
+      "native": "src/tests.rs::test_ring_consumer"
+    },
+    {
+      "source": "sketch_test.go::TestSketch",
+      "native": "src/tests.rs::test_sketch"
+    },
+    {
+      "source": "sketch_test.go::TestSketchIncrement",
+      "native": "src/tests.rs::test_sketch_increment"
+    },
+    {
+      "source": "sketch_test.go::TestSketchEstimate",
+      "native": "src/tests.rs::test_sketch_estimate"
+    },
+    {
+      "source": "sketch_test.go::TestSketchReset",
+      "native": "src/tests.rs::test_sketch_reset"
+    },
+    {
+      "source": "sketch_test.go::TestSketchClear",
+      "native": "src/tests.rs::test_sketch_clear"
+    },
+    {
+      "source": "sketch_test.go::TestNext2Power",
+      "native": "src/tests.rs::test_next2_power"
+    },
+    {
+      "source": "sketch_test.go::BenchmarkSketchIncrement",
+      "native": "src/benchmarks.rs::benchmark_sketch_increment"
+    },
+    {
+      "source": "sketch_test.go::BenchmarkSketchEstimate",
+      "native": "src/benchmarks.rs::benchmark_sketch_estimate"
+    },
+    {
+      "source": "store_test.go::TestStoreSetGet",
+      "native": "src/tests.rs::test_store_set_get"
+    },
+    {
+      "source": "store_test.go::TestStoreDel",
+      "native": "src/tests.rs::test_store_del"
+    },
+    {
+      "source": "store_test.go::TestStoreClear",
+      "native": "src/tests.rs::test_store_clear"
+    },
+    {
+      "source": "store_test.go::TestStoreUpdate",
+      "native": "src/tests.rs::test_store_update"
+    },
+    {
+      "source": "store_test.go::TestStoreCollision",
+      "native": "src/tests.rs::test_store_collision"
+    },
+    {
+      "source": "store_test.go::TestStoreExpiration",
+      "native": "src/tests.rs::test_store_expiration"
+    },
+    {
+      "source": "store_test.go::BenchmarkStoreGet",
+      "native": "src/benchmarks.rs::benchmark_store_get"
+    },
+    {
+      "source": "store_test.go::BenchmarkStoreSet",
+      "native": "src/benchmarks.rs::benchmark_store_set"
+    },
+    {
+      "source": "store_test.go::BenchmarkStoreUpdate",
+      "native": "src/benchmarks.rs::benchmark_store_update"
+    },
+    {
+      "source": "stress_test.go::TestStressSetGet",
+      "native": "src/tests.rs::test_stress_set_get"
+    },
+    {
+      "source": "stress_test.go::TestStressHitRatio",
+      "native": "src/tests.rs::test_stress_hit_ratio"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": ".deepsource.toml",
+      "role": "support",
+      "sha256": "8c24efd18e6634b0dbb56ebfae9e7d2f84aa5e8255aeaf3ded65614b22c7c782",
+      "bytes": 189,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/CODEOWNERS",
+      "role": "support",
+      "sha256": "aea303d37ff5d9474e928d9ed32f4cafc37e7048ec058dc5a7e1665092267728",
+      "bytes": 214,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "role": "support",
+      "sha256": "8a19907b0f0c5f93d7eca6a30e4218f661754724e3719b38bafd82808b0994b7",
+      "bytes": 1832,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/documentation_request.yml",
+      "role": "support",
+      "sha256": "51a53070f9d5f45bb4db1af6159267f57331e0850c0cf71ab368bb9d62c52e4f",
+      "bytes": 951,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "role": "support",
+      "sha256": "860ec1ffc172d8c6161851544be096e898defe7364c560b67a9543a5846451b4",
+      "bytes": 1606,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/question.yml",
+      "role": "support",
+      "sha256": "5387a15691359eb5cc346f0ae7181a8348094e61032e213ebae116c86063d322",
+      "bytes": 500,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "role": "support",
+      "sha256": "0a845f60e198c84d2d4962a15b2bc613cb70f1cf50c2324b6f750086f81cba62",
+      "bytes": 1092,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/workflows/ci-ristretto-lint.yml",
+      "role": "build/input",
+      "sha256": "26385c56ec172b50442d2b13d84b79da80160e7e6feb6a82ac717bf1b90cdd52",
+      "bytes": 661,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".github/workflows/ci-ristretto-tests.yml",
+      "role": "build/input",
+      "sha256": "ad783fc001628534fea87da3374bc54a2756f2faacc3c9fa79dcdc889913b05e",
+      "bytes": 953,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".go-version",
+      "role": "build/input",
+      "sha256": "2d73b039cbc371b784ad7d98f729308b2de35b67ed4c89c1df034b404f8a9d1c",
+      "bytes": 8,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": ".golangci.yml",
+      "role": "build/input",
+      "sha256": "88f82afe2d2c7e505dc0561deeda1874b238e632c28fa20dc1a2a8676b9b1383",
+      "bytes": 285,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": "CHANGELOG.md",
+      "role": "support",
+      "sha256": "58c9b6dc8018e1ab4ee23c4343115fc2cc4440f71f69cc14c70ecc92b5dd4d88",
+      "bytes": 7832,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": "LICENSE",
+      "role": "license",
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "bytes": 10173,
+      "integration_decision": "Apache-2.0 attribution retained in native source headers and THIRD_PARTY_LICENSES.md."
+    },
+    {
+      "path": "README.md",
+      "role": "support",
+      "sha256": "44534e5e08de8074a65551c300403d1cf35a8b621578d2806ec62b77b4d99227",
+      "bytes": 9304,
+      "integration_decision": "Repository/support artifact retained in source inventory. Native root build, test and workflow obligations recorded in receipt and Cargo manifest; no executable runtime obligation omitted."
+    },
+    {
+      "path": "benchmarks/Hit Ratios - CODASYL (ARC-OLTP).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "dd4f4b3053c418741facb782c8871f8af2ca97208cd176a504e8c92628f5ca54",
+      "bytes": 93267,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Hit Ratios - Database (ARC-DS1).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "d8732a60836d2f12d2df086cb0389b6834d0fe4142c74bb52f033f9b4aab34f1",
+      "bytes": 160542,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Hit Ratios - Glimpse (LIRS-GLI).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "924688f46ab53243209e0ebe5da935096c6a795f470d953bc7827940b4480b71",
+      "bytes": 102937,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Hit Ratios - Search (ARC-S3).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "c3d32c45ed974e257b06998739300c032046d36c052a85d2ad67600510bc14e5",
+      "bytes": 151057,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Throughput - Mixed.svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "8df58a56b78acddf5150a032a0ebdd1f134af96452af2fae7136e2d357c2f222",
+      "bytes": 130147,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Throughput - Read (Zipfian).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "18b7ca1fcc374943bf49735f70f9344c6570a3a86a9689d0c34cc26c0cb2b534",
+      "bytes": 133859,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "benchmarks/Throughput - Write (Zipfian).svg",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "3d40d7b658b773159117ac2d09436a7bf3006a8982a7ae7c1860ce64969e6132",
+      "bytes": 133156,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "cache.go",
+      "role": "production",
+      "sha256": "c39322586a007e8f8f563516fe065906670e1ec83ed16fc67d47aae207e5c697",
+      "bytes": 20046,
+      "lines": 719,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/lib.rs + metrics.rs"
+    },
+    {
+      "path": "cache_test.go",
+      "role": "test",
+      "sha256": "db947c0cb800022256ba9b865852ed5dedfd5e4fccb0d7e19408f0a7975e9f5a",
+      "bytes": 20784,
+      "lines": 999,
+      "build_tags": [],
+      "test_functions": [
+        "TestCacheKeyToHash",
+        "TestCacheMaxCost",
+        "TestUpdateMaxCost",
+        "TestNewCache",
+        "TestNilCache",
+        "TestMultipleClose",
+        "TestSetAfterClose",
+        "TestClearAfterClose",
+        "TestGetAfterClose",
+        "TestDelAfterClose",
+        "TestCacheProcessItems",
+        "TestCacheGet",
+        "TestCacheSet",
+        "TestCacheInternalCost",
+        "TestRecacheWithTTL",
+        "TestCacheSetWithTTL",
+        "TestCacheDel",
+        "TestCacheDelWithTTL",
+        "TestCacheGetTTL",
+        "TestCacheClear",
+        "TestCacheMetrics",
+        "TestMetrics",
+        "TestNilMetrics",
+        "TestMetricsAddGet",
+        "TestMetricsRatio",
+        "TestMetricsString",
+        "TestCacheMetricsClear",
+        "TestBlockOnClear",
+        "TestDropUpdates",
+        "TestRistrettoCalloc",
+        "TestRistrettoCallocTTL",
+        "TestCacheWithTTL"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "contrib/demo/node.go",
+      "role": "production",
+      "sha256": "4086a014aa9df730c2e8bd49f45d07b5d91d16d3d41d80407f7411d47f554023",
+      "bytes": 977,
+      "lines": 61,
+      "build_tags": [],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/demo/node_allocator.go",
+      "role": "production",
+      "sha256": "ab36f5299dc43b713c5f21327b174964b28c462b420a14ce3fcdff66a1d1cc31",
+      "bytes": 555,
+      "lines": 28,
+      "build_tags": [
+        "jemalloc,allocator"
+      ],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/demo/node_golang.go",
+      "role": "production",
+      "sha256": "9a7fa5796a5ee921a13d32b74247e084acce960b227ee38995a26e6cf0224e59",
+      "bytes": 118,
+      "lines": 9,
+      "build_tags": [
+        "!jemalloc"
+      ],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/demo/node_jemalloc.go",
+      "role": "production",
+      "sha256": "9c8c71e6f6c32f4d42f3c6bc6096a04499762d5131f131cdfc1d9c664547b4b1",
+      "bytes": 334,
+      "lines": 21,
+      "build_tags": [
+        "jemalloc,!allocator"
+      ],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtest/.gitignore",
+      "role": "support",
+      "sha256": "3a1e59cabec82034ce8d3187a7166879e907d7dad4beddb0a62ac807acc65281",
+      "bytes": 15,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtest/README.md",
+      "role": "support",
+      "sha256": "9e8c5992859d1d6c5c2b6de899d387630a337fcff00dbc24bb8e4c7ea1f7d1bd",
+      "bytes": 476,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtest/main.go",
+      "role": "production",
+      "sha256": "76872c49d691b42a6f20f50738c612a1e76d4bd34516959789b8c75038cf11dc",
+      "bytes": 3474,
+      "lines": 175,
+      "build_tags": [],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtest/nojemalloc.go",
+      "role": "production",
+      "sha256": "e7ebc224ef11ed78e46eb22820ad66522db92c333f0837f94172d433888edbab",
+      "bytes": 756,
+      "lines": 46,
+      "build_tags": [],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtest/withjemalloc.go",
+      "role": "production",
+      "sha256": "19210d76ded2d19ee0010426ed1f3923fb04daf3ac871d119aa2f67f6aef4f41",
+      "bytes": 516,
+      "lines": 26,
+      "build_tags": [],
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtestc/.gitignore",
+      "role": "support",
+      "sha256": "21e3c302d515767036ea4b1d85878ae6da4f658ef47f8204360d9cc06e6cbba5",
+      "bytes": 6,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "contrib/memtestc/list.c",
+      "role": "support",
+      "sha256": "893c87be15a7a6fe2f456213e5c6d513460c4d17c938c16aa51a0004e31513d9",
+      "bytes": 2289,
+      "integration_decision": "Separate benchmark/contribution package, not part of root acceptance; retained inventory, no native production importer."
+    },
+    {
+      "path": "go.mod",
+      "role": "build/input",
+      "sha256": "321ff25f2a424f80c328f0229dabbce0724391c5dc110a0014421a91a93d4dcd",
+      "bytes": 423,
+      "integration_decision": "Pinned Go module provenance and checksum retained; native dependency/build decisions live in Cargo.toml and workspace Cargo.lock."
+    },
+    {
+      "path": "go.sum",
+      "role": "build/input",
+      "sha256": "3f297905052e2ff7c9c1e961c8562eb79161d8699a57e9f469378e8749c47f0b",
+      "bytes": 2223,
+      "integration_decision": "Pinned Go module provenance and checksum retained; native dependency/build decisions live in Cargo.toml and workspace Cargo.lock."
+    },
+    {
+      "path": "policy.go",
+      "role": "production",
+      "sha256": "19d319188c3403032940caa36bd42bed5908f1d9565c46c8503a485b8aed83cb",
+      "bytes": 10412,
+      "lines": 423,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/policy.rs"
+    },
+    {
+      "path": "policy_test.go",
+      "role": "test",
+      "sha256": "964172e789c14df1ceff95b2db140b3a1c7cee1554976790ca090cb6cc164e8d",
+      "bytes": 5346,
+      "lines": 259,
+      "build_tags": [],
+      "test_functions": [
+        "TestPolicy",
+        "TestPolicyMetrics",
+        "TestPolicyProcessItems",
+        "TestPolicyPush",
+        "TestPolicyAdd",
+        "TestPolicyHas",
+        "TestPolicyDel",
+        "TestPolicyCap",
+        "TestPolicyUpdate",
+        "TestPolicyCost",
+        "TestPolicyClear",
+        "TestPolicyClose",
+        "TestPushAfterClose",
+        "TestAddAfterClose",
+        "TestSampledLFUAdd",
+        "TestSampledLFUDel",
+        "TestSampledLFUUpdate",
+        "TestSampledLFUClear",
+        "TestSampledLFURoom",
+        "TestSampledLFUSample",
+        "TestTinyLFUIncrement",
+        "TestTinyLFUEstimate",
+        "TestTinyLFUPush",
+        "TestTinyLFUClear"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "ring.go",
+      "role": "production",
+      "sha256": "012eddeab5b86b1c03d86e560b0c59a68d27cf57fb1ce64a2351b4324014e94f",
+      "bytes": 2836,
+      "lines": 91,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/ring.rs"
+    },
+    {
+      "path": "ring_test.go",
+      "role": "test",
+      "sha256": "95aef9045b1a1a6f3dad8e1d05e38e89d014ba69bc7a38a5db38ef6a71e432a2",
+      "bytes": 1255,
+      "lines": 70,
+      "build_tags": [],
+      "test_functions": [
+        "TestRingDrain",
+        "TestRingReset",
+        "TestRingConsumer"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "sim/gli.lirs.gz",
+      "role": "fixture/benchmark-artifact",
+      "sha256": "c300a0bff8149373bdbb7df3fa440e621aba920b0ec6bcc7a936f360f782511c",
+      "bytes": 5770,
+      "integration_decision": "Separate simulation package, not accepted as a whole. Root stress-test Zipf dependency replaced by native CDF sampling with the same exponent/support; native test retains original clairvoyant comparison. No runtime import."
+    },
+    {
+      "path": "sim/sim.go",
+      "role": "production",
+      "sha256": "349711166cdff09d1c25af9224bdb6511f1e1ecd03803f63751d00413e57e031",
+      "bytes": 5396,
+      "lines": 168,
+      "build_tags": [],
+      "integration_decision": "Separate simulation package, not accepted as a whole. Root stress-test Zipf dependency replaced by native CDF sampling with the same exponent/support; native test retains original clairvoyant comparison. No runtime import."
+    },
+    {
+      "path": "sim/sim_test.go",
+      "role": "test",
+      "sha256": "1765e2aa9f6dea0eceb3d08df1de4a58049dace1e708138097e2475110f6ec56",
+      "bytes": 2336,
+      "lines": 114,
+      "build_tags": [],
+      "test_functions": [
+        "TestZipfian",
+        "TestUniform",
+        "TestParseLIRS",
+        "TestReadLIRS",
+        "TestParseARC",
+        "TestCollection",
+        "TestStringCollection"
+      ],
+      "integration_decision": "Separate simulation package, not accepted as a whole. Root stress-test Zipf dependency replaced by native CDF sampling with the same exponent/support; native test retains original clairvoyant comparison. No runtime import."
+    },
+    {
+      "path": "sketch.go",
+      "role": "production",
+      "sha256": "8a819beae83e1559e6cf5ff60fb2451118502a656317da8090d6e82a9df07dbb",
+      "bytes": 3835,
+      "lines": 156,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/sketch.rs"
+    },
+    {
+      "path": "sketch_test.go",
+      "role": "test",
+      "sha256": "9dcdb023dad966c7a34d04b2c6639f0fcf74a72185a02544e1f7091ef1c8cbb8",
+      "bytes": 1589,
+      "lines": 85,
+      "build_tags": [],
+      "test_functions": [
+        "TestSketch",
+        "TestSketchIncrement",
+        "TestSketchEstimate",
+        "TestSketchReset",
+        "TestSketchClear",
+        "TestNext2Power",
+        "BenchmarkSketchIncrement",
+        "BenchmarkSketchEstimate"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "store.go",
+      "role": "production",
+      "sha256": "9534bd01a7b530075f1169cdc1a874c15471266cd11bfc10a03986feec6c55be",
+      "bytes": 5873,
+      "lines": 242,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/store.rs"
+    },
+    {
+      "path": "store_test.go",
+      "role": "test",
+      "sha256": "a44861a07bb610e8eb1240ea8bbff3a2049f200f32097fbf0829092ada176d75",
+      "bytes": 4226,
+      "lines": 238,
+      "build_tags": [],
+      "test_functions": [
+        "TestStoreSetGet",
+        "TestStoreDel",
+        "TestStoreClear",
+        "TestStoreUpdate",
+        "TestStoreCollision",
+        "TestStoreExpiration",
+        "BenchmarkStoreGet",
+        "BenchmarkStoreSet",
+        "BenchmarkStoreUpdate"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "stress_test.go",
+      "role": "test",
+      "sha256": "7b51116d8d599c4f2e40e155739e696482076db89491dd3834831d2936bc8555",
+      "bytes": 3551,
+      "lines": 151,
+      "build_tags": [],
+      "test_functions": [
+        "TestStressSetGet",
+        "TestStressHitRatio"
+      ],
+      "integration_decision": "All original tests/benchmarks mapped individually below; support helpers live in tests.rs and benchmarks.rs."
+    },
+    {
+      "path": "ttl.go",
+      "role": "production",
+      "sha256": "9b9eb72aa7578fba129772a5258bd2e85448044330cca7f688ea326d79c8139f",
+      "bytes": 3347,
+      "lines": 147,
+      "build_tags": [],
+      "integration_decision": "Native root implementation: src/store.rs"
+    },
+    {
+      "path": "z/LICENSE",
+      "role": "license",
+      "sha256": "349fec2711443e0da8f36e388931fdfe2f874fdd4df307b9a379d01bb9764dc8",
+      "bytes": 2937,
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/README.md",
+      "role": "support",
+      "sha256": "fecb2cdab0b4bc84c61d66a4392753471cdcf893f301c00a1be9cda880934add",
+      "bytes": 5448,
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/allocator.go",
+      "role": "production",
+      "sha256": "c58098fd55609773ac0a0f78d0b551f718fbfcdd32abb8f6561a54b97eec0aa0",
+      "bytes": 8701,
+      "lines": 403,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/allocator_test.go",
+      "role": "test",
+      "sha256": "4f053e5e6b319af25004999d6c5dc5d8c32e7c83f22cd0f2530996d9e02cc413",
+      "bytes": 4185,
+      "lines": 194,
+      "build_tags": [],
+      "test_functions": [
+        "TestAllocate",
+        "TestAllocateSize",
+        "TestAllocateReset",
+        "TestAllocateTrim",
+        "TestPowTwo",
+        "TestAllocateAligned",
+        "TestAllocateConcurrent",
+        "BenchmarkAllocate"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/bbloom.go",
+      "role": "production",
+      "sha256": "65e8c2c989bce0633343a7ce6011d7316e6340f3ee95d3a8471b6076b9068eed",
+      "bytes": 6311,
+      "lines": 211,
+      "build_tags": [],
+      "integration_decision": "Root doorkeeper operations implemented in sketch.rs with pinned sizing and false-positive target. MIT notice retained. Other Bloom export/serialization APIs remain separate z package."
+    },
+    {
+      "path": "z/bbloom_test.go",
+      "role": "test",
+      "sha256": "6f1eccfcf5c24ae625d7a02dc7279747557baec436bd3405ba05893f365b8b63",
+      "bytes": 2154,
+      "lines": 112,
+      "build_tags": [],
+      "test_functions": [
+        "TestMain",
+        "TestM_NumberOfWrongs",
+        "TestM_JSON",
+        "BenchmarkM_New",
+        "BenchmarkM_Clear",
+        "BenchmarkM_Add",
+        "BenchmarkM_Has"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/btree.go",
+      "role": "production",
+      "sha256": "7c2490f70eb2e314cc0c75f0f58613ea6d70c4c58eca5e302a1415569c928721",
+      "bytes": 17881,
+      "lines": 710,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/btree_test.go",
+      "role": "test",
+      "sha256": "15bce83d417588f717e5a3468804c65a86c362dadefa7a2434c47bcc3b48abc8",
+      "bytes": 12967,
+      "lines": 531,
+      "build_tags": [],
+      "test_functions": [
+        "TestTree",
+        "TestTreePersistent",
+        "TestTreeBasic",
+        "TestTreeReset",
+        "TestTreeCycle",
+        "TestTreeIterateKV",
+        "TestOccupancyRatio",
+        "TestNode",
+        "TestNodeBasic",
+        "TestNode_MoveRight",
+        "TestNodeCompact",
+        "BenchmarkPurge",
+        "BenchmarkWrite",
+        "BenchmarkRead",
+        "BenchmarkSearch",
+        "BenchmarkCustomSearch"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/buffer.go",
+      "role": "production",
+      "sha256": "323dca02eecbceb1cc6fecbc140bc800742e40600ab76b5c79db2c7b2091852a",
+      "bytes": 13463,
+      "lines": 544,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/buffer_test.go",
+      "role": "test",
+      "sha256": "9989d09549c30029fb9e9084f1fd6a45eacdf100c75f2e24b5412621b71d9a41",
+      "bytes": 7554,
+      "lines": 303,
+      "build_tags": [],
+      "test_functions": [
+        "TestBuffer",
+        "TestBufferWrite",
+        "TestBufferAutoMmap",
+        "TestBufferSimpleSort",
+        "TestBufferSlice",
+        "TestBufferSort",
+        "TestBufferPadding",
+        "TestSmallBuffer"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc.go",
+      "role": "production",
+      "sha256": "33240da9febd06bb68255f454f785222874435ef5e531c19052495f9bc823628",
+      "bytes": 1959,
+      "lines": 42,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc_32bit.go",
+      "role": "production",
+      "sha256": "66939c30f5b2dc6ba3a3a853b52cf143590ec7d62b900a7601fe94f45baa2972",
+      "bytes": 485,
+      "lines": 14,
+      "build_tags": [
+        "386 amd64p32 arm armbe  mips mipsle mips64p32 mips64p32le ppc sparc"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc_64bit.go",
+      "role": "production",
+      "sha256": "cb91efcafcbe7ad1e46c8a1c881d7bf025b1f6c36de2ca387d551dac43dd5f30",
+      "bytes": 491,
+      "lines": 14,
+      "build_tags": [
+        "amd64 arm64 arm64be ppc64 ppc64le mips64 mips64le riscv64 s390x sparc64"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc_jemalloc.go",
+      "role": "production",
+      "sha256": "7dbb43a230067e092f000cbe65849c31b5497064eb51e2f0413b45f09f4d740f",
+      "bytes": 5064,
+      "lines": 172,
+      "build_tags": [
+        "jemalloc"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc_nojemalloc.go",
+      "role": "production",
+      "sha256": "d4b76179957489bf7464fe3c99dbe3aee75edfbf0f3af46de07b33e1ff787cde",
+      "bytes": 977,
+      "lines": 37,
+      "build_tags": [
+        "!jemalloc !cgo"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/calloc_test.go",
+      "role": "test",
+      "sha256": "261eca51ebad468a6e910f31fa3b1651ae441dcc541d1a21503aa76871d4d4b5",
+      "bytes": 2595,
+      "lines": 107,
+      "build_tags": [],
+      "test_functions": [
+        "BenchmarkAllocation",
+        "TestCalloc"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/file.go",
+      "role": "production",
+      "sha256": "bdf180bf5efb0b7624a6e8e66451c35bc57249cacc2878dbe3748669f2bffd04",
+      "bytes": 5689,
+      "lines": 217,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/file_default.go",
+      "role": "production",
+      "sha256": "070717dd1617105b089e82a5e3ff9f3a84d5fa8d85725510e1cc0f46999bc81c",
+      "bytes": 1359,
+      "lines": 39,
+      "build_tags": [
+        "!linux"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/file_linux.go",
+      "role": "production",
+      "sha256": "2fe6604f0864efd2c3311a93154e6cc67d2ab34aa37723d88bd8e2331b8d520c",
+      "bytes": 1231,
+      "lines": 37,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/flags.go",
+      "role": "production",
+      "sha256": "8ac59c74696bf350704ac98825dbad01c10c6904fa8ad213db381a8261980188",
+      "bytes": 6993,
+      "lines": 311,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/flags_test.go",
+      "role": "test",
+      "sha256": "0e2e0e2d11e0407b8d9d43d48e98796f067e78acb6ffc10e1695fa32f2fa79c7",
+      "bytes": 2215,
+      "lines": 100,
+      "build_tags": [],
+      "test_functions": [
+        "TestFlag",
+        "TestFlagDefault",
+        "TestGetPath"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/histogram.go",
+      "role": "production",
+      "sha256": "884508b116337746d76140220ea55e366ed65e2c4480c4bd783e90e985876670",
+      "bytes": 5631,
+      "lines": 205,
+      "build_tags": [],
+      "integration_decision": "Root lifetime histogram operations implemented in metrics.rs (buckets, count/min/max/sum/copy/mean). Unused histogram presentation/utilities remain separate z package."
+    },
+    {
+      "path": "z/histogram_test.go",
+      "role": "test",
+      "sha256": "f3f76b228d59805d88f97e88483bfb88ee0fd1fbe96c05626bb260965cc06765",
+      "bytes": 1491,
+      "lines": 80,
+      "build_tags": [],
+      "test_functions": [
+        "TestPercentile00",
+        "TestPercentile99",
+        "TestPercentile100"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap.go",
+      "role": "production",
+      "sha256": "ac6d1d79a7899e7464cd772b67c4279446548db08ac88245a8539aabc489f857",
+      "bytes": 1397,
+      "lines": 44,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap_darwin.go",
+      "role": "production",
+      "sha256": "d17ff4a1b5612a8bcc09c149711f42d9f49017819dbd0012b7b03a0400a92e57",
+      "bytes": 1612,
+      "lines": 59,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap_linux.go",
+      "role": "production",
+      "sha256": "03e5866182cbea8672eb0aa8baf7e6c6c6821891cd15cb7468dfd3f6f25c61ce",
+      "bytes": 2085,
+      "lines": 71,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap_plan9.go",
+      "role": "production",
+      "sha256": "cbc6fa1f676ac7ed3f446fdb9c2581c39a1f8eedd7fb12294dd1471d021bb50c",
+      "bytes": 1361,
+      "lines": 44,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap_unix.go",
+      "role": "production",
+      "sha256": "d2d6aa44012e8a25fde3488f8b5fd0090c82ad769ec169b7fe5d614bb524604c",
+      "bytes": 1625,
+      "lines": 55,
+      "build_tags": [
+        "!windows,!darwin,!plan9,!linux"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mmap_windows.go",
+      "role": "production",
+      "sha256": "ac4791e3b9383548e5b9577d41ba747d1f14d900a77fc40662785dfa6a39616b",
+      "bytes": 2418,
+      "lines": 96,
+      "build_tags": [
+        "windows"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mremap_linux.go",
+      "role": "production",
+      "sha256": "676042d6e51dc7fef1526959ffe2f09562919472d8b1b89b1df04dbe750b1f4f",
+      "bytes": 1510,
+      "lines": 56,
+      "build_tags": [
+        "!arm64"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/mremap_linux_arm64.go",
+      "role": "production",
+      "sha256": "2c971b165a21d4d2f18d0692c1bda513a42962d39f9712cf32b05b70b5b578f8",
+      "bytes": 1513,
+      "lines": 52,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/rtutil.go",
+      "role": "production",
+      "sha256": "5a6494db899d770c3abb4528d80223c55acffab4646d3eab5436f9b076941e6e",
+      "bytes": 2725,
+      "lines": 75,
+      "build_tags": [],
+      "integration_decision": "Root dependency: key.rs preserves integer identity, byte/string equivalence, customizable primary/conflict hashes and xxhash64 conflicts; randomized Rust hashing replaces runtime-dependent Go MemHash/assembly. Other z APIs are a separate package, not claimed."
+    },
+    {
+      "path": "z/rtutil.s",
+      "role": "support",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "integration_decision": "Root dependency: key.rs preserves integer identity, byte/string equivalence, customizable primary/conflict hashes and xxhash64 conflicts; randomized Rust hashing replaces runtime-dependent Go MemHash/assembly. Other z APIs are a separate package, not claimed."
+    },
+    {
+      "path": "z/rtutil_test.go",
+      "role": "test",
+      "sha256": "93dae35af8242ff70b6c383b120e03d2df4766222a2c0410c21ce9a2f63bba67",
+      "bytes": 5270,
+      "lines": 327,
+      "build_tags": [],
+      "test_functions": [
+        "BenchmarkMemHash",
+        "BenchmarkMemHashString",
+        "BenchmarkSip",
+        "BenchmarkFarm",
+        "BenchmarkFnv",
+        "BenchmarkNanoTime",
+        "BenchmarkCPUTicks",
+        "BenchmarkFastRand",
+        "BenchmarkRandSource",
+        "BenchmarkRandGlobal",
+        "BenchmarkRandAtomic"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/add_test.go",
+      "role": "test",
+      "sha256": "b39c6f09bf8dcdd705744a33731d206d32ec587f7f0add74505550b8836dea1f",
+      "bytes": 471,
+      "lines": 23,
+      "build_tags": [],
+      "test_functions": [
+        "TestSearch"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/asm2.go",
+      "role": "production",
+      "sha256": "dd77dc8f13e66db07c7adb6fbf43d95bfbec537be60c4fdf2175e561fd0fef50",
+      "bytes": 1555,
+      "lines": 80,
+      "build_tags": [
+        "ignore"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/baseline.go",
+      "role": "production",
+      "sha256": "df961974869a1d9ac231aa0aa882a101c32719370b9b95ce523c57b57955f339",
+      "bytes": 2156,
+      "lines": 127,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/search.go",
+      "role": "production",
+      "sha256": "d28fea84a318d58e272f401c63525bce6f81e3e191fe3222952cc8969472c4db",
+      "bytes": 1253,
+      "lines": 51,
+      "build_tags": [
+        "!amd64"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/search_amd64.s",
+      "role": "support",
+      "sha256": "31e4a41cffb8258252e2bdc7cefd007a93eeb6201dc90d30e0df7a1b0cf09cb2",
+      "bytes": 831,
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/simd/stub_search_amd64.go",
+      "role": "production",
+      "sha256": "3032eb59a0e4f3e7acd6076d041d2e412649ec335bf780cb92ca8f4a2c362a4a",
+      "bytes": 223,
+      "lines": 6,
+      "build_tags": [],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    },
+    {
+      "path": "z/z.go",
+      "role": "production",
+      "sha256": "f4011678f6540c791b22b077c367360c104cbebcfffd8ab554f5349e40b9021d",
+      "bytes": 3744,
+      "lines": 151,
+      "build_tags": [],
+      "integration_decision": "Root dependency: key.rs preserves integer identity, byte/string equivalence, customizable primary/conflict hashes and xxhash64 conflicts; randomized Rust hashing replaces runtime-dependent Go MemHash/assembly. Other z APIs are a separate package, not claimed."
+    },
+    {
+      "path": "z/z_test.go",
+      "role": "test",
+      "sha256": "fb0f1cc3bc944afc4f3e69879dc3763ccd8e915f5c70ee9bb5c5b1c839bdcba4",
+      "bytes": 2655,
+      "lines": 107,
+      "build_tags": [],
+      "test_functions": [
+        "TestKeyToHash",
+        "TestMulipleSignals",
+        "TestCloser",
+        "TestZeroOut"
+      ],
+      "integration_decision": "Separate z package, not accepted as a whole. Root allocation tests use Rust Arc/Vec with live allocation/drop accounting; Go allocator, jemalloc, mmap, file, build-tag/assembly variants do not participate in native root runtime. Their original artifacts remain inventoried."
+    }
+  ],
+  "scope": "Pinned root package only; z, sim and contrib remain separate packages with explicit dependency decisions.",
+  "validation_receipt": "shared-cache-batch-validation.json"
+}

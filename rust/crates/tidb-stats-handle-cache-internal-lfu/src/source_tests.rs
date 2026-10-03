@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Original Go LFU cases. Stretto does not expose the synchronous policy's
-//! CostAdded/CostEvicted metrics; their exact assertions run in the Go suite.
+//! Original Go LFU cases, including policy metrics and buffered admission.
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -22,7 +21,6 @@ use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table as tabl
 // Isolate C04 without scheduling a large pressure workload. Pause the primary
 // processor inside the first rejection, then probe a new key before admission.
 #[test]
-#[ignore = "C04: Stretto publishes new primary values before admission; see lfu-review-followup.md"]
 fn nonresident_primary_waits_for_admission() {
     use std::sync::mpsc;
 
@@ -51,11 +49,21 @@ fn nonresident_primary_waits_for_admission() {
     );
 }
 
+fn assert_policy_cost(cache: &Lfu, expected: i64) {
+    let primary = cache.primary();
+    let metrics = primary.as_ref().unwrap().metrics();
+    assert_eq!(
+        metrics.cost_added().wrapping_sub(metrics.cost_evicted()),
+        expected as u64
+    );
+}
+
 fn settled_cost(cache: &Lfu, expected: i64) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         cache.wait_for_async_updates();
         if cache.cost() == expected {
+            assert_policy_cost(cache, expected);
             return;
         }
         assert!(
@@ -78,6 +86,7 @@ fn fresh_memory_usage() {
     }
     cache.wait_for_async_updates();
     assert_eq!(cache.cost(), 48);
+    assert_policy_cost(&cache, 48);
     for (cols, indexes, expected) in [(2, 1, 52), (2, 2, 56)] {
         cache.put(1, table(cols, indexes, true, false, false));
         cache.wait_for_async_updates();
@@ -88,6 +97,7 @@ fn fresh_memory_usage() {
         assert_eq!(cache.cost(), expected);
     }
     cache.wait_for_async_updates();
+    assert_policy_cost(&cache, 48);
 }
 
 // TestLFUPutTooBig and TestCacheLen: fallback visibility and payload-only quota.
@@ -105,10 +115,12 @@ fn oversized_and_enumerable_tables() {
     cache.wait_for_async_updates();
     assert_eq!(cache.len(), 2);
     assert_eq!(cache.cost(), 8);
+    assert_policy_cost(&cache, 8);
     cache.put(3, table(2, 1, true, false, false));
     cache.wait_for_async_updates();
     assert_eq!(cache.len(), 3);
     assert_eq!(cache.cost(), 12);
+    assert_policy_cost(&cache, 12);
 }
 
 // TestLFUCachePutGetWithManyConcurrency: all 1,000 IDs / 2,000 operations,
@@ -135,6 +147,7 @@ fn concurrent_distinct_tables() {
     assert_eq!(cache.len(), 1000);
     assert_eq!(cache.values().len(), 1000);
     assert_eq!(cache.cost(), 8000);
+    assert_policy_cost(&cache, 8000);
 }
 
 // TestLFUCachePutGetWithManyConcurrency2: five writers/five readers, 1,000 keys.
@@ -158,6 +171,7 @@ fn concurrent_replacements() {
     cache.wait_for_async_updates();
     assert_eq!(cache.values().len(), 1000);
     assert_eq!(cache.cost(), 8000);
+    assert_policy_cost(&cache, 8000);
 }
 
 fn check_table(table: &Table) {
@@ -185,7 +199,6 @@ fn check_table(table: &Table) {
 
 // TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency and checkTable.
 #[test]
-#[ignore = "C04: Stretto retains oversized payloads after concurrent replacement; see lfu-lifecycle-repair.md"]
 fn concurrent_small_capacity() {
     let cache = Lfu::new_for_test(100).unwrap();
     // Deterministically establish all keys before readers start, replacing Go's
@@ -231,6 +244,7 @@ fn rejected_after_capacity_change() {
     cache.put(1, table(2, 1, true, false, false));
     cache.wait_for_async_updates();
     assert_eq!(cache.cost(), 12);
+    assert_policy_cost(&cache, 12);
     cache.set_capacity(11);
     assert!(cache.put(2, table(2, 1, true, false, false)));
     settled_cost(&cache, 0);

@@ -14,11 +14,9 @@
 
 //! Go `pkg/bindinfo`, covering the single file `utils.go`.
 //!
-//! LABELING: a **COMPLETE port of one file**, and therefore still a **SEED for
-//! the package**. `pkg/bindinfo` holds `binding.go`, `binding_handle.go`,
-//! `binding_operator.go`, `binding_match.go`, `capture.go`,
-//! `session_handle.go` and more; this module and [`crate::binding_cache`]
-//! claim two of them. Two files do not make `pkg/bindinfo` transcreated.
+//! This module supplies storage helpers, not complete-package acceptance of
+//! `pkg/bindinfo`. The maintained server binding owner calls these helpers
+//! through independent internal sessions.
 //!
 //! # What this file is
 //!
@@ -52,9 +50,8 @@
 //! * `// boundary:` `pkg/util.DestroyableSessionPool` -- `callWithSCtx`
 //!   (line 41) borrows a session, optionally wraps it in a pessimistic
 //!   transaction, and destroys rather than recycles it on error. This tier has
-//!   ONE session and no pool, so [`call_with_runner`] keeps only the
-//!   transaction wrapper (`BEGIN PESSIMISTIC` / `COMMIT` / `ROLLBACK`) and
-//!   drops Get/Put/Destroy.
+//!   runner owns an independent server session, discarded after the operation;
+//!   [`call_with_runner`] supplies `BEGIN PESSIMISTIC` / `COMMIT` / `ROLLBACK`.
 //!
 //! # Narrowings
 //!
@@ -73,11 +70,10 @@
 //!   depth zero and outside any quoted token -- the same position, since every
 //!   CTE body is parenthesised. The non-`WITH` branches keep Go's own naive
 //!   `strings.Index`, verbatim.
-//! * **`Binding.PlanDigest` and `Binding.UsageInfo`.** [`Binding`] carries
-//!   neither (see its own doc), so [`new_binding_from_storage`] drops the
-//!   `plan_digest` column, and the usage writer operates on a standalone
-//!   [`BindingUsage`] record instead of Go's `atomic.Pointer[time.Time]`
-//!   fields hanging off the binding.
+//! * **`Binding.PlanDigest` and `Binding.UsageInfo`.** [`Binding`] retains the
+//!   plan digest and shared usage timestamps. The writer snapshots these into
+//!   [`BindingUsage`] records and acknowledges each committed batch; the
+//!   server owner applies acknowledgements back to the retained bindings.
 //! * **`Binding.Status` / `Binding.Source` are `&'static str`** in this crate,
 //!   so a storage row carrying an unrecognised status is SKIPPED (Go keeps the
 //!   raw text) and an unrecognised source falls back to `manual`. This matches
@@ -100,8 +96,8 @@
 //!
 //! * **`getBindingPlanDigest` (lines 316-347).** It needs
 //!   `CalculatePlanDigest` and a planner that emits plan digests; this tier
-//!   emits none, which is also why [`Binding`] has no `plan_digest` field and
-//!   why `SHOW BINDINGS` prints an empty `Plan_digest` column.
+//!   emits none. Stored plan digests are retained for usage updates; new
+//!   binding plan-digest calculation remains a separate planner obligation.
 //! * **`hasParam` (`binding.go:560`)**, reached only from
 //!   `getBindingPlanDigest`, goes with it.
 
@@ -384,6 +380,8 @@ pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
         collation: text(7).unwrap_or_default(),
         source: binding_source(text(8).unwrap_or_default().as_str()),
         sql_digest: text(9).unwrap_or_default(),
+        plan_digest: text(10).unwrap_or_default(),
+        usage: Default::default(),
         no_db_digest: crate::binding::no_db_digest(&stmt),
         table_names: crate::binding::collect_table_names(&stmt),
         hints: crate::binding::collect_hints(&stmt),
@@ -465,7 +463,6 @@ where
     R: InternalSqlRunner + ?Sized,
 {
     let mut to_write: Vec<usize> = Vec::with_capacity(UPDATE_BINDING_USAGE_INFO_BATCH_SIZE);
-    let mut written: Vec<usize> = Vec::new();
     let mut count = 0usize;
     for index in 0..usages.len() {
         let Some(last_used) = usages[index].last_used_at else {
@@ -477,15 +474,16 @@ where
         }
         if to_write.len() == UPDATE_BINDING_USAGE_INFO_BATCH_SIZE {
             flush_usage_batch(runner, usages, &to_write, now)?;
-            written.append(&mut to_write);
+            for index in to_write.drain(..) {
+                usages[index].last_saved_at = Some(now);
+            }
         }
     }
     if !to_write.is_empty() {
         flush_usage_batch(runner, usages, &to_write, now)?;
-        written.append(&mut to_write);
-    }
-    for index in written {
-        usages[index].last_saved_at = Some(now);
+        for index in to_write.drain(..) {
+            usages[index].last_saved_at = Some(now);
+        }
     }
     Ok(count)
 }
@@ -578,8 +576,7 @@ mod tests {
 
     use super::*;
 
-    /// A recording [`InternalSqlRunner`]: the boundary has no real
-    /// implementation in this tier, so the tests drive it directly.
+    /// A recording runner for checking storage statements and transaction order.
     #[derive(Default)]
     struct RecordingRunner {
         statements: RefCell<Vec<String>>,
@@ -608,6 +605,44 @@ mod tests {
             self.statements.borrow_mut().push(sql.to_owned());
             Ok(self.rows.clone())
         }
+    }
+
+    #[test]
+    fn later_usage_batch_failure_keeps_committed_batch_acknowledged() {
+        struct FailSecondBatch(usize);
+        impl InternalSqlRunner for FailSecondBatch {
+            fn exec(&mut self, sql: &str, _: &[Datum]) -> Result<u64, DriverError> {
+                if sql.starts_with(
+                    "UPDATE mysql.bind_info USE INDEX(digest_index) SET last_used_date",
+                ) {
+                    self.0 += 1;
+                    if self.0 == 101 {
+                        return Err(DriverError::unsupported("second batch failed"));
+                    }
+                }
+                Ok(1)
+            }
+            fn exec_rows(&mut self, _: &str, _: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {
+                Ok(Vec::new())
+            }
+        }
+        let now = Utc::now();
+        let mut usages = (0..101)
+            .map(|index| BindingUsage {
+                sql_digest: index.to_string(),
+                plan_digest: String::new(),
+                last_used_at: Some(now),
+                last_saved_at: None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            update_binding_usage_info_to_storage(&mut FailSecondBatch(0), &mut usages, now)
+                .is_err()
+        );
+        assert!(usages[..100]
+            .iter()
+            .all(|usage| usage.last_saved_at == Some(now)));
+        assert!(usages[100].last_saved_at.is_none());
     }
 
     fn parse(sql: &str) -> Stmt {

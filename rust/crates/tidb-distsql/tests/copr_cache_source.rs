@@ -52,6 +52,7 @@ fn cloned_cache_handles_share_process_owned_entries() {
             ..CoprCacheValue::default()
         },
     ));
+    writer.wait();
     assert_eq!(
         reader.get(b"shared").map(|value| value.data.to_vec()),
         Some(b"across-statements".to_vec())
@@ -288,6 +289,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
             ..CoprCacheValue::default()
         }
     ));
+    cache.wait();
     assert_eq!(cache.get(b"foo").unwrap().data.as_ref(), b"bar");
     assert_eq!(cache.get(b"foo").unwrap().key, b"foo");
     assert!(cache.get(b"foO").is_none());
@@ -302,6 +304,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
             ..CoprCacheValue::default()
         },
     ));
+    cache.wait();
     caller_key.fill(b'x');
     assert_eq!(
         cache.get(b"stable-key").unwrap().data.as_ref(),
@@ -342,6 +345,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
             .unwrap(),
         CoprCacheResponseOutcome::Stored
     );
+    cache.wait();
 
     let lookup = cache
         .prepare_request(&mut request, request_context(7, 101))
@@ -352,6 +356,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
         Some(&b"m"[..])
     );
 
+    cache.wait();
     let mut hit = CoprocessorResponse {
         is_cache_hit: true,
         ..CoprocessorResponse::default()
@@ -421,18 +426,27 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
         ..CoprCacheValue::default()
     };
     assert!(cache.set(b"first".to_vec(), small_value.clone()));
+    cache.wait();
     assert!(cache.set(b"second".to_vec(), small_value));
+    cache.wait();
     assert_eq!(cache.len(), 1);
-    assert!(cache.get(b"first").is_none());
-    assert!(cache.get(b"second").is_some());
-    assert!(!cache.set(
+    assert_eq!(
+        [b"first".as_slice(), b"second".as_slice()]
+            .into_iter()
+            .filter(|key| cache.get(key).is_some())
+            .count(),
+        1
+    );
+    assert!(cache.set(
         b"oversize".to_vec(),
         CoprCacheValue {
             data: vec![2; 400].into(),
             ..CoprCacheValue::default()
         },
     ));
-    assert!(cache.get(b"second").is_some());
+    cache.wait();
+    assert!(cache.get(b"oversize").is_none());
+    assert_eq!(cache.len(), 1);
 }
 
 #[test]
@@ -502,6 +516,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
             .unwrap(),
         CoprCacheResponseOutcome::Stored
     );
+    cache.wait();
     let empty_range_lookup = cache
         .prepare_request(&mut request, request_context(7, 101))
         .unwrap();
@@ -539,6 +554,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
             ..CoprCacheValue::default()
         },
     ));
+    cache.wait();
     let mut absent_request = CoprocessorRequestEnvelope {
         data: b"absent-range".to_vec().into(),
         ..request
@@ -634,4 +650,57 @@ fn test_issue_24118() {
         error.to_string(),
         "Capacity must be > 0 to enable the cache"
     );
+}
+
+#[test]
+fn frequently_read_coprocessor_result_survives_cold_admission() {
+    let cache = CoprCache::from_config(&CoprCacheConfig {
+        capacity_mb: 300.0 / 1_048_576.0,
+        admission_max_result_mb: 1.0,
+        ..CoprCacheConfig::default()
+    })
+    .unwrap()
+    .unwrap();
+    let value = CoprCacheValue {
+        data: vec![1; 100].into(),
+        ..CoprCacheValue::default()
+    };
+    assert!(cache.set(b"hot".to_vec(), value.clone()));
+    cache.wait();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    for _ in 0..1024 {
+        assert!(cache.get(b"hot").is_some());
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(cache.set(b"cold".to_vec(), value));
+    cache.wait();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(
+        cache.get(b"hot").is_some(),
+        "hot result lost to a never-read replacement"
+    );
+    assert!(cache.get(b"cold").is_none());
+}
+
+#[test]
+fn cache_close_joins_shared_owner_and_retained_values_survive() {
+    let cache = cache();
+    cache.set(
+        b"retained".to_vec(),
+        CoprCacheValue {
+            data: b"payload".to_vec().into(),
+            ..Default::default()
+        },
+    );
+    cache.wait();
+    let value = cache.get(b"retained").unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &value,
+        &cache.get(b"retained").unwrap()
+    ));
+    let alias = cache.clone();
+    cache.close();
+    assert!(alias.get(b"retained").is_none());
+    assert!(!alias.set(b"new".to_vec(), CoprCacheValue::default()));
+    assert_eq!(value.data.as_ref(), b"payload");
 }

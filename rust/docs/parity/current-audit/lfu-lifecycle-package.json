@@ -1,6 +1,6 @@
 {
   "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
-  "integration_base": "affe8b392b4957ab84009f4cb44c586ecf677354",
+  "integration_base": "b38a25eb0e361739460d81263a17bc75455a3974",
   "package": "pkg/statistics/handle/cache/internal/lfu",
   "finding": "C04",
   "artifacts": [
@@ -46,8 +46,8 @@
   ],
   "production_mapping": {
     "key_set.go": "KeySetShard independently locked table maps; removal cost is unused by the Go shard owner. Clear replaces each map.",
-    "key_set_shard.go": "KeySetShard, all 256 shards, signed remainder, shared table identities. Values retains unspecified concurrent enumeration order.",
-    "lfu_cache.go": "Lfu and State/Callbacks; complete source reviewed together, dependency admission/metrics remain unaccepted."
+    "key_set_shard.go": "KeySetShard, all 256 shards, nonnegative native modulo for negative synthetic triggers, shared table identities and unspecified concurrent enumeration order.",
+    "lfu_cache.go": "Lfu and State/Callbacks over tidb-ristretto; original admission, nil trigger, fallback, recovery, metrics and joined close obligations retained."
   },
   "original_test_mapping": {
     "TestLFUPutGetDel": "tests::put_get_delete_preserves_go_visibility",
@@ -56,7 +56,7 @@
     "TestCacheLen": "source_tests::oversized_and_enumerable_tables",
     "TestLFUCachePutGetWithManyConcurrency": "source_tests::concurrent_distinct_tables",
     "TestLFUCachePutGetWithManyConcurrency2": "source_tests::concurrent_replacements",
-    "TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency": "source_tests::concurrent_small_capacity (executed and failed; retained ignored C04 reproduction, not accepted)",
+    "TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency": "source_tests::concurrent_small_capacity (enabled; passes full 5x1000x50 workload and strengthened retained-payload assertion)",
     "TestLFUReject": "source_tests::rejected_after_capacity_change",
     "TestMemoryControl": "source_tests::memory_control",
     "TestMemoryControlWithUpdate": "source_tests::memory_control_with_update"
@@ -66,24 +66,27 @@
     "checkTable": "source_tests::check_table checks eviction flags, TopN and histogram bucket capacity for columns and indexes.",
     "testutil.NewMockStatisticsTable": "Existing tidb-stats-handle-cache-internal-testutil::new_mock_statistics_table; its complete source was read. No separate support-package acceptance claim.",
     "test scheduling": "2,000 operations use 32 OS workers instead of 2,000 goroutines; five-writer/five-reader cases retain source loop counts. Pressure case uses deterministic 50-key warmup instead of Go one-second writer head start.",
-    "Ristretto metrics assertions": "Original Go race suite executes CostAdded/CostEvicted assertions. Stretto synchronous cache does not expose these metrics; Rust cost/visibility assertions are not a substitute for this unaccepted contract."
+    "Ristretto metrics assertions": "Original CostAdded/CostEvicted assertions restored at source observation points; original Go race suite and native source cases pass."
   },
-  "build_mapping": "Existing Cargo crate plus parent tests; lockfile regenerated with direct dependencies on already-resolved rand 0.10.2 and tidb-log. BUILD.bazel enables race, flaky=true, ten shards. Reference bazel_prepare and Go race suite executed; no Go/Bazel change in main tree.",
+  "build_mapping": "Cargo native crate and parent callers; BUILD.bazel race/flaky/shard obligations mapped to original Go race suite and native concurrency tests. No Go/Bazel sources/imports changed; bazel_prepare is not triggered by this Rust-only batch.",
   "dependencies": {
-    "ristretto": "github.com/dgraph-io/ristretto v0.1.1, selected by Go master; complete external package acceptance remains open.",
-    "stretto": "0.9.0, registry checksum a1d042915dad0991b1dc54d0b5005029901a9705113389050d53503f2a182f28. Cached archive SHA and every expanded file verified. Eager nonresident insertion differs from Ristretto buffered admission.",
-    "native_client": "b2b3783 unchanged; no dependency update needed for this LFU repair.",
+    "ristretto": "Pinned v0.1.1 root implemented in tidb-ristretto; see ristretto-native-inventory.json and shared-cache-batch-validation.json.",
+    "stretto": "Removed from manifest and lockfile after all callers migrated.",
+    "native_client": "19a56cc unchanged; no client source/sync needed for this dependency owner.",
     "statistics_memory_metrics_logging": "Existing shared owners retained; no independent package acceptance inferred."
   },
   "removed_owners": [
     "Exclusive per-operation primary mutex and cloned primary handles",
     "Synthetic empty Table eviction triggers and monotonic fake-key counter",
     "Negative-key callback classification",
-    "Early-return concurrent close and ignored cache clear/wait failures"
+    "Early-return concurrent close and ignored cache clear/wait failures",
+    "Stretto primary and API adapter",
+    "Ignored admission and pressure probes",
+    "Stale negative-table-ID panic test"
   ],
-  "integration": "Existing parent StatsCache consumes the same StatsCacheInner implementation. Shared read lifetime and exclusive joined shutdown replace primary clones; callbacks never take lifetime gate. Existing LFU remains seed evidence, not an accepted Ristretto implementation.",
-  "acceptance_scope": "Complete five-artifact review and native lifetime/nil-callback repair. C04 remains open for dependency admission/replacement and metrics. One original concurrency case is a failing retained reproduction; no package-completion claim.",
-  "validation_receipt": "lfu-lifecycle-repair.md",
+  "integration": "Parent StatsCache keeps its existing shared LFU instance and fallback. Public lifetime guards remain; Close explicitly joins the primary. All direct callers compile and source/production tests pass.",
+  "acceptance_scope": "Complete five-artifact LFU package, source-test/support/build obligations, after acceptance of the pinned Ristretto root. Original Go ten-test race suite and native21-test suite pass. No parent statistics package, separate support package or workload performance acceptance.",
+  "validation_receipt": "shared-cache-batch-validation.json",
   "review_followup": {
     "baseline": "f94540083fd7c17b8589226feb105f18f2b31703",
     "source_recheck": "All five blobs match current master; no new variants or fixtures.",
@@ -91,5 +94,6 @@
     "dependency_probe": "Nonresident primary admission fails deterministically with a paused rejection worker; Go misses before admission and hits after Wait.",
     "external_inventory": "ristretto-v0.1.1-inventory.json",
     "receipt": "lfu-review-followup.md"
-  }
+  },
+  "prior_lifecycle_baseline": "affe8b392b4957ab84009f4cb44c586ecf677354"
 }

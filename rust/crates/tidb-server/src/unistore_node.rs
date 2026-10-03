@@ -577,6 +577,12 @@ pub(crate) fn unistore_cluster_session_stack(
         Arc::clone(&catalog),
         users.global_vars(),
         IN_PROCESS_TIMEOUT,
+        Arc::new(tidb_owner::MockManager::new(
+            tidb_owner::Context::background(),
+            server_info.local_server_info().static_info.id.clone(),
+            Some(&format!("embedded-authority-{}", opener.authority_id())),
+            "/tidb/bindinfo/owner",
+        )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     let cluster_ddl = Arc::new(

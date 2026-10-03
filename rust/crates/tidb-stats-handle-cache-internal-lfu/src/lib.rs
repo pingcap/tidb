@@ -18,11 +18,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, Weak};
 
-use stretto::{
-    Cache, CacheBuilder, CacheCallback, DefaultCoster, DefaultUpdateValidator, Item,
-    TransparentKeyBuilder,
-};
 use tidb_log::{Field, Value};
+use tidb_ristretto::{Cache, Callback, Config, Item};
 use tidb_stats::{CopyIntent, Table};
 use tidb_stats_handle_cache_internal::StatsCacheInner;
 use tidb_stats_handle_cache_metrics as metrics;
@@ -109,17 +106,9 @@ impl KeySetShard {
     }
 }
 
-// A nil value is Go's eviction trigger, not a statistics table. The outer
-// Option on Stretto callbacks independently represents an already-removed item.
+// A nil value is Go's eviction trigger, not a statistics table.
 type CachedTable = Option<Arc<Table>>;
-type Primary = Cache<
-    i64,
-    CachedTable,
-    TransparentKeyBuilder<i64>,
-    DefaultCoster<CachedTable>,
-    DefaultUpdateValidator<CachedTable>,
-    Callbacks,
->;
+type Primary = Cache<CachedTable>;
 
 struct State {
     tables: KeySetShard,
@@ -156,12 +145,12 @@ impl State {
         }
         if self.cost.load(Ordering::Acquire) > cache.max_cost() {
             let key = -((rand::random::<u64>() & i64::MAX as u64) as i64);
-            cache.insert(key, None, 0);
+            cache.set(&key, None, 0);
         }
     }
 
     fn drop_memory(&self, item: &Item<CachedTable>) {
-        let Some(table) = item.val.as_ref().and_then(Option::as_ref) else {
+        let Some(table) = item.value.as_ref().and_then(Option::as_ref) else {
             return;
         };
         if self.closed.load(Ordering::Acquire) {
@@ -169,7 +158,7 @@ impl State {
         }
         let table = Arc::new(table.copy_as(CopyIntent::AllDataWritable));
         table.hist_coll.drop_evicted();
-        self.tables.put(item.index as i64, Arc::clone(&table));
+        self.tables.put(item.key as i64, Arc::clone(&table));
         self.add_cost(table.memory_usage().total_tracking_mem_usage());
         self.trigger_evict();
     }
@@ -200,12 +189,10 @@ fn recover_callback(name: &str, action: impl FnOnce()) {
     }
 }
 
-impl CacheCallback for Callbacks {
-    type Value = CachedTable;
-
-    fn on_exit(&self, value: Option<Self::Value>) {
+impl Callback<CachedTable> for Callbacks {
+    fn on_exit(&self, value: CachedTable) {
         recover_callback("onExit", || {
-            let Some(table) = value.flatten() else { return };
+            let Some(table) = value else { return };
             if self.0.closed.load(Ordering::Acquire) {
                 return;
             }
@@ -215,20 +202,18 @@ impl CacheCallback for Callbacks {
         });
     }
 
-    fn on_evict(&self, item: Item<Self::Value>) {
+    fn on_evict(&self, item: &Item<CachedTable>) {
         recover_callback("onEvict", || {
-            self.0.drop_memory(&item);
+            self.0.drop_memory(item);
             metrics::evict_counter().inc();
         });
-        self.on_exit(item.val);
     }
 
-    fn on_reject(&self, item: Item<Self::Value>) {
+    fn on_reject(&self, item: &Item<CachedTable>) {
         recover_callback("onReject", || {
-            self.0.drop_memory(&item);
+            self.0.drop_memory(item);
             metrics::reject_counter().inc();
         });
-        self.on_exit(item.val);
     }
 }
 
@@ -264,19 +249,15 @@ impl Lfu {
             #[cfg(test)]
             before_trigger: std::sync::Mutex::new(None),
         });
-        let cache = Arc::new(
-            CacheBuilder::new_with_key_builder(
-                usize::try_from((cost / 128).clamp(10, 1_000_000)).unwrap_or(10),
-                cost,
-                TransparentKeyBuilder::default(),
-            )
-            .set_buffer_items(64)
-            .set_ignore_internal_cost(ignore_internal_cost)
-            .set_metrics(ignore_internal_cost)
-            .set_callback(Callbacks(Arc::clone(&state)))
-            .finalize()
-            .map_err(|error| error.to_string())?,
+        let mut config = Config::new(
+            usize::try_from((cost / 128).clamp(10, 1_000_000)).unwrap_or(10),
+            cost,
+            64,
         );
+        config.ignore_internal_cost = ignore_internal_cost;
+        config.metrics = ignore_internal_cost;
+        config.callback = Arc::new(Callbacks(Arc::clone(&state)));
+        let cache = Arc::new(Cache::new(config)?);
         state
             .primary
             .set(Arc::downgrade(&cache))
@@ -303,7 +284,7 @@ impl Lfu {
         if let Some(cache) = self.primary().as_ref() {
             // Go clears the primary first because its callbacks can repopulate
             // the fallback metadata. Clear the fallback only after they finish.
-            cache.clear().expect("LFU primary clear");
+            cache.clear();
         }
         self.state.tables.clear();
     }
@@ -323,14 +304,9 @@ impl StatsCacheInner for Lfu {
         self.primary()
             .as_ref()
             .and_then(|cache| {
-                cache.get(&table_id).map(|value| {
-                    Arc::clone(
-                        value
-                            .value()
-                            .as_ref()
-                            .expect("LFU eviction trigger is not a table"),
-                    )
-                })
+                cache
+                    .get(&table_id)
+                    .map(|value| value.expect("LFU eviction trigger is not a table"))
             })
             .or_else(|| self.state.tables.get(table_id))
     }
@@ -342,12 +318,12 @@ impl StatsCacheInner for Lfu {
         self.state.add_cost(cost);
         primary
             .as_ref()
-            .is_some_and(|cache| cache.insert(table_id, Some(table), cost))
+            .is_some_and(|cache| cache.set(&table_id, Some(table), cost))
     }
 
     fn del(&self, table_id: i64) {
         if let Some(cache) = self.primary().as_ref() {
-            cache.remove(&table_id);
+            cache.del(&table_id);
         }
         self.state.tables.remove(table_id);
     }
@@ -395,11 +371,11 @@ impl StatsCacheInner for Lfu {
             return;
         }
         if let Some(cache) = primary.take() {
-            cache.clear().expect("LFU primary clear during close");
+            cache.clear();
             self.state.tables.clear();
-            cache.wait().expect("LFU primary wait during close");
-            // Stretto joins its worker on final drop. Keep the lifetime gate
-            // until that completes, equivalent to Go's sync.Once Close body.
+            cache.close();
+            // The shared cache joins both workers before this lifetime gate is
+            // released, equivalent to Go's sync.Once Close body.
             drop(cache);
         }
     }
@@ -411,7 +387,7 @@ impl StatsCacheInner for Lfu {
     }
     fn wait_for_async_updates(&self) {
         if let Some(cache) = self.primary().as_ref() {
-            cache.wait().expect("LFU primary wait");
+            cache.wait();
         }
     }
 }
@@ -503,19 +479,24 @@ mod tests {
     }
 
     #[test]
-    fn negative_shard_zero_is_a_real_table_not_an_eviction_trigger() {
+    fn negative_table_ids_retain_metadata_after_rejection() {
         let cache = Lfu::new_for_test(1).unwrap();
         let table = new_mock_statistics_table(1, 1, true, true, true);
-        // Go -256 % 256 == 0: a valid shard, unlike -1.
-        assert!(cache.put(-256, table));
+        // Embedded catalog IDs may be negative; use valid native shard
+        // indexing, including a negative remainder, and retain Go fallback data.
+        for id in [-1, -256] {
+            assert!(cache.put(id, Arc::clone(&table)));
+        }
         cache.wait_for_async_updates();
-        let retained = cache.get(-256).unwrap();
-        assert_eq!(retained.memory_usage().total_tracking_mem_usage(), 0);
-        retained.hist_coll.for_each_column(|_, column| {
-            assert!(column.is_all_evicted());
-            false
-        });
-        assert_eq!(cache.len(), 1);
+        for id in [-1, -256] {
+            let retained = cache.get(id).unwrap();
+            assert_eq!(retained.memory_usage().total_tracking_mem_usage(), 0);
+            retained.hist_coll.for_each_column(|_, column| {
+                assert!(column.is_all_evicted());
+                false
+            });
+        }
+        assert_eq!(cache.len(), 2);
         assert_eq!(cache.cost(), 0);
     }
 
@@ -557,29 +538,29 @@ mod tests {
         let cache = Lfu::new_for_test(1).unwrap();
         let table = new_mock_statistics_table(1, 1, true, false, false);
         let cost = table.memory_usage().total_tracking_mem_usage();
-        // Inject an invalid shard directly into the primary's callback path:
-        // dropMemory panics, Go recovers, then Ristretto still invokes onExit.
+        // Inject a callback panic explicitly. Negative IDs are valid native
+        // table keys; they no longer imply a shard-index panic.
+        *cache.state.before_trigger.lock().unwrap() = Some(Box::new(|| {
+            panic!("injected eviction callback failure");
+        }));
         cache.state.add_cost(cost);
         cache
             .primary()
             .as_ref()
             .unwrap()
-            .insert(-1, Some(table), cost);
+            .set(&-1, Some(table), cost);
         cache.wait_for_async_updates();
         assert_eq!(cache.cost(), 0);
         assert!(cache.put(1, new_mock_statistics_table(1, 1, true, false, false)));
         cache.wait_for_async_updates();
         assert_eq!(cache.cost(), 0);
-        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.len(), 2);
 
         let callbacks = Callbacks(Arc::clone(&cache.state));
         callbacks.on_exit(None);
-        callbacks.on_exit(Some(None));
         assert_eq!(cache.cost(), 0);
         cache.close();
-        callbacks.on_exit(Some(Some(new_mock_statistics_table(
-            1, 1, true, false, false,
-        ))));
+        callbacks.on_exit(Some(new_mock_statistics_table(1, 1, true, false, false)));
         assert_eq!(cache.cost(), 0);
     }
 
@@ -594,6 +575,12 @@ mod tests {
         assert!(cache.get(1).is_none());
         cache.wait_for_async_updates();
         assert!(cache.values().is_empty());
+        let primary = cache.primary();
+        let metrics = primary.as_ref().unwrap().metrics();
+        assert_eq!(
+            cache.cost() as u64,
+            metrics.cost_added().wrapping_sub(metrics.cost_evicted())
+        );
     }
 
     #[test]
@@ -671,13 +658,6 @@ mod tests {
 
         assert_eq!(cache.cost(), one_table_cost);
         assert_eq!(cache.len(), 3);
-    }
-
-    #[test]
-    #[should_panic]
-    fn negative_table_id_matches_go_shard_indexing() {
-        let cache = Lfu::new_for_test(100).expect("LFU");
-        cache.put(-1, new_mock_statistics_table(1, 1, true, false, false));
     }
 
     #[test]

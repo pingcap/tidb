@@ -118,7 +118,21 @@ pub struct ProductionReadSessionFactory {
     read_opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
     default_timeout: Duration,
     lock_timestamp_source: PdTimestampSource,
-    copr_cache: CoprCache,
+    copr_cache: Option<CoprCache>,
+}
+
+/// Construct the process cache from the same effective TiKV settings used by
+/// server startup. Zero capacity is a valid disabled store, with no workers.
+pub fn configured_coprocessor_cache(
+    config: &tidb_config::tikvcfg::CoprocessorCache,
+) -> Result<Option<CoprCache>, RealTiKvReadError> {
+    CoprCache::from_config(&CoprCacheConfig {
+        capacity_mb: config.capacity_mb,
+        admission_max_ranges: config.admission_max_ranges,
+        admission_max_result_mb: config.admission_max_result_mb,
+        admission_min_process_ms: config.admission_min_process_ms,
+    })
+    .map_err(|error| RealTiKvReadError::Transport(error.to_string()))
 }
 
 impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
@@ -129,7 +143,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
             &self.read_opener,
             DirectUnaryRuntimeConfig {
                 default_timeout: self.default_timeout,
-                shared_cache: Some(self.copr_cache.clone()),
+                shared_cache: self.copr_cache.clone(),
                 ..DirectUnaryRuntimeConfig::default()
             },
             self.lock_timestamp_source.clone(),
@@ -490,6 +504,7 @@ pub struct ProductionReadProcessAuthority {
     transaction_opener: Option<RealOptimisticTransactionOpener>,
     admission: ReadSessionAdmissionOwner,
     lifecycle: ProductionReadLifecycle,
+    copr_cache: Option<CoprCache>,
 }
 
 enum ProductionOpener {
@@ -682,6 +697,11 @@ impl ProductionReadProcessAuthority {
         E: Into<String>,
         F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
     {
+        let copr_cache = configured_coprocessor_cache(
+            &tidb_config::tikvcfg::get_global_config()
+                .tikv_client
+                .copr_cache,
+        )?;
         let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
         let cluster_id = pd.cluster_id();
         let timestamp_source = PdTimestampSource::new(pd.clone());
@@ -697,16 +717,7 @@ impl ProductionReadProcessAuthority {
             read_opener: read_authority.opener(),
             default_timeout: timeout,
             lock_timestamp_source: timestamp_source.clone(),
-            // client-go's `DefaultTiKVClient`: this cache belongs to the
-            // process store and is shared by every query and connection.
-            copr_cache: CoprCache::from_config(&CoprCacheConfig {
-                capacity_mb: 1000.0,
-                admission_max_ranges: 500,
-                admission_max_result_mb: 10.0,
-                admission_min_process_ms: 5,
-            })
-            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
-            .expect("the positive default capacity enables the coprocessor cache"),
+            copr_cache: copr_cache.clone(),
         };
         // Derived from the authority that is already running: the same shared
         // read opener and the same PD worker. This is a capability, not a
@@ -731,6 +742,7 @@ impl ProductionReadProcessAuthority {
             opener: ProductionOpener::Open(opener),
             transaction_opener: Some(transaction_opener),
             admission,
+            copr_cache,
             lifecycle: ProductionReadLifecycle {
                 region_cache: ProductionRegionLifecycle::Running(read_authority),
                 transport: ProductionTransportLifecycle::Running(transport_owner),
@@ -819,6 +831,9 @@ impl ProductionReadProcessAuthority {
     /// Rejects active sessions, then always attempts RegionCache, TiKV, and PD.
     pub fn shutdown(&mut self) -> Result<(), ReadProcessShutdownError> {
         self.admission.close_admission()?;
+        if let Some(cache) = self.copr_cache.take() {
+            cache.close();
+        }
         let opener = std::mem::replace(&mut self.opener, ProductionOpener::Closed);
         drop(opener);
         // Stop the transaction safe-point refresher before its PD client.
@@ -1462,5 +1477,29 @@ where
         for reader in &mut self.readers {
             reader.set_time_zone(zone);
         }
+    }
+}
+
+#[cfg(test)]
+mod coprocessor_cache_configuration_tests {
+    use super::*;
+
+    #[test]
+    fn process_cache_uses_effective_tikv_configuration_and_allows_disabled() {
+        let mut config = tidb_config::tikvcfg::CoprocessorCache {
+            capacity_mb: 0.0,
+            admission_max_ranges: 2,
+            admission_max_result_mb: 0.5,
+            admission_min_process_ms: 11,
+        };
+        assert!(configured_coprocessor_cache(&config).unwrap().is_none());
+        config.capacity_mb = 1.0;
+        let cache = configured_coprocessor_cache(&config).unwrap().unwrap();
+        assert!(cache.check_request_admission(2));
+        assert!(!cache.check_request_admission(3));
+        assert!(!cache.check_response_admission(10, 10_000_000, 0));
+        assert!(cache.check_response_admission(10, 11_000_000, 0));
+        assert!(!cache.check_response_admission(524_289, 11_000_000, 0));
+        cache.close();
     }
 }

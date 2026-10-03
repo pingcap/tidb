@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+rand = "0.10"
 base64.workspace = true
 chrono.workspace = true
 crossbeam-channel = "0.5"

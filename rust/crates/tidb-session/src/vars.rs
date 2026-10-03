@@ -1168,25 +1168,6 @@ impl GlobalSysvars {
         tidb_vardef::set_enable_mdl(enabled);
     }
 
-    /// Publishes the MDL process switch only when this registry actually
-    /// carries the value. `replace_from` uses this variant: falling back to
-    /// the default for a registry that never set the switch would let an
-    /// isolated (test) image clobber the process authority published by a
-    /// parallel registry that did set it.
-    fn publish_enable_mdl_if_carried(&self) {
-        if !self.publishes_runtime_settings {
-            return;
-        }
-        if let Some(value) = self
-            .values
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
-        {
-            tidb_vardef::set_enable_mdl(value.eq_ignore_ascii_case("ON") || value == "1");
-        }
-    }
-
     /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
     /// live GLOBAL table. Scratch registries deliberately skip this hook and
     /// publish it only when their committed image replaces the live table.
@@ -1751,7 +1732,12 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
-        self.publish_enable_mdl_if_carried();
+        // Go's effective global value is ON when the row is absent.  The
+        // live registry must publish that default after every cluster image
+        // replacement; otherwise a node that bootstraps before the row is
+        // visible keeps the process flag at false and acknowledges DDL on
+        // the classic per-node key instead of the MDL per-job key.
+        self.publish_enable_mdl();
         self.publish_plan_replayer_file_retention_time();
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);

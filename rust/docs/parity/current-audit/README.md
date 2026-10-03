@@ -1,5 +1,16 @@
 # Structural parity audit: current evidence
 
+The [shared cache batch](shared-cache-batch-repair.md) repairs B01, B02, C03 and
+C04 together: one pinned Ristretto implementation, live incremental binding
+maintenance, effective coprocessor configuration and deferred LFU admission.
+**61 unresolved (52 open, nine partial), 25 repaired, 86 tracked.**
+See [validation](shared-cache-batch-validation.json), the
+[91-artifact dependency decisions](ristretto-native-inventory.json) and
+[five-artifact LFU receipt](lfu-lifecycle-package.json). Other findings retain
+their recorded scope; source continuity is not fresh runtime reproduction.
+
+The entries below retain their historical checkpoint counts.
+
 The [account history and locking-image repair](account-history-locking-repair.md)
 closes A04 and preserves locking limits/counts/epochs and raw attributes through
 account writes. **65 unresolved (55 open, ten partial), 21 repaired, 86 tracked.**
@@ -41,7 +52,7 @@ and interrupted joins, and cancels cache-owned RPC waits. P06 remains partial;
 this does not accept the complete root/discovery/TSO packages or close P03.
 
 The expanded [remaining structural finding register](structural-findings.md)
-consolidates 86 tracked ownership/contract findings (65 unresolved, 21 repaired), review candidates and the
+consolidates 86 tracked ownership/contract findings (61 unresolved, 25 repaired), review candidates and the
 limits of the review. The [historical protocol comparison](protocol-projections.json)
 lists 400 omissions, one PD oneof contract mismatch and 71 deliberate opaque
 representations separately. It includes the keyspace-zero wire reproduction.
@@ -207,11 +218,11 @@ and the 77-ID count remain open.
 
 The [statistics LFU follow-up](lfu-lifecycle-repair.md) removes synthetic trigger
 tables and repairs joined shutdown after reviewing all five Go package artifacts.
-C04 remains open: a retained concurrent-pressure reproduction fails in Stretto,
+At that checkpoint C04 remained open: the concurrent-pressure reproduction failed in Stretto,
 and its admission/metrics contract is not accepted as Ristretto-equivalent.
 The [review follow-up](lfu-review-followup.md) closes two missed shutdown paths,
 isolates the admission mismatch with a paused worker, and inventories all 91
-artifacts of the pinned external module. Both dependency probes remain red.
+artifacts of the pinned external module. Both probes were red there; the shared-cache batch above now enables and passes them.
 
 The [shared cache ownership review](shared-cache-owner-review.md) traces all
 four Ristretto consumers on current Go master, including inference, which is
