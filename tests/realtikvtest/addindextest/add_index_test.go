@@ -15,7 +15,9 @@
 package addindextest
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -23,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
@@ -216,4 +219,32 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
+}
+
+func TestAddIndexAndAdjustMaxWriteSpeed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c int)")
+	for i := 0; i < 8192; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t(c) values (%d)", i))
+	}
+	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 10485760") // 10MB
+	count := 0
+	limitSet := make(map[int]struct{}, 4)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockRegionSplitKeys", "return(1024)"))
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/lightning/backend/local/getWriteLimitInDoWrite", func(limit int) {
+		count += 1
+		limitSet[limit] = struct{}{}
+		if count == 2 {
+			variable.DDLReorgMaxWriteSpeed.Store(20971520) // 20MB
+			time.Sleep(300 * time.Millisecond)
+		}
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockRegionSplitKeys"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/getWriteLimitInDoWrite"))
+	}()
+	tk.MustExec("alter table t add index (c)")
+	require.Len(t, limitSet, 2, limitSet)
 }
