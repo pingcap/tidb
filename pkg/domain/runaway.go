@@ -35,6 +35,15 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return nil
 	}
 
+	// Fetch the server info before creating the controller, so that no
+	// fallible step remains between creating the controller and installing
+	// it on the Domain. Otherwise an error return would leak a started
+	// controller that nobody stops, while it still holds the process-wide
+	// controller ownership (see tikv/pd#11080).
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
 	keyspaceID := constants.NullKeyspaceID
 	if codec := do.Store().GetCodec(); codec != nil {
 		keyspaceID = uint32(codec.GetKeyspaceID())
@@ -44,10 +53,6 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return err
 	}
 	control.Start(ctx)
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
 	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	do.runawayManager = runaway.NewRunawayManager(control, serverAddr,
 		do.sysSessionPool, do.exit, do.infoCache, do.ddl)
