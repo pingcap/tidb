@@ -55,10 +55,13 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	}
 
 	// The index authorises the MATCH without the session variable, and
-	// supplies the analyzer the MATCH compiles with.
+	// supplies the analyzer the MATCH compiles with. Table t has no
+	// statistics, so every term is taken to be in a tenth of its rows and a
+	// scan is cheaper: these checks of what the path does force it; the cost
+	// choice is checked on tables with statistics below.
 	tk.MustQuery("select @@tidb_enable_local_match_against").Check(testkit.Rows("0"))
-	usesIndex("select id from t where match(body) against('+hello' in boolean mode)", "idx_body(body)")
-	usesIndex("select id from t where match(title) against('数据库' in boolean mode)", "idx_title(title)")
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from t use index (idx_title) where match(title) against('数据库' in boolean mode)", "idx_title(title)")
 	// The path competes on cost: a more selective condition on another index
 	// wins, and the MATCH is then evaluated on the rows it returns.
 	plan := explain("select id from t where match(body) against('+hello' in boolean mode) and k = 1")
@@ -67,7 +70,7 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	require.Regexp(t, `Selection.*match_against`, plan)
 	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode) and k = 1", "idx_body(body)")
 	// Each MATCH conjunct offers its own path; one is chosen.
-	plan = explain("select id from t where match(body) against('+hello' in boolean mode) and match(title) against('世界' in boolean mode)")
+	plan = explain("select id from t use index (idx_body, idx_title) where match(body) against('+hello' in boolean mode) and match(title) against('世界' in boolean mode)")
 	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
 	require.Equal(t, 1, strings.Count(plan, "FullTextIndexScan"), plan)
 
@@ -91,14 +94,14 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	usesIndex("select /*+ use_index(t, idx_body) */ id from t where match(body) against('+hello' in boolean mode)", "idx_body(body)")
 
 	// The index cannot keep an order, even one on its own column.
-	plan = explain("select id from t where match(body) against('+hello' in boolean mode) order by body")
+	plan = explain("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode) order by body")
 	require.Contains(t, plan, "Sort", plan)
 
 	// An invisible index is not used unless the session opts in.
 	tk.MustExec("alter table t alter index idx_body invisible")
 	scans("select id from t where match(body) against('+hello' in boolean mode)")
 	tk.MustExec("set @@tidb_opt_use_invisible_indexes = 1")
-	usesIndex("select id from t where match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from t use index (idx_body) where match(body) against('+hello' in boolean mode)", "idx_body(body)")
 	tk.MustExec("set @@tidb_opt_use_invisible_indexes = 0")
 	tk.MustExec("alter table t alter index idx_body visible")
 
@@ -144,14 +147,14 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	// They show as the trailing range dimensions and, for a search of exact
 	// terms, are served by the index in place of the table filter.
 	tk.MustExec("create table td (tenant_id bigint, id bigint, body text, primary key (tenant_id, id) clustered, fulltext index idx_body (body))")
-	usesIndex("select id from td where tenant_id = 42 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
-	plan = explain("select id from td where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
+	usesIndex("select id from td use index (idx_body) where tenant_id = 42 and match(body) against('+hello' in boolean mode)", "idx_body(body)")
+	plan = explain("select id from td use index (idx_body) where tenant_id = 42 and match(body) against('+hello' in boolean mode)")
 	require.Contains(t, plan, "range:[42,42]", plan)
 	require.NotContains(t, plan, "eq(test.td.tenant_id", plan)
-	plan = explain("select id from td where tenant_id in (42, 43) and match(body) against('+hello' in boolean mode)")
+	plan = explain("select id from td use index (idx_body) where tenant_id in (42, 43) and match(body) against('+hello' in boolean mode)")
 	require.Contains(t, plan, "range:[42,42], [43,43]", plan)
 	require.NotContains(t, plan, "in(test.td.tenant_id", plan)
-	plan = explain("select id from td where tenant_id = 42 and id > 7 and match(body) against('+hello' in boolean mode)")
+	plan = explain("select id from td use index (idx_body) where tenant_id = 42 and id > 7 and match(body) against('+hello' in boolean mode)")
 	require.Contains(t, plan, "range:(42 7,42 +inf]", plan)
 	require.NotContains(t, plan, "Selection", plan)
 	// A prefix search reads every term with the prefix, which a handle range
@@ -203,6 +206,9 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 		if i%50 == 0 {
 			body = "hello world"
 		}
+		if i == 1234 {
+			body = "zebra world"
+		}
 		values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i, body))
 	}
 	tk.MustExec("insert into tw values " + strings.Join(values, ","))
@@ -212,7 +218,13 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	// A rare term is estimated from the column's statistics through its ILIKE
 	// form, so the index still wins when a LIKE that a scan pushes down to the
 	// storage makes the scan cheap, as applications pair MATCH with LIKE.
-	usesIndex("select id from tw where match(body) against('+hello' in boolean mode) and body like '%hello%'", "idx_body(body)")
+	usesIndex("select id from tw where match(body) against('+zebra' in boolean mode) and body like '%zebra%'", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra' in boolean mode) and body like '%zebra%'").Check(testkit.Rows("1234"))
+	// A term in every row: reading its postings and looking up every handle
+	// costs more than scanning the table and analyzing each document.
+	plan = explain("select id from tw where match(body) against('+world' in boolean mode)")
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	require.Regexp(t, `Selection.*match_against`, plan)
 	plan = explain("select id from tw where k = 5 and match(body) against('+world' in boolean mode)")
 	require.Contains(t, plan, "index:idx_k(k)", plan)
 	require.NotContains(t, plan, "FullTextIndexScan", plan)

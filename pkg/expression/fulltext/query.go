@@ -172,12 +172,13 @@ func appendPostingReads(reads []PostingRead, node queryNode) []PostingRead {
 	return reads
 }
 
-// DocumentMatchCostPerByte is roughly what evaluating a query against one
-// document costs per byte of the document, in units of the evaluation of one
-// simple scalar function: analyzing the document dominates, and measures
-// about 100ns a byte for the NGRAM parser on documents of 30 to 3000 bytes,
-// where a simple function is about 50ns.
-const DocumentMatchCostPerByte = 2.0
+// DocumentMatchCostPerByte is what evaluating a query against one document costs
+// per byte of the document, as a multiple of the CPU factor, so that analyzing
+// documents in TiDB weighs against a TiKV scan as it does in practice. Measured
+// on 10M rows of ~28-byte documents (NGRAM and STANDARD alike): a root MATCH took
+// about 4.6x the time of the scan feeding it, which at the cost model's scan
+// factors is about 0.11 per byte on top of the filter's own CPU cost.
+const DocumentMatchCostPerByte = 0.125
 
 func queryNodeUsesPrefix(node queryNode) bool {
 	switch n := node.(type) {
