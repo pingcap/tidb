@@ -139,6 +139,7 @@ struct AccountTable {
 /// One logical row of an account table: its identity and the values this
 /// writer owns.
 type LogicalRows = BTreeMap<Vec<String>, BTreeMap<&'static str, String>>;
+type AccountExpiryValues = BTreeMap<Vec<String>, (Option<i64>, Option<Time>)>;
 
 const USER_TABLE: &str = "user";
 const DB_TABLE: &str = "db";
@@ -178,6 +179,16 @@ pub fn plan_account_write<S: MetaSnapshot>(
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
     let mut changed = std::collections::BTreeSet::new();
+    let expiry_values: AccountExpiryValues = desired
+        .users
+        .iter()
+        .map(|user| {
+            (
+                vec![user.host.clone(), user.user.clone()],
+                (user.password_lifetime, user.password_last_changed),
+            )
+        })
+        .collect();
 
     for (table, desired_rows) in [
         (user_table(), user_rows(desired)),
@@ -193,6 +204,7 @@ pub fn plan_account_write<S: MetaSnapshot>(
             catalog,
             &table,
             &desired_rows,
+            &expiry_values,
             now,
             &mut plan,
             &mut changed,
@@ -580,6 +592,7 @@ fn reconcile<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     account_table: &AccountTable,
     desired: &LogicalRows,
+    expiry_values: &AccountExpiryValues,
     now: Time,
     plan: &mut AccountWritePlan,
     changed: &mut std::collections::BTreeSet<String>,
@@ -670,6 +683,13 @@ fn reconcile<S: MetaSnapshot>(
                         moved = true;
                     }
                 }
+                moved |= apply_expiry_values(
+                    table,
+                    account_table,
+                    identity,
+                    expiry_values,
+                    &mut row.values,
+                )?;
                 if moved {
                     plan.mutations
                         .push(update_row(table, &row.key, &row.values)?);
@@ -689,6 +709,7 @@ fn reconcile<S: MetaSnapshot>(
                     let wanted = values.get(column).cloned().unwrap_or_default();
                     fresh.insert(*id, Datum::Bytes(wanted.into_bytes()));
                 }
+                apply_expiry_values(table, account_table, identity, expiry_values, &mut fresh)?;
                 plan.mutations.extend(insert_row(table, row_id, &fresh)?);
                 note_changed(changed, account_table, identity);
             }
@@ -701,6 +722,59 @@ fn reconcile<S: MetaSnapshot>(
         note_changed(changed, account_table, &identity);
     }
     Ok(())
+}
+
+/// The expiry columns are typed rather than text: SQL NULL must not become
+/// zero, and an unchanged timestamp must retain its original epoch.
+fn apply_expiry_values(
+    table: &TableInfo,
+    account: &AccountTable,
+    identity: &[String],
+    expiry_values: &AccountExpiryValues,
+    row: &mut RowValues,
+) -> Result<bool, AccountWriteError> {
+    if account.name != USER_TABLE {
+        return Ok(false);
+    }
+    let (lifetime, changed) = expiry_values
+        .get(identity)
+        .expect("desired user row belongs to the account image");
+    let values = [
+        (
+            "password_lifetime",
+            (*lifetime)
+                .map(|value| {
+                    u64::try_from(value).map(Datum::UInt).map_err(|_| {
+                        AccountWriteError::Unsupported("negative password lifetime".to_owned())
+                    })
+                })
+                .transpose()?
+                .unwrap_or(Datum::Null),
+        ),
+        (
+            "password_last_changed",
+            (*changed).map_or(Datum::Null, Datum::Time),
+        ),
+    ];
+    let mut moved = false;
+    for (name, wanted) in values {
+        if indexed_columns(table).iter().any(|column| column == name) {
+            return Err(AccountWriteError::Unsupported(format!(
+                "mysql.user indexes expiry column {name}"
+            )));
+        }
+        let column = match declared_column(table, name) {
+            Ok(column) => column,
+            Err(_) if wanted == Datum::Null => continue,
+            Err(error) => return Err(error),
+        };
+        let id = column.read().id;
+        if row.get(&id) != Some(&wanted) {
+            row.insert(id, wanted);
+            moved = true;
+        }
+    }
+    Ok(moved)
 }
 
 /// Records the `'user'@'host'` a changed row is about.

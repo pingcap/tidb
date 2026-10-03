@@ -26,10 +26,10 @@
       "id": "A02",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "**P1; partially repaired:** the durable account image omits `mysql.global_priv`, password-change time/lifetime, failed-login policy/state and other user attributes. Rebuilding the registry supplies `SslType::None`, a fresh password timestamp and no lock policy. The live authentication code therefore cannot enforce the policies loaded from a Go peer. Empty usernames now survive load, matching and account-image writeback; the former discard test was removed because it contradicted Go. The other policy-loss boundaries remain open.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs:120`, `:191`, `:294`, `:428`; `rust/crates/tidb-server/src/cluster_privileges.rs:88`, `:381`, `:702`; `rust/crates/tidb-session/src/privilege.rs:262`",
+      "finding": "**P1; partially repaired:** empty accounts and stored password-expiry policy now survive load, registry publication and account writeback. NULL versus NEVER, original password-change epochs and zero timestamps are preserved. The durable image still omits mysql.global_priv, failed-login policy/state and other user attributes, so Go-authored TLS/locking policy remains incomplete. No complete privilege package or live mixed-node security acceptance is claimed.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs`; `cluster_account_write.rs`; `rust/crates/tidb-server/src/cluster_privileges.rs`; `rust/crates/tidb-session/src/privilege.rs` and `privilege/registry_ops.rs`",
       "go_owner": "`pkg/privilege/privileges/cache.go::LoadAll`, `decodeUserTableRow`, `decodeGlobalPrivTableRow`, and `privileges.go::ConnectionVerification`/`checkSSL`. Carry the complete policy image through read, publication and writeback; preserve expiry/lock epochs. Policy loss is source-confirmed; no live mixed-node authentication exploit was run.",
-      "review_basis": "Cloud batch starting b6520ebe83c against freshly fetched Go master 93a01d31f6 and unchanged native 19a56cc. Empty-account preservation failed before and passes after the loader repair. Expiry/TLS/locking image probes still fail, so A02 remains partial; no complete privilege package or mixed-node acceptance. See cloud-account-test-review.md."
+      "review_basis": "Cloud expiry batch starting 05ed8bc460 against Go master 93a01d31f6 and unchanged native 19a56cc. Publication regression failed before; storage insertion regression failed with expiry writes withheld. Typed lifetime/timestamp load, shared record ownership, write/reload, original epoch and live-default login tests pass. TLS/locking/user attributes and A04 history remain open; see account-expiry-durability-repair.md."
     },
     {
       "id": "A03",
@@ -796,9 +796,9 @@
     "statuses": {
       "A02": "partial"
     },
-    "scope": "Empty-account load/matching/writeback preservation and source-aligned parser test maintenance",
-    "integration_start": "b6520ebe83c992a34cf75dc7e381b1eef20e288f",
+    "scope": "Typed password-expiry read/publication/writeback, NULL/NEVER and original epoch preservation",
+    "integration_start": "05ed8bc4606dcf592258b96c5ac72a3bbb28d2b6",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "cloud-account-test-review.md"
+    "receipt": "account-expiry-durability-repair.md"
   }
 }

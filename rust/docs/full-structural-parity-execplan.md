@@ -2505,3 +2505,14 @@ production behavior, three parser API-stale calls are corrected, and a valid Go
 EOF diagnostic mismatch is repaired without weakening original assertions.
 Current counts are 66 unresolved (56 open, ten partial), 20 repaired, 86 tracked.
 This maintains existing owners; no complete Go package or benchmark is accepted.
+
+### Account expiry durability milestone
+
+
+The [cloud expiry repair](parity/current-audit/account-expiry-durability-repair.md)
+maintains the existing account loader, shared privilege record and mutation owner.
+Stored nullable lifetime and original timestamp survive reload and writeback;
+only password changes refresh the epoch. A02 remains partial for TLS/locking/
+attributes and A04 history remains open. Counts stay 66 unresolved (56 open,
+ten partial), 20 repaired. This is existing owner maintenance, not package
+acceptance or performance evidence.

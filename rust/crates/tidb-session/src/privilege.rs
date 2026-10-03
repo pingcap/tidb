@@ -147,9 +147,9 @@ struct UserRecord {
     /// `default_password_lifetime`), `Some(0)` is `PASSWORD EXPIRE NEVER`,
     /// and `Some(n)` is `PASSWORD EXPIRE INTERVAL n DAY` (all captured).
     password_lifetime: Option<i64>,
-    /// Go's `mysql.user.Password_last_changed` TIMESTAMP, in Unix seconds:
-    /// the instant an interval-based expiry counts from.
-    password_last_changed: i64,
+    /// Stored UTC TIMESTAMP; the login epoch is derived from this one value.
+    /// NULL is retained instead of fabricating a password change on reload.
+    password_last_changed: Option<tidb_datatype::Time>,
     /// Go's `mysql.global_priv` row for this account -- its `PRIV` JSON's
     /// `ssl_type` member, which is where a `REQUIRE` clause is stored (NOT
     /// in `mysql.user`). Captured: `CREATE USER 'ssl'@'%' REQUIRE SSL`
@@ -280,7 +280,7 @@ impl PrivilegeRegistry {
                         password_locking: None,
                         password_expired: false,
                         password_lifetime: None,
-                        password_last_changed: bootstrapped_at,
+                        password_last_changed: Some(password_change_timestamp(bootstrapped_at)),
                         ssl_type: SslType::None,
                     },
                 )

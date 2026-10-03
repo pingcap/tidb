@@ -49,6 +49,10 @@ pub struct ExportedUser {
     pub account_locked: bool,
     /// `Password_expired = 'Y'`.
     pub password_expired: bool,
+    /// Nullable per-user expiry interval, preserving DEFAULT versus NEVER.
+    pub password_lifetime: Option<i64>,
+    /// Packed Go temporal representation, retaining NULL and the original epoch.
+    pub password_last_changed: Option<u64>,
     /// Printed names of the global privileges this account holds.
     pub privileges: Vec<&'static str>,
 }

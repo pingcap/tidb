@@ -311,6 +311,7 @@ impl PrivilegeRegistry {
         if guard.contains_key(&key) {
             return false;
         }
+        let created_at = self.clock.now_unix();
         guard.insert(
             key,
             UserRecord {
@@ -326,7 +327,7 @@ impl PrivilegeRegistry {
                 // a display difference, but it is the row Go writes.
                 password_expired: is_role,
                 password_lifetime: None,
-                password_last_changed: self.clock.now_unix(),
+                password_last_changed: Some(password_change_timestamp(created_at)),
                 ssl_type: SslType::None,
             },
         );
@@ -643,7 +644,10 @@ impl PrivilegeRegistry {
             .map(|record| PasswordExpiry {
                 expired: record.password_expired,
                 lifetime: record.password_lifetime,
-                last_changed: record.password_last_changed,
+                last_changed: record
+                    .password_last_changed
+                    .and_then(|value| value.core_time().to_datetime(&chrono::Utc).ok())
+                    .map_or(-62_135_596_800, |value| value.timestamp()),
             })
     }
 
@@ -690,10 +694,27 @@ impl PrivilegeRegistry {
         match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             Some(record) => {
                 record.password_expired = false;
-                record.password_last_changed = now;
+                record.password_last_changed = Some(password_change_timestamp(now));
                 true
             }
             None => false,
+        }
+    }
+
+    /// Publishes the stored expiry policy without treating a reload as a
+    /// password change. NULL and zero TIMESTAMP remain distinct on export.
+    pub fn restore_password_expiry(
+        &self,
+        user: &str,
+        host: &str,
+        expired: bool,
+        lifetime: Option<i64>,
+        changed: Option<tidb_datatype::Time>,
+    ) {
+        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            record.password_expired = expired;
+            record.password_lifetime = lifetime;
+            record.password_last_changed = changed;
         }
     }
 
@@ -1837,6 +1858,10 @@ impl PrivilegeRegistry {
                 plugin: record.plugin.clone(),
                 account_locked: record.is_role,
                 password_expired: record.password_expired,
+                password_lifetime: record.password_lifetime,
+                password_last_changed: record
+                    .password_last_changed
+                    .map(tidb_datatype::Time::go_raw),
                 privileges: printed_privileges(record.privs),
             })
             .collect();

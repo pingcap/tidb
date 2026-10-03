@@ -24,7 +24,8 @@ acceptance and TLS transport A03 remain separately open.
 - [x] Remove the Go-contradicting empty-account discard test and production discard; prove failure before and 14 cluster tests passing afterward.
 - [x] Repair three stale hint test API calls and Go-observed EOF diagnostics; four hint tests pass.
 - [ ] Complete durable account source/test/caller accounting and fail-before regressions.
-- [ ] Carry account policy and history through read, registry, export and write.
+- [x] Carry expiry lifetime/timestamp through read, the single shared record, export and typed account mutations; retain NULL/NEVER and original epochs.
+- [ ] Carry TLS/locking/other attributes and history through the same bridge.
 - [ ] Integrate CREATE/ALTER/SET/DROP/RENAME callers and enforce Go reuse rules.
 - [ ] Run affected regressions, original source contracts, Ready checks and lint.
 - [ ] Update both finding registers and durable receipt with accurate limits.
@@ -145,3 +146,17 @@ Exploratory expiry/locking/history red probes confirm the remaining work and are
 not committed as passing coverage. Broader parser library validation reports
 719 passed and 16 failed; those tests remain. See current-audit/cloud-account-test-review.md
 and its JSON receipt for exact pins, validation and publication limits.
+
+### Expiry durability milestone
+
+
+The first substantive account-state milestone is complete: stored password
+lifetime and change epochs survive publication and write/reload. UTC decoding
+is explicit; the registry owns one typed timestamp and derives login time from it.
+Old epochs, live defaults, NULL versus NEVER and zero timestamps are covered.
+Publication and insertion regressions fail before their repairs and pass after.
+This removes the expiry subitems of A02 while retaining its TLS/locking/attribute
+gaps and all of A04. No new history implementation is dispatched and no whole
+upstream package is accepted. See parity/current-audit/account-expiry-durability-repair.md.
+Next milestone remains complete account attributes/global_priv and history
+ownership, then every CREATE/ALTER/SET/DROP/RENAME caller and transaction gate.

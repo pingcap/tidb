@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [expiry durability repair](account-expiry-durability-repair.md) preserves
+typed lifetime/timestamp values through loading, publication and writeback. A02
+remains partial; the 66-unresolved count is unchanged.
+
 Latest cloud [source/test review](cloud-account-test-review.md): 66 unresolved
 (56 open, ten partial), 20 repaired. Empty-account preservation advances A02 to
 partial; complete durable policy and password reuse remain open.

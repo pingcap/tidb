@@ -264,6 +264,10 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
                 },
                 account_locked: user.account_locked,
                 password_expired: user.password_expired,
+                password_lifetime: user.password_lifetime,
+                password_last_changed: user
+                    .password_last_changed
+                    .map(tidb_datatype::Time::from_go_raw_like_go),
                 privileges: user.privileges,
             })
             .collect(),
@@ -365,30 +369,20 @@ fn set_element(printed: &str) -> String {
 /// Creates one account row, preserving the distinction Go encodes in
 /// `Account_locked`: a locked, passwordless row IS a role.
 fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
-    if user.account_locked && user.authentication_string.is_empty() {
-        registry.create_role(&user.user, &user.host);
-        return;
-    }
     let plugin = if user.plugin.is_empty() {
         DEFAULT_AUTH_PLUGIN
     } else {
         user.plugin.as_str()
     };
     registry.create_user_with_plugin(&user.user, &user.host, &user.authentication_string, plugin);
-    if user.account_locked {
-        registry.set_locked(&user.user, &user.host, true);
-    }
-    // `mysql.user.Password_expired = 'Y'` is a login-time restriction, not a
-    // display column: without it an account a Go node put under
-    // `PASSWORD EXPIRE` opens a full unrestricted session here instead of
-    // reporting 1862 (or starting sandboxed).
-    if user.password_expired {
-        registry.set_password_expire(
-            &user.user,
-            &user.host,
-            tidb_session::privilege::PasswordExpireSetting::Now,
-        );
-    }
+    registry.set_locked(&user.user, &user.host, user.account_locked);
+    registry.restore_password_expiry(
+        &user.user,
+        &user.host,
+        user.password_expired,
+        user.password_lifetime,
+        user.password_last_changed,
+    );
 }
 
 /// Resolves a `SET`-valued privilege list, naming anything unmodelled.
@@ -726,7 +720,114 @@ mod tests {
             plugin: "mysql_native_password".to_owned(),
             account_locked: locked,
             password_expired: false,
+            password_lifetime: None,
+            password_last_changed: None,
             privileges: privs,
+        }
+    }
+
+    #[test]
+    fn expiry_lifetime_and_change_epoch_survive_account_publication() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        registry.create_user("expiry", "%", "*ABC");
+        registry.set_password_expire(
+            "expiry",
+            "%",
+            tidb_session::privilege::PasswordExpireSetting::Interval(7),
+        );
+        let before = registry.password_expiry("expiry", "%");
+        let rebuilt = registry_from_cluster(&cluster_image_from_registry(&registry)).registry;
+        assert_eq!(rebuilt.password_expiry("expiry", "%"), before);
+    }
+
+    #[test]
+    fn stored_expiry_epochs_and_nulls_are_not_reset_by_reload() {
+        use tidb_datatype::{Time, TimeType};
+        let old = Time::from_date_checked(2001, 2, 3, 4, 5, 6, 0, TimeType::Timestamp, 0).unwrap();
+        for lifetime in [None, Some(0), Some(7)] {
+            let mut account = user("expiry", "%", "*ABC", true, vec!["SELECT"]);
+            account.password_lifetime = lifetime;
+            account.password_last_changed = Some(old);
+            account.password_expired = true;
+            let image = ClusterPrivileges {
+                users: vec![account],
+                ..Default::default()
+            };
+            let registry = registry_from_cluster(&image).registry;
+            assert_eq!(cluster_image_from_registry(&registry), image);
+            assert_eq!(
+                registry
+                    .password_expiry("expiry", "%")
+                    .unwrap()
+                    .last_changed,
+                old.core_time()
+                    .to_datetime(&chrono::Utc)
+                    .unwrap()
+                    .timestamp()
+            );
+        }
+        let image = ClusterPrivileges {
+            users: vec![user("null", "%", "", true, vec![])],
+            ..Default::default()
+        };
+        assert_eq!(
+            cluster_image_from_registry(&registry_from_cluster(&image).registry),
+            image
+        );
+        let mut zero = image.clone();
+        zero.users[0].password_last_changed = Some(
+            Time::new(
+                tidb_datatype::CoreTime::from_date(0, 0, 0, 0, 0, 0, 0),
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+        );
+        assert_ne!(zero, image);
+        assert_eq!(
+            cluster_image_from_registry(&registry_from_cluster(&zero).registry),
+            zero
+        );
+    }
+
+    #[test]
+    fn loaded_expiry_obeys_live_defaults_and_only_password_change_refreshes_epoch() {
+        use tidb_datatype::{Time, TimeType};
+        let old = Time::from_date_checked(2001, 2, 3, 4, 5, 6, 0, TimeType::Timestamp, 0).unwrap();
+        for (lifetime, global, expired) in [
+            (None, 0, false),
+            (None, 7, true),
+            (Some(0), 7, false),
+            (Some(7), 0, true),
+        ] {
+            let mut account = user("expiry", "%", "*ABC", false, vec![]);
+            account.password_lifetime = lifetime;
+            account.password_last_changed = Some(old);
+            let registry = registry_from_cluster(&ClusterPrivileges {
+                users: vec![account],
+                ..Default::default()
+            })
+            .registry;
+            assert_eq!(
+                registry
+                    .check_password_expired("expiry", "%", global)
+                    .is_err(),
+                expired
+            );
+            let before = cluster_image_from_registry(&registry).users[0].password_last_changed;
+            registry.clock().advance(60);
+            assert_eq!(
+                cluster_image_from_registry(&registry).users[0].password_last_changed,
+                before
+            );
+            registry.mark_password_changed("expiry", "%");
+            assert_ne!(
+                cluster_image_from_registry(&registry).users[0].password_last_changed,
+                before
+            );
+            assert!(registry
+                .check_password_expired("expiry", "%", global)
+                .is_ok());
         }
     }
 

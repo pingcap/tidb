@@ -167,6 +167,8 @@ fn user(name: &str, host: &str, privileges: &[&'static str]) -> LoadedUser {
         plugin: "mysql_native_password".to_owned(),
         account_locked: false,
         password_expired: false,
+        password_lifetime: None,
+        password_last_changed: None,
         privileges: privileges.to_vec(),
     }
 }
@@ -552,4 +554,61 @@ fn a_row_written_now_is_still_writable_after_a_reload() {
     assert_eq!(read_back.users.len(), 3);
     desired.users.push(user("dave", "%", &[]));
     assert_eq!(store.write(&desired).users.len(), 4);
+}
+
+#[test]
+fn expiry_policy_roundtrips_typed_null_never_and_original_epoch() {
+    let mut store = bootstrapped();
+    let mut image = store.accounts();
+    let old = Time::from_date_checked(2001, 2, 3, 4, 5, 6, 0, TimeType::Timestamp, 0).unwrap();
+    let mut account = user("expiry", "%", &["SELECT"]);
+    account.password_lifetime = Some(7);
+    account.password_last_changed = Some(old);
+    image.users.push(account);
+    let mut actual = store.write(&image);
+    let loaded = actual
+        .users
+        .iter()
+        .find(|user| user.user == "expiry")
+        .unwrap();
+    assert_eq!(loaded.password_lifetime, Some(7));
+    assert_eq!(loaded.password_last_changed, Some(old));
+    let catalog = store.catalog();
+    let unchanged = plan_account_write(&mut store, &catalog, &actual, timestamp()).unwrap();
+    assert!(
+        unchanged.is_empty(),
+        "an unchanged epoch must not schedule a write"
+    );
+    for lifetime in [Some(0), None] {
+        actual
+            .users
+            .iter_mut()
+            .find(|user| user.user == "expiry")
+            .unwrap()
+            .password_lifetime = lifetime;
+        actual = store.write(&actual);
+        let loaded = actual
+            .users
+            .iter()
+            .find(|user| user.user == "expiry")
+            .unwrap();
+        assert_eq!(loaded.password_lifetime, lifetime);
+        assert_eq!(loaded.password_last_changed, Some(old));
+    }
+    actual
+        .users
+        .iter_mut()
+        .find(|user| user.user == "expiry")
+        .unwrap()
+        .password_last_changed = None;
+    actual = store.write(&actual);
+    assert_eq!(
+        actual
+            .users
+            .iter()
+            .find(|user| user.user == "expiry")
+            .unwrap()
+            .password_last_changed,
+        None
+    );
 }

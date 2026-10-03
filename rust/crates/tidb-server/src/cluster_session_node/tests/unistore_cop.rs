@@ -353,6 +353,42 @@ fn shared_session_activation_inherits_globals_and_obeys_set() {
 }
 
 #[test]
+fn cluster_account_expiry_survives_sql_writes_and_password_changes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(902)).unwrap();
+    session
+        .execute_write(
+            "CREATE USER 'expiry_probe'@'%' IDENTIFIED BY 'pw' PASSWORD EXPIRE INTERVAL 7 DAY",
+        )
+        .unwrap();
+    let policy = |session: &mut ClusterServerSession| {
+        displayed(rows(session, "SELECT Password_lifetime, Password_last_changed FROM mysql.user WHERE User='expiry_probe'"))
+    };
+    assert_eq!(policy(&mut session)[0][0], "7");
+    session.execute_write("UPDATE mysql.user SET Password_last_changed='2001-02-03 04:05:06' WHERE User='expiry_probe'").unwrap();
+    session
+        .execute_write("ALTER USER 'expiry_probe'@'%' ACCOUNT LOCK")
+        .unwrap();
+    assert_eq!(policy(&mut session), [["7", "2001-02-03 04:05:06"]]);
+    session
+        .execute_write("ALTER USER 'expiry_probe'@'%' PASSWORD EXPIRE NEVER")
+        .unwrap();
+    assert_eq!(policy(&mut session), [["0", "2001-02-03 04:05:06"]]);
+    session
+        .execute_write("ALTER USER 'expiry_probe'@'%' PASSWORD EXPIRE DEFAULT")
+        .unwrap();
+    assert_eq!(policy(&mut session), [["NULL", "2001-02-03 04:05:06"]]);
+    session
+        .execute_write("ALTER USER 'expiry_probe'@'%' IDENTIFIED BY 'changed'")
+        .unwrap();
+    assert_ne!(policy(&mut session)[0][1], "2001-02-03 04:05:06");
+    session
+        .execute_write("SET PASSWORD FOR 'expiry_probe'@'%' = 'changed-again'")
+        .unwrap();
+    assert_eq!(policy(&mut session)[0][0], "NULL");
+}
+
+#[test]
 fn cluster_account_drop_persists_through_its_own_transaction() {
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(901)).unwrap();

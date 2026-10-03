@@ -1,0 +1,113 @@
+{
+  "reviewed_at": "2026-10-02T21:19:06.701055-03:00",
+  "baseline": {
+    "integration": "05ed8bc4606dcf592258b96c5ac72a3bbb28d2b6",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "scope": "Existing account owner maintenance; expiry read/publication/writeback repaired. A02 partial and A04 open; no whole-package acceptance.",
+  "distinct_passing_targeted_tests": 37,
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-server --lib expiry_lifetime_and_change_epoch",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/expiry-before.log",
+      "sha256": "88c69983614997d6201356b1782b390d4528fb152264459ace5b050fc07b4284",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test all expiry_policy_roundtrips_typed_null_never_and_original_epoch (insertion-side expiry write withheld)",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/storage-before.log",
+      "sha256": "8b805a984190a443c42a7c26259a34481c7a2d92b859267b824dd741ebd0c7aa",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib cluster_privileges",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/server-after.log",
+      "sha256": "5c68ae36bfff2ca12b0d36f4b5c3c2ccab9d893de641157dad81dbc4aa23f5b7",
+      "passed": 17,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test all cluster_account_write_source",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/storage-after.log",
+      "sha256": "2b8aba116c5cfe82cf7844127b08b4c0bffa2080d139f2f4c56283a5d4286393",
+      "passed": 14,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_grants::password_policy",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/session-after.log",
+      "sha256": "2c661a84248662f6922c6e0892910a58e4265f8b3cc7d39ec0ed158a67e799ef",
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib cluster_account_expiry_survives_sql",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/sql-after.log",
+      "sha256": "5b335c06de1c9cadca2279f7ba36d095bb404b9f80e50011acf4554e8840e28e",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/check.log",
+      "sha256": "d6e370c408cf487aa47d2e7ccca394606e50be9c36a0ee5e9833beae81652713"
+    },
+    {
+      "command": "make lint",
+      "working_directory": "/workspace/tidb",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/lint.log",
+      "sha256": "ae41ceb4ad7c528136d33b695d85ab84c6f43efaa8191f0cdb708ffbad264a14"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch2/build.log",
+      "sha256": "6714a501bc03d2f5c85133f49ec936c50c9f486744098b1f2847c3faf92e918b"
+    }
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 66,
+    "open": 56,
+    "partial": 10,
+    "repaired": 20
+  },
+  "not_verified": [
+    "mixed-node TiKV authentication",
+    "non-UTC calendar-day/DST parity",
+    "full Go suites",
+    "whole upstream package acceptance",
+    "performance benchmarks"
+  ],
+  "known_other_failures": {
+    "broader_parser_library": 16
+  },
+  "hook": {
+    "actual_hook": "hooks/pre-commit",
+    "core.hooksPath": "hooks",
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "commit_log": "/workspace/.cloud-setup/account-batch2/commit.log"
+  },
+  "push_gate": "Repeat the same locked build immediately before each normal push; do not bypass hooks or force-push.",
+  "publication": "pending actual commit/push attempt; prior TiDB push denied to ngaut with HTTP 403; preserve all local cloud commits"
+}

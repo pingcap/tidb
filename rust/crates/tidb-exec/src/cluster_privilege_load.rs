@@ -28,13 +28,11 @@
 //! serve a table without a `BIGINT` handle (see
 //! [`crate::mysql_system_tables`]).
 //!
-//! Two deliberate scope statements, both stated rather than hidden:
+//! The server calls this snapshot reader at startup and during privilege reload.
+//! `password_last_changed` is decoded in UTC so publication preserves the
+//! stored instant rather than interpreting it in a session timezone.
 //!
-//! * **One-shot.** Go re-loads on a `notifyupdateprivilege` etcd event and on
-//!   its own `Load` interval. This is the startup load only; nothing here
-//!   watches for later changes, so a `GRANT` a Go node runs after this node
-//!   started is not visible until this node restarts.
-//! * **`mysql.global_priv` is not read.** That table holds the JSON
+//! Remaining scope gap: **`mysql.global_priv` is not read.** That table holds the JSON
 //!   connection-attribute policy (SSL/SAN requirements), which this node's
 //!   login path does not enforce at all; reading it would imply an
 //!   enforcement that does not exist.
@@ -124,6 +122,8 @@ const USER_COLUMNS: &[&str] = &[
     "plugin",
     "account_locked",
     "password_expired",
+    "password_lifetime",
+    "password_last_changed",
     "select_priv",
     "insert_priv",
     "update_priv",
@@ -201,6 +201,10 @@ pub struct LoadedUser {
     pub account_locked: bool,
     /// `Password_expired = 'Y'`.
     pub password_expired: bool,
+    /// Nullable per-account expiry interval; NULL means the live global default.
+    pub password_lifetime: Option<i64>,
+    /// Stored UTC TIMESTAMP, retained without replacing its epoch on reload.
+    pub password_last_changed: Option<tidb_datatype::Time>,
     /// Printed names of the global privileges whose column reads `Y`.
     pub privileges: Vec<&'static str>,
 }
@@ -432,8 +436,9 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     let mut loaded = ClusterPrivileges::default();
 
     let users = SystemTableView::locate(catalog, "user", USER_COLUMNS)?;
+    let timezone = tidb_datatype::SessionTimeZone::utc();
     for (key, value) in scan_system_table(snapshot, &users)? {
-        let row = SystemRow::parse(&users, &key, &value)?;
+        let row = SystemRow::parse_in_timezone(&users, &key, &value, Some(&timezone))?;
         loaded.users.push(LoadedUser {
             host: row.text("host")?.unwrap_or_default(),
             user: row.text("user")?.unwrap_or_default(),
@@ -441,6 +446,25 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
             plugin: row.text("plugin")?.unwrap_or_default(),
             account_locked: row.is_yes("account_locked")?,
             password_expired: row.is_yes("password_expired")?,
+            password_lifetime: if row.has_column("password_lifetime") {
+                row.i64("password_lifetime")?
+            } else {
+                None
+            },
+            password_last_changed: if row.has_column("password_last_changed") {
+                match row.datum("password_last_changed")? {
+                    Some(tidb_datatype::Datum::Time(value)) => Some(*value),
+                    None => None,
+                    Some(value) => {
+                        return Err(SystemTableError::Decode {
+                            name: "mysql.user".to_owned(),
+                            detail: format!("password_last_changed is not a TIMESTAMP: {value:?}"),
+                        })
+                    }
+                }
+            } else {
+                None
+            },
             privileges: granted_names(&row, USER_PRIVILEGE_COLUMNS)?,
         });
     }
