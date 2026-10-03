@@ -6429,6 +6429,13 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+<<<<<<< HEAD
+=======
+			} else if opt2.Global {
+				opt1.Global = true
+			} else if opt2.SplitOpt != nil {
+				opt1.SplitOpt = opt2.SplitOpt
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
 			}
 			$$ = opt1
 		}
@@ -6473,6 +6480,35 @@ IndexOption:
 			PrimaryKeyTp: $1.(model.PrimaryKeyType),
 		}
 	}
+<<<<<<< HEAD
+=======
+|	"GLOBAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: true,
+		}
+	}
+|	"LOCAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: false,
+		}
+	}
+|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+    {
+		$$ = &ast.IndexOption{
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt:  &ast.SplitOption{
+				Num:   $3.(int64),
+			},
+		}
+	}
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
 
 /*
   See: https://github.com/mysql/mysql-server/blob/8.0/sql/sql_yacc.yy#L7179
