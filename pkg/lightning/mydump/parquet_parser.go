@@ -518,11 +518,17 @@ func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	fileMeta SourceFileMeta,
-) (int64, error) {
+) (rowCount int64, err error) {
 	r, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+
+	defer func() {
+		if closeErr := r.Close(); closeErr != nil && err == nil {
+			err = errors.Annotate(closeErr, "close parquet row-count reader")
+		}
+	}()
 
 	reader, err := file.NewParquetReader(&parquetFileWrapper{ReadSeekCloser: r})
 	if err != nil {
