@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -445,6 +446,12 @@ func TestDebugRoutes(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
 
 	debugRoutes := []string{
 		"/debug/pprof/",
@@ -463,11 +470,28 @@ func TestDebugRoutes(t *testing.T) {
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",
 	}
+	expectedProfilingLogs := 0
 	for _, route := range debugRoutes {
+		if strings.HasPrefix(route, "/debug/pprof/") {
+			expectedProfilingLogs++
+		}
 		resp, err := ts.FetchStatus(route)
 		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
 		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
 		require.NoError(t, resp.Body.Close())
+	}
+
+	profilingLogs := recorded.FilterMessage("profiling request received")
+	require.Len(t, profilingLogs.All(), expectedProfilingLogs)
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/goroutine")).
+		FilterField(zap.String("debug", "2")).All(), 1)
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/profile")).
+		FilterField(zap.String("seconds", "5")).All(), 1)
+	for _, entry := range profilingLogs.All() {
+		fields := entry.ContextMap()
+		require.Equal(t, http.MethodGet, fields["method"])
+		require.NotEmpty(t, fields["path"])
+		require.NotEmpty(t, fields["remote-addr"])
 	}
 }
 
