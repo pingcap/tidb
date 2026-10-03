@@ -440,9 +440,26 @@
     "fresh-task cloud restore"
   ],
   "publication": {
-    "commit_hook_locked_build": "pending",
-    "fresh_pre_push_locked_build": "pending",
-    "push": "pending",
-    "destination": "https://github.com/pingcap/tidb.git hparser-integration"
+    "source_commit": "22aa8ac5301e2a10af31db44032929452ba869e3",
+    "commit_hook_locked_build": "passed via actual hooks/pre-commit",
+    "hook_path": "hooks",
+    "hook_sha256": "4d3609057355f094d1ae8eb4a312d7346b06dd8fd947772e709484c514bec66e",
+    "commit_log_sha256": "cc0e00d2dbd6b9a8f25ceb8fc99a986866f79c43962d79254b843f12b1d5c4cb",
+    "fresh_pre_push_locked_build": "passed immediately before this push",
+    "pre_push_build_log_sha256": "eaddd848b64117bfc1c5505f2bf50fc8c5ef580a6417a93b0b099c7652b39720",
+    "push": "blocked",
+    "push_exit": 128,
+    "destination": "https://github.com/pingcap/tidb.git hparser-integration",
+    "sanitized_diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut.\nfatal: unable to access 'https://github.com/pingcap/tidb.git/': The requested URL returned error: 403",
+    "remote_after_push": "7b991676da79f044774caf6da4dfffe247160feb",
+    "permission_scope": "Repository-scoped GitHub denial; account role versus GitHub-app installation scope cannot be distinguished from this diagnostic. Existing platform credentials retained.",
+    "receipt_only_followup": "Normal hook required; no repeat push against unchanged denial solely for receipt changes."
+  },
+  "wire_smoke": {
+    "status": "passed",
+    "source_commit": "22aa8ac5301e2a10af31db44032929452ba869e3",
+    "scope": "real MySQL authentication, SELECT, unistore DDL/INSERT/read; not multi-node/TiFlash SQL acceptance",
+    "service": "own temporary process stopped and joined",
+    "log_sha256": "73562100ca5d231c25d5f68c87d1fa170934953a2ed0817e2bd6275f6e8f8aab"
   }
 }

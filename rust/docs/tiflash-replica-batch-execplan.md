@@ -9,7 +9,7 @@ This living ExecPlan follows `PLANS.md`. Changing replica count must preserve an
 - [x] Capture six failing metadata/cadence regressions before their corresponding production edits.
 - [x] Repair shared count/reset/physical status, DROP/TRUNCATE readiness and retained polling; migrate HTTP/security consumers; remove eight empty ignored shells while preserving their obligations.
 - [x] Validate 29 distinct targeted Rust cases, a fifty-tick independent Go source oracle, four affected crates/all targets and root lint.
-- [ ] Pass actual commit-hook and fresh pre-push locked server builds.
+- [x] Source commit 22aa8ac530 passes the actual hook and fresh immediate-pre-push locked build; real unistore wire smoke passes. Exact requested push is denied with 403 and remote remains 7b991676da.
 - [ ] Update both finding registers, receipts and reusable cloud draft; verify exact push destination and outcome.
 
 ## Context and Orientation
@@ -44,6 +44,6 @@ Retain `TiFlashReplicaControl` for owner gating and metadata publication. Add so
 
 ## Outcomes & Retrospective
 
-F03's recorded classic polling gap is repaired; F01/F02 remain partial for placement/GC and durable partition phases, and N03 remains partial after connecting the secure HTTP consumer. The register has 60 unresolved findings (49 open, eleven partial), 26 repaired. All targeted checks pass; publication gates remain pending. No whole pkg/ddl/infosync/security acceptance, live multi-node result or workload speedup is claimed.
+F03's recorded classic polling gap is repaired; F01/F02 remain partial for placement/GC and durable partition phases, and N03 remains partial after connecting the secure HTTP consumer. The register has 60 unresolved findings (49 open, eleven partial), 26 repaired. All targeted checks and both source publication build gates pass. GitHub denied the requested push with 403; remote remains unchanged. The receipt-only follow-up also must use the normal hook. No whole pkg/ddl/infosync/security acceptance, live multi-node result or workload speedup is claimed.
 
 Revision (2026-10-03): the same-owner review also repaired DROP/TRUNCATE identity readiness and physical desired-rule scope, reproduced before edits. Secure HTTP consumes the existing cluster security owner. Eight empty placeholders were removed without removing original-source obligations. See `parity/current-audit/tiflash-replica-batch-repair.md` and its validation JSON for precise evidence and remaining scope.

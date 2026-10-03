@@ -104,3 +104,5 @@ Do not substitute a fork, force push, bypass hooks or reuse an old build before
 pushing. The reusable cloud setup uses the existing checkouts, two Cargo jobs
 and disabled incremental compilation. A blocked push must preserve these
 validated local changes in the existing bundle and cloud draft.
+
+Publication result: source commit `22aa8ac5301e2a10af31db44032929452ba869e3` passed the actual tracked pre-commit locked build and a separate fresh locked build immediately before push. The real unistore wire smoke also passed. GitHub refused the exact requested destination with `Permission to pingcap/tidb.git denied to ngaut` and HTTP 403; verified remote remains `7b991676da79f044774caf6da4dfffe247160feb`. The diagnostic is repository scoped but does not establish account-role versus GitHub-app installation scope. Preserve platform credentials and the validated local source; do not substitute a fork.
