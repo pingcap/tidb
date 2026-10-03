@@ -376,7 +376,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
-	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), int64(config.MinRegionNum))
 }
 
 func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
