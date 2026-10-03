@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -275,23 +276,34 @@ func (r *byteReader) reload() error {
 		r.curBufOffset = 0
 		return nil
 	}
-	n, err := io.ReadFull(r.storageReader, r.curBuf[0:])
+
+	return util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, r.readFromStorageReader)
+}
+
+func (r *byteReader) readFromStorageReader() (retryable bool, err error) {
+	n, err := io.ReadFull(r.storageReader, r.curBuf)
 	if err != nil {
 		switch err {
 		case io.EOF:
 			// move curBufOffset so following read will also find EOF
 			r.curBufOffset = len(r.curBuf)
-			return err
+			return false, err
 		case io.ErrUnexpectedEOF:
+			if n == 0 {
+				r.logger.Warn("encounter (0, ErrUnexpectedEOF) during during read, retry it")
+				return true, err
+			}
 			// The last batch.
 			r.curBuf = r.curBuf[:n]
+		case context.Canceled:
+			return false, err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
-			return err
+			return false, err
 		}
 	}
 	r.curBufOffset = 0
-	return nil
+	return false, nil
 }
 
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {
