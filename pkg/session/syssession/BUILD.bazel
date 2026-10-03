@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "syssession",
+    srcs = [
+        "pool.go",
+        "session.go",
+        "session_test_util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/syssession",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/infosync",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
+        "//pkg/sessionctx",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "syssession_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "pool_test.go",
+        "session_integration_test.go",
+        "session_test.go",
+    ],
+    embed = [":syssession"],
+    flaky = True,
+    shard_count = 21,
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
