@@ -704,6 +704,30 @@ SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t8
 		tk.MustQuery("SELECT /* issue:58999 */ 1 FROM t0, v0 WHERE t0.c2=(-(-1|v0.c0))").Check(testkit.Rows())
 	}
 
+	// issue-67345-view-where-predicate-internal-error
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("CREATE TABLE t0(c0 BOOL)")
+		tk.MustExec("CREATE VIEW v0(c0) AS SELECT '0.43245565050850177' FROM t0")
+
+		require.NotEmpty(t, tk.MustQuery(`EXPLAIN SELECT v0.c0, t0.c0
+FROM v0, t0
+WHERE ((((CAST(t0.c0 AS SIGNED)) NOT LIKE (((-2056919112) AND (NULL))))) = ((-(((v0.c0) | (-1132301066))))))`).Rows())
+
+		tk.MustQuery(`SELECT /* issue:67345 */ v0.c0, t0.c0
+FROM v0, t0
+WHERE ((((CAST(t0.c0 AS SIGNED)) NOT LIKE (((-2056919112) AND (NULL))))) = ((-(((v0.c0) | (-1132301066))))))`).Check(testkit.Rows())
+
+		tk.MustQuery(`SELECT ref0, ref1
+FROM (
+    SELECT v0.c0 AS ref0,
+           t0.c0 AS ref1,
+           ((((CAST(t0.c0 AS SIGNED)) NOT LIKE (((-2056919112) AND (NULL))))) = ((-(((v0.c0) | (-1132301066)))))) AS ref2
+    FROM v0, t0
+) AS s
+WHERE ref2`).Check(testkit.Rows())
+	}
+
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.
