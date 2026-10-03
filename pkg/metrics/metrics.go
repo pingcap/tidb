@@ -91,6 +91,7 @@ func InitMetrics() {
 	InitBindInfoMetrics()
 	InitDDLMetrics()
 	InitDistSQLMetrics()
+	InitTiKVClientRegionCacheMetrics()
 	InitDomainMetrics()
 	InitExecutorMetrics()
 	InitGCWorkerMetrics()
@@ -354,6 +355,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2Statements)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
+
+	prometheus.MustRegister(RegionCacheOperationsCounter)
 
 	prometheus.MustRegister(RestoreTableCreatedCount)
 	prometheus.MustRegister(RestoreImportFileSeconds)
