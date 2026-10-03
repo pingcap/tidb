@@ -96,6 +96,30 @@
         "Warning": null
       },
       {
+        "SQL": "select /* issue:63741 */ * from t6 where (a = b) or (a is null and b is null)",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  nulleq(test.t6.a, test.t6.b)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /* issue:63741 */ * from t6 where (b is null and a is null) or (b = a)",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  nulleq(test.t6.b, test.t6.a)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "SELECT column_1, column_2, column_3, column_4, column_5, column_6 FROM ISSUE64263 WHERE column_3 = 'M 5 9 2 9 2 5 4 6 8 4 9' AND (column_2 IN (1) OR column_4 = 121092106) ORDER BY column_6 DESC, column_1 DESC LIMIT 1000;",
         "Plan": [
           "TopN root  test.issue64263.column_6:desc, test.issue64263.column_1:desc, offset:0, count:1000",
