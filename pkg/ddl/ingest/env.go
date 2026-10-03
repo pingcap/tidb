@@ -95,6 +95,7 @@ func genLightningDataDir() (string, error) {
 			return "", err
 		}
 	}
+	logutil.BgLogger().Warn("[issue58437] genLightningDataDir()")
 	err := os.MkdirAll(sortPath, 0o700)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrCreateDirFail,
