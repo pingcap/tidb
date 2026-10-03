@@ -39,7 +39,8 @@ these owners rather than introducing another account SQL interpreter.
 - [x] Carry policy, history and raw attributes through all account image callers.
 - [x] Enforce count/time policy and migrate CREATE/ALTER/SET/DROP/RENAME and mirrors.
 - [x] Validate red/green regressions, targeted suites, all-target check, lint.
-- [ ] Update both registers and receipts; commit with actual hook; rebuild before push.
+- [x] Update both registers/receipts; source commit 4b1aebe025 through actual hook; fresh locked build immediately before normal push attempt.
+- [ ] Publish to requested remote after GitHub write access is restored (current attempt denied HTTP 403).
 
 ## Implementation milestones
 
@@ -91,7 +92,10 @@ transaction owner is composed.
 
 The durable history and locking image are implemented. The Session account/grant
 suite passes all 115 tests. Final SQL, affected all-target checking, lint and the actual staged-hook build
-pass. The 156 distinct targeted tests pass; commit/publication remain next.
+pass. The 156 distinct targeted tests pass. Source commit 4b1aebe025 ran the
+actual hook; the fresh pre-push build passed in 21.06 seconds. Push exited 128
+with HTTP 403, remote verified at ee637c3a39. Publication remains externally
+blocked; code and recovery bundle are retained in the cloud workspace.
 The register starts with 86 findings,
 66 unresolved (56 open, 10 partial), 20 repaired. Change statuses only for the
 contracts demonstrated by production-path regressions; preserve valid failures.
@@ -143,3 +147,7 @@ The reconstructed lz4 archive failed its existing go.sum checksum and was never
 used. Packaging the exact Git tag with x/mod/zip.CreateFromVCS reproduced the
 recorded checksum, and Go accepted it. Other four module archives also matched
 their recorded checksums. Final make lint exited zero without dependency errors.
+
+Final receipt update: record the actual source commit, hook/build logs, push exit
+and unchanged remote SHA. The following documentation-only commit preserves
+these outcomes; no source implementation or test obligation changes.

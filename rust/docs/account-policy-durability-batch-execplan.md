@@ -30,8 +30,9 @@ acceptance and TLS transport A03 remain separately open.
 - [x] Integrate CREATE/ALTER/SET/DROP/RENAME callers and enforce Go reuse rules.
 - [x] Run affected regressions, source-based contract review, affected Ready checks and lint; full original Go suites remain unverified.
 - [x] Update both finding registers and durable receipt with accurate limits.
-- [ ] Commit through actual hook; fresh locked build immediately before normal
-  push, verify remote SHA or record precise permission blocker.
+- [x] Source batch committed through actual hook; fresh locked build immediately before
+  normal push; remote verified and precise GitHub 403 recorded.
+- [ ] Publish after TiDB write access is restored.
 
 ## Surprises & Discoveries
 
@@ -133,8 +134,10 @@ command exit statuses, test counts and source pins.
 
 ## Outcomes & Retrospective
 
-Implementation and final batch acceptance are pending. Environment setup is
-validated and saved for review; TiDB remote write authorization remains unresolved.
+History/reuse and raw locking-image maintenance are implemented and validated
+with 156 distinct targeted tests. A04 is repaired; A02 remains partial for the
+listed security/cache consumers. Environment setup is validated and saved for
+review; source push and reliable restoration of local-only commits remain blocked.
 
 ### Cloud test-hygiene prerequisite checkpoint
 

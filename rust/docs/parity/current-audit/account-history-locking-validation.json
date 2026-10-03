@@ -1449,6 +1449,20 @@
       "exit_code": 0,
       "cloud_log": "/workspace/.cloud-setup/account-batch3/precommit-proof.log",
       "sha256": "ae91478aa1d14512f493cc8b2c2cd16754391a78e0a606c07378c37709ca03ca"
+    },
+    {
+      "command": "TERM=xterm git commit -m account: persist reuse history and preserve locking policy (actual hook)",
+      "working_directory": "/workspace/tidb",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch3/commit.log",
+      "sha256": "56545de07aa193c8765e7e2e598c97b08b41d468095a00babe7b1e32cc72a4ae"
+    },
+    {
+      "command": "cd rust && cargo build --locked -p tidb-server (immediately before push)",
+      "working_directory": "/workspace/tidb",
+      "exit_code": 0,
+      "cloud_log": "/workspace/.cloud-setup/account-batch3/prepush-build.log",
+      "sha256": "61f69faae3cda010393c50cb5fc6b3ae9375248987c9066085545638868cfca9"
     }
   ],
   "package_obligations": [
@@ -1488,7 +1502,15 @@
   "publication": {
     "destination": "pingcap/tidb:hparser-integration",
     "last_permission_diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut.\nfatal: unable to access 'https://github.com/pingcap/tidb.git/': The requested URL returned error: 403",
-    "permission_scope_diagnosis": "Repository-scoped GitHub write denial. Account role versus GitHub-app installation scope cannot be distinguished from this response. No alternate remote or copied credentials."
+    "permission_scope_diagnosis": "Repository-scoped GitHub write denial. Account role versus GitHub-app installation scope cannot be distinguished from this response. No alternate remote or copied credentials.",
+    "source_commit": "4b1aebe025a6b832f3f6cf9986e47e4f70569b77",
+    "push_command": "git push origin HEAD:hparser-integration",
+    "push_exit_code": 128,
+    "push_log": "/workspace/.cloud-setup/account-batch3/push.log",
+    "push_log_sha256": "fde1abbd7801f07a6308a07282330c2b11bb359e3706f82d8076cba2a665afee",
+    "remote_after_push": "ee637c3a3992dc6acb4a669e9a5dbba846573474",
+    "published": false,
+    "recovery_bundle": "/workspace/.cloud-setup/tidb-unpublished.bundle"
   },
   "distinct_passing_targeted_tests": 156,
   "hook": {

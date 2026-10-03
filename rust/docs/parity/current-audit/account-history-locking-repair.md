@@ -119,3 +119,10 @@ and ngaut/client-rust master. No alternate fork or laptop credentials were used.
 Local commits and a verified recovery bundle must be retained in the cloud
 snapshot; fetching unpublished commits from GitHub or fresh-task restoration is
 not established while publication is blocked.
+
+Source implementation commit: `4b1aebe025a6b832f3f6cf9986e47e4f70569b77`. The
+actual commit hook passed, then a fresh locked build passed immediately before
+the normal push attempt. Push exited 128 with the diagnostic above; the remote
+was verified unchanged at ee637c3a3992dc6acb4a669e9a5dbba846573474. This
+documentation follow-up records those outcomes without another identical denied
+push. Future publication still requires the fresh locked build.
