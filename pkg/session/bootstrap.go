@@ -1259,6 +1259,36 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+<<<<<<< HEAD
+=======
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if etcdCli == nil {
+		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
+		return func() {
+			// do nothing
+		}, nil
+	}
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
+	if err != nil {
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
+}
+
+>>>>>>> fc8bdb54c60 (session: remove distributed tasks limitation from upgrade (#56773))
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
@@ -1289,6 +1319,21 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+<<<<<<< HEAD
+=======
+	var ver int64
+	ver, err = getBootstrapVersion(s)
+	terror.MustNil(err)
+	if ver >= currentBootstrapVersion {
+		// It is already bootstrapped/upgraded by a higher version TiDB server.
+		return
+	}
+
+	printClusterState(s, ver)
+
+	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
+	// but during upgrade we disable it.
+>>>>>>> fc8bdb54c60 (session: remove distributed tasks limitation from upgrade (#56773))
 	if isNull {
 		upgradeToVer99Before(s)
 	}
