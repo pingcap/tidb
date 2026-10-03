@@ -27,7 +27,7 @@ ENV GOPROXY ${GOPROXY}
 RUN make server
 
 
-FROM rockylinux:9-minimal
+FROM quay.io/rockylinux/rockylinux:9-minimal
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
 
