@@ -298,3 +298,7 @@ remains in README.md. No new SQL regression or workload benchmark was run.
 Publication checks and their final outcomes are recorded in the parent ExecPlan.
 Prior successful package repairs remain valid at their recorded revisions;
 none are promoted to repository-wide parity by this audit.
+
+## Test-harness cleanup, 2026-10-04
+
+Six test binaries, three source/doc-only assertions and two canned DDL self-checks are retired; 57 behavioral cases move into existing aggregates. Six stale catalog totals now test fixture-relative changes. The selected 74 cases pass. Original standalone cardinality/TopN suites retain one pass and three reproduced Go-estimate failures; their sources, expectations and isolation remain unchanged. Counts stay 86 tracked, 29 repaired, 57 unresolved. See [receipt](test-harness-retirement-validation.json).

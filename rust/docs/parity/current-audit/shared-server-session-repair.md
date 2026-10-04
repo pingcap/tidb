@@ -113,8 +113,6 @@ exit zero. The validation JSON retains its exact startup arguments, SQL and rows
 From the repository root:
 
 ```sh
-bash rust/scripts/test-ddl-json-fixture.sh
-bash rust/scripts/test-ddl-change-count.sh
 GOTOOLCHAIN=go1.25.14 make lint
 git diff --check
 ```
@@ -148,3 +146,5 @@ sysbench/TPC-C/TPC-H/YCSB performance comparisons were not run in this batch.
 Removing the extra SQL engines improves ownership and removes their restrictions;
 it is not a measured benchmark improvement. Existing shared-runtime findings,
 including account/configuration gaps and T01, remain explicit in the register.
+
+The two mocked DDL-runner self-checks were retired on 2026-10-04. They supplied canned SQL/log results and did not validate DDL execution. The historical JSON receipt preserves their original invocations; use the maintained live DDL runners and ordinary executor regressions for current validation.

@@ -22,7 +22,6 @@
 //! rows the `SELECT` returns, because a DAG-shape assertion would pass for a
 //! request that still answers wrongly.
 
-// aggregate-test: standalone
 
 #![allow(missing_docs)]
 

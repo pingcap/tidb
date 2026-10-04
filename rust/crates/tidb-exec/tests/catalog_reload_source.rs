@@ -21,7 +21,6 @@
 //! `pkg/infoschema/issyncer/loader.go` `tryLoadSchemaDiffs`, and
 //! `pkg/infoschema/builder.go` `ApplyDiff`.
 
-// aggregate-test: standalone
 
 use std::collections::BTreeMap;
 
@@ -499,7 +498,8 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
 
     let created = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
     let created = created.catalog().expect("published catalog").clone();
-    assert_eq!(created.databases.len(), 2);
+    // Loading also installs system schemas; check the diff's delta.
+    assert_eq!(created.databases.len(), catalog.databases.len() + 1);
     assert!(created
         .databases
         .iter()
@@ -510,7 +510,8 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     let dropped = reload_cluster_catalog(&mut snapshot, &created).expect("reload runs");
     let dropped = dropped.catalog().expect("published catalog");
     assert_eq!(dropped.schema_version, 102);
-    assert_eq!(dropped.databases.len(), 1);
+    assert_eq!(dropped.databases.len(), catalog.databases.len());
+    assert!(dropped.databases.iter().all(|db| db.info.id != 4));
 }
 
 #[test]
@@ -1002,7 +1003,7 @@ fn a_recover_schema_diff_reads_the_databases_tables_from_the_store() {
         reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
         "recover schema",
     );
-    assert_eq!(next.databases.len(), 2);
+    assert_eq!(next.databases.len(), catalog.databases.len() + 1);
     assert!(next.find_table("ledger", "a").is_some());
     assert!(next.find_table("ledger", "b").is_some());
 
@@ -1066,7 +1067,7 @@ fn policy_and_resource_group_diffs_change_nothing_and_stay_incremental() {
             "policy diff",
         );
         assert_eq!(next.schema_version, 101, "{action}");
-        assert_eq!(next.databases.len(), 1, "{action}");
+        assert_eq!(next.databases.len(), catalog.databases.len(), "{action}");
         assert_eq!(next.databases[0].tables.len(), 1, "{action}");
     }
 }
@@ -1132,14 +1133,14 @@ fn refresh_meta_diffs_follow_the_store() {
         reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
         "refresh meta table under unloaded database",
     );
-    assert_eq!(next.databases.len(), 1);
+    assert_eq!(next.databases.len(), catalog.databases.len());
 
     snapshot.commit_diff(104, &refresh(104, 4, 0));
     let next = diffs_reload(
         reload_cluster_catalog(&mut snapshot, &next).expect("reload runs"),
         "refresh meta add database",
     );
-    assert_eq!(next.databases.len(), 2);
+    assert_eq!(next.databases.len(), catalog.databases.len() + 1);
 }
 
 /// A flashback diff that does not demand a rebuilt map is a no-op in Go

@@ -64,15 +64,3 @@ sha2.workspace = true
 [[test]]
 name = "all"
 path = "tests/all.rs"
-
-# Keep the scan request/row-cap regressions independently runnable.
-[[test]]
-name = "cop_scan_partial_predicate_limit_source"
-path = "tests/cop_scan_partial_predicate_limit_source.rs"
-
-# Keep the incremental catalog reload regressions independently runnable, so
-# they are not blocked by an unrelated compile failure elsewhere in the
-# aggregate "all" binary.
-[[test]]
-name = "catalog_reload_source"
-path = "tests/catalog_reload_source.rs"

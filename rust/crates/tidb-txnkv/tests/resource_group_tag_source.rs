@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! Source-shaped tests for Go `pkg/util/resourcegrouptag`.
-//! aggregate-test: standalone
 
 use prost::Message;
 use tidb_proto::{

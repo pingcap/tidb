@@ -1,0 +1,154 @@
+{
+  "date": "2026-10-04",
+  "parent": "b68c1ec85c9b08ee322ac7ec4b880888d8d24490",
+  "go_reference": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Retire nonbehavioral guards and mocked DDL checks; consolidate module-safe integration targets without dropping semantic cases. Production code/dependencies unchanged.",
+  "removed": {
+    "standalone_behavioral_targets": 5,
+    "documentation_only_binary": 1,
+    "source_or_document_assertions": 3,
+    "mocked_ddl_scripts": 2,
+    "stale_catalog_total_assumptions_replaced": 6,
+    "superseded_executable_bytes": 539278984
+  },
+  "consolidated": [
+    {
+      "crate": "tidb-exec",
+      "module": "cop_scan_partial_predicate_limit_source",
+      "cases": 8,
+      "before_sha256": "e864cddf84c6caf93d2c59a13080efeb7b46c675ab89e4cf0369615505dda23c",
+      "after_sha256": "45ffa91eb1994c169390c3c057005f927a8975230fbb743aa9c4257698939de3",
+      "case_bodies_unchanged": true
+    },
+    {
+      "crate": "tidb-exec",
+      "module": "catalog_reload_source",
+      "cases": 37,
+      "before_sha256": "7b968b0c7424347ae071560da21cd350d9d5f9bd89d6647f6df72b25ad83e8e7",
+      "after_sha256": "0d63b7a4f4b9324fee43183c6b9c1ccea69cee115cd55e8301958e93e9316c5d",
+      "case_bodies_unchanged": false,
+      "change": "Replace six hard-coded total database counts with fixture-relative deltas; explicitly retain drop identity verification."
+    },
+    {
+      "crate": "tidb-executor",
+      "module": "cteutil_source",
+      "cases": 6,
+      "before_sha256": "17994ef0f0bca07877ec14081e8832e78bc79123bde4cc431b887a0096ee5fd6",
+      "after_sha256": "1d1305124c73eecd7720ecc2152e2fadb831e5d72b356e330d0fe8258bd1f0bf",
+      "case_bodies_unchanged": true
+    },
+    {
+      "crate": "tidb-pd-client",
+      "module": "engine_source",
+      "cases": 3,
+      "before_sha256": "70ee2691769e3d609a3c6fab4badb942dc886d39a5f55adbf85203549f17e3b9",
+      "after_sha256": "7ed1c39014d5e325dfdce7f92712bf1b95a7f96d8b01057dc7a6502b1f949ba2",
+      "case_bodies_unchanged": true
+    },
+    {
+      "crate": "tidb-txnkv",
+      "module": "resource_group_tag_source",
+      "cases": 3,
+      "before_sha256": "3a4aa10fab8b12c0a0d81d425e377d210789aacc353622d67cf233461dea0e80",
+      "after_sha256": "039abdfa906191250df9083ab7710081749909b32af70800faf9119ca11f00d9",
+      "case_bodies_unchanged": true
+    }
+  ],
+  "deleted_inventory": [
+    {
+      "path": "rust/crates/tidb-kvcache/tests/kvcache_semantic_receipt.rs",
+      "lines": 109,
+      "sha256": "e38844e3a0879de1e89956ef085ea5596a09c6c0557b1f46340514498ff08ae5"
+    },
+    {
+      "path": "rust/scripts/test-ddl-json-fixture.sh",
+      "lines": 33,
+      "sha256": "469a6411ccd329e9e70f1c795a76072e4f10202d8294e801df04ff4e131c52d4"
+    },
+    {
+      "path": "rust/scripts/test-ddl-change-count.sh",
+      "lines": 39,
+      "sha256": "0d94d3dea128b6d42395e2d6f3c9050babcd1813f2e797df2293c097ea3e6114"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/tikv_transaction_driver_source.rs",
+      "function": "live_transaction_has_one_protocol_owner",
+      "lines": 28,
+      "sha256": "23648da9c5aaef40594b9ab09f401f6c68d877d6c307cd55e4b685593554f11f"
+    },
+    {
+      "path": "rust/testport/receipts/util_kvcache.md",
+      "section": "Obsolete documentation-guard repair narrative",
+      "lines": 24
+    }
+  ],
+  "retained_isolated_suites": [
+    "snapshot_lock_wait_source",
+    "transaction_size_limits_source",
+    "lock_resolver_source",
+    "topn_assisted_string_match",
+    "cardinality_stats_loading"
+  ],
+  "retained_cases": {
+    "moved": 57,
+    "transaction_driver": 8,
+    "lru_go_and_rust_contract": 9
+  },
+  "validation": {
+    "selected_behavioral_passed": 74,
+    "selected_behavioral_failed": 0,
+    "ignored": 0,
+    "standalone_baseline_passed": 1,
+    "standalone_baseline_failed": 3,
+    "distinct_passed_including_baseline": 75,
+    "catalog_before": "Four cases failed independently in fresh processes before replacing stale total counts; all pass after fixture-relative delta/identity checks.",
+    "all_targets": "passed",
+    "lint": "passed",
+    "self_review": "passed; diff --check, unchanged case-body/source hashes and manifest/aggregate registration checks",
+    "hook": "Actual hooks/pre-commit must run cargo build --locked -p tidb-server; final result in Cloud final-handoff.json"
+  },
+  "existing_failures": [
+    {
+      "module": "cardinality_stats_loading",
+      "test": "builtin_in_estimate_survives_statistics_initialization",
+      "observed": "80/10000 pseudo estimate versus expected 1/10"
+    },
+    {
+      "module": "cardinality_stats_loading",
+      "test": "subset_index_cardinality_after_async_statistics_load",
+      "observed": "1.44 reader/projection estimate versus expected 16"
+    },
+    {
+      "module": "topn_assisted_string_match",
+      "test": "topn_assisted_string_match_estimates_match_go_in_both_collation_modes",
+      "observed": "32 versus Go fixture 30 for regexp"
+    }
+  ],
+  "existing_failure_policy": "All three reproduce with the exact original standalone sources and registrations; no ignored flag, changed expectation or test deletion. Restored both session suites after confirming global collation/async queue isolation requirements.",
+  "commands": [
+    "cd rust && cargo test --locked -p tidb-exec -p tidb-executor -p tidb-pd-client -p tidb-txnkv --test all --no-run --message-format=json",
+    "Run each generated aggregate with retained module filters and --test-threads=1; exact commands in Cloud final-results.json",
+    "cd rust && cargo test --locked -p tidb-kvcache --test simple_lru_test",
+    "cd rust && cargo test --locked -p tidb-session --test cardinality_stats_loading --test topn_assisted_string_match --no-run --message-format=json; execute both unchanged standalone binaries",
+    "cd rust && cargo check --locked -p tidb-exec -p tidb-executor -p tidb-pd-client -p tidb-txnkv -p tidb-kvcache --all-targets",
+    "make lint",
+    "git diff --check"
+  ],
+  "cloud_logs": "/workspace/.cloud-setup/test-cleanup-batch",
+  "log_sha256": {
+    "build.log": "1ab701febaab7e47a2c7e6f058c4ec97c94dafd9529469817dbb23e3fd8e0d71",
+    "final-build.log": "ed09e4419514f96065fd822bcf2f3d6fa310264a98895ba1408d90278b5706bf",
+    "kvcache-tests.log": "2d03613b2366cfd24868a3fbeb7ffb7bea95e599dcead4501364fcdb026596ae",
+    "all-targets.log": "f1b58426943f3881999630252223986039659e79f5170394fd1378e94516ce27",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "planner-baseline.json": "1c286c9abe8dc7ecedf077f1fdc399846b4ec868d1d0253bf1cfa7efd07c874c",
+    "catalog-before.json": "d07e5e063b9b0f24ee69383c19cc02c038c9b296be8ad6e727526b1d663afdf6",
+    "pruned.json": "140159726a1f2862ce0956f396103851b5cbbc79cf34629f60c9fc57bb6e2a7b"
+  },
+  "limitations": [
+    "No elapsed build-time or runtime speedup measurement; six fewer link targets is structural evidence.",
+    "No complete Go package or structural finding is closed; 86 tracked,29 repaired,57 unresolved remains unchanged.",
+    "Full Go suites, full Rust suites, live multi-node TiKV and existing unrelated DDL failures were not rerun.",
+    "No push or dry run; fresh-task restoration remains unverified."
+  ]
+}

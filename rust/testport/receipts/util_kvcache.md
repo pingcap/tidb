@@ -53,30 +53,11 @@ five and one compiler errors before the edits and pass afterward.
 
 ## Semantic receipt repair (2026-09-08)
 
-`tests/kvcache.semantic.toml` still named
-`rust/crates/tidb-executor/tests/apply_cache_source.rs` as evidence and ran
-`cargo test -p tidb-executor --test all apply_cache_source`, but commit
-`e1deac7e86` had deleted that file when it narrowed the apply cache to
-executor internals. The receipt now points at the apply cache's owning receipt
-(`rust/testport/receipts/executor_internal_applycache.md`) and runs the two
-surviving apply-cache gates: `--lib tests_executor_internal_source` (the two
-source-derived tests) and `--lib apply::tests` (the live ApplyExec reuse
-cases). `tests/kvcache_semantic_receipt.rs` now fails when any recorded
-evidence file is absent; it failed with `evidence file
-rust/crates/tidb-executor/tests/apply_cache_source.rs ... does not exist`
-against the pre-fix receipt and passes after. The same batch removed the
-dangling `replacing_a_key_preserves_the_source_tracker_charge` and
-`tests/apply_cache_source.rs` references from `apply_cache.rs`'s module doc and
-the `kvcache-audit-execplan.md` command list.
-
-A follow-up (2026-09-08) found the same class of drift in this ExecPlan: it
-named `tests/kvcache_source.rs` as the source contract and mapped the Go tests
-to Rust test names that no longer exist. The ExecPlan now names the actual
-`tests/simple_lru_test.rs` suite (one Rust test per Go test), and
-`every_crate_path_recorded_by_the_audit_execplan_exists` fails when any
-`rust/crates/...` path the ExecPlan records is absent; it failed with
-`audit execplan path rust/crates/tidb-kvcache/tests/kvcache_source.rs does
-not exist` before the repair.
+The receipt and source test map use the current shared owner and internal
+Apply cache tests. Source/document path assertions were retired on 2026-10-04;
+review evidence paths with the receipt instead of linking a Rust test binary
+for documentation. All eight Go LRU cases and the Rust return-value diagnostic
+contract remain in `tests/simple_lru_test.rs`.
 
 ## Validation
 

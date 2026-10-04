@@ -18,10 +18,18 @@ one aggregate target with module filters, for example:
 cargo test --locked -p tidb-exec --test all -- prepared_dml_lowering_source cluster_ddl_source --test-threads=1
 ```
 
-The duplicate standalone registrations for 11 suites and the private-source
-relation-binding target are retired. Historical receipts retain their original
-`--test <suite>` commands; use `--test all -- <suite>` to select those suites
-now. Deliberately standalone targets listed in Cargo.toml remain supported.
+Standalone catalog-reload, scan-limit, CTE storage, engine classification
+and resource-group-tag suites now run in
+their crate's `all` target as well. Historical receipts retain their original
+`--test <suite>` commands; use `--test all -- <suite>` to select retained cases.
+Snapshot lock-wait, transaction-size settings and lock-resolver metric suites
+remain isolated because they touch process-global configuration or counters.
+The session TopN/collation and statistics-loading suites also retain isolation
+for their global collation mode and async statistics queues.
+
+The source-name transaction guard, kvcache documentation-path test binary and
+two mocked DDL-runner self-checks are retired. The Go LRU contract, ordinary
+transaction tests and maintained live DDL runners remain the validation owners.
 
 Use the pinned toolchain and existing profile/cache. Heavy Cloud links use one
 build job; do not force an unrelated release build just to run a focused check.

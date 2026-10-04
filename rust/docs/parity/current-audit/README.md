@@ -139,3 +139,7 @@ notifications, so this failure does not establish a missing event filter:
 ## Observed-plan batch, 2026-10-04
 
 O11/O18/N03 advance together through shared plan samples, binary prepared/Global-switch policy, runtime TopSQL admission and SET labels. See [receipt](observation-plan-batch-validation.json) and [living plan](../../observation-plan-batch-execplan.md). Counts remain 86 tracked, 29 repaired and 57 unresolved (35 open, 22 partial). These three roots remain partial; the other 54 unresolved roots were not freshly revalidated. No pushes.
+
+## Test-harness cleanup, 2026-10-04
+
+Six test binaries, three source/doc-only assertions and two canned DDL self-checks are retired; 57 behavioral cases move into existing aggregates. Six stale catalog totals now test fixture-relative changes. The selected 74 cases pass. Original standalone cardinality/TopN suites retain one pass and three reproduced Go-estimate failures; their sources, expectations and isolation remain unchanged. Counts stay 86 tracked, 29 repaired, 57 unresolved. See [receipt](test-harness-retirement-validation.json).

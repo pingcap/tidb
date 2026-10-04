@@ -49,10 +49,6 @@ path = "tests/snapshot_lock_wait_source.rs"
 name = "lock_resolver_source"
 path = "tests/lock_resolver_source.rs"
 
-[[test]]
-name = "resource_group_tag_source"
-path = "tests/resource_group_tag_source.rs"
-
 [[bench]]
 name = "kv"
 harness = false

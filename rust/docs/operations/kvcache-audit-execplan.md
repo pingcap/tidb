@@ -81,7 +81,7 @@ Publication and remote verification follow the scoped commit.
 
 The Go package is exactly `BUILD.bazel`, `simple_lru.go`, `simple_lru_test.go`, and `main_test.go`. `SimpleLRUCache` maps a key's byte hash to a linked-list element. The front is most recently used and the back is oldest. `Get` and an existing-key `Put` promote; a new-key `Put` enforces capacity and, when quota is nonzero, repeatedly samples process memory and evicts from the back.
 
-The Rust owner is `rust/crates/tidb-kvcache/src/lib.rs`. It uses stable indexed nodes plus explicit previous/next links, a hash-to-index map, and a free-slot list. The source contract is the Go-port suite `rust/crates/tidb-kvcache/tests/simple_lru_test.rs`, and `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` records the pin, evidence files, and commands; `rust/crates/tidb-kvcache/tests/kvcache_semantic_receipt.rs` fails when a recorded evidence file no longer exists. `rust/crates/tidb-util/src/kvcache.rs` re-exports the owner and supplies the package-global tracker.
+The Rust owner is `rust/crates/tidb-kvcache/src/lib.rs`. It uses stable indexed nodes plus explicit previous/next links, a hash-to-index map, and a free-slot list. The source contract is the Go-port suite `rust/crates/tidb-kvcache/tests/simple_lru_test.rs`, and `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` records the pin, evidence files, and commands. `rust/crates/tidb-util/src/kvcache.rs` re-exports the owner and supplies the package-global tracker.
 
 Live consumers are `tidb-datatype`'s JSON path cache, `tidb-executor`'s Apply cache, and `tidb-session`'s non-prepared plan-cache key set. Each imports the same `SimpleLruCache`; none carries a private LRU implementation.
 

@@ -249,34 +249,6 @@ fn pessimistic_locks_are_acquired_at_statement_time() {
     reader.rollback().unwrap();
 }
 
-// The live facade must use the same engine as these driver tests.
-#[test]
-fn live_transaction_has_one_protocol_owner() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transaction");
-    let mut pending = vec![root];
-    while let Some(path) = pending.pop() {
-        if path.is_dir() {
-            pending.extend(
-                std::fs::read_dir(path)
-                    .unwrap()
-                    .map(|entry| entry.unwrap().path()),
-            );
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            let source = std::fs::read_to_string(&path).unwrap();
-            for retired_algorithm in [
-                "fn commit_inner(",
-                "fn build_prewrite_request(",
-                "struct PessimisticPrewritePlan",
-                "struct TransactionMutationBuffer",
-            ] {
-                assert!(!source.contains(retired_algorithm),
-                    "{} still owns {retired_algorithm}; transaction protocols belong to client-rust",
-                    path.display());
-            }
-        }
-    }
-}
-
 /// Source SQL operations set flags on MemDB; the client alone lowers wire mutations.
 #[test]
 fn sql_mutation_assertions_reach_the_authoritative_memdb() {

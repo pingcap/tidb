@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! Source-shaped tests for Go `pkg/util/cteutil`.
-//! aggregate-test: standalone
 
 use std::path::PathBuf;
 use std::sync::Arc;

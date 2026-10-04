@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! Source-shaped tests for Go `pkg/util/engine`.
-//! aggregate-test: standalone
 
 use tidb_pd_client::{
     is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response, PdNodeState, PdStore,
