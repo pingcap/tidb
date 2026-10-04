@@ -31,18 +31,20 @@ use tidb_util::memory::Tracker;
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ApplyRuntimeSnapshot {
     pub enabled: bool,
+    pub concurrency: usize,
     pub accesses: u64,
     pub hits: u64,
 }
 
 pub(crate) type ApplyRuntimeSink = Arc<Mutex<Option<ApplyRuntimeSnapshot>>>;
 
-struct InnerRows {
+pub(super) struct InnerRows {
     list: List,
 }
 impl Drop for InnerRows {
     fn drop(&mut self) {
         self.list.clear();
+        self.list.mem_tracker().detach();
     }
 }
 
@@ -60,10 +62,12 @@ pub struct NestedLoopApplyExec {
     memory: StatementMemory,
     tracker: Arc<Tracker>,
     cache_enabled: bool,
+    shared_rows_tracker: Option<Arc<Tracker>>,
+    preset_outer_selection: Option<bool>,
     cache_accesses: u64,
     cache_hits: u64,
     runtime_sink: Option<ApplyRuntimeSink>,
-    cache: Option<ApplyCache<InnerRows>>,
+    cache: Option<Arc<ApplyCache<InnerRows>>>,
     inner_rows: Option<Arc<InnerRows>>,
     inner_position: Option<ListIteratorPosition>,
     outer_chunk: Chunk,
@@ -106,6 +110,8 @@ impl NestedLoopApplyExec {
             memory,
             tracker,
             cache_enabled,
+            shared_rows_tracker: None,
+            preset_outer_selection: None,
             cache_accesses: 0,
             cache_hits: 0,
             runtime_sink: None,
@@ -128,16 +134,43 @@ impl NestedLoopApplyExec {
         self
     }
 
+    pub(super) fn prepare_worker_row(
+        &mut self,
+        selected: bool,
+        cache: Option<Arc<ApplyCache<InnerRows>>>,
+        tracker: Arc<Tracker>,
+    ) {
+        self.preset_outer_selection = Some(selected);
+        self.shared_rows_tracker = Some(tracker);
+        self.cache = cache;
+    }
+    pub(super) fn cache_snapshot(&self) -> ApplyRuntimeSnapshot {
+        ApplyRuntimeSnapshot {
+            enabled: self.cache_enabled,
+            concurrency: 0,
+            accesses: self.cache_accesses,
+            hits: self.cache_hits,
+        }
+    }
     fn account(&self) -> Result<(), ExecError> {
-        let rows = self
-            .inner_rows
-            .as_ref()
-            .map_or(0, |rows| rows.list.mem_tracker().bytes_consumed());
+        let rows = self.inner_rows.as_ref().map_or(0, |rows| {
+            if self.shared_rows_tracker.is_some() {
+                0
+            } else {
+                rows.list.mem_tracker().bytes_consumed()
+            }
+        });
         self.tracker.replace_bytes_used(
             self.outer_chunk.memory_usage()
                 + self.inner_chunk.memory_usage()
                 + rows
-                + self.cache.as_ref().map_or(0, ApplyCache::memory_consumed),
+                + self.cache.as_ref().map_or(0, |cache| {
+                    if self.shared_rows_tracker.is_some() {
+                        0
+                    } else {
+                        cache.memory_consumed()
+                    }
+                }),
         );
         self.memory.check()
     }
@@ -200,8 +233,11 @@ impl NestedLoopApplyExec {
                 ),
             }
         };
+        if let Some(tracker) = &self.shared_rows_tracker {
+            rows.list.mem_tracker().attach_to(tracker);
+        }
         rows.list.reset();
-        let result: Result<(), ExecError> = (|| {
+        let result: Result<(), ExecError> = crate::sort_util::recover_executor_panic(|| {
             self.inner.open()?;
             loop {
                 self.inner.next(&mut self.inner_chunk)?;
@@ -224,13 +260,23 @@ impl NestedLoopApplyExec {
                 self.tracker.replace_bytes_used(
                     self.outer_chunk.memory_usage()
                         + self.inner_chunk.memory_usage()
-                        + rows.list.mem_tracker().bytes_consumed()
-                        + self.cache.as_ref().map_or(0, ApplyCache::memory_consumed),
+                        + if self.shared_rows_tracker.is_some() {
+                            0
+                        } else {
+                            rows.list.mem_tracker().bytes_consumed()
+                        }
+                        + self.cache.as_ref().map_or(0, |cache| {
+                            if self.shared_rows_tracker.is_some() {
+                                0
+                            } else {
+                                cache.memory_consumed()
+                            }
+                        }),
                 );
                 self.memory.check()?;
             }
-        })();
-        if let Err(error) = self.inner.close() {
+        });
+        if let Err(error) = crate::sort_util::recover_executor_panic(|| self.inner.close()) {
             eprintln!("Apply inner close: {error:?}");
         }
         result?;
@@ -250,13 +296,17 @@ impl NestedLoopApplyExec {
                     self.done = true;
                     return Ok(false);
                 }
-                self.outer_selected = tidb_expr::evaluator::vectorized_filter(
-                    &self.context,
-                    self.context.enable_vectorized_expression(),
-                    &self.outer_filter,
-                    &self.outer_chunk,
-                    std::mem::take(&mut self.outer_selected),
-                )?;
+                self.outer_selected = if let Some(selected) = self.preset_outer_selection {
+                    vec![selected; self.outer_chunk.num_rows()]
+                } else {
+                    tidb_expr::evaluator::vectorized_filter(
+                        &self.context,
+                        self.context.enable_vectorized_expression(),
+                        &self.outer_filter,
+                        &self.outer_chunk,
+                        std::mem::take(&mut self.outer_selected),
+                    )?
+                };
                 let first = self.outer_chunk.get_row(0).idx();
                 if previous_cursor == 0
                     && self.outer_chunk.num_rows() == 1
@@ -300,7 +350,7 @@ impl Executor for NestedLoopApplyExec {
         self.cache_hits = 0;
         self.cache = self
             .cache_enabled
-            .then(|| ApplyCache::new(self.context.apply_cache_capacity()));
+            .then(|| Arc::new(ApplyCache::new(self.context.apply_cache_capacity())));
         self.account()
     }
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
@@ -369,6 +419,7 @@ impl Executor for NestedLoopApplyExec {
         if let Some(sink) = &self.runtime_sink {
             *sink.lock().unwrap() = Some(ApplyRuntimeSnapshot {
                 enabled: self.cache_enabled,
+                concurrency: 0,
                 accesses: self.cache_accesses,
                 hits: self.cache_hits,
             });

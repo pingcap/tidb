@@ -1,5 +1,13 @@
 # Audit and remove Go/Rust structural mismatches
 
+## Cache/Apply continuation checkpoint (2026-10-04)
+
+The [cache/Apply batch](parity/current-audit/cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.
+
+The statement-observation checkpoint below is historical.
+
+See [living batch plan](cache-apply-batch-execplan.md) and [validation](parity/current-audit/cache-apply-batch-validation.json).
+
 User instruction (2026-10-03): **Do not push; continue implementation in Codex Cloud.** Keep both repositories' validated commits local and retain their exact intended destinations. A later push needs a new explicit user instruction plus the mandatory fresh locked server build. Normal commit hooks remain mandatory.
 
 Current checkpoint (2026-10-03): the [MPP read batch](parity/current-audit/mpp-read-batch-repair.md) repairs M02/M03 and advances M04 to partial. Exact ranges, canonical process cache/PD, incremental results, shared cancellation/quota and bounded remote cleanup are composed together. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Thirty empty ignored shells are removed with original obligations retained; full packages, transport and live multi-node acceptance remain unverified.

@@ -479,6 +479,9 @@ impl GlobalSysvars {
         let def = &crate::sysvar::SYS_VARS[index];
         // Go's retired partition-statistics concurrency variable has fixed
         // getters so upgraded persisted values cannot leak a stale setting.
+        if let Some(value) = self.instance_plan_cache_limit_getter(def) {
+            return Ok(value);
+        }
         if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
             return Ok("1".to_owned());
         }
@@ -755,6 +758,9 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
+        if let Some(value) = self.instance_plan_cache_limit_getter(def) {
+            return Ok(value);
+        }
         if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
             return Ok("1".to_owned());
         }
@@ -900,7 +906,75 @@ impl GlobalSysvars {
             }
         }
         self.publish_embedding_settings();
+        self.publish_instance_plan_cache_settings(None);
         self.refresh_resolved();
+    }
+
+    // Go GetGlobal exposes the typed byte count, not the original unit spelling.
+    fn instance_plan_cache_limit_getter(&self, def: &SysVarDef) -> Option<String> {
+        if def.name != tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE {
+            return None;
+        }
+        let value = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(def.name)
+            .cloned()
+            .unwrap_or_else(|| crate::sysvar::effective_default(def));
+        crate::varsutil::parse_byte_size(&value)
+            .map(|(bytes, _)| bytes)
+            .or_else(|| value.parse::<u64>().ok())
+            .map(|bytes| (bytes as i64).to_string())
+    }
+
+    fn publish_instance_plan_cache_settings(&self, reset: Option<&str>) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        use std::sync::atomic::Ordering::SeqCst;
+        use tidb_vardef::tidb_vars::*;
+        for name in [
+            TIDB_ENABLE_INSTANCE_PLAN_CACHE,
+            TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE,
+            TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE,
+        ] {
+            let value = self
+                .values
+                .lock()
+                .expect("global sysvar lock poisoned")
+                .get(name)
+                .cloned();
+            let value = value.or_else(|| {
+                (reset == Some(name)).then(|| {
+                    crate::sysvar::effective_default(
+                        get_sys_var(name).expect("registered cache variable"),
+                    )
+                })
+            });
+            let Some(value) = value else {
+                continue;
+            };
+            match name {
+                TIDB_ENABLE_INSTANCE_PLAN_CACHE => tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE
+                    .store(value == "ON" || value == "1", SeqCst),
+                TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE => {
+                    if let Some(bytes) = crate::varsutil::parse_byte_size(&value)
+                        .map(|(bytes, _)| bytes)
+                        .or_else(|| value.parse().ok())
+                    {
+                        tidb_vardef::INSTANCE_PLAN_CACHE_MAX_MEM_SIZE
+                            .store(bytes.min(i64::MAX as u64) as i64, SeqCst);
+                    }
+                }
+                _ => {
+                    if let Ok(value) = value.parse::<f64>() {
+                        tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
+                            .store(value.to_bits(), SeqCst);
+                    }
+                }
+            }
+        }
     }
 
     /// Publishes the process-wide embedding settings after a live table
@@ -945,6 +1019,21 @@ impl GlobalSysvars {
             .validate_in_scope_with_lookup(&value, scope, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
+        if key == tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE {
+            let bytes = crate::varsutil::parse_byte_size(&validated.value)
+                .map(|(bytes, _)| bytes)
+                .or_else(|| validated.value.parse::<u64>().ok());
+            let Some(bytes) = bytes else {
+                return Err(VarError::ValidationRefused(format!(
+                    "invalid tidb_instance_plan_cache_max_mem_size value {value}"
+                )));
+            };
+            if bytes < 100 * 1024 * 1024 {
+                return Err(VarError::ValidationRefused(
+                    "tidb_instance_plan_cache_max_mem_size should be at least 100MiB".to_owned(),
+                ));
+            }
+        }
         // Go's `tidb_auto_analyze_concurrency` Validation observes the two
         // current GLOBAL switches. Check the table being written (rather
         // than process atomics) so a cluster scratch image validates a
@@ -1111,6 +1200,7 @@ impl GlobalSysvars {
             }
         }
         self.publish_embedding_settings();
+        self.publish_instance_plan_cache_settings(None);
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
@@ -1481,6 +1571,7 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&key);
+        self.publish_instance_plan_cache_settings(Some(&key));
         // RESET restores the Go default in the process-wide embedding config
         // even though the registry no longer carries an explicit value
         // (`publish_embedding_settings` intentionally skips absent values so
@@ -1701,6 +1792,7 @@ impl GlobalSysvars {
         }
         self.publish_stmt_summary_settings();
         self.publish_embedding_settings();
+        self.publish_instance_plan_cache_settings(None);
         self.refresh_resolved();
     }
 
@@ -1771,6 +1863,7 @@ impl GlobalSysvars {
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
         self.publish_embedding_settings();
+        self.publish_instance_plan_cache_settings(None);
     }
 
     /// Publishes only the named GLOBAL variables from `fresh`.

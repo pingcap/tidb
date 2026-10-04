@@ -686,6 +686,7 @@ where
             *scan_id = request.statement.plan_id;
         }
         let plan = RemoteScanPlan {
+            cancellation: request.statement.memory.coprocessor_request_cancellation(),
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
@@ -725,6 +726,7 @@ where
 
 /// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
+    cancellation: Arc<CancelHandle>,
     dag: tidb_proto::tipb::DagRequest,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
@@ -800,7 +802,7 @@ where
     use prost::Message;
 
     let mut transport = factory.open_session_transport()?;
-    let cancellation = Arc::new(CancelHandle::default());
+    let cancellation = plan.cancellation;
     // Go `SetFromSessionVars`, which EVERY read in `pkg/distsql` runs. The
     // zero-value builder this replaced sent `Concurrency: 0` and an EMPTY
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session

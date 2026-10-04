@@ -2276,6 +2276,7 @@ impl Drop for StatsUsageWorkers {
 
 impl Drop for ClusterSessionFactory {
     fn drop(&mut self) {
+        self.plan_cache_invalidation.stop_maintenance();
         // Positive-lease maintenance has already joined. For zero/negative
         // leases this is Go's quitStatsOwner lifetime instead.
         if let Some(owner) = &self.stats_owner {
@@ -3225,6 +3226,7 @@ impl ClusterSessionFactory {
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
+        session.set_plan_cache_schema_version(loaded.schema_version as u64);
         if let Some(syncer) = &self.global_config_syncer {
             session.set_global_config_syncer(Arc::clone(syncer));
         }
@@ -5785,6 +5787,8 @@ impl ClusterServerSession {
         *catalog = built.catalog;
         drop(catalog);
         self.schema_version = loaded.schema_version;
+        self.session
+            .set_plan_cache_schema_version(loaded.schema_version as u64);
         self.skipped = built.skipped;
     }
 

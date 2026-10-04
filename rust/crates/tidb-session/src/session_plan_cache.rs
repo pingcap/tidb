@@ -28,6 +28,13 @@ impl Session {
         self.plan_cache_invalidation = owner;
     }
 
+    /// Install the hosting cluster's persisted InfoSchema version on the
+    /// shared instance key; locally rebuilt catalog image IDs remain local.
+    pub fn set_plan_cache_schema_version(&self, version: u64) {
+        self.physical_plan_cache
+            .set_instance_schema_version(version);
+    }
+
     /// Close a binary-protocol prepared definition under the same policy as
     /// SQL DEALLOCATE. The caller releases the definition after this call.
     pub fn close_prepared(&self, prepared: &crate::PreparedAst) {
@@ -68,6 +75,12 @@ impl Session {
         {
             return;
         }
+        let enabled = self
+            .vars
+            .get_global("tidb_enable_instance_plan_cache")
+            .is_ok_and(|value| value == "ON" || value == "1");
+        self.physical_plan_cache
+            .select_instance(&self.plan_cache_invalidation, enabled);
         let epoch = self.plan_cache_invalidation.epoch();
         let monitor = self.session_bool("tidb_enable_prepared_plan_cache_memory_monitor", true);
         let guard = self

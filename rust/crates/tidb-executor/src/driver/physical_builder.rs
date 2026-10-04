@@ -113,6 +113,7 @@ struct BuildState {
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
     /// those statements write the membuffer the workers would race).
     projection_workers_allowed: bool,
+    merge_scan_counters: bool,
     /// Go `executorBuilder.hasLock`: a `SELECT ... FOR UPDATE` below keeps the
     /// projections above it serial for the same reason.
     has_lock: bool,
@@ -120,6 +121,7 @@ struct BuildState {
 
 pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
 
+#[derive(Clone)]
 pub(crate) struct PhysicalRuntimeCounter {
     rows: crate::executor::RowCount,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
@@ -161,6 +163,11 @@ impl PhysicalRuntimeCounter {
             ));
         }
         if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
+            let concurrency = if snapshot.concurrency > 1 {
+                format!("Concurrency:{}", snapshot.concurrency)
+            } else {
+                "concurrency:OFF".to_owned()
+            };
             if snapshot.enabled {
                 let ratio = if snapshot.accesses == 0 {
                     0.0
@@ -168,10 +175,10 @@ impl PhysicalRuntimeCounter {
                     snapshot.hits as f64 / snapshot.accesses as f64 * 100.0
                 };
                 details.push(format!(
-                    "concurrency:OFF, cache:ON, cacheHitRatio:{ratio:.3}%"
+                    "{concurrency}, cache:ON, cacheHitRatio:{ratio:.3}%"
                 ));
             } else {
-                details.push("concurrency:OFF, cache:OFF".to_owned());
+                details.push(format!("{concurrency}, cache:OFF"));
             }
         }
         if let Some(runtime_snapshot) = self
@@ -276,10 +283,12 @@ impl BuildState {
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
         };
-        if matches!(
-            plan,
-            PhysicalPlan::TableScan(_) | PhysicalPlan::IndexScan(_)
-        ) {
+        if !self.merge_scan_counters
+            && matches!(
+                plan,
+                PhysicalPlan::TableScan(_) | PhysicalPlan::IndexScan(_)
+            )
+        {
             if let Some(counter) = executor
                 .table_access()
                 .and_then(|access| access.scanned_rows_counter())
@@ -3408,6 +3417,7 @@ fn build_apply(
             "a physical Apply has too few default inner values",
         ));
     }
+    let worker_conditions = conditions.clone();
     let joiner = new_joiner(
         ctx.clone(),
         joiner_type(apply.hash_join.join_type),
@@ -3429,6 +3439,119 @@ fn build_apply(
     } else {
         (left, right, left_filter, right_filter)
     };
+    if apply.concurrency > 1 {
+        use crate::apply::parallel::{
+            ApplyWorker, CancellableInner, ParallelNestedLoopApplyExec, WorkerOuter,
+        };
+        let inner_plan = if apply.hash_join.inner_child_idx == 0 {
+            left_plan
+        } else {
+            right_plan
+        };
+        if tidb_planner::physical::supports_apply_worker_clone(inner_plan) {
+            let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let mut workers = Vec::with_capacity(apply.concurrency);
+            if let Some(counters) = state.runtime_counters.as_mut() {
+                for counter in counters.values_mut() {
+                    counter
+                        .calls
+                        .get_or_insert_with(|| Arc::new(Mutex::new(PhysicalCallStats::default())));
+                }
+            }
+            for _ in 0..apply.concurrency {
+                let mut cloned = tidb_planner::physical::clone_for_apply_worker(inner_plan);
+                let columns =
+                    tidb_planner::physical::rebind_correlated_columns_by_schema_4_physical_plan(
+                        &mut cloned,
+                        outer.schema(),
+                    );
+                let mut worker_state = BuildState {
+                    projection_workers_allowed: state.projection_workers_allowed,
+                    has_lock: state.has_lock,
+                    executor_runtime_stats_source: state.executor_runtime_stats_source.clone(),
+                    merge_scan_counters: true,
+                    ..BuildState::default()
+                };
+                if let Some(counters) = &state.runtime_counters {
+                    let mut worker_counters = HashMap::new();
+                    seed_apply_clone_runtime(inner_plan, &cloned, counters, &mut worker_counters);
+                    worker_state.runtime_counters = Some(worker_counters);
+                }
+                let Ok(worker_inner) =
+                    build_with_state(&cloned, catalog, &worker_ctx, &mut worker_state)
+                else {
+                    workers.clear();
+                    break;
+                };
+                let feed = Arc::new(Mutex::new((None, false)));
+                let worker_outer = WorkerOuter::new(
+                    ExecutorMeta::new(
+                        outer.schema().clone(),
+                        plan.id() as i64,
+                        ctx.executor_chunk_sizes().0,
+                        ctx.executor_chunk_sizes().1,
+                    ),
+                    feed.clone(),
+                );
+                let mut worker_conditions = worker_conditions.clone();
+                let mut worker_inner_filter = inner_filter.clone();
+                tidb_planner::physical::rebind_apply_worker_expressions(
+                    &mut worker_conditions,
+                    &columns,
+                );
+                tidb_planner::physical::rebind_apply_worker_expressions(
+                    &mut worker_inner_filter,
+                    &columns,
+                );
+                let worker_joiner = new_joiner(
+                    worker_ctx.clone(),
+                    joiner_type(apply.hash_join.join_type),
+                    apply.hash_join.inner_child_idx == 0,
+                    &default_values,
+                    worker_conditions,
+                    &left_types,
+                    &right_types,
+                    None,
+                    false,
+                    JoinerChunkSizes {
+                        vectorized: ctx.enable_vectorized_expression(),
+                        init_chunk_size: ctx.executor_chunk_sizes().0,
+                        max_chunk_size: ctx.executor_chunk_sizes().1,
+                    },
+                );
+                let worker = NestedLoopApplyExec::new(
+                    meta(ctx, plan, plan_schema(plan)?),
+                    Box::new(worker_outer),
+                    Box::new(CancellableInner::new(worker_inner, stop.clone())),
+                    Vec::new(),
+                    worker_inner_filter,
+                    columns,
+                    worker_joiner,
+                    apply.hash_join.join_type != LogicalJoinType::Inner,
+                    apply.can_use_cache,
+                    worker_ctx.clone(),
+                );
+                workers.push(ApplyWorker {
+                    executor: Arc::new(Mutex::new(worker)),
+                    feed,
+                });
+            }
+            if workers.len() == apply.concurrency {
+                return Ok(Box::new(ParallelNestedLoopApplyExec::new(
+                    meta(ctx, plan, plan_schema(plan)?),
+                    outer,
+                    outer_filter,
+                    workers,
+                    apply.keep_order,
+                    apply.can_use_cache,
+                    worker_ctx.clone(),
+                    stop,
+                    state.apply_runtime_sink(runtime_plan_key(plan)),
+                )));
+            }
+        }
+    }
     let executor = NestedLoopApplyExec::new(
         meta(ctx, plan, plan_schema(plan)?),
         outer,
@@ -3443,6 +3566,51 @@ fn build_apply(
     )
     .with_runtime_sink(state.apply_runtime_sink(runtime_plan_key(plan)));
     Ok(Box::new(executor))
+}
+
+fn seed_apply_clone_runtime(
+    original: &PhysicalPlan,
+    cloned: &PhysicalPlan,
+    source: &PhysicalRuntimeStats,
+    target: &mut PhysicalRuntimeStats,
+) {
+    if let Some(counter) = source.get(&runtime_plan_key(original)) {
+        target.insert(runtime_plan_key(cloned), counter.clone());
+    }
+    for (old, new) in original.children().iter().zip(cloned.children()) {
+        seed_apply_clone_runtime(old, new, source, target);
+    }
+    let pairs: Vec<(&PhysicalPlan, &PhysicalPlan)> = match (original, cloned) {
+        (PhysicalPlan::TableReader(old), PhysicalPlan::TableReader(new)) => old
+            .table_plan
+            .as_deref()
+            .zip(new.table_plan.as_deref())
+            .into_iter()
+            .collect(),
+        (PhysicalPlan::IndexReader(old), PhysicalPlan::IndexReader(new)) => old
+            .index_plan
+            .as_deref()
+            .zip(new.index_plan.as_deref())
+            .into_iter()
+            .collect(),
+        (PhysicalPlan::IndexLookUpReader(old), PhysicalPlan::IndexLookUpReader(new)) => old
+            .index_plan
+            .as_deref()
+            .zip(new.index_plan.as_deref())
+            .into_iter()
+            .chain(old.table_plan.as_deref().zip(new.table_plan.as_deref()))
+            .collect(),
+        (PhysicalPlan::IndexMergeReader(old), PhysicalPlan::IndexMergeReader(new)) => old
+            .partial_plans_raw
+            .iter()
+            .zip(&new.partial_plans_raw)
+            .chain(old.table_plan.as_deref().zip(new.table_plan.as_deref()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (old, new) in pairs {
+        seed_apply_clone_runtime(old, new, source, target);
+    }
 }
 
 fn join_key_offsets(

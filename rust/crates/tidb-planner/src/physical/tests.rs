@@ -2331,3 +2331,92 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
     );
     assert_eq!(built.operator_info(), "data:CTE_5");
 }
+
+#[test]
+fn apply_worker_clone_isolates_nested_owner_cells_and_preserves_internal_aliases() {
+    let column = tidb_expr::column::Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+    let correlation = tidb_expr::column::CorrelatedColumn::with_value(column, Datum::Int(7));
+    let mut base = BasePhysicalPlan::with_id(1, "Apply", 0);
+    base.set_children(vec![
+        PhysicalPlan::TableDual(Default::default()),
+        PhysicalPlan::Projection(PhysicalProjection {
+            exprs: vec![tidb_expr::expression::Expression::CorrelatedColumn(
+                correlation.clone(),
+            )],
+            ..Default::default()
+        }),
+    ]);
+    let source = PhysicalPlan::Apply(PhysicalApply {
+        hash_join: PhysicalHashJoin {
+            base,
+            ..Default::default()
+        },
+        outer_schema: vec![correlation.clone()],
+        ..Default::default()
+    });
+    let cloned = clone_for_apply_worker(&source);
+    let PhysicalPlan::Apply(apply) = &cloned else {
+        panic!("Apply");
+    };
+    let PhysicalPlan::Projection(projection) = &cloned.children()[1] else {
+        panic!("Projection");
+    };
+    let tidb_expr::expression::Expression::CorrelatedColumn(expression) = &projection.exprs[0]
+    else {
+        panic!("correlation");
+    };
+    assert!(!std::sync::Arc::ptr_eq(
+        correlation.data.as_ref().unwrap(),
+        apply.outer_schema[0].data.as_ref().unwrap()
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        expression.data.as_ref().unwrap(),
+        apply.outer_schema[0].data.as_ref().unwrap()
+    ));
+    apply.outer_schema[0].bind(Datum::Int(77));
+    assert_eq!(
+        *expression.data.as_ref().unwrap().read().unwrap(),
+        Datum::Int(77)
+    );
+    assert_eq!(
+        *correlation.data.as_ref().unwrap().read().unwrap(),
+        Datum::Int(7)
+    );
+}
+
+#[test]
+fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
+    let column = Column::new(31, FieldType::new(FieldTypeCode::LongLong));
+    let correlation =
+        tidb_expr::column::CorrelatedColumn::with_value(column.clone(), Datum::Int(7));
+    let expression = Expression::CorrelatedColumn(correlation.clone());
+    let source = PhysicalPlan::Window(PhysicalWindow {
+        window_func_descs: vec![tidb_expr::aggregation::WindowFuncDesc {
+            base: tidb_expr::aggregation::BaseFuncDesc {
+                name: "sum".to_owned(),
+                args: vec![expression.clone()],
+                ret_type: column.ret_type.clone().unwrap(),
+            },
+        }],
+        frame: Some(crate::logical::window::WindowFrame {
+            start: Some(crate::logical::window::FrameBound {
+                calc_funcs: vec![expression],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    assert_eq!(source.extract_correlated_cols().len(), 2);
+    let mut worker = clone_for_apply_worker(&source);
+    let bindings = rebind_correlated_columns_by_schema_4_physical_plan(
+        &mut worker,
+        &Schema::new(vec![column]),
+    );
+    assert_eq!(bindings.len(), 1);
+    bindings[0].bind(Datum::Int(99));
+    for occurrence in worker.extract_correlated_cols() {
+        assert_eq!(*occurrence.data.unwrap().read().unwrap(), Datum::Int(99));
+    }
+    assert_eq!(*correlation.data.unwrap().read().unwrap(), Datum::Int(7));
+}

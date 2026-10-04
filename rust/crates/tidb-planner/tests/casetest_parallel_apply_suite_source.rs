@@ -12,55 +12,67 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Documentary gap ports for `pkg/planner/core/casetest/parallelapply`
-//! (`pkg/planner.part6` items 331–333 on `origin/master`; family bootstrap is
-//! `parallelapply/main_test.go:24 TestMain`, skipped-reason in the receipt).
-//!
-//! All three tests need a live mock store: either `testkit.CreateMockStore`
-//! for DML round trips plus `EXPLAIN ANALYZE`, or `RunTestUnderCascades`
-//! golden runs. The planner decisions they pin — whether the LATERAL apply
-//! stays un-decorrelated, when `enableParallelApply`
-//! (`pkg/planner/core/rule_generate_subquery.go`) chooses parallelism, its
-//! `outerExpectedCnt` computation inside
-//! `exhaustPhysicalPlans4LogicalApply`, and the ordered-apply KeepOrder
-//! setting — remain explicit gaps on the wired `physical::PhysicalApply`
-//! operator.
+//! Executable post-optimization regressions replacing empty ignored shells.
+//! The three original Go casetest obligations (recursive hierarchy/full golden
+//! plans/hinted warning matrices) remain tracked in the batch repair receipt;
+//! these tests assert the common eligibility boundary, not full family parity.
+use tidb_planner::physical::*;
 
-/// GO PORT of `pkg/planner/core/casetest/parallelapply/
-/// parallel_apply_test.go:36 TestLateralHierarchyParallelApply`.
-///
-/// Re-derived contract (three claims over one mock store):
-/// 1. With `tidb_enable_parallel_apply=on` and concurrency 5, the recursive
-///    CTE + LATERAL hierarchy query keeps Apply in the plan (not decorrelated).
-/// 2. A flat LATERAL join's EXPLAIN ANALYZE reports `Concurrency:` > 1 on the
-///    Apply operator.
-/// 3. The recursive-CTE result set is identical with parallel_apply off and
-///    on — the recursive body's Apply is intentionally serialized per
-///    `logical_cte.go` because grandchildren would otherwise be dropped.
+fn leaf() -> PhysicalPlan {
+    PhysicalPlan::TableDual(Default::default())
+}
+fn apply(outer: PhysicalPlan, inner: PhysicalPlan, ordered: bool) -> PhysicalPlan {
+    let mut base = BasePhysicalPlan::with_id(1, "Apply", 0);
+    base.set_children(vec![outer, inner]);
+    PhysicalPlan::Apply(PhysicalApply {
+        hash_join: PhysicalHashJoin {
+            base,
+            inner_child_idx: 1,
+            ..Default::default()
+        },
+        keep_order: ordered,
+        ..Default::default()
+    })
+}
 #[test]
-#[ignore = "go-parity-gap: needs CreateMockStore session+executor for explain analyze rows and recursive-CTE execution; enableParallelApply decision logic is unported"]
-fn lateral_hierarchy_keeps_apply_and_matches_serial_results() {}
-
-/// GO PORT of `pkg/planner/core/casetest/parallelapply/
-/// parallel_apply_test.go:113 TestParallelApplyWarnning`.
-///
-/// Re-derived contract: a scalar subquery joining t2,t3 via INL hash-join hint
-/// under parallel apply emits NO warnings ("show warnings" empty), and the
-/// issue 59863 shape (correlated count(*) with index join plan) plans the
-/// recorded CARTESIAN Apply tree without warning output either.
+fn parallel_apply_only_recurses_into_the_outer_apply_child() {
+    let mut plan = apply(
+        apply(leaf(), leaf(), false),
+        apply(leaf(), leaf(), false),
+        false,
+    );
+    enable_parallel_apply(&mut plan, 5);
+    let PhysicalPlan::Apply(root) = &plan else {
+        panic!("Apply");
+    };
+    assert_eq!(root.concurrency, 5);
+    let PhysicalPlan::Apply(outer) = &plan.children()[0] else {
+        panic!("outer Apply");
+    };
+    let PhysicalPlan::Apply(inner) = &plan.children()[1] else {
+        panic!("inner Apply");
+    };
+    assert_eq!(outer.concurrency, 5);
+    assert_eq!(inner.concurrency, 0);
+}
 #[test]
-#[ignore = "go-parity-gap: RunTestUnderCascades live planning with hint-driven IndexJoin choice plus plan_tree printing and warning capture"]
-fn parallel_apply_inl_hash_join_emits_no_warnings() {}
-
-/// GO PORT of `pkg/planner/core/casetest/parallelapply/
-/// parallel_apply_test.go:148 TestParallelApplyOrderedPlan`.
-///
-/// Re-derived contract: with parallel apply on, correlated ORDER BY queries
-/// still produce Apply whose outer (Build) side scans `keep order:true` — the
-/// KeepOrder branch of `enableParallelApply`; ORDER BY + LIMIT exercises the
-/// `outerExpectedCnt` selectivity estimate; unordered cases keep
-/// keep order:false; no "Parallel Apply rejects order properties" warning; and
-/// parallel results equal serial ones.
+fn parallel_apply_keeps_the_existing_outer_order_contract() {
+    for ordered in [false, true] {
+        let mut plan = apply(leaf(), leaf(), ordered);
+        enable_parallel_apply(&mut plan, 4);
+        let PhysicalPlan::Apply(plan) = plan else {
+            panic!("Apply");
+        };
+        assert_eq!(plan.concurrency, 4);
+        assert_eq!(plan.keep_order, ordered);
+    }
+}
 #[test]
-#[ignore = "go-parity-gap: outerExpectedCnt estimation and KeepOrder selection in exhaustPhysicalPlans4LogicalApply are unported; assertions also compare executor outputs"]
-fn parallel_apply_ordered_plan_keeps_outer_order() {}
+fn parallel_apply_falls_back_for_shared_cte_runtime_ownership() {
+    let mut plan = apply(leaf(), PhysicalPlan::CTETable(Default::default()), false);
+    enable_parallel_apply(&mut plan, 4);
+    let PhysicalPlan::Apply(plan) = plan else {
+        panic!("Apply");
+    };
+    assert_eq!(plan.concurrency, 0);
+}

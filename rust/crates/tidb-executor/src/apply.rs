@@ -50,6 +50,7 @@
 
 use crate::apply_cache::ApplyCache;
 pub mod native;
+pub(crate) mod parallel;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::mem_quota::StatementMemory;
 pub use native::NestedLoopApplyExec;

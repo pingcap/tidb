@@ -404,6 +404,7 @@ pub struct PreparedSelectPlan {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PreparedPlanCacheEnvironment {
     sql_mode: tidb_mysql::SqlMode,
+    user_identity: String,
     /// Go's `EnableNoBackslashEscapesInLike` plan-cache key bit. The
     /// statement's implicit LIKE escape changes both the rewritten expression
     /// and any index range derived from it, so plans built under different
@@ -435,6 +436,7 @@ impl Default for PreparedPlanCacheEnvironment {
 impl PreparedPlanCacheEnvironment {
     pub(super) fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()
+            + self.user_identity.capacity()
             + self.time_zone.capacity()
             + self.connection_charset.capacity()
             + self.connection_collation.capacity()
@@ -442,6 +444,12 @@ impl PreparedPlanCacheEnvironment {
             + self.isolation_read_engines.capacity()
             + self.sql_select_limit.capacity()
             + self.binding_sql.capacity()
+    }
+
+    /// Go plan-cache key's authenticated user/host identity.
+    pub fn with_user_identity(mut self, identity: String) -> Self {
+        self.user_identity = identity;
+        self
     }
 
     /// Builds the non-schema portion of Go's plan-cache environment key.
@@ -453,6 +461,7 @@ impl PreparedPlanCacheEnvironment {
     ) -> Self {
         Self {
             sql_mode,
+            user_identity: String::new(),
             enable_no_backslash_escapes_in_like: true,
             time_zone,
             pushdown_blacklist_generation,
@@ -755,6 +764,10 @@ impl PreparedSelectPlan {
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
+        if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
+            return None;
+        }
+
         if !self.current_database.eq_ignore_ascii_case(current_database) {
             return None;
         }

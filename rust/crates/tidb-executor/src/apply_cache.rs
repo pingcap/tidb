@@ -72,6 +72,7 @@ struct CacheEntry<V> {
 
 struct CacheState<V> {
     memory_consumed: i64,
+    key_memory_consumed: i64,
     entries: SimpleLruCache<Vec<u8>, CacheEntry<V>>,
 }
 
@@ -90,6 +91,7 @@ impl<V> ApplyCache<V> {
             memory_capacity,
             state: Mutex::new(CacheState {
                 memory_consumed: 0,
+                key_memory_consumed: 0,
                 entries: SimpleLruCache::new(usize::MAX),
             }),
         }
@@ -129,13 +131,17 @@ impl<V> ApplyCache<V> {
         let mut state = self.lock();
 
         while memory + state.memory_consumed > self.memory_capacity {
-            let Some((_, evicted)) = state.entries.remove_oldest() else {
+            let Some((evicted_key, evicted)) = state.entries.remove_oldest() else {
                 return false;
             };
             state.memory_consumed -= evicted.memory;
+            state.key_memory_consumed -= evicted_key.len() as i64;
         }
 
         state.memory_consumed += memory;
+        if state.entries.get(&key).is_none() {
+            state.key_memory_consumed += key.len() as i64;
+        }
         state.entries.put(key, CacheEntry { value, memory });
         true
     }
@@ -144,6 +150,11 @@ impl<V> ApplyCache<V> {
     #[must_use]
     pub(crate) fn memory_consumed(&self) -> i64 {
         self.lock().memory_consumed
+    }
+
+    /// Actual retained key bytes, when immutable values own separate trackers.
+    pub(crate) fn key_memory_consumed(&self) -> i64 {
+        self.lock().key_memory_consumed
     }
 
     fn lock(&self) -> MutexGuard<'_, CacheState<V>> {

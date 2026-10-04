@@ -1092,8 +1092,10 @@ impl crate::Session {
                 // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
                 // defer observes the lookup duration on hits only.
                 tidb_planner::metrics::plan_cache_hit_counter(true).inc();
-                tidb_planner::metrics::plan_cache_lookup_duration(false)
-                    .observe(lookup_start.elapsed().as_secs_f64());
+                tidb_planner::metrics::plan_cache_lookup_duration(
+                    self.physical_plan_cache.uses_instance(),
+                )
+                .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
             }
         }
@@ -1153,8 +1155,10 @@ impl crate::Session {
         };
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
-            tidb_planner::metrics::plan_cache_lookup_duration(false)
-                .observe(start.elapsed().as_secs_f64());
+            tidb_planner::metrics::plan_cache_lookup_duration(
+                self.physical_plan_cache.uses_instance(),
+            )
+            .observe(start.elapsed().as_secs_f64());
         };
         {
             let catalog = self.lock_catalog().ok()?;

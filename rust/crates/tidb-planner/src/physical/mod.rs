@@ -4068,6 +4068,16 @@ impl PhysicalPlan {
 
         let mut result = Vec::new();
         match self {
+            Self::Window(op) => {
+                for function in &op.window_func_descs {
+                    expressions(&mut result, &function.base.args);
+                }
+                if let Some(frame) = &op.frame {
+                    for bound in frame.start.iter().chain(frame.end.iter()) {
+                        expressions(&mut result, &bound.calc_funcs);
+                    }
+                }
+            }
             Self::Selection(op) => expressions(&mut result, &op.conditions),
             Self::Projection(op) => expressions(&mut result, &op.exprs),
             Self::HashJoin(op) => hash_join_conditions(op, &mut result),
@@ -4701,6 +4711,11 @@ fn visit_expression_correlated_columns_mut(
                 visit_expression_correlated_columns_mut(argument, visitor);
             }
         }
+        tidb_expr::expression::Expression::Constant(constant) => {
+            if let Some(expression) = constant.deferred_expr.as_deref_mut() {
+                visit_expression_correlated_columns_mut(expression, visitor);
+            }
+        }
         _ => {}
     }
 }
@@ -4771,7 +4786,12 @@ fn visit_physical_correlated_columns_mut(
                 visit_expression_correlated_columns_mut(&mut item.expr, visitor);
             }
         }
-        PhysicalPlan::Apply(op) => hash_join(&mut op.hash_join, visitor),
+        PhysicalPlan::Apply(op) => {
+            hash_join(&mut op.hash_join, visitor);
+            for column in &mut op.outer_schema {
+                visitor(column);
+            }
+        }
         PhysicalPlan::TableScan(op) => {
             if let Some(rebuild) = &mut op.range_rebuild {
                 expressions(&mut rebuild.access_conditions, visitor);
@@ -4819,6 +4839,18 @@ fn visit_physical_correlated_columns_mut(
         PhysicalPlan::StreamAgg(op) => {
             aggregation(&mut op.agg_funcs, &mut op.group_by_items, visitor);
         }
+        PhysicalPlan::Window(op) => {
+            for function in &mut op.window_func_descs {
+                expressions(&mut function.base.args, visitor);
+            }
+            if let Some(frame) = &mut op.frame {
+                for bound in frame.start.iter_mut().chain(frame.end.iter_mut()) {
+                    expressions(&mut bound.calc_funcs, visitor);
+                    expressions(&mut bound.compare_cols, visitor);
+                }
+            }
+        }
+
         _ => {}
     }
     for child in plan.base_mut().children_mut() {
@@ -4954,3 +4986,84 @@ pub use inject_extra_projection::inject_extra_projection;
 
 #[cfg(test)]
 mod tests;
+
+/// Go postOptimize enableParallelApply: inner Apply descendants remain serial.
+/// Shared recursive CTE/shuffle runtime state cannot be independently cloned
+/// by the Rust builder yet, so those inner trees retain the serial fallback.
+pub fn enable_parallel_apply(plan: &mut PhysicalPlan, concurrency: usize) {
+    if let PhysicalPlan::Apply(apply) = plan {
+        let outer = 1 - apply.hash_join.inner_child_idx;
+        if outer > 1 {
+            return;
+        }
+        let inner = 1 - outer;
+        if plan
+            .children()
+            .get(inner)
+            .is_some_and(supports_apply_worker_clone)
+        {
+            let PhysicalPlan::Apply(apply) = plan else {
+                unreachable!()
+            };
+            apply.concurrency = concurrency;
+        }
+        if let Some(child) = plan.base_mut().children_mut().get_mut(outer) {
+            enable_parallel_apply(child, concurrency);
+        }
+        return;
+    }
+    for child in plan.base_mut().children_mut() {
+        enable_parallel_apply(child, concurrency);
+    }
+}
+
+/// Clone eligibility for an independently owned Apply worker executor tree.
+pub fn supports_apply_worker_clone(plan: &PhysicalPlan) -> bool {
+    !matches!(
+        plan,
+        PhysicalPlan::CTE(_)
+            | PhysicalPlan::CTETable(_)
+            | PhysicalPlan::Shuffle(_)
+            | PhysicalPlan::ShuffleReceiver(_)
+    ) && plan.children().iter().all(supports_apply_worker_clone)
+}
+
+/// Clone every correlated binding cell once, preserving internal aliasing
+/// while isolating nested Apply owners. External bindings start at the current
+/// datum; the worker builder then rebinds its own outer schema to fresh cells.
+pub fn clone_for_apply_worker(plan: &PhysicalPlan) -> PhysicalPlan {
+    let mut cloned = plan.deep_clone();
+    let mut bindings = std::collections::HashMap::new();
+    visit_physical_correlated_columns_mut(&mut cloned, &mut |column| {
+        if let Some(old) = &column.data {
+            let identity = std::sync::Arc::as_ptr(old).addr();
+            let binding = bindings.entry(identity).or_insert_with(|| {
+                std::sync::Arc::new(std::sync::RwLock::new(
+                    old.read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone(),
+                ))
+            });
+            column.data = Some(binding.clone());
+        }
+    });
+    cloned
+}
+
+/// Bind correlated expressions owned by Apply filters/Joiner to the same
+/// execution-local cells as that worker's inner physical tree.
+pub fn rebind_apply_worker_expressions(
+    expressions: &mut [tidb_expr::expression::Expression],
+    columns: &[CorrelatedColumn],
+) {
+    for expression in expressions {
+        visit_expression_correlated_columns_mut(expression, &mut |correlation| {
+            if let Some(column) = columns
+                .iter()
+                .find(|column| column.column.unique_id == correlation.column.unique_id)
+            {
+                correlation.data.clone_from(&column.data);
+            }
+        });
+    }
+}

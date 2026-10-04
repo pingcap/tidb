@@ -2359,6 +2359,14 @@ pub(super) struct CachedDmlPlan {
 }
 
 impl CachedDmlPlan {
+    pub(super) fn clone_for_execution(&self) -> Self {
+        Self {
+            statement: self.statement.clone(),
+            physical: self.physical.deep_clone(),
+            generation: self.generation,
+        }
+    }
+
     pub(super) fn memory_usage(&self) -> i64 {
         tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
     }
@@ -2516,6 +2524,10 @@ impl PreparedDmlPlan {
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
+        if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
+            return None;
+        }
+
         if !self.current_database.eq_ignore_ascii_case(current_database) {
             return None;
         }

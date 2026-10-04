@@ -852,28 +852,24 @@ fn a_correlated_apply_plan_never_hits() {
     }
 }
 
-/// The fulltext LIKE fallback and the plan cache, together: a LITERAL
-/// `AGAINST` is cacheable, because the baked pattern constants are stable
-/// across executions (the corpus's own test 37,
-/// `planner/core/fulltext_search`).
+/// Go requires a source-supported fulltext index/reader. MATCH cannot be
+/// replaced with LIKE and then used to manufacture a cache hit.
 #[test]
-fn a_literal_fts_search_is_cacheable() {
+fn fulltext_without_a_source_index_never_manufactures_a_like_cache_plan() {
     let mut session = Session::new();
-    session
-        .run("SET @@tidb_opt_enable_alternative_logical_plans=ON")
-        .unwrap();
     session
         .run("CREATE TABLE articles (id int primary key, title varchar(200), body text)")
         .unwrap();
     session
         .run("INSERT INTO articles VALUES (1, 'MySQL Tutorial', 'basic')")
         .unwrap();
-    session
-        .run("PREPARE st FROM 'select id, title from articles where match(title) against(''MySQL'')'")
-        .unwrap();
-    session.run("EXECUTE st").unwrap();
-    session.run("EXECUTE st").unwrap();
-    assert_eq!(cache_flag(&mut session), "1");
+    let result = session.run("PREPARE st FROM 'select id, title from articles where match(title) against(''MySQL'')'")
+        .and_then(|_| session.run("EXECUTE st"));
+    assert!(
+        result.is_err(),
+        "a table without source fulltext indexing is not a LIKE substitute"
+    );
+    assert_eq!(cache_flag(&mut session), "0");
 }
 
 #[test]
@@ -1493,15 +1489,17 @@ fn held_prepared_execution_reuses_published_digest() {
     let hold = session
         .retain_process_statement_with_digest(sql, &digest)
         .unwrap();
-    crate::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
     let output = session
         .run_prepared_with_result_authority(&prepared, &[Datum::new_int(1)])
         .unwrap();
     assert!(matches!(output.0, crate::StmtOutput::Rows { .. }));
+    // Statement summary now legitimately materializes normalized SQL too.
+    // Assert the published PREPARE identity, not a zero-normalizer-call count.
     assert_eq!(
-        crate::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
-        0,
-        "Go EXECUTE reuses the PREPARE digest already published by the server"
+        tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 91)
+            .unwrap()
+            .digest,
+        digest
     );
     assert_eq!(registry.snapshot()[0].info.as_deref(), Some(sql));
     drop(hold);
@@ -1972,4 +1970,166 @@ fn session_plan_cache_close_deletes_only_the_current_environment_bucket() {
     assert_cache_hit(&mut session, "EXECUTE a USING @id", 0);
     session.run("SET sql_mode=''").unwrap();
     assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
+}
+
+#[test]
+fn instance_plan_cache_shares_read_only_plans_across_sessions() {
+    let mut first = shared_cache_session(2);
+    let mut peer = Session::with_catalog(first.shared_catalog());
+    for session in [&mut first, &mut peer] {
+        session
+            .run("SET GLOBAL tidb_enable_instance_plan_cache=ON")
+            .unwrap();
+        session
+            .run("PREPARE a FROM 'SELECT v FROM cache_lifecycle WHERE id=?'")
+            .unwrap();
+        session.run("SET @id=1").unwrap();
+    }
+    assert_cache_hit(&mut first, "EXECUTE a USING @id", 0);
+    peer.run("SET @id=2").unwrap();
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
+    assert_eq!(
+        peer.run("EXECUTE a USING @id").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(20)]])
+    );
+    assert_eq!(
+        first.run("EXECUTE a USING @id").unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(10)]])
+    );
+    first.run("DEALLOCATE PREPARE a").unwrap();
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
+    first.run("ADMIN FLUSH SESSION PLAN_CACHE").unwrap();
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
+    first.run("ADMIN FLUSH INSTANCE PLAN_CACHE").unwrap();
+    // Current Go expires session LRUs, not the shared instance owner.
+    assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
+}
+
+#[test]
+fn parallel_apply_session_switch_reaches_execution_workers() {
+    let mut session = shared_cache_session(2);
+    session.run("SET tidb_enable_parallel_apply=ON").unwrap();
+    session.run("SET tidb_executor_concurrency=4").unwrap();
+    let rows = crate::tests_support::row_text(session.run("EXPLAIN ANALYZE SELECT t1.id FROM cache_lifecycle t1 WHERE t1.v > (SELECT /*+ NO_DECORRELATE() */ MAX(t2.v) FROM cache_lifecycle t2 WHERE t2.id < t1.id) ORDER BY t1.id"));
+    assert!(
+        rows.iter()
+            .flatten()
+            .any(|cell| cell.contains("Concurrency:4")),
+        "actual runtime {rows:?}"
+    );
+}
+
+#[test]
+fn instance_cache_bindings_do_not_invalidate_another_sessions_open_execution() {
+    let mut first = shared_cache_session(2);
+    let mut peer = Session::with_catalog(first.shared_catalog());
+    for session in [&mut first, &mut peer] {
+        session
+            .run("SET GLOBAL tidb_enable_instance_plan_cache=ON")
+            .unwrap();
+    }
+    let a = first
+        .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
+        .unwrap();
+    let b = peer
+        .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
+        .unwrap();
+    let first_bound = first
+        .bind_cached_prepared_select(&a.select_plan().unwrap(), &[Datum::Int(1)])
+        .unwrap();
+    let peer_bound = peer
+        .bind_cached_prepared_select(&b.select_plan().unwrap(), &[Datum::Int(2)])
+        .unwrap();
+    let first_rows = crate::tests_support::collect_record_set(
+        first
+            .execute_prepared_record_set_for(&first_bound, &a)
+            .unwrap(),
+    );
+    let peer_rows = crate::tests_support::collect_record_set(
+        peer.execute_prepared_record_set_for(&peer_bound, &b)
+            .unwrap(),
+    );
+    for (rows, expected) in [(first_rows, 10), (peer_rows, 20)] {
+        let crate::StmtOutput::Rows { rows, .. } = rows else {
+            panic!("rows");
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(expected)]]);
+    }
+}
+
+#[test]
+fn instance_cache_dml_and_non_prepared_consumers_share_the_same_owner() {
+    let mut first = shared_cache_session(2);
+    let mut peer = Session::with_catalog(first.shared_catalog());
+    for session in [&mut first, &mut peer] {
+        session
+            .run("SET GLOBAL tidb_enable_instance_plan_cache=ON")
+            .unwrap();
+        session
+            .run("PREPARE a FROM 'UPDATE cache_lifecycle SET v=? WHERE id=?'")
+            .unwrap();
+        session.run("SET @v=30,@id=1").unwrap();
+        session
+            .run("SET tidb_enable_non_prepared_plan_cache=ON")
+            .unwrap();
+    }
+    assert_cache_hit(&mut first, "EXECUTE a USING @v,@id", 0);
+    peer.run("SET @v=40,@id=2").unwrap();
+    assert_cache_hit(&mut peer, "EXECUTE a USING @v,@id", 1);
+    assert_cache_hit(&mut first, "SELECT v FROM cache_lifecycle WHERE id=1", 0);
+    assert_cache_hit(&mut peer, "SELECT v FROM cache_lifecycle WHERE id=2", 1);
+    assert_eq!(
+        first
+            .run("SELECT v FROM cache_lifecycle ORDER BY id")
+            .unwrap(),
+        crate::StmtResult::Rows(vec![vec![Datum::Int(30)], vec![Datum::Int(40)]])
+    );
+}
+
+#[test]
+fn instance_cache_refuses_session_local_temporary_tables_like_go() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_enable_instance_plan_cache=ON")
+        .unwrap();
+    session
+        .run("CREATE TEMPORARY TABLE cache_temp (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO cache_temp VALUES (1,10)").unwrap();
+    session
+        .run("PREPARE p FROM 'SELECT v FROM cache_temp WHERE id=?'")
+        .unwrap();
+    session.run("SET @id=1").unwrap();
+    for _ in 0..2 {
+        assert_cache_hit(&mut session, "EXECUTE p USING @id", 0);
+    }
+}
+
+#[test]
+fn instance_plan_cache_global_limits_use_typed_byte_getters() {
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_instance_plan_cache_max_size='128MiB'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@global.tidb_instance_plan_cache_max_size")),
+        vec![vec!["134217728"]]
+    );
+    let error = session
+        .run("SET GLOBAL tidb_instance_plan_cache_max_size='99MiB'")
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("tidb_instance_plan_cache_max_mem_size should be at least 100MiB"));
+    assert_eq!(
+        row_text(session.run("SELECT @@global.tidb_instance_plan_cache_max_size")),
+        vec![vec!["134217728"]]
+    );
+    session
+        .run("SET GLOBAL tidb_instance_plan_cache_max_size=DEFAULT")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@global.tidb_instance_plan_cache_max_size")),
+        vec![vec!["104857600"]]
+    );
 }

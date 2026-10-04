@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [cache/Apply batch](cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.
+
+The statement-observation checkpoint below is historical.
+
 The [statement observation batch](statement-observation-batch-repair.md) advances **O18, O11 and N03 together**: shared SQL completion/counters, routed durable publication, full current/history schema, persistent startup/fallback/readers and joined shutdown. **58 unresolved (42 open, sixteen partial), 28 repaired, 86 tracked.** Detailed telemetry and complete profiling/transport remain unresolved; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
 
 The DML checkpoint below is historical.

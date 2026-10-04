@@ -1,0 +1,219 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "ed4fe8e91f580d9b533595be5c2ccac05ff114a6",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "normative_client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "scope": "C02 repaired recorded owner absence; E04 and N03 partial. Existing-owner maintenance, no complete Go package acceptance. Other unresolved findings retain carried evidence. No push.",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17,
+    "repaired": 29
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_prepared_plan_cache -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 64,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/session-cache-tests.log",
+      "sha256": "6b567667cefc5c16ec4cb9d69c2d8095609da86c2a142b0b84414e6e843b8850"
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --lib physical::tests -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 61,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/physical-tests.log",
+      "sha256": "4e1363e85d46eec8a77deb5802d6bfc68b408bc42b3cdff85ba50a969fa5cf0c"
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --lib plan_cache_instance -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 3,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/instance-owner-tests.log",
+      "sha256": "c398520e3968760982527bd0350ad86436c74181e3fb42468b1d3d6139714fed"
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test all casetest_parallel_apply_suite_source -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 3,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/apply-planner-tests.log",
+      "sha256": "fd72aff857088c4d9e75d7dcf1134badb3337500c14af7c8a7dc1beae21989df"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib non_prepared_plan_cache -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 27,
+      "ignored": 1,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/non-prepared-tests.log",
+      "sha256": "b67c23d675643b79f56fc756471b66d1ae9ef2b1fe5dabae637ee02f9d069e56"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial -- --ignored --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 1,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/cache-metric-serial-tests.log",
+      "sha256": "40ae92b869f22ea43c3237ecd338cca2a437cfaee97dee077e65777a7a4cdab1"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib observation -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 13,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/observation-tests.log",
+      "sha256": "7312b8b7c84b9995940816f4c483c37a5dc0d742bbb4b5ae3ed1d65e4bf9849f"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib native_parallel_apply -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 4,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/native-apply-tests.log",
+      "sha256": "4bf6ae4b1279ae386fb676d6c6600c78ba8eacd1040bfd2f5a8d6b02deb10cab"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib apply_close_cancels_request_children -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 1,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/apply-request-cancel-tests.log",
+      "sha256": "7e1d240bf4f3815aa6e4bc55210ef94b1b7e5e6a45e3a5324575a8ece209355c"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_parallel_apply_sql_source -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 11,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/apply-sql-tests.log",
+      "sha256": "7139bc980feac232ecd8cf2ee89a86d8f726076f69862b4752d8daae97a3de26"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib tests_executor_internal_source -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 6,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/executor-internal-tests.log",
+      "sha256": "165acb00e8e07863257aa6421765b9bae9a2690e8deeb593c62a10fec9ae07c3"
+    },
+    {
+      "command": "cargo test --locked -p tidb-distsql --lib test_cancel_handle -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 2,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/transport-cancel-tests.log",
+      "sha256": "ca70cf733e57d0441858ee6392d78350845d705ab24d65c69bdcc3d660077cbc"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib cop_scan -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 2,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/cop-tests.log",
+      "sha256": "8d2d2f4ef0d90f1205d525e33109d5d98fff4adf66951d352d077e75a6cf24aa"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs -- --test-threads=1",
+      "status": "passed",
+      "exit_code": 0,
+      "passing_cases": 1,
+      "ignored": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/cluster-cache-tests.log",
+      "sha256": "4dd0fda68d7b97cffbc7bede8c7999c9b812f6a3c5b4da05a16de6202d1816e2"
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session -p tidb-exec -p tidb-server --all-targets",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/all-targets-check.log",
+      "sha256": "372ff2711968d057871a1c4db05e1cea94e57c85ba01e7925f1ded135dccd2be"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/server-build.log",
+      "sha256": "a575d9d1e769cdc29aa0402414be272f1d75c4e5e07fe9c8b0c2710b50ee7ef5"
+    },
+    {
+      "command": "make lint",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/cache-apply-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "passing_test_cases": 199,
+  "wire": {
+    "checks": [
+      "first prepared result",
+      "first instance miss",
+      "peer independent binding",
+      "peer instance hit",
+      "peer survives close",
+      "close retains instance entry",
+      "SESSION flush result",
+      "SESSION flush shared retention",
+      "INSTANCE flush result",
+      "INSTANCE flush shared retention",
+      "typed global byte getter",
+      "below-minimum global write rejected",
+      "parallel Apply ordered SQL",
+      "actual Apply runtime four workers",
+      "early LIMIT cleanup 0",
+      "early LIMIT cleanup 1",
+      "early LIMIT cleanup 2",
+      "early LIMIT cleanup 3",
+      "early LIMIT cleanup 4",
+      "statement works after early cleanup"
+    ],
+    "passed": 20,
+    "connections": 2,
+    "store": "unistore"
+  },
+  "red_evidence": [
+    {
+      "log": "/workspace/.cloud-setup/cache-apply-batch/limit-red-excerpt.txt",
+      "result": "initial below-minimum rejection assertion failed; preserved tool-output excerpt, not full Cargo log"
+    },
+    {
+      "log": "/workspace/.cloud-setup/cache-apply-batch/cache-red.log",
+      "result": "one pre-fix cross-session hit assertion failed"
+    },
+    {
+      "log": "/workspace/.cloud-setup/cache-apply-batch/apply-red-original-producer.log",
+      "result": "corrected NO_DECORRELATE assertion failed with exact historical statement-context producer restored; new executor/planner code present",
+      "boundary": "not pristine whole-tree red"
+    },
+    {
+      "log": "/workspace/.cloud-setup/cache-apply-batch/apply-red.log",
+      "result": "invalid evidence: query decorrelated into HashJoin; excluded"
+    }
+  ],
+  "unverified": [
+    "Full Go suites/package inventories",
+    "Nonrecursive CTE/shuffle Apply clone ownership and complete upstream fixture/failpoint matrices",
+    "Live multi-node TiKV cancellation/transport latency",
+    "Performance",
+    "Fulltext execution"
+  ],
+  "recovery": "Local commits and verified Cloud bundle; remote unchanged. Exact local-only snapshot restore in a new task is not verified."
+}

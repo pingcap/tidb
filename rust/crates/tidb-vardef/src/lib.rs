@@ -86,6 +86,15 @@ pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
 /// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
 pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
 
+/// Go instance plan-cache process switches, published only from committed GLOBAL values.
+pub static ENABLE_INSTANCE_PLAN_CACHE: AtomicBool = AtomicBool::new(false);
+/// Go InstancePlanCacheMaxMemSize.
+pub static INSTANCE_PLAN_CACHE_MAX_MEM_SIZE: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE);
+/// Go InstancePlanCacheReservedPercentage, stored as IEEE-754 bits.
+pub static INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE.to_bits());
+
 /// Go `vardef.SchemaCacheSize`, the process-wide byte count used by the
 /// infoschema cache after a GLOBAL/INSTANCE update.
 pub static SCHEMA_CACHE_SIZE: AtomicU64 =

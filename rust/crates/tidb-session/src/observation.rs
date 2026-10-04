@@ -56,6 +56,16 @@ impl StmtExecLazyInfo for LazyStatement {
 }
 
 impl Session {
+    pub(crate) fn current_statement_observation_identity(
+        &self,
+        sql: &str,
+    ) -> Option<(&str, &tidb_parser::Digest)> {
+        self.statement_observation
+            .as_ref()
+            .filter(|observation| observation.sql == sql)
+            .map(|observation| (observation.normalized.as_str(), &observation.digest))
+    }
+
     pub(crate) fn begin_statement_observation(&mut self, sql: &str) {
         if self.routed_statement_observation_depth != 0 {
             return;

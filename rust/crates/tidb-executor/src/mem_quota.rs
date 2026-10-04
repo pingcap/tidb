@@ -499,6 +499,7 @@ impl SessionMemory {
             spill_storage: config.spill_storage,
             tmp_storage_on_oom: config.tmp_storage_on_oom,
             killer,
+            coprocessor_scope: None,
         }
     }
 
@@ -543,6 +544,7 @@ pub struct StatementMemory {
     /// The statement's canonical SQL killer, shared by memory cancellation,
     /// `KILL QUERY`, connection shutdown, and blocking expression waits.
     killer: Arc<SqlKiller>,
+    coprocessor_scope: Option<Arc<Mutex<Arc<tidb_distsql::CancelHandle>>>>,
 }
 
 impl std::fmt::Debug for StatementMemory {
@@ -567,6 +569,45 @@ impl Default for StatementMemory {
 }
 
 impl StatementMemory {
+    /// A child execution scope, independent of the statement's SQL killer.
+    /// All worker clones see its current generation across executor reopen.
+    pub fn with_coprocessor_worker_scope(mut self) -> Self {
+        self.coprocessor_scope = Some(Arc::new(Mutex::new(Arc::new(
+            tidb_distsql::CancelHandle::default(),
+        ))));
+        self
+    }
+    /// New request-local child. Closing a response cancels only this child;
+    /// closing its Apply owner cancels every outstanding sibling request.
+    pub fn coprocessor_request_cancellation(&self) -> Arc<tidb_distsql::CancelHandle> {
+        self.coprocessor_scope.as_ref().map_or_else(
+            || Arc::new(tidb_distsql::CancelHandle::default()),
+            |scope| {
+                scope
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .request_child()
+            },
+        )
+    }
+    /// Rotate only after all workers from the previous Open have joined.
+    pub(crate) fn renew_coprocessor_worker_scope(&self) {
+        if let Some(scope) = &self.coprocessor_scope {
+            *scope
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Arc::new(tidb_distsql::CancelHandle::default());
+        }
+    }
+    pub(crate) fn cancel_coprocessor_workers(&self) {
+        if let Some(scope) = &self.coprocessor_scope {
+            scope
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cancel();
+        }
+    }
+
     /// Builds the two-tracker shape `ResetContextOfStmt` builds, with
     /// `quota` on the session root and the action `oom_action` selects.
     ///

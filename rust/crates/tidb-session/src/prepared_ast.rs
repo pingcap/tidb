@@ -161,6 +161,7 @@ impl Session {
                     self.vars.get_system("time_zone").unwrap_or_default(),
                     blacklist_generation,
                 )
+                .with_user_identity(self.current_user.clone().unwrap_or_default())
                 .with_pessimistic_transaction(pessimistic_transaction)
                 .with_session_state(
                     self.vars
@@ -433,8 +434,10 @@ impl Session {
                 // `lookupPlanCache`'s defer observes the lookup duration on
                 // hits only, for the prepared and non-prepared paths alike.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
-                tidb_planner::metrics::plan_cache_lookup_duration(false)
-                    .observe(lookup_start.elapsed().as_secs_f64());
+                tidb_planner::metrics::plan_cache_lookup_duration(
+                    self.physical_plan_cache.uses_instance(),
+                )
+                .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(cached);
             }
         }
@@ -515,8 +518,10 @@ impl Session {
                 // (plan_cache.go:351, prepared label); the lookup-duration
                 // observation is hits-only per `lookupPlanCache`'s defer.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
-                tidb_planner::metrics::plan_cache_lookup_duration(false)
-                    .observe(lookup_start.elapsed().as_secs_f64());
+                tidb_planner::metrics::plan_cache_lookup_duration(
+                    self.physical_plan_cache.uses_instance(),
+                )
+                .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
             }
         }

@@ -22,6 +22,7 @@ use super::node_fixture::*;
 use crate::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChange};
 use crate::sql_node::{QuerySession, QuerySessionFactory};
 use std::sync::Arc;
+use tidb_datatype::Datum;
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
@@ -279,5 +280,59 @@ fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
             ("enable_resource_metering".into(), "true".into()),
             ("source_id".into(), "2".into())
         ]
+    );
+}
+
+#[test]
+fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() {
+    let node = MockNode::start();
+    let factory = factory_with_globals(
+        &node,
+        GlobalSysvars::from_cluster_rows([(
+            "tidb_enable_instance_plan_cache".to_owned(),
+            "ON".to_owned(),
+        )]),
+    );
+    let mut first = factory.open_session(session_context(71)).unwrap();
+    let mut peer = factory.open_session(session_context(72)).unwrap();
+    for session in [&mut first, &mut peer] {
+        session.select_database("app").unwrap();
+    }
+    first
+        .execute_write("INSERT INTO t VALUES (1,10),(2,20)")
+        .unwrap();
+    for session in [&mut first, &mut peer] {
+        session
+            .execute_write("PREPARE p FROM 'SELECT v FROM t WHERE id=?'")
+            .unwrap();
+        session.execute_write("SET @id=1").unwrap();
+    }
+    assert_eq!(
+        rows(&mut first, "EXECUTE p USING @id"),
+        vec![vec![Datum::Int(10)]]
+    );
+    assert_eq!(
+        rows(&mut first, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(0)]]
+    );
+    peer.execute_write("SET @id=2").unwrap();
+    assert_eq!(
+        rows(&mut peer, "EXECUTE p USING @id"),
+        vec![vec![Datum::Int(20)]]
+    );
+    assert_eq!(
+        rows(&mut peer, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(1)]]
+    );
+    first
+        .execute_write("ADMIN FLUSH INSTANCE PLAN_CACHE")
+        .unwrap();
+    assert_eq!(
+        rows(&mut peer, "EXECUTE p USING @id"),
+        vec![vec![Datum::Int(20)]]
+    );
+    assert_eq!(
+        rows(&mut peer, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(1)]]
     );
 }

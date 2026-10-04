@@ -2167,10 +2167,19 @@ impl Session {
         // Materialize normalized SQL here only when memory arbitration needs
         // the text as well; pass its digest through to avoid a second hash.
         let arbitrated = self.session_memory.arbitrator_enabled();
-        let normalized = arbitrated.then(|| normalize_statement_digest(sql));
+        let observation = self.current_statement_observation_identity(sql);
+        let normalized = arbitrated.then(|| {
+            observation.map_or_else(
+                || normalize_statement_digest(sql),
+                |(normalized, digest)| (normalized.to_owned(), digest.clone()),
+            )
+        });
         if let Some(guard) = &self.process {
             let registry = guard.registry();
-            let digest = normalized.as_ref().map(|(_, digest)| digest.to_string());
+            let digest = normalized
+                .as_ref()
+                .map(|(_, digest)| digest.to_string())
+                .or_else(|| observation.map(|(_, digest)| digest.to_string()));
             registry.statement_started_with_digest(
                 guard.id(),
                 sql,

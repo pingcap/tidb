@@ -2736,6 +2736,9 @@ pub(crate) fn physical_plan_for_logical(
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
     tidb_planner::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
+    if ctx.enable_parallel_apply() {
+        tidb_planner::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
+    }
     physical
         .base_mut()
         .base
@@ -2754,6 +2757,7 @@ struct DriverCteOptimizer<'a> {
     column_ids: &'a ColumnIdAllocator,
     /// Classes being optimized right now; a class reaching itself is a cycle.
     visiting: RefCell<HashSet<usize>>,
+    parallel_apply_allowed: std::cell::Cell<bool>,
 }
 
 impl tidb_planner::logical::rule::CteOptimizer for DriverCteOptimizer<'_> {
@@ -2834,7 +2838,12 @@ impl DriverCteOptimizer<'_> {
             }
         };
         if let Some(recursive) = recursive {
-            let (logical, physical) = self.optimize_tree(recursive, opt_flag, rule_context)?;
+            // Go temporarily disables parallel Apply throughout recursive
+            // body optimization, including lazily optimized nested CTE parts.
+            let previous = self.parallel_apply_allowed.replace(false);
+            let optimized = self.optimize_tree(recursive, opt_flag, rule_context);
+            self.parallel_apply_allowed.set(previous);
+            let (logical, physical) = optimized?;
             let mut class = class.borrow_mut();
             class.recursive_part_logical_plan = Some(Box::new(logical));
             class.recursive_part_physical_plan = Some(Box::new(physical));
@@ -2851,7 +2860,11 @@ impl DriverCteOptimizer<'_> {
         opt_flag: u64,
         rule_context: &RuleContext<'_>,
     ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
-        let ctx = self.ctx;
+        let context = self
+            .ctx
+            .clone()
+            .with_parallel_apply(self.parallel_apply_allowed.get());
+        let ctx = &context;
         // Go DataSource.DeriveStats initializes base statistics even when
         // called from a logical rule; CTE roots need the same preinitialization
         // as the outer query before join reorder can inspect their sources.
@@ -3401,6 +3414,7 @@ fn optimize_built_logical(
         plan_ids,
         column_ids,
         visiting: RefCell::new(HashSet::new()),
+        parallel_apply_allowed: std::cell::Cell::new(ctx.enable_parallel_apply()),
     };
     let rule_context = RuleContext {
         estimator_options: optimizer_cost_env.session.estimator_options.clone(),
@@ -3492,6 +3506,14 @@ pub(crate) struct CachedSelectPlan {
 }
 
 impl CachedSelectPlan {
+    pub(super) fn clone_for_execution(&self) -> Self {
+        Self {
+            statement: self.statement.clone(),
+            physical: self.physical.deep_clone(),
+            generation: self.generation,
+        }
+    }
+
     pub(super) fn memory_usage(&self) -> i64 {
         tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
     }

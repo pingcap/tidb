@@ -20,7 +20,8 @@ use super::access::{
     prepared_parameter_types_compatible, PreparedParameterType, PreparedPlanCacheEnvironment,
 };
 use super::{dml::CachedDmlPlan, planner_bridge::CachedSelectPlan};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use tidb_planner::plan_cache_instance::InstancePlanCache;
 use tidb_planner::plan_cache_lru::{LruPlanCache, PlanCacheKey, PlanCacheValue};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -44,6 +45,23 @@ impl PlanCacheKey for PhysicalPlanCacheKey {
 pub(super) enum CachedPhysicalPlan {
     Select(Arc<Mutex<CachedSelectPlan>>),
     Dml(Arc<Mutex<CachedDmlPlan>>),
+}
+
+impl CachedPhysicalPlan {
+    fn clone_for_execution(&self) -> Self {
+        match self {
+            Self::Select(plan) => Self::Select(Arc::new(Mutex::new(
+                plan.lock()
+                    .expect("cached SELECT poisoned")
+                    .clone_for_execution(),
+            ))),
+            Self::Dml(plan) => Self::Dml(Arc::new(Mutex::new(
+                plan.lock()
+                    .expect("cached DML poisoned")
+                    .clone_for_execution(),
+            ))),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -96,18 +114,129 @@ impl Drop for CacheState {
 
 /// Domain-owned invalidation state for ADMIN FLUSH INSTANCE PLAN_CACHE.
 /// An epoch represents Go's expiry timestamp without depending on clock precision.
-#[derive(Default, Debug)]
-pub struct PlanCacheInvalidation(std::sync::atomic::AtomicU64);
+pub struct PlanCacheInvalidation {
+    epoch: std::sync::atomic::AtomicU64,
+    instance: Arc<InstancePlanCache<PhysicalPlanCacheKey, CachedPlanValue>>,
+    maintenance: OnceLock<CacheMaintenance>,
+}
+
+struct CacheMaintenance {
+    stop: Arc<(Mutex<bool>, Condvar)>,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+impl CacheMaintenance {
+    fn stop(&self) {
+        let (lock, wake) = &*self.stop;
+        *lock.lock().expect("plan cache stop poisoned") = true;
+        wake.notify_all();
+        if let Some(worker) = self
+            .worker
+            .lock()
+            .expect("plan cache worker poisoned")
+            .take()
+        {
+            let _ = worker.join();
+        }
+    }
+}
+impl Drop for CacheMaintenance {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+impl Default for PlanCacheInvalidation {
+    fn default() -> Self {
+        let (soft, hard) = instance_limits();
+        Self {
+            epoch: Default::default(),
+            instance: Arc::new(InstancePlanCache::new(soft, hard)),
+            maintenance: OnceLock::new(),
+        }
+    }
+}
+impl std::fmt::Debug for PlanCacheInvalidation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlanCacheInvalidation")
+            .field("epoch", &self.epoch())
+            .field("instance_size", &self.instance.size())
+            .finish()
+    }
+}
+fn instance_limits() -> (i64, i64) {
+    use std::sync::atomic::Ordering::Acquire;
+    let hard = tidb_vardef::INSTANCE_PLAN_CACHE_MAX_MEM_SIZE.load(Acquire);
+    let reserved =
+        f64::from_bits(tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE.load(Acquire));
+    ((hard as f64 * (1.0 - reserved)) as i64, hard)
+}
 
 impl PlanCacheInvalidation {
+    /// Activate the Domain-owned 15s limits/metrics and 30s eviction lifecycle.
+    /// The stop guard joins before owner retirement; no worker retains its Domain.
+    pub fn start_maintenance(&self) {
+        self.maintenance.get_or_init(|| {
+            let stop = Arc::new((Mutex::new(false), Condvar::new()));
+            let signal = stop.clone();
+            let cache = self.instance.clone();
+            let worker = std::thread::Builder::new()
+                .name("instance-plan-cache".to_owned())
+                .spawn(move || {
+                    let mut eviction_tick = false;
+                    let (lock, wake) = &*signal;
+                    let mut stopped = lock.lock().expect("plan cache stop poisoned");
+                    loop {
+                        let (guard, timeout) = wake
+                            .wait_timeout_while(
+                                stopped,
+                                std::time::Duration::from_secs(15),
+                                |stop| !*stop,
+                            )
+                            .expect("plan cache stop poisoned");
+                        stopped = guard;
+                        if *stopped {
+                            break;
+                        }
+                        if !timeout.timed_out() {
+                            continue;
+                        }
+                        let (soft, hard) = instance_limits();
+                        cache.set_limits(soft, hard);
+                        tidb_planner::metrics::plan_cache_instance_num_counter(true)
+                            .set(cache.size() as f64);
+                        tidb_planner::metrics::plan_cache_instance_memory_usage(true)
+                            .set(cache.memory_usage() as f64);
+                        eviction_tick = !eviction_tick;
+                        if !eviction_tick {
+                            let disabled = !tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE
+                                .load(std::sync::atomic::Ordering::Acquire);
+                            let removed = cache.evict(disabled);
+                            tidb_planner::metrics::plan_cache_instance_evict().set(removed as f64);
+                        }
+                    }
+                })
+                .expect("start instance plan cache maintenance");
+            CacheMaintenance {
+                stop,
+                worker: Mutex::new(Some(worker)),
+            }
+        });
+    }
+
+    /// Join maintenance when the hosting Domain closes, even if a session
+    /// still retains its invalidation handle.
+    pub fn stop_maintenance(&self) {
+        if let Some(maintenance) = self.maintenance.get() {
+            maintenance.stop();
+        }
+    }
     /// The expiry generation sessions last observed before using their cache.
     pub fn epoch(&self) -> u64 {
-        self.0.load(std::sync::atomic::Ordering::Acquire)
+        self.epoch.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Expire existing physical entries in every session sharing this owner.
     pub fn expire(&self) {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -117,6 +246,8 @@ impl PlanCacheInvalidation {
 #[derive(Default)]
 pub struct SessionPlanCache {
     state: Mutex<Option<CacheState>>,
+    instance: Mutex<Option<Arc<InstancePlanCache<PhysicalPlanCacheKey, CachedPlanValue>>>>,
+    instance_schema_version: Mutex<Option<u64>>,
 }
 
 impl std::fmt::Debug for SessionPlanCache {
@@ -128,6 +259,43 @@ impl std::fmt::Debug for SessionPlanCache {
 }
 
 impl SessionPlanCache {
+    /// Select the Domain cache for this statement; the session LRU remains separate.
+    pub fn select_instance(&self, owner: &PlanCacheInvalidation, enabled: bool) {
+        if enabled {
+            owner.start_maintenance();
+        }
+        *self
+            .instance
+            .lock()
+            .expect("instance cache selection poisoned") = enabled.then(|| owner.instance.clone());
+    }
+    /// Persisted InfoSchema version for cluster catalogs rebuilt separately
+    /// per session. Embedded catalogs retain their native metadata identity.
+    pub fn set_instance_schema_version(&self, version: u64) {
+        *self
+            .instance_schema_version
+            .lock()
+            .expect("plan cache schema version poisoned") = Some(version);
+    }
+    fn instance_key(&self, key: &PhysicalPlanCacheKey) -> PhysicalPlanCacheKey {
+        let mut key = key.clone();
+        if let Some(version) = *self
+            .instance_schema_version
+            .lock()
+            .expect("plan cache schema version poisoned")
+        {
+            key.schema_version = version;
+        }
+        key
+    }
+    /// Metrics label for the selected physical cache owner.
+    pub fn uses_instance(&self) -> bool {
+        self.instance
+            .lock()
+            .expect("instance cache selection poisoned")
+            .is_some()
+    }
+
     /// Apply session capacity and memory monitoring and the domain's flush
     /// generation. Physical entries expire; prepared statement metadata stays.
     pub fn configure(&self, capacity: usize, monitor_memory: bool, epoch: u64, guard: f64) {
@@ -220,6 +388,19 @@ impl SessionPlanCache {
         key: &PhysicalPlanCacheKey,
         parameter_types: &Arc<[PreparedParameterType]>,
     ) -> Option<CachedPhysicalPlan> {
+        if let Some(instance) = self
+            .instance
+            .lock()
+            .expect("instance cache selection poisoned")
+            .clone()
+        {
+            let value = instance.get(&self.instance_key(key), parameter_types)?;
+            let begin = std::time::Instant::now();
+            let plan = value.plan.clone_for_execution();
+            tidb_planner::metrics::plan_cache_clone_duration()
+                .observe(begin.elapsed().as_secs_f64());
+            return Some(plan);
+        }
         self.mutate(|plans| plans.get(key, parameter_types).map(|entry| entry.plan))
     }
 
@@ -243,6 +424,22 @@ impl SessionPlanCache {
         } + (std::mem::size_of::<CachedPlanValue>()
             + parameter_types.len() * std::mem::size_of::<PreparedParameterType>())
             as i64;
+        if let Some(instance) = self
+            .instance
+            .lock()
+            .expect("instance cache selection poisoned")
+            .clone()
+        {
+            instance.put(
+                self.instance_key(&key),
+                CachedPlanValue {
+                    parameter_types,
+                    plan: plan.clone_for_execution(),
+                    memory,
+                },
+            );
+            return;
+        }
         self.mutate(|plans| {
             plans.put(
                 key,
@@ -260,4 +457,12 @@ impl SessionPlanCache {
 pub(super) fn statement_key(database: &str, sql: &str) -> String {
     // Length-prefixing prevents database/SQL boundary collisions.
     format!("{}:{database}{sql}", database.len())
+}
+
+// Go cacheable_checker.checkTable: both cache tiers refuse temporary tables.
+pub(super) fn tables_cacheable(
+    catalog: &super::Catalog,
+    keys: &[super::catalog::CatalogTableKey],
+) -> bool {
+    keys.iter().all(|key| !matches!(catalog.get_by_key(key), Some(super::TableEntry::Kv(table)) if table.temp_table_type() != tidb_model::TempTableType::NONE))
 }

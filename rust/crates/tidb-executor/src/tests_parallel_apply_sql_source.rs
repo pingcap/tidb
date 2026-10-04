@@ -15,20 +15,17 @@
 //! Data-level ports of Go `pkg/executor/parallel_apply_test.go`: the scalar /
 //! EXISTS / IN correlated-subquery (apply) contracts those tests pin.
 //!
-//! SCOPE NOTE. Go's `parallel_apply_test.go` runs every query twice -- once
-//! serial, once with `tidb_enable_parallel_apply=true` -- and additionally
-//! asserts `explain analyze` plan text (`Concurrency:`/`cacheHitRatio:`
-//! lines), failpoint-injected worker panics, SQL-killer cancellation, and
-//! cancel-in-flight latency. This tier has ONE apply implementation -- the
-//! sequential `crate::apply` operator driven through the statement driver --
-//! and no `explain analyze` text, failpoint, or kill surface. The data
-//! assertions run with Go's fixtures and expected results.
+//! These fixtures run through the production physical builder with parallel
+//! Apply enabled. Native worker tests separately prove overlap, bounded
+//! queues, independent bindings, original errors/panics and joined Close.
+//! Full Go failpoint/RPC cancellation and casetest golden obligations remain
+//! recorded in the batch receipt; data assertions alone do not claim them.
 
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::{Collation, Datum, StringDatum};
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_parallel_apply(true)
 }
 
 /// testkit's `result.Sort()`: rows compared as an ordered multiset. The key
@@ -628,7 +625,7 @@ fn apply_concurrency_sum_over_prefix_source() {
 /// Go `pkg/executor/parallel_apply_test.go:499::TestParallelApplyCorrectness`:
 /// NO_DECORRELATE sum apply over `t1.c3 = alias.c3` for `alias.c1 = 1`
 /// yields `1` and `3` whether or not the parallel flag is on -- on this tier
-/// there is one apply implementation, so the rows are pinned once.
+/// the production parallel worker path is enabled here.
 #[test]
 fn parallel_apply_correctness_source() {
     let mut catalog = Catalog::default();
@@ -654,7 +651,7 @@ fn parallel_apply_correctness_source() {
 /// data arms 1-5: ORDER BY with a scalar correlated subquery preserves row
 /// order, ORDER BY + LIMIT, EXISTS semi-join with ORDER BY, count apply at
 /// every concurrency, and LIMIT/OFFSET. Go proves parallel == serial; the
-/// serial values themselves are the pinned contract below.
+/// parallel values are checked against the pinned serial contract below.
 #[test]
 fn ordered_parallel_apply_source() {
     let mut catalog = Catalog::default();

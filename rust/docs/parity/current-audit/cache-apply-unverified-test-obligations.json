@@ -1,0 +1,44 @@
+{
+  "scope": "Replacing stale or empty assertions does not discharge upstream obligations",
+  "obligations": [
+    {
+      "owner": "pkg/planner/core/casetest/parallelapply",
+      "obligation": "Complete recursive CTE hierarchy and Apply eligibility expectations",
+      "status": "unverified",
+      "upstream_test": "TestLateralHierarchyParallelApply",
+      "removed_empty_shell": "lateral_hierarchy_keeps_apply_and_matches_serial_results",
+      "contract": "Recursive CTE/LATERAL hierarchy keeps Apply; flat LATERAL EXPLAIN ANALYZE reports real parallelism; recursive results agree with switch OFF/ON."
+    },
+    {
+      "owner": "pkg/planner/core/casetest/parallelapply",
+      "obligation": "Full upstream physical plan golden fixtures",
+      "status": "unverified",
+      "upstream_test": "TestParallelApplyWarnning",
+      "removed_empty_shell": "parallel_apply_inl_hash_join_emits_no_warnings",
+      "contract": "Complete INL hash-join hinted warning matrix and issue 59863 correlated count/index join CARTESIAN Apply golden tree."
+    },
+    {
+      "owner": "pkg/planner/core/casetest/parallelapply",
+      "obligation": "Full hinted warning matrix",
+      "status": "unverified",
+      "upstream_test": "TestParallelApplyOrderedPlan",
+      "removed_empty_shell": "parallel_apply_ordered_plan_keeps_outer_order",
+      "contract": "Full correlated ORDER BY/ORDER BY LIMIT physical goldens, outerExpectedCnt selectivity, keep-order choices, warning absence and serial/parallel result agreement."
+    },
+    {
+      "owner": "pkg/executor/parallel_apply.go",
+      "obligation": "Nonrecursive CTE/shuffle clone ownership and upstream concurrency/failpoint matrices",
+      "status": "partial"
+    },
+    {
+      "owner": "pkg/executor/parallel_apply.go",
+      "obligation": "Live multi-node TiKV cancellation, transport latency and measured performance",
+      "status": "unverified"
+    },
+    {
+      "owner": "E02",
+      "obligation": "Source fulltext-index admission and execution; no MATCH-to-LIKE fallback",
+      "status": "unverified"
+    }
+  ]
+}

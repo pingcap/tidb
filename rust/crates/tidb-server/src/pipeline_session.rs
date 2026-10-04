@@ -116,6 +116,16 @@ pub struct PipelineSessionFactory {
     advisory_locks: Arc<dyn tidb_executor::advisory_lock_state::AdvisoryLockService>,
 }
 
+impl Drop for PipelineSessionFactory {
+    fn drop(&mut self) {
+        self.catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .plan_cache_invalidation()
+            .stop_maintenance();
+    }
+}
+
 impl Default for PipelineSessionFactory {
     fn default() -> Self {
         Self {
@@ -141,11 +151,10 @@ impl PipelineSessionFactory {
     /// available for in-process sessions with no wire authenticator.
     #[must_use]
     pub fn with_configured_store(store: &ConfiguredUserStore) -> Self {
-        Self {
-            privileges: store.accounts(),
-            global_vars: store.global_vars(),
-            ..Self::default()
-        }
+        let mut factory = Self::default();
+        factory.privileges = store.accounts();
+        factory.global_vars = store.global_vars();
+        factory
     }
 
     /// Builds a factory over an existing account table AND an existing
@@ -159,11 +168,10 @@ impl PipelineSessionFactory {
         accounts: PrivilegeRegistry,
         global_vars: GlobalSysvars,
     ) -> Self {
-        Self {
-            privileges: accounts,
-            global_vars,
-            ..Self::default()
-        }
+        let mut factory = Self::default();
+        factory.privileges = accounts;
+        factory.global_vars = global_vars;
+        factory
     }
 
     /// The process list of every connection this factory has open.
