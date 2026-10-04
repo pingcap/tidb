@@ -410,3 +410,103 @@ fn sequence_defaults_obey_ddl_and_row_write_boundaries() {
         );
     }
 }
+
+// Go infoschema.tableSequencesCols + executor.setDataFromSequences: the
+// definition is catalog metadata, independent of NEXTVAL's cached counter.
+#[test]
+fn sequence_metadata_schema_and_definition_follow_go() {
+    let mut session = Session::new();
+    session.run("CREATE SEQUENCE SeqMeta INCREMENT BY -3 START WITH -7 MINVALUE -100 MAXVALUE -1 CACHE 9 CYCLE COMMENT 'descending'").unwrap();
+    let (columns, rows) = query_text(&mut session, "SELECT * FROM information_schema.sequences");
+    assert_eq!(
+        columns,
+        [
+            "TABLE_CATALOG",
+            "SEQUENCE_SCHEMA",
+            "SEQUENCE_NAME",
+            "CACHE",
+            "CACHE_VALUE",
+            "CYCLE",
+            "INCREMENT",
+            "MAX_VALUE",
+            "MIN_VALUE",
+            "START",
+            "COMMENT"
+        ]
+    );
+    assert_eq!(
+        rows,
+        [[
+            "def",
+            "test",
+            "SeqMeta",
+            "1",
+            "9",
+            "1",
+            "-3",
+            "-1",
+            "-100",
+            "-7",
+            "descending"
+        ]]
+    );
+    assert_eq!(scalar(&mut session, "SELECT NEXTVAL(SeqMeta)"), "-7");
+    assert_eq!(
+        query_text(&mut session, "SELECT * FROM information_schema.sequences").1,
+        rows
+    );
+    assert_eq!(scalar(&mut session, "SELECT NEXTVAL(SeqMeta)"), "-10");
+}
+
+#[test]
+fn sequence_metadata_tracks_alter_drop_and_joined_catalog_queries() {
+    let mut session = Session::new();
+    session
+        .run("CREATE SEQUENCE s START WITH 4 CACHE 3")
+        .unwrap();
+    session.run("CREATE TABLE ordinary (a INT)").unwrap();
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT SEQUENCE_NAME FROM information_schema.sequences"
+        )
+        .1,
+        [["s"]]
+    );
+    session
+        .run("ALTER SEQUENCE s INCREMENT BY 7 NOCACHE CYCLE")
+        .unwrap();
+    assert_eq!(query_text(&mut session, "SELECT s.SEQUENCE_NAME,s.CACHE,s.CYCLE,s.INCREMENT FROM information_schema.sequences s JOIN information_schema.schemata d ON s.SEQUENCE_SCHEMA=d.SCHEMA_NAME WHERE d.SCHEMA_NAME='test'").1, [["s", "0", "1", "7"]]);
+    session.run("DROP SEQUENCE s").unwrap();
+    assert_eq!(
+        scalar(
+            &mut session,
+            "SELECT COUNT(*) FROM information_schema.sequences"
+        ),
+        "0"
+    );
+}
+
+#[test]
+fn sequence_metadata_uses_any_table_privilege_and_active_roles() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut bootstrap = bootstrap_session(&registry);
+    bootstrap.run("CREATE DATABASE meta_db").unwrap();
+    bootstrap.run("CREATE SEQUENCE meta_db.allowed").unwrap();
+    bootstrap.run("CREATE SEQUENCE meta_db.hidden").unwrap();
+    bootstrap.run("CREATE USER 'seq_reader'@'%'").unwrap();
+    bootstrap.run("CREATE ROLE 'seq_role'@'%'").unwrap();
+    bootstrap
+        .run("GRANT INSERT ON meta_db.allowed TO 'seq_role'@'%'")
+        .unwrap();
+    bootstrap
+        .run("GRANT 'seq_role'@'%' TO 'seq_reader'@'%'")
+        .unwrap();
+    let mut reader = session_as(&registry, bootstrap.shared_catalog(), "seq_reader", "%");
+    let sql = "SELECT SEQUENCE_SCHEMA,SEQUENCE_NAME FROM information_schema.sequences ORDER BY SEQUENCE_NAME";
+    assert!(query_text(&mut reader, sql).1.is_empty());
+    reader.run("SET ROLE ALL").unwrap();
+    assert_eq!(query_text(&mut reader, sql).1, [["meta_db", "allowed"]]);
+    reader.run("SET ROLE NONE").unwrap();
+    assert!(query_text(&mut reader, sql).1.is_empty());
+}

@@ -696,3 +696,133 @@ fn closest_adaptive_balances_zones_and_updates_existing_sessions() {
     topology.check_replica_read("closest-adaptive").unwrap();
     assert!(!topology.adaptive_enabled());
 }
+
+#[test]
+fn cluster_metadata_instance_uses_local_status_identity_without_discovery() {
+    use crate::Session;
+    let fake = Arc::new(FakeEtcd::default());
+    let mut peer = mock_server_info("peer", "192.0.2.90", 4400);
+    fake.put(&server_info_key_path("peer"), &peer.marshal().unwrap())
+        .unwrap();
+    let mut session = Session::new();
+    session.set_server_info_syncer(Arc::new(Syncer::new(
+        mock_server_info("local-id", "2001:db8::7", 4000),
+        Some(fake.clone()),
+    )));
+    assert_eq!(session.cluster_instance_address(), "[2001:db8::7]:10080");
+    *fake.get_error.lock().unwrap() = Some("etcd unavailable".into());
+    assert_eq!(session.cluster_instance_address(), "[2001:db8::7]:10080");
+}
+
+// SEM is process-global. As in tests_sem_v2, isolate it from unrelated tests.
+#[test]
+fn cluster_metadata_sem_redacts_each_projection_and_observes_live_roles() {
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "tests_domain_serverinfo_syncer_source::cluster_metadata_sem_child",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+#[ignore = "isolated subprocess helper for process-global SEM"]
+fn cluster_metadata_sem_child() {
+    use crate::{tests_support::*, *};
+    tidb_util::sem::disable();
+    tidb_util::sem_v2::disable();
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut bootstrap = bootstrap_session(&registry);
+    bootstrap.run("CREATE USER 'metadata_reader'@'%'").unwrap();
+    bootstrap.run("CREATE ROLE 'metadata_admin'@'%'").unwrap();
+    bootstrap
+        .run("GRANT 'metadata_admin'@'%' TO 'metadata_reader'@'%'")
+        .unwrap();
+    registry.grant_dynamic("metadata_admin", "%", "RESTRICTED_TABLES_ADMIN", false);
+    let info = mock_server_info("local-ddl-id", "2001:db8::7", 4000);
+    let syncer = Arc::new(Syncer::new(info, None));
+    let mut reader = authenticated_session(&registry, "metadata_reader", "%");
+    reader.set_server_info_syncer(syncer.clone());
+    let mut internal = Session::new();
+    internal.set_server_info_syncer(syncer);
+    let mut failures = Vec::new();
+    for version in [1, 2] {
+        if version == 1 {
+            tidb_util::sem::enable();
+        } else {
+            tidb_util::sem::disable();
+            tidb_util::sem_v2::enable_by(&tidb_util::sem_v2::Config {
+                version: "1.0".into(),
+                tidb_version: tidb_util::sem_v2::tidb_release_version(),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        for (label, session) in [
+            ("missing checker", &mut internal),
+            ("ordinary account", &mut reader),
+        ] {
+            let cluster = session.cluster_info_table_rows().unwrap();
+            if cluster[0][1] != tidb_datatype::Datum::Bytes(b"1".to_vec())
+                || [2, 5, 6]
+                    .into_iter()
+                    .any(|i| cluster[0][i] != tidb_datatype::Datum::Null)
+            {
+                failures.push(format!("SEM{version} {label}: CLUSTER_INFO not redacted"));
+            }
+            let servers = session.tidb_servers_info_table_rows().unwrap();
+            if servers[0][1] != tidb_datatype::Datum::Null {
+                failures.push(format!(
+                    "SEM{version} {label}: TIDB_SERVERS_INFO IP not redacted"
+                ));
+            }
+            if session.cluster_instance_address() != "local-ddl-id" {
+                failures.push(format!("SEM{version} {label}: cluster instance not DDL ID"));
+            }
+            assert_eq!(cluster[0][7], tidb_datatype::Datum::UInt(1));
+            assert_eq!(servers[0][2], tidb_datatype::Datum::Int(4000));
+        }
+        reader.run("SET ROLE ALL").unwrap();
+        assert_eq!(
+            reader.cluster_info_table_rows().unwrap()[0][1],
+            tidb_datatype::Datum::Bytes(b"[2001:db8::7]:4000".to_vec())
+        );
+        assert_eq!(
+            reader.tidb_servers_info_table_rows().unwrap()[0][1],
+            tidb_datatype::Datum::Bytes(b"2001:db8::7".to_vec())
+        );
+        if reader.cluster_instance_address() != "[2001:db8::7]:10080" {
+            failures.push(format!("SEM{version} active role: wrong instance"));
+        }
+        reader.run("SET ROLE NONE").unwrap();
+        // A present Go checker with no identity, or SkipWithGrant, permits
+        // the dynamic verification. Only an absent checker hides by default.
+        let mut anonymous = bootstrap_session(&registry);
+        anonymous.set_server_info_syncer(internal.server_info_syncer.as_ref().unwrap().clone());
+        let mut bypassed = authenticated_session(&registry, "metadata_reader", "%");
+        bypassed.set_server_info_syncer(internal.server_info_syncer.as_ref().unwrap().clone());
+        bypassed.enable_privilege_bypass();
+        for session in [&mut anonymous, &mut bypassed] {
+            assert_eq!(session.cluster_instance_address(), "[2001:db8::7]:10080");
+            assert_ne!(
+                session.tidb_servers_info_table_rows().unwrap()[0][1],
+                tidb_datatype::Datum::Null
+            );
+        }
+    }
+    tidb_util::sem_v2::disable();
+    tidb_util::sem::disable();
+    assert_eq!(
+        internal.cluster_info_table_rows().unwrap()[0][1],
+        tidb_datatype::Datum::Bytes(b"[2001:db8::7]:4000".to_vec())
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

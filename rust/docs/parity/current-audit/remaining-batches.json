@@ -6,8 +6,8 @@
     "tracked": 86,
     "unresolved": 57,
     "repaired": 29,
-    "open": 37,
-    "partial": 20
+    "open": 36,
+    "partial": 21
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
@@ -313,7 +313,7 @@
       "completion_boundary": "Real peers and SQL events feed owned providers, summaries, profiles/reports, replay archives and periodic learning/telemetry. Reuse process/session lifetimes and avoid synthetic rows or zero-field acceptance. Workload repository remains separate from learning. Dependencies gate relevant consumers, not every leaf prerequisite.",
       "acceptance": "unaccepted",
       "finding_statuses": {
-        "I01": "open",
+        "I01": "partial",
         "I02": "partial",
         "I03": "open",
         "O08": "open",
@@ -346,5 +346,13 @@
       }
     }
   ],
-  "latest_evidence": "cluster-topology-validation.json"
+  "latest_evidence": {
+    "receipt": "metadata-policy-batch-validation.json",
+    "findings": [
+      "I01",
+      "I02",
+      "I03"
+    ],
+    "boundary": "I01/I02 remain partial; I03 fanout stays open. Shared sequence metadata, restored ALTER routing, SEM policy and local status identity. Other54 unresolved IDs retain prior evidence."
+  }
 }

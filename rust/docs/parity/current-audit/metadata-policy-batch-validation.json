@@ -1,0 +1,275 @@
+{
+  "date": "2026-10-04",
+  "scope": "Existing-owner metadata maintenance of I01/I02 and local I03 rendering; no complete upstream package acceptance.",
+  "baseline": {
+    "tidb": "580d205b2fee771224d5750b85a0adf2b7856135",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "remote_integration_preserved_unmerged": "0a61ca9b586add9697a10f9bf8264931e3281a95"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21
+  },
+  "rechecked_findings": [
+    "I01",
+    "I02",
+    "I03"
+  ],
+  "other_findings": "Other54 unresolved IDs retain prior evidence; not a fresh whole-register review.",
+  "changes": [
+    "Replace the obsolete thirteen-column sequence schema with Go tableSequencesCols and the constant empty reader with shared catalog definitions. Preserve casing, options, comments, active-role visibility and allocator state.",
+    "Move the existing ALTER SEQUENCE parser before generic ALTER fallback. Restore ALTER metadata updates without duplicating parsing or weakening original regression assertions.",
+    "Share SEM RESTRICTED_TABLES_ADMIN policy across CLUSTER_INFO, TIDB_SERVERS_INFO and local cluster-instance rendering. Distinguish absent checker from attached internal or skip-grant checker; honor live active roles.",
+    "Replace arbitrary remote peer selection/SQL-port formatting with local status identity and IPv6-aware formatting; use textual DDL ID for SEM cluster instance and numeric server ID for CLUSTER_INFO.",
+    "Remove outdated metadata documentation. No meaningful test or assertion is deleted."
+  ],
+  "before_regressions": [
+    {
+      "command": "cargo test --locked -p tidb-session -p tidb-server -p tidb-exec -p tidb-domain --lib -- sequence_metadata cluster_metadata_instance cluster_metadata_sem_redacts --test-threads=1",
+      "result": "Five failures with unchanged production: sequence schema, lifecycle, role visibility, local instance and SEM rendering.",
+      "log": "before-tests.log"
+    },
+    {
+      "command": "Retained parser unit executable -- tests::sequence --test-threads=1",
+      "result": "Three original sequence parser groups fail at expected TABLE; three pass. Existing nextval_counts_through_a_session also fails in the first post-metadata run; the new lifecycle test reaches the same existing dispatch defect.",
+      "log": "parser-before.log"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/metadata-policy-batch/wire-metadata.py before[-sem] /workspace/tidb/rust/target/debug/tidb-server",
+      "result": "Missing sequence row, SQL-port instance and all three SEM projections fail on retained unchanged server. Shared process identity controls pass.",
+      "logs": [
+        "before-wire.json",
+        "before-sem-wire.json"
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-parser -p tidb-executor -p tidb-session -p tidb-server -p tidb-exec -p tidb-domain --lib -- sequence:: tests_sequence tests_domain_serverinfo_syncer_source tests_sem_v2::configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates cluster_topology store_metadata_preserves_go --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "result": "PASS",
+      "distinct_passes": 57,
+      "ignored": [
+        [
+          "tests_domain_serverinfo_syncer_source::assumed_server_info_syncer_cross_keyspace_arm",
+          ", go-parity-gap: NewCrossKSSyncer (cross-keyspace syncer wiring) is not transcreated; keyspace track pending"
+        ],
+        [
+          "tests_domain_serverinfo_syncer_source::cluster_metadata_sem_child",
+          ", isolated subprocess helper for process-global SEM"
+        ],
+        [
+          "tests_domain_serverinfo_syncer_source::stale_ddl_owner_key_is_deleted_too",
+          ", go-parity-gap: owner.DeleteOwnerKeyByID (owner election) is not transcreated; stale DDL owner keys survive startup cleanup"
+        ]
+      ],
+      "target_summaries": [
+        [
+          "ok",
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "23",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "6",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "1",
+          "0",
+          "0"
+        ],
+        [
+          "ok",
+          "26",
+          "0",
+          "3"
+        ]
+      ],
+      "note": "tidb-domain selected zero tests; no validation credit for that target. Isolated SEM child runs inside its passing parent and is not counted twice.",
+      "log": "final-tests.log",
+      "sha256": "df346ea8b315fd517592471274f7e13de67cda140e7d801f45ed6a6001ec55f4",
+      "test_names": [
+        "cluster_discovery::tests::store_metadata_preserves_go_component_and_lifecycle_rules",
+        "ddl_sequence::tests::a_descending_sequence_takes_the_negative_defaults",
+        "ddl_sequence::tests::a_duplicate_sequence_name_is_1050",
+        "ddl_sequence::tests::a_missing_sequence_is_4139_for_drop_and_1146_for_alter",
+        "ddl_sequence::tests::alter_sequence_keeps_unnamed_options_and_discards_the_cache",
+        "ddl_sequence::tests::an_alter_into_a_conflicting_state_is_4136_and_changes_nothing",
+        "ddl_sequence::tests::conflicting_option_values_are_4136",
+        "ddl_sequence::tests::drop_sequence_drops_the_names_it_finds_before_reporting",
+        "ddl_sequence::tests::restart_is_an_alter_only_option",
+        "ddl_sequence::tests::show_create_sequence_round_trips_the_captured_text",
+        "sequence::tests::a_cache_batch_is_clamped_at_maxvalue",
+        "sequence::tests::a_cloned_allocator_shares_the_counter",
+        "sequence::tests::a_default_sequence_counts_from_one",
+        "sequence::tests::a_descending_sequence_counts_down_from_start",
+        "sequence::tests::a_lower_setval_reports_null_even_with_no_cache_yet",
+        "sequence::tests::alter_sequence_reseeks_from_the_batch_end_not_the_last_value",
+        "sequence::tests::cycle_wraps_to_minvalue_and_nocycle_runs_out",
+        "sequence::tests::nocache_yields_the_same_values_one_at_a_time",
+        "sequence::tests::restart_with_resets_the_next_value",
+        "sequence::tests::setval_only_moves_a_sequence_forward",
+        "sequence::tests::start_with_is_the_congruence_offset",
+        "sequence::tests::test_concurrent_alloc_sequence",
+        "sequence::tests::test_sequence_autoid",
+        "sequence::tests::the_seek_spans_zero_without_overflowing",
+        "tests::sequence::alter_instance_accepts_go_keyword_literals_across_token_kinds",
+        "tests::sequence::go_test_ddl_sequence_rows",
+        "tests::sequence::go_test_sequence_restore_rows",
+        "tests::sequence::go_test_simple_sequence_rows",
+        "tests::sequence::sequence_source_statements_have_typed_ddl_variants",
+        "tests::sequence::shared_table_options_and_invalid_state_boundaries",
+        "cluster_topology::tests::domain_checker_reads_live_global_setting_and_joins",
+        "tests_domain_serverinfo_syncer_source::assumed_server_info_syncer_current_keyspace_arm",
+        "tests_domain_serverinfo_syncer_source::closest_adaptive_balances_zones_and_updates_existing_sessions",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_cluster_info_propagates_discovery_errors",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_composes_retrievers_and_retains_warnings_on_failure",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_config_refuses_captured_runtime_rows",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_contains_only_discovered_nodes",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_instance_uses_local_status_identity_without_discovery",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_sem_redacts_each_projection_and_observes_live_roles",
+        "tests_domain_serverinfo_syncer_source::cluster_metadata_servers_info_propagates_discovery_errors",
+        "tests_domain_serverinfo_syncer_source::startup_cleans_the_stale_server_info_at_this_address",
+        "tests_domain_serverinfo_syncer_source::topology_repairs_itself_after_key_loss",
+        "tests_sem_v2::configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates",
+        "tests_sequence::a_rolled_back_nextval_is_still_consumed",
+        "tests_sequence::a_sequence_is_not_a_table",
+        "tests_sequence::a_sequence_name_resolves_like_a_table_name",
+        "tests_sequence::an_exhausted_sequence_is_4135",
+        "tests_sequence::drop_sequence_frees_the_name",
+        "tests_sequence::lastval_is_null_until_this_session_takes_a_value",
+        "tests_sequence::nextval_counts_through_a_session",
+        "tests_sequence::nextval_missing_or_wrong_object_errors_match_go",
+        "tests_sequence::sequence_defaults_obey_ddl_and_row_write_boundaries",
+        "tests_sequence::sequence_metadata_schema_and_definition_follow_go",
+        "tests_sequence::sequence_metadata_tracks_alter_drop_and_joined_catalog_queries",
+        "tests_sequence::sequence_metadata_uses_any_table_privilege_and_active_roles",
+        "tests_sequence::setval_moves_forward_and_reports_null_backwards",
+        "tests_sequence::show_create_reports_a_sequence_under_either_keyword"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-parser -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+      "result": "PASS",
+      "working_directory": "/workspace/tidb/rust",
+      "log": "all-targets.log",
+      "sha256": "35b61ee4e227cf178cfb31ab50de392da0d0b33d306d2df6b75a7a817ba7c5ca"
+    },
+    {
+      "command": "make lint",
+      "result": "PASS",
+      "working_directory": "/workspace/tidb",
+      "log": "lint-final.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "limitations": {
+    "I01": "Other dynamic providers remain incomplete: cluster config/log, resource/watch, inspection and TiFlash system tables. Full durable sequence DDL/package acceptance is not claimed.",
+    "I02": "Bounded address-resolution worker structure and full mixed-cluster/HTTP acceptance remain unverified/incomplete.",
+    "I03": "Remote fanout, peer cancellation and memory accounting remain absent. I03 stays open despite corrected local identity.",
+    "general": "No full Go/Rust suites, live multi-node TiKV, performance benchmark, or fresh-task restoration test. Earlier unrelated failures retain historical receipts; three selected sequence parser groups are now retested."
+  },
+  "source_manifest": {
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "39db7d529dfb4d74ebebc7e21bba1a672b025e011cbf3ac670fdd0f6a5df124b",
+    "rust/crates/tidb-executor/src/driver/infoschema_meta.rs": "9265da6d4c542f4af3df805d0e317ac859fd3700f4c30b22072cb222d1565aa6",
+    "rust/crates/tidb-parser/src/statement.rs": "73592c751eaa56d2cb339c932698beaabfabcfe17b49eb4a55ac29c402de865a",
+    "rust/crates/tidb-session/src/dispatch.rs": "3f12064b6b550932c91f25f57a64ff68569b5e926790d8580af0b5b845b42169",
+    "rust/crates/tidb-session/src/identity.rs": "20631572727bca97d2c89cb990cb212ad9713095bd33e77d1d5eee5cef8856ca",
+    "rust/crates/tidb-session/src/infoschema.rs": "5b61c3d083a2b04c030fb6d053afe11d786fd4c0eb9e229e5f5490aaf66d4c21",
+    "rust/crates/tidb-session/src/lib.rs": "975b0de89ed12a0cde0e00250b5414a815eb6614576a770682e70ef4c667bac1",
+    "rust/crates/tidb-session/src/tests_domain_serverinfo_syncer_source.rs": "57a0b9d0c7246eef2a3444f2dd3b7c06b3633993f3c0c5e28c99e7bdb3b38951",
+    "rust/crates/tidb-session/src/tests_sequence.rs": "b899eb881baa9ebb09c86a9a863fe10f435efa91fa553a545e580db3ca52afd2"
+  },
+  "publication": {
+    "push": "Forbidden by user. No push or dry run.",
+    "precommit": "Normal hooks/pre-commit must pass cd rust && cargo build --locked -p tidb-server. Actual commit/hook/wire/bundle/draft outcome is recorded in the external final-handoff.json."
+  },
+  "external_logs": "/workspace/.cloud-setup/metadata-policy-batch",
+  "recovered_errors": [
+    "Initial shell used repository-root paths from rust; no files written. Empty-selection compile stopped and tests reapplied before the valid baseline run.",
+    "Initial SEM wire report could not serialize an observed datetime; serializer corrected and unchanged-server probe rerun.",
+    "First grouped post-change run exposed existing ALTER SEQUENCE dispatch failure, repaired and covered by final grouped tests."
+  ],
+  "artifact_pruning": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/d18f1f25f5d0ed9c/out/tidb_session-d18f1f25f5d0ed9c",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-session/e2361f3885bd66ec/out/tidb_session-e2361f3885bd66ec",
+      "bytes": 288086240,
+      "reason": "superseded regeneratable executable; newer matching target retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/bad9811fb9b3ac50/out/cluster_stats_dump",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-server/5908382c938203b7/out/cluster_stats_dump",
+      "bytes": 198368024,
+      "reason": "superseded regeneratable executable; newer matching target retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/b29bd99e23e28042/out/cluster_session_smoke",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-server/214133df0db8bcbc/out/cluster_session_smoke",
+      "bytes": 377101720,
+      "reason": "superseded regeneratable executable; newer matching target retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/45ddff7c39566a95/out/mysql_bootstrap",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-server/275f8d03daec0cdc/out/mysql_bootstrap",
+      "bytes": 295654864,
+      "reason": "superseded regeneratable executable; newer matching target retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/86e27ae2652f1134/out/tidb_server",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-server/304b7f20746b794e/out/tidb_server",
+      "bytes": 444345560,
+      "reason": "superseded source-version executable; current batch baseline/current tests retained; logs and committed source preserve earlier evidence"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/3c6fe9b35dac844b/out/tidb_session-3c6fe9b35dac844b",
+      "retained": "/workspace/tidb/rust/target/debug/build/tidb-session/e2361f3885bd66ec/out/tidb_session-e2361f3885bd66ec",
+      "bytes": 276759856,
+      "reason": "superseded source-version executable; current batch baseline/current tests retained; logs and committed source preserve earlier evidence"
+    }
+  ],
+  "go_source_manifest": {
+    "pkg/infoschema/tables.go": "e015c10352b0e507c90c84c26422c8777d0e849f72f80e557298f5a3ecb4ac04",
+    "pkg/infoschema/cluster.go": "fd616566b927702b5e3333beafcba9f1a80f369ff78bd52d099a5042507c28d0",
+    "pkg/executor/infoschema_reader.go": "fb7e137b1530451b921545cb7e7a0da1e6a134175ded187b9b1678d8ae4d57c0",
+    "pkg/privilege/privileges/privileges.go": "6d5dc165873fa66caee8cbd6938de17798ba19314233c7be11c8388c8bd492f8",
+    "pkg/parser/parser.y": "a05a5f3719fc58f9fbc01eb412121f3fc5bfbcea170d282bd33afe2c3f40e390"
+  },
+  "external_log_hashes": {
+    "lint.log": "11b7bbdbfd603628c8cbe48fb2dbe3a8c75f404191027615c0ebce5862c400d4",
+    "before.log": "7ddc6ea97647e4a0c32c56297dea6bba17304b0ad02f6f820840df94a3c7645c",
+    "before-sem-wire.log": "3ce0146aa10869a37e0e17fe92dff1086aff1e5a619d5ce2a0a73acfe5099d03",
+    "before-wire.json": "8e3954fe8db6e47a9c3d96c9222a8765919ac05aee1d9d5aec05fea5f09b6a7e",
+    "parser-before.log": "5b7757ffa6b021437404c4bc7650065de5792ece2ec0308c47d3baa4a400e7b0",
+    "all-targets.log": "35b61ee4e227cf178cfb31ab50de392da0d0b33d306d2df6b75a7a817ba7c5ca",
+    "before-sem-wire-final.log": "24879afad216437e02e4e17bdf2fdb6c4674ca6dc21b851fcb5bb2732118ab45",
+    "after-tests.log": "18231f15503f2642c4ffbca59ace8c75c9d11a661e28912fbc4d983195aed0bb",
+    "before-wire.log": "8e3954fe8db6e47a9c3d96c9222a8765919ac05aee1d9d5aec05fea5f09b6a7e",
+    "before-wire-server.log": "2b4a0277322610dd919fad46db1493b76c1f542060678e3f89de303554cd4374",
+    "before-tests.log": "ac828fc9c6d26f05cfce222e775969bf20573c104378e882d5cc91ce66c3bc93",
+    "lint-final.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "final-tests.log": "df346ea8b315fd517592471274f7e13de67cda140e7d801f45ed6a6001ec55f4",
+    "before-sem-wire.json": "24879afad216437e02e4e17bdf2fdb6c4674ca6dc21b851fcb5bb2732118ab45",
+    "before-sem-wire-server.log": "5aae16665593c65b42c0108b5abf01d9de993b6e945810f22f9d4b6d8c82d49f"
+  }
+}

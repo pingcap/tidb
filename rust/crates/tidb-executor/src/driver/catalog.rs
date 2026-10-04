@@ -768,8 +768,8 @@ pub struct SequenceDef {
     /// The name as written, for `SHOW CREATE SEQUENCE` and `SHOW TABLES`.
     pub name: String,
     /// Go `model.SequenceInfo.Comment`, retained for sequence metadata and
-    /// appended to `SHOW CREATE SEQUENCE` when non-empty. The separate
-    /// information-schema sequence reader remains outside this catalog seam.
+    /// appended to `SHOW CREATE SEQUENCE` when non-empty and exposed through
+    /// the shared information-schema sequence reader.
     pub comment: String,
     /// The value source. See [`crate::sequence`].
     pub allocator: crate::sequence::SequenceAllocator,

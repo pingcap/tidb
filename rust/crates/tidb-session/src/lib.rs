@@ -1486,6 +1486,7 @@ impl Session {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_secs() as i64);
+        let redact = self.sem_hides_cluster_metadata();
         Ok(servers
             .into_iter()
             .map(|info| {
@@ -1500,32 +1501,45 @@ impl Session {
                 };
                 vec![
                     text(&info.server_type),
-                    text(&info.address),
-                    text(&info.status_address),
+                    if redact {
+                        text(&info.server_id.to_string())
+                    } else {
+                        text(&info.address)
+                    },
+                    if redact {
+                        Datum::Null
+                    } else {
+                        text(&info.status_address)
+                    },
                     text(&info.version),
                     text(&info.git_hash),
-                    datetime_datum(start),
-                    text(&uptime),
+                    if redact {
+                        Datum::Null
+                    } else {
+                        datetime_datum(start)
+                    },
+                    if redact { Datum::Null } else { text(&uptime) },
                     Datum::UInt(info.server_id),
                 ]
             })
             .collect())
     }
 
-    /// Go's cluster tables fill `INSTANCE` with `ip:port` of each server
-    /// (`pkg/executor/pkg/cluster` instance formatting). Empty when the
-    /// server-info syncer has not published this node's identity yet.
+    /// Go infoschema.GetInstanceAddr uses local status identity. This does not
+    /// discover peers: loss of etcd cannot relabel or hide local process rows.
     pub(crate) fn cluster_instance_address(&self) -> String {
         let Some(syncer) = self.server_info_syncer.as_ref() else {
             return String::new();
         };
-        let Ok(all) = syncer.all_server_info() else {
-            return String::new();
-        };
-        all.values()
-            .next()
-            .map(|info| format!("{}:{}", info.static_info.ip, info.static_info.port))
-            .unwrap_or_default()
+        let info = syncer.local_server_info();
+        if self.sem_hides_cluster_metadata() {
+            info.static_info.id.clone()
+        } else {
+            tidb_domain::serverinfo_syncer::join_host_port(
+                &info.static_info.ip,
+                info.static_info.status_port,
+            )
+        }
     }
 
     /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
@@ -1548,6 +1562,7 @@ impl Session {
         let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
         let mut ids: Vec<&String> = all.keys().collect();
         ids.sort();
+        let redact = self.sem_hides_cluster_metadata();
         Ok(ids
             .into_iter()
             .map(|id| {
@@ -1555,7 +1570,11 @@ impl Session {
                 let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
                 vec![
                     text(&info.static_info.id),
-                    text(&info.static_info.ip),
+                    if redact {
+                        Datum::Null
+                    } else {
+                        text(&info.static_info.ip)
+                    },
                     Datum::Int(info.static_info.port as i64),
                     Datum::Int(info.static_info.status_port as i64),
                     text(&info.static_info.lease),

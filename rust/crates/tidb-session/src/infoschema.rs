@@ -20,20 +20,11 @@
 //! so the column lists must match exactly -- a `SELECT *` that returns the
 //! wrong arity breaks a client that reads by position.
 //!
-//! Every column list and value below was CAPTURED from a running TiDB by
-//! querying the table and printing the rows, not transcribed from the Go
-//! source: several values (`NOT_SHARDED(PK_IS_HANDLE)`, the per-type
-//! `CHARACTER_OCTET_LENGTH`, `NUMERIC_PRECISION` 19 for bigint) are computed
-//! in ways that reading the table definitions would not reveal.
-//!
-//! NOT MODELLED (documented): `CREATE_TIME` is NULL rather than a fabricated
-//! timestamp; the other `information_schema` tables; and the
-//! contents of `mysql`, which is a real schema OBJECT in the
-//! catalog (see `Catalog::default`) holding none of its 61 bootstrap tables,
-//! so `SCHEMATA` lists it as TiDB does while `TABLES` reports it empty and
-//! naming one of its tables refuses with 1146. The `performance_schema`,
-//! `sys` and `metrics_schema` databases are absent entirely; their contents
-//! are separate tiers.
+//! Column definitions live in `tidb_executor::infoschema_meta`. Catalog-backed
+//! readers below share the statement's schema and privilege snapshot. Session
+//! dispatch composes process-owned providers for runtime tables. A declared
+//! virtual table does not imply that its live provider is implemented; remaining
+//! provider gaps are tracked in the structural parity register.
 
 use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
@@ -339,7 +330,7 @@ pub fn table_rows(
         return Some(plugins_rows());
     }
     if name.eq_ignore_ascii_case("SEQUENCES") {
-        return Some(sequences_rows());
+        return Some(sequences_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("RUNAWAY_WATCHES") {
         return Some(runaway_watches_rows());
@@ -2935,8 +2926,28 @@ fn plugins_rows() -> Vec<Vec<Datum>> {
     Vec::new()
 }
 
-fn sequences_rows() -> Vec<Vec<Datum>> {
-    Vec::new()
+/// Go setDataFromSequences reads the schema definition, never allocator state.
+fn sequences_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    visible_tables(catalog, visibility, ANY_PRIV)
+        .into_iter()
+        .filter_map(|(schema, name)| {
+            let sequence = catalog.sequence_in(&schema, &name)?;
+            let info = sequence.allocator.info();
+            Some(vec![
+                text(CATALOG),
+                text(&schema),
+                text(&sequence.name),
+                Datum::Int(i64::from(info.cache)),
+                Datum::Int(info.cache_value),
+                Datum::Int(i64::from(info.cycle)),
+                Datum::Int(info.increment),
+                Datum::Int(info.max_value),
+                Datum::Int(info.min_value),
+                Datum::Int(info.start),
+                text(&sequence.comment),
+            ])
+        })
+        .collect()
 }
 
 fn runaway_watches_rows() -> Vec<Vec<Datum>> {

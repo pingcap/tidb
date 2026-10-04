@@ -1,8 +1,8 @@
 # Structural execution batches for the remaining findings
 
-The [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
+The [metadata policy batch](metadata-policy-batch-validation.json) connects I01 live sequence metadata and I02 shared cluster redaction, and corrects I03 local instance ownership. I01/I02 remain partial; I03 remote fanout remains open. Other54 unresolved IDs retain earlier evidence.
 
-The current register has **57 unresolved findings: 37 open and 20 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
+The current register has **57 unresolved findings: 36 open and 21 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 
@@ -109,4 +109,4 @@ Integration dependencies: B02, B06.
 
 ## Current evidence boundary
 
-The T01/K03 table maintenance repairs six reproduced contracts in B02. It does not complete B02 or either parent finding. The other 55 unresolved findings retain their prior evidence. Exact commands and source identities belong in the linked repair receipt, not in a claim that the entire register was retested. The machine-readable map is [remaining-batches.json](remaining-batches.json); the status authority is [structural-findings.json](structural-findings.json).
+The current batch rechecks I01/I02/I03 only. Exact validation and source identities are in its receipt. It does not freshly reproduce the other54 unresolved findings or accept any whole package. The machine-readable map is [remaining-batches.json](remaining-batches.json); the status authority is [structural-findings.json](structural-findings.json).

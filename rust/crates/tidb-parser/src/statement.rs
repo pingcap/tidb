@@ -436,6 +436,10 @@ impl Parser {
                 || (self.is_kw_at(1, "IGNORE") && self.is_kw_at(2, "TABLE")))
         {
             self.parse_alter_table_statement()
+        } else if self.is_kw("ALTER") && self.is_kw_at(1, "SEQUENCE") {
+            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterSequence(
+                Box::new(self.parse_alter_sequence()?),
+            ))))
         } else if self.is_kw("ALTER") && self.is_kw_at(1, "INSTANCE") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterInstance(
                 Box::new(self.parse_alter_instance()?),
@@ -631,10 +635,6 @@ impl Parser {
         } else if self.is_kw("CREATE") && self.is_kw_at(1, "SEQUENCE") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateSequence(
                 Box::new(self.parse_create_sequence()?),
-            ))))
-        } else if self.is_kw("ALTER") && self.is_kw_at(1, "SEQUENCE") {
-            Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterSequence(
-                Box::new(self.parse_alter_sequence()?),
             ))))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "SEQUENCE") {
             Ok(Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::DropSequence(

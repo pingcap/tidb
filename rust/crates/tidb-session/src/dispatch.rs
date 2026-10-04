@@ -671,9 +671,8 @@ impl Session {
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
             } else if table_name.eq_ignore_ascii_case("CLUSTER_PROCESSLIST") {
-                // Go's cluster machinery fills the INSTANCE column with each
-                // server's `ip:port` (pkg/executor/cluster_table_test.go's
-                // instance format).
+                // Go AppendHostInfoToRows uses this process's status address
+                // or its DDL ID under SEM. Remote fanout remains separate.
                 let instance = self.cluster_instance_address();
                 self.process_list_table_rows()
                     .into_iter()

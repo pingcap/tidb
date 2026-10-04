@@ -1,6 +1,8 @@
 # Structural parity audit: current evidence
 
-The current register has **86 findings: 29 repaired and 57 unresolved (37 open, 20 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
+The current register has **86 findings: 29 repaired and 57 unresolved (36 open, 21 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
+
+The [metadata policy batch](metadata-policy-batch-validation.json) replaces stale sequence schema/rows, composes shared SEM visibility, and repairs local cluster instance identity. I01/I02 remain partial; I03 fanout remains open. See the [living plan](../../metadata-policy-batch-execplan.md).
 
 The [cluster topology batch](cluster-topology-validation.json) advances I02/O13/N03 together: seven live component retrievers, Domain zone balancing and joined refresh, live session policy, post-split request adjustment and canonical startup labels. All three remain partial; other54 unresolved IDs retain previous evidence. See the [living plan](../../cluster-topology-execplan.md) for remaining producers and validation limits.
 
@@ -13,9 +15,9 @@ The [tooling removal inventory](obsolete-tooling-removal-validation.json) record
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current topology plan](../../cluster-topology-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current metadata plan](../../metadata-policy-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](cluster-topology-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](metadata-policy-batch-validation.json): exact source/log identities and verification limits.
 
 Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `19a56ccda1e128218cd33c69709038219aced9bc` at this checkpoint.
 

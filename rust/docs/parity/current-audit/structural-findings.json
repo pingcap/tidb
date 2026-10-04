@@ -1,7 +1,7 @@
 {
   "date": "2026-10-04",
   "baseline": {
-    "tidb_integration": "d0f1c371150530fb7b5c37730456c5d56ad11e64",
+    "tidb_integration": "580d205b2fee771224d5750b85a0adf2b7856135",
     "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
     "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
@@ -11,8 +11,8 @@
     "tracked": 86,
     "unresolved": 57,
     "repaired": 29,
-    "open": 37,
-    "partial": 20
+    "open": 36,
+    "partial": 21
   },
   "findings": [
     {
@@ -296,30 +296,30 @@
     },
     {
       "id": "I01",
-      "status": "open",
+      "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "Dynamic virtual tables still use constant empty/default rows or unconditional captured errors. The compiled CLUSTER_CONFIG capture and synthetic store1 warning have been removed; reads now explicitly refuse unavailable live retrieval. **Earlier reproductions still open:** an existing sequence is absent from SEQUENCES; CLUSTER_LOG reports missing start time even with start/end/pattern predicates. Other affected providers are enumerated in the review receipt.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `infoschema.rs::sequences_rows`; removal receipt `rust/docs/cluster-fixture-removal-execplan.md`",
-      "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. CLUSTER_CONFIG still needs the complete fetchClusterConfig owner; safe refusal is not Go parity. Static column definitions/charset/metrics descriptions are not inherently wrong.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Retained SEQUENCES remains empty for a created sequence and CLUSTER_LOG ignores supplied bounds; CLUSTER_CONFIG now refuses. Missing live retrievers remain. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**Partially repaired:** SEQUENCES now exposes Go’s eleven-column schema and current catalog definitions, including name casing, cache/cycle/options and comments, without consuming allocator values. The existing typed ALTER SEQUENCE parser now precedes the generic ALTER fallback, restoring definition updates. CREATE/ALTER/DROP and joined queries use the shared catalog; any table privilege and active roles govern visibility. The obsolete thirteen-column schema and constant empty reader are removed. Other dynamic providers still use empty/default rows or captured errors: CLUSTER_CONFIG safely refuses unavailable live retrieval, and CLUSTER_LOG still ignores supplied bounds. Sequence repair does not close the other provider owners.",
+      "rust_evidence": "`rust/crates/tidb-session/src/infoschema.rs::sequences_rows`; `rust/crates/tidb-executor/src/driver/infoschema_meta.rs::SEQUENCES_COLUMNS`; `tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; [validation](metadata-policy-batch-validation.json); `tidb-parser/src/statement.rs`",
+      "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. CLUSTER_CONFIG still needs the complete fetchClusterConfig owner; safe refusal is not Go parity. Static column definitions/charset/metrics descriptions are not inherently wrong. SEQUENCES follows pkg/infoschema/tables.go::tableSequencesCols and pkg/executor/infoschema_reader.go::setDataFromSequences.",
+      "review_basis": "Cloud metadata batch from 580d205b2fee771224d5750b85a0adf2b7856135 against refreshed Go master93a01d31f6 and unchanged native19a56cc. Five grouped session regressions and real MySQL/unistore failures establish the repaired boundary. See metadata-policy-batch-validation.json for exact results and remaining obligations. Other54 unresolved IDs retain prior evidence."
     },
     {
       "id": "I02",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "**P2; partially repaired:** CLUSTER_INFO now composes live TiDB, PD, store, TiProxy, TiCDC, TSO and scheduling retrievers. PD membership and raw store metadata reuse the process client; HTTP discovery shares the existing internal TLS constructor. SQL retains retriever warnings on later errors, propagates failures, uses live server IDs, version formatting and loopback substitution. SEM redaction, complete mixed-cluster/HTTP validation and full package acceptance remain outstanding.",
-      "rust_evidence": "`tidb-domain/src/cluster_topology.rs`; `tidb-exec/src/cluster_discovery.rs`; `tidb-pd-client/src/client/mod.rs::all_store_metadata`; `tidb-session/src/lib.rs::cluster_info_table_rows`; `tidb-server/src/cluster_session_node/boot.rs`; [validation](cluster-topology-validation.json)",
-      "go_owner": "`pkg/infoschema/tables.go::GetClusterServerInfo`, seven component retrievers and ResolveLoopBackAddr; `pkg/domain/infosync/info.go` topology readers; `pkg/executor/infoschema_reader.go::dataForTiDBClusterInfo`. Complete SEM rendering and source/package obligations remain required.",
-      "review_basis": "Cloud topology batch from ac241f4b3a49f13970893256fa56a188fa304e74 against freshly fetched Go 93a01d31f6 and unchanged native19a56cc. Existing SQL metadata regression fails before the change. See cluster-topology-validation.json for exact grouped checks and limitations; other54 unresolved IDs retain earlier evidence."
+      "finding": "**P2; partially repaired:** CLUSTER_INFO now composes live TiDB, PD, store, TiProxy, TiCDC, TSO and scheduling retrievers. PD membership and raw store metadata reuse the process client; HTTP discovery shares the existing internal TLS constructor. SQL retains retriever warnings on later errors, propagates failures, uses live server IDs, version formatting and loopback substitution. Shared SEM rendering now replaces CLUSTER_INFO endpoints/timing with the numeric server ID and NULLs, hides TIDB_SERVERS_INFO IP, and uses active RESTRICTED_TABLES_ADMIN roles with Go nil-checker/internal/skip-grant behavior. Serial address resolution still lacks Go’s bounded worker structure; complete mixed-cluster/HTTP validation and full package acceptance remain outstanding.",
+      "rust_evidence": "`tidb-domain/src/cluster_topology.rs`; `tidb-exec/src/cluster_discovery.rs`; `tidb-pd-client/src/client/mod.rs::all_store_metadata`; `tidb-session/src/lib.rs::cluster_info_table_rows`; `tidb-server/src/cluster_session_node/boot.rs`; [validation](cluster-topology-validation.json); `tidb-session/src/identity.rs::sem_hides_cluster_metadata`; [metadata validation](metadata-policy-batch-validation.json)",
+      "go_owner": "`pkg/infoschema/tables.go::GetClusterServerInfo`, seven component retrievers and ResolveLoopBackAddr; `pkg/domain/infosync/info.go` topology readers; `pkg/executor/infoschema_reader.go::dataForTiDBClusterInfo`. SEM rendering follows dataForTiDBClusterInfo and setDataForServersInfo; bounded address-resolution and source/package obligations remain required.",
+      "review_basis": "Cloud metadata batch from 580d205b2fee771224d5750b85a0adf2b7856135 against refreshed Go master93a01d31f6 and unchanged native19a56cc. Five grouped session regressions and real MySQL/unistore failures establish the repaired boundary. See metadata-policy-batch-validation.json for exact results and remaining obligations. Other54 unresolved IDs retain prior evidence."
     },
     {
       "id": "I03",
       "status": "open",
       "group": "Runtime information-schema providers",
-      "finding": "CLUSTER_PROCESSLIST decorates only this process's rows with its address. Other listed cluster tables lack remote retrieval; table-name presence does not provide fanout.",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs:670`, `infoschema.rs:1034`; existing CLUSTER_STATEMENTS_SUMMARY_HISTORY test expects refusal",
+      "finding": "**Still open:** CLUSTER_PROCESSLIST still retrieves only local process rows. Their identity now correctly comes from local server info and the status port, with IPv6 formatting and textual DDL ID under SEM; arbitrary-peer selection, SQL-port decoration and swallowed discovery failure are removed. Other cluster tables still lack remote retrieval. This repairs local rendering, not the missing fanout owner.",
+      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; `lib.rs::cluster_instance_address`; [metadata validation](metadata-policy-batch-validation.json)",
       "go_owner": "`pkg/infoschema/cluster.go`, `pkg/executor/table_reader.go`, `pkg/store/copr/coprocessor.go::buildTiDBMemCopTasks`: discover and dispatch to peers or DDL owner, with cancellation and memory tracking. Multi-node fanout not exercised.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. CLUSTER_PROCESSLIST still decorates local process rows; no complete peer fanout task/retrieval lifecycle is composed. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud metadata batch from 580d205b2fee771224d5750b85a0adf2b7856135 against refreshed Go master93a01d31f6 and unchanged native19a56cc. Five grouped session regressions and real MySQL/unistore failures establish the repaired boundary. See metadata-policy-batch-validation.json for exact results and remaining obligations. Other54 unresolved IDs retain prior evidence."
     },
     {
       "id": "T01",
@@ -559,7 +559,7 @@
       "id": "M05",
       "status": "open",
       "group": "TiFlash and MPP",
-      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01\u2013F03.",
+      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01–F03.",
       "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::watch_disaggregated_tiflash`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
       "go_owner": "`pkg/util/tiflashcompute`, startup topology initialization and `pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHash`: integrate configured topology discovery, fixed-pool cache, recovery and dispatch selection with the complete MPP owner. Do not add unsupported Go provider modes.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Disaggregated settings still have no composed compute topology/cache/dispatch consumer; the live scan selects ordinary PD stores. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."

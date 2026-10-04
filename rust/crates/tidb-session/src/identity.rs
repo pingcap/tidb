@@ -287,6 +287,14 @@ impl Session {
         }
     }
 
+    /// Go cluster metadata redacts even with a nil privilege checker. Active
+    /// roles are evaluated at retrieval, so SET ROLE affects existing sessions.
+    pub(crate) fn sem_hides_cluster_metadata(&self) -> bool {
+        tidb_util::sem_compat::is_enabled()
+            && (self.privileges.is_none()
+                || !self.has_dynamic_privilege("RESTRICTED_TABLES_ADMIN", false))
+    }
+
     pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
         !self.privilege_checks_bypassed()
             && tidb_util::sem_compat::is_enabled()
