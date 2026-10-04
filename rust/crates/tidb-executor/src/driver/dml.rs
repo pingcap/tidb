@@ -24,8 +24,11 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 
 mod correlated;
 mod defaults;
+pub(crate) mod delete_record;
 pub(crate) mod update_record;
 
+use delete_record::DeleteRecords;
+use tidb_planner::physical::FkTriggerNode;
 use update_record::{UpdateRecords, UpdateRowId};
 
 use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
@@ -148,11 +151,39 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
-    let physical_source = match physical_plan {
-        Some(plan) => dml_select_plan_mut(plan, "Insert")?,
-        None => None,
+    let (physical_source, fk_triggers) = dml_execution_parts(physical_plan, "Insert")?;
+    run_insert_with_physical(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        physical_source,
+        fk_triggers,
+        runtime,
+    )
+}
+
+fn dml_execution_parts<'a>(
+    plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
+    operator: &str,
+) -> Result<
+    (
+        Option<&'a mut tidb_planner::physical::PhysicalPlan>,
+        &'a [FkTriggerNode],
+    ),
+    DriverError,
+> {
+    let Some(tidb_planner::physical::PhysicalPlan::Dml(root)) = plan else {
+        return Err(DriverError::unsupported(
+            "DML execution has no physical root",
+        ));
     };
-    run_insert_with_physical(insert, catalog, current_db, ctx, physical_source, runtime)
+    if root.go_operator != operator {
+        return Err(DriverError::unsupported(
+            "DML execution received the wrong physical root",
+        ));
+    }
+    Ok((root.select_plan.as_deref_mut(), root.fk_triggers.as_slice()))
 }
 
 /// Builds and prepares the same DML plan for execution and EXPLAIN.
@@ -324,12 +355,12 @@ fn physical_dml_plan_with_cache_mode(
 
     let base = root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
     // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
-    let mut fk_triggers = fk_specs
-        .iter()
-        .flat_map(|spec| {
-            fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, spec, &plan_ids)
-        })
-        .collect::<Vec<_>>();
+    let mut fk_triggers = Vec::new();
+    for spec in fk_specs {
+        fk_triggers.extend(fk_trigger_plan::build_fk_triggers(
+            catalog, ctx, operator, spec, &plan_ids,
+        )?);
+    }
     // Go flattens all checks before all cascades, preserving table order.
     fk_triggers.sort_by_key(|node| node.operator == "Foreign_Key_Cascade");
     let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
@@ -570,6 +601,7 @@ fn run_insert_with_physical(
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     if insert.replace && !insert.on_duplicate.is_empty() {
@@ -1176,25 +1208,6 @@ fn run_insert_with_physical(
             }
         }
     }
-    // Go's `FKCheckExec` sits between the row build and the write, which is
-    // why the table's own borrow is released for it: the check reads the
-    // PARENT tables, which the statement never named.
-    let fk_verdicts = if ctx.foreign_key_checks() && insert.on_duplicate.is_empty() {
-        crate::foreign_key::check_child_rows(
-            catalog,
-            &database,
-            &table_name,
-            &new_rows,
-            &ctx.session_zone(),
-        )?
-    } else {
-        vec![None; new_rows.len()]
-    };
-    if !insert.ignore {
-        if let Some(error) = fk_verdicts.iter().flatten().next() {
-            return Err(error.clone());
-        }
-    }
     // The table is re-borrowed per use rather than held across the loop,
     // because REPLACE's row removal runs the PARENT-side referential
     // operators, and those write the DEPENDENT tables the statement never
@@ -1245,16 +1258,10 @@ fn run_insert_with_physical(
             false
         };
     inserted = 0;
-    let mut updates = UpdateRecords::default();
+    let mut updates = UpdateRecords::new(fk_triggers);
+    let mut removals = DeleteRecords::new(fk_triggers);
+    let mut inserted_rows = Vec::new();
     for (position, row) in new_rows.iter().enumerate() {
-        // Go's `FKCheckExec` runs per row, before the row is added, and
-        // under `INSERT IGNORE` its violation is a warning and a skip rather
-        // than a statement error.
-        if let Some(error) = &fk_verdicts[position] {
-            let warning = error.clone().to_mysql_error();
-            ctx.append_warning_parts(warning.code, &warning.message);
-            continue;
-        }
         // Go's partition-qualified INSERT target is a table wrapper, so the
         // completed candidate is routed through the selected partition set
         // before duplicate-key resolution.  This prevents a row for p0 from
@@ -1283,15 +1290,6 @@ fn run_insert_with_physical(
         };
         if !conflicts.is_empty() {
             if insert.replace {
-                // Go's REPLACE removes the conflicting rows and adds the new
-                // one inside ONE transaction, so a failure at addRecord -- a
-                // violated CHECK (3819) foremost -- rolls the statement back
-                // and the conflicting rows survive. This harness commits row
-                // state as it goes, so the add-time validation runs BEFORE
-                // any deletion to the same observable end.
-                target(catalog, &database, &table_name)
-                    .validate_check_constraints(row, ctx)
-                    .map_err(kv_write_error)?;
                 // Go `InsertValues.removeRow` (`insert_common.go`): a
                 // conflicting row IDENTICAL to the one being written is left
                 // in place -- not deleted and not rewritten -- and counts
@@ -1310,32 +1308,15 @@ fn run_insert_with_physical(
                         unchanged = true;
                         break;
                     }
-                    // Go `removeRow` ends in `onRemoveRowForFK`, so the row
-                    // REPLACE withdraws is a PARENT-side change exactly like
-                    // a DELETE's: a dependent that restricts makes the whole
-                    // statement 1451, and one that cascades follows it. Run
-                    // BEFORE the removal, so a restricted REPLACE leaves the
-                    // parent where it was rather than half-applied.
-                    if let (true, Some(existing)) = (ctx.foreign_key_checks(), &existing) {
-                        let changes = [crate::foreign_key::ParentChange::Delete(existing)];
-                        crate::foreign_key::cascade_parent_changes(
-                            catalog,
-                            &database,
-                            &table_name,
-                            &changes,
-                            ctx,
-                        )?;
-                    }
-                    // Otherwise the conflicting row goes, and the affected
-                    // count is one per deleted row plus one for the inserted
-                    // row.
-                    target(catalog, &database, &table_name)
-                        .delete_row_with_old_context(
-                            handle,
-                            existing.as_deref().expect("unchanged rows continued above"),
-                            ctx,
-                        )
-                        .map_err(|e| kv_read_error("row delete failed", e))?;
+                    removals.write(
+                        catalog,
+                        &database,
+                        &table_name,
+                        &UpdateRowId::Kv(handle.clone()),
+                        existing.as_deref().expect("conflicting row exists"),
+                        insert.ignore,
+                        ctx,
+                    )?;
                     inserted += 1;
                 }
                 if unchanged {
@@ -1364,17 +1345,19 @@ fn run_insert_with_physical(
                 continue;
             }
         }
-        // ODKU checks the row actually written. Its rejected insert candidate
-        // must not fail the FK check before duplicate resolution.
-        if ctx.foreign_key_checks() && !insert.on_duplicate.is_empty() {
+        // IGNORE checks this candidate before writing; ordinary INSERT
+        // collects only accepted rows and checks the final statement buffer.
+        // ODKU candidates redirected to UPDATE have already continued above.
+        if insert.ignore {
             if let Err(error) = crate::foreign_key::require_child_rows(
                 catalog,
+                fk_triggers,
                 &database,
                 &table_name,
                 std::slice::from_ref(row),
                 &ctx.session_zone(),
             ) {
-                if insert.ignore && matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
+                if matches!(error, DriverError::ForeignKeyNoReferencedRow { .. }) {
                     let warning = error.to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
                     continue;
@@ -1430,7 +1413,14 @@ fn run_insert_with_physical(
             )
         };
         match insert_result {
-            Ok(_) => inserted += 1,
+            Ok(_) => {
+                inserted += 1;
+                if !insert.ignore
+                    && crate::foreign_key::has_triggers(fk_triggers, &database, &table_name)
+                {
+                    inserted_rows.push(position);
+                }
+            }
             Err(error) => {
                 let rendered = kv_write_error(error);
                 // Under IGNORE a skipped row counts in NEITHER the stored
@@ -1441,7 +1431,22 @@ fn run_insert_with_physical(
             }
         }
     }
+    if !inserted_rows.is_empty() {
+        let written: Vec<_> = inserted_rows
+            .into_iter()
+            .map(|index| new_rows[index].clone())
+            .collect();
+        crate::foreign_key::require_child_rows(
+            catalog,
+            fk_triggers,
+            &database,
+            &table_name,
+            &written,
+            &ctx.session_zone(),
+        )?;
+    }
     updates.finish(catalog, ctx)?;
+    removals.finish(catalog, ctx)?;
     Ok((inserted, first_allocated))
 }
 
@@ -1554,164 +1559,6 @@ pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableErro
             format!("{operation}: {other:?}").into(),
         )),
     }
-}
-
-/// Orders candidate rows the way a DML statement's own `ORDER BY` does, and
-/// reports the row cap its `LIMIT` sets.
-///
-/// Go plans `UPDATE`/`DELETE ... ORDER BY ... LIMIT n` as a sort and a limit
-/// over the rows to modify, so the cap counts rows actually MODIFIED, not
-/// rows examined -- which is why the limit is applied by the caller as it
-/// modifies rather than by truncating this list.
-pub(crate) fn order_rows_for_dml<H>(
-    rows: &mut [(H, Vec<Datum>)],
-    order_by: &[tidb_ast::OrderItem],
-    field_types: &[FieldType],
-    resolver: &impl tidb_expr::rewriter::ColumnResolver,
-    column_names: &[String],
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    if order_by.is_empty() {
-        return Ok(());
-    }
-    let mut items = Vec::with_capacity(order_by.len());
-    for item in order_by {
-        // A bare positive integer literal is a positional reference to the
-        // table's own column at that 1-based position, NOT a constant —
-        // confirmed via `zz_dump_parity_test.go`
-        // (`TestZZDumpParityDMLPositionalOrderBy`): `UPDATE t SET a = a +
-        // 100 ORDER BY 2 LIMIT 1` on `t(a, b)` picked the row with the
-        // smallest `b`, i.e. `2` resolved to column `b`, exactly like
-        // `SELECT`'s positional `ORDER BY`/`GROUP BY` (see
-        // `tidb_exec::order::positional`). There is no select list here, so
-        // the position indexes the table's declared columns instead.
-        let resolved_expr = match dml_order_by_position(&item.expr)? {
-            Some(pos) => {
-                let name = column_names
-                    .get(pos)
-                    .ok_or(DriverError::unsupported("ORDER BY position out of range"))?;
-                tidb_ast::Expr::Column(vec![name.clone()])
-            }
-            None => item.expr.clone(),
-        };
-        let expr = rewrite_expr_resolved(&resolved_expr, resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        items.push((expr, item.desc));
-    }
-    // Each row's sort key is computed once, so the comparison itself cannot
-    // fail partway through and leave a partial order.
-    let mut keyed = Vec::with_capacity(rows.len());
-    for (index, (_, row)) in rows.iter().enumerate() {
-        let chunk = row_chunk(row, field_types)?;
-        let mut key = Vec::with_capacity(items.len());
-        for (expr, _) in &items {
-            key.push(
-                expr.eval(ctx, chunk.get_row(0))
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-            );
-        }
-        keyed.push((index, key));
-    }
-    let mut failure = None;
-    keyed.sort_by(|left, right| {
-        for (position, (_, desc)) in items.iter().enumerate() {
-            let ordering = match tidb_expr::compare_datums(&left.1[position], &right.1[position]) {
-                Ok(ordering) => ordering,
-                Err(error) => {
-                    failure = Some(error);
-                    std::cmp::Ordering::Equal
-                }
-            };
-            if ordering != std::cmp::Ordering::Equal {
-                return if *desc { ordering.reverse() } else { ordering };
-            }
-        }
-        std::cmp::Ordering::Equal
-    });
-    if let Some(error) = failure {
-        return Err(DriverError::Exec(ExecError::Eval(error)));
-    }
-    let order: Vec<usize> = keyed.into_iter().map(|(index, _)| index).collect();
-    apply_permutation(rows, &order);
-    Ok(())
-}
-
-/// If `expr` is a positive integer literal `N` (or the boolean literals
-/// `TRUE`/`FALSE`, treated as `1`/`0`), returns its 0-based column index
-/// (`N-1`); any other expression returns `None`; position `0` is an error.
-/// Mirrors `tidb_exec::order::positional`'s SELECT-list version, but for
-/// `UPDATE`/`DELETE ... ORDER BY`, which has no select list to index — see
-/// `order_rows_for_dml`.
-pub(crate) fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usize>, DriverError> {
-    if let Some((_, index)) = positional_field_index(expr) {
-        return index.map(Some).map_err(|why| match why {
-            PositionalError::Malformed => DriverError::unsupported("ORDER BY position"),
-            PositionalError::Zero => DriverError::unsupported("ORDER BY position 0"),
-        });
-    }
-    // `ORDER BY TRUE` reaches the DML tier as a boolean literal rather than
-    // digits, and MySQL still reads it as position 1.
-    match expr {
-        tidb_ast::Expr::Bool(b) => usize::from(*b)
-            .checked_sub(1)
-            .ok_or(DriverError::unsupported("ORDER BY position 0"))
-            .map(Some),
-        _ => Ok(None),
-    }
-}
-
-enum PositionalError {
-    Malformed,
-    Zero,
-}
-
-fn positional_field_index(expr: &tidb_ast::Expr) -> Option<(&str, Result<usize, PositionalError>)> {
-    let text = match expr {
-        tidb_ast::Expr::Int(text) => text.as_str(),
-        tidb_ast::Expr::Bool(true) => "1",
-        tidb_ast::Expr::Bool(false) => "0",
-        _ => return None,
-    };
-    let index = match text.parse::<usize>() {
-        Err(_) => Err(PositionalError::Malformed),
-        Ok(0) => Err(PositionalError::Zero),
-        Ok(position) => Ok(position - 1),
-    };
-    Some((text, index))
-}
-
-/// Reorders `rows` so that position `i` holds what was at `order[i]`.
-pub(crate) fn apply_permutation<T>(rows: &mut [T], order: &[usize]) {
-    let mut done = vec![false; rows.len()];
-    for start in 0..rows.len() {
-        if done[start] || order[start] == start {
-            done[start] = true;
-            continue;
-        }
-        let mut current = start;
-        loop {
-            let next = order[current];
-            done[current] = true;
-            if next == start {
-                break;
-            }
-            rows.swap(current, next);
-            current = next;
-        }
-    }
-}
-
-/// The row cap a DML `LIMIT` sets, which Go requires to be a constant.
-pub(crate) fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u64>, DriverError> {
-    let Some(limit) = limit else {
-        return Ok(None);
-    };
-    if limit.offset.is_some() {
-        return Err(DriverError::unsupported(
-            "an UPDATE/DELETE LIMIT takes no offset",
-        ));
-    }
-    Ok(Some(eval_limit_bound(&limit.count)?))
 }
 
 #[derive(Clone, Debug)]
@@ -1845,7 +1692,7 @@ fn apply_on_duplicate(
     target_table_name: &str,
     ignore: bool,
     null_level: crate::bad_null::NullLevel,
-    updates: &mut UpdateRecords,
+    updates: &mut UpdateRecords<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, target_table_name) else {
@@ -2185,7 +2032,7 @@ fn substitute_values_references(
 ///
 /// A changed primary-key handle moves the row and rewrites its secondary-index
 /// entries. Single-table `ORDER BY`/`LIMIT` is supported (see
-/// `order_rows_for_dml`, `dml_row_limit`).
+/// the retained physical read child).
 pub fn run_update_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -2248,10 +2095,10 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let source = update_source_query(update);
-    let mut fresh = (physical_plan.is_none()
-        && matches!(update.kind, tidb_ast::UpdateKind::Single(_)))
-        .then(|| {
-            physical_dml_plan(
+    let mut fresh = physical_plan
+        .is_none()
+        .then(|| match &update.kind {
+            tidb_ast::UpdateKind::Single(_) => physical_dml_plan(
                 "Update",
                 source.as_ref(),
                 Some(update),
@@ -2259,7 +2106,13 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
                 current_db,
                 ctx,
                 &fk_spec_for_update(update, current_db)?,
-            )
+            ),
+            tidb_ast::UpdateKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(
+                super::multi_dml::MultiDmlRef::Update(update),
+                catalog,
+                current_db,
+                ctx,
+            ),
         })
         .transpose()?;
     let mut physical_plan = physical_plan.or(fresh.as_mut());
@@ -2267,7 +2120,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
-    let (physical_source, update_expressions) = match physical_plan {
+    let (physical_source, update_expressions, fk_triggers) = match physical_plan {
         Some(plan) => {
             let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
                 return Err(DriverError::unsupported(
@@ -2283,9 +2136,10 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             (
                 root.select_plan.as_deref_mut(),
                 Some(root.update_expressions.as_slice()),
+                root.fk_triggers.as_slice(),
             )
         }
-        None => (None, None),
+        None => (None, None, &[][..]),
     };
     run_update_with_physical(
         update,
@@ -2294,6 +2148,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         ctx,
         physical_source,
         update_expressions,
+        fk_triggers,
         runtime,
     )
 }
@@ -2963,6 +2818,7 @@ fn run_update_with_physical(
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
     planned_update_expressions: Option<&[Option<Expression>]>,
+    fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
@@ -2982,6 +2838,7 @@ fn run_update_with_physical(
                 current_db,
                 ctx,
                 physical_source,
+                fk_triggers,
                 runtime,
             );
         }
@@ -2999,6 +2856,15 @@ fn run_update_with_physical(
         });
     }
     let physical_kv_source = matches!(table, TableEntry::Kv(_));
+    match table {
+        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        TableEntry::Sequence(_) => {
+            return Err(DriverError::unsupported(
+                "UPDATE of a sequence is not a statement TiDB accepts",
+            ))
+        }
+        _ => {}
+    }
     let mut column_list = table.column_list();
     let column_meta = column_metadata(table);
     // Go gives a write's `DataSource` the same schema a read gets, so
@@ -3086,16 +2952,6 @@ fn run_update_with_physical(
         assignments.push((assignment_index, offset, assignment.value.clone()));
     }
     let dml_scope = dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx);
-    let predicate = match &update.where_clause {
-        Some(expr) => Some(DmlExpression::build(
-            expr,
-            dml_scope.clone(),
-            catalog,
-            current_db,
-            ctx,
-        )?),
-        None => None,
-    };
     let default_row = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -3103,9 +2959,7 @@ fn run_update_with_physical(
     };
     let mut set_exprs = Vec::with_capacity(assignments.len());
     for (assignment_index, offset, value) in &assignments {
-        let planned = physical_kv_source
-            .then(|| planned_update_expressions)
-            .flatten()
+        let planned = planned_update_expressions
             .and_then(|expressions| expressions.get(*assignment_index))
             .and_then(Option::as_ref);
         let expression = if let Some(planned) = planned {
@@ -3173,67 +3027,6 @@ fn run_update_with_physical(
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
-    let row_limit = dml_row_limit(&update.limit)?;
-    // Go `buildLimit` (`pkg/planner/core/logical_plan_builder.go`): `LIMIT 0`
-    // replaces the whole read subtree with `LogicalTableDual{RowCount: 0}` at
-    // logical build, before any access path exists -- the write reads NOTHING
-    // and its plan is `Update -> TableDual`, never a capped scan.
-    if !physical_kv_source && row_limit == Some(0) {
-        // Go builds the whole logical plan before `buildLimit` swaps the read
-        // subtree for a `TableDual`: an unupdatable target, an unknown
-        // partition, or an unresolvable `ORDER BY` column still errors under
-        // `LIMIT 0`.
-        match catalog.get_in(&database, &name) {
-            Some(TableEntry::View(_)) => {
-                return Err(DriverError::TableNotUpdatable(name.clone()));
-            }
-            Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::unsupported(
-                    "UPDATE of a sequence is not a statement TiDB accepts",
-                ));
-            }
-            Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
-                let Some(spec) = kv.partition() else {
-                    return Err(DriverError::UnknownPartition {
-                        partition: table_ref.partitions[0].clone(),
-                        table: name.clone(),
-                    });
-                };
-                crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
-                    .map_err(|partition| DriverError::UnknownPartition {
-                        partition,
-                        table: name.clone(),
-                    })?;
-            }
-            _ => {}
-        }
-        order_rows_for_dml(
-            &mut [] as &mut [(crate::kv_table::TableHandle, Vec<Datum>)],
-            &update.order_by,
-            &field_types,
-            &resolver,
-            &column_names,
-            ctx,
-        )?;
-        ctx.notify_before_executor_first_run();
-        ctx.set_message(format!(
-            "Rows matched: 0  Changed: 0  Warnings: {}",
-            ctx.warning_count()
-        ));
-        return Ok(0);
-    }
-    // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
-    // it does beneath Go's Update executor. Single-table matrix writes still
-    // keep their local expression path; joined writes use the shared child.
-    let predicate = if physical_kv_source { None } else { predicate };
-    enum SourceRows {
-        Mem(Vec<Vec<Datum>>),
-        Kv {
-            rows: PhysicalWriteRows,
-            partition_ids: Option<Vec<i64>>,
-        },
-    }
-
     // Finish the physical read before evaluating the predicate. The Apply's
     // inner query needs an immutable view of the complete statement snapshot,
     // including the target table itself, and no write is applied until every
@@ -3274,76 +3067,45 @@ fn run_update_with_physical(
         .flatten()
     });
     let mut physical_source = fast_point_source.as_mut().or(physical_source);
-    let source_rows = if physical_kv_source {
-        let partition_ids = match catalog.get_in(&database, &name) {
-            Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
-            Some(TableEntry::Kv(kv)) => {
-                let Some(spec) = kv.partition() else {
-                    return Err(DriverError::UnknownPartition {
-                        partition: table_ref.partitions[0].clone(),
-                        table: name.clone(),
-                    });
-                };
-                Some(
-                    crate::partition_pruning::ids_for_selected_partitions(
-                        spec,
-                        &table_ref.partitions,
-                    )
+    let partition_ids = match catalog.get_in(&database, &name) {
+        Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
+        Some(TableEntry::Kv(kv)) => {
+            let Some(spec) = kv.partition() else {
+                return Err(DriverError::UnknownPartition {
+                    partition: table_ref.partitions[0].clone(),
+                    table: name.clone(),
+                });
+            };
+            Some(
+                crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
                     .map_err(|partition| DriverError::UnknownPartition {
                         partition,
                         table: name.clone(),
                     })?,
-                )
-            }
-            _ => unreachable!("physical_kv_source was established above"),
-        };
-        let physical = physical_source
-            .as_deref_mut()
-            .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
-        SourceRows::Kv {
-            rows: execute_physical_write_rows(
-                physical,
-                catalog,
-                &database,
-                &name,
-                ctx,
-                runtime,
-                mem_quota::label::UPDATE,
-            )?,
-            partition_ids,
+            )
         }
-    } else {
-        let entry = catalog.get_in(&database, &name).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
-        })?;
-        match entry {
-            TableEntry::View(_) => {
-                return Err(DriverError::TableNotUpdatable(name.clone()));
-            }
-            TableEntry::Sequence(_) => {
-                return Err(DriverError::unsupported(
-                    "UPDATE of a sequence is not a statement TiDB accepts",
-                ));
-            }
-            TableEntry::Mem(mem) => {
-                ctx.notify_before_executor_first_run();
-                SourceRows::Mem(mem.rows.clone())
-            }
-            TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
-        }
+        _ => None,
     };
+    let physical = physical_source
+        .as_deref_mut()
+        .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
+    let source_rows = execute_physical_write_rows(
+        physical,
+        catalog,
+        &database,
+        &name,
+        ctx,
+        runtime,
+        mem_quota::label::UPDATE,
+    )?;
     let mut matched = 0u64;
     let mut touched = 0u64;
     let mut changed = 0u64;
     let mut rewrites = Vec::new();
-    let mut update_partitions = None;
-    let mut records = UpdateRecords::default();
+    let mut records = UpdateRecords::new(fk_triggers);
     let row_evaluator = UpdateRowEvaluator {
         field_types: &field_types,
         column_names: &column_names,
-        predicate: &predicate,
         set_exprs: &set_exprs,
         catalog,
         current_db,
@@ -3351,44 +3113,28 @@ fn run_update_with_physical(
         on_update_now: &on_update_now,
         extra_handle: extra_handle_slot.is_some(),
     };
-    match source_rows {
-        SourceRows::Mem(rows) => {
-            for (index, row) in rows.into_iter().enumerate() {
-                if row_limit.is_some_and(|cap| matched >= cap) {
-                    break;
-                }
-                if let Some(new_row) = row_evaluator.compute(&row, None, None, &mut matched)? {
-                    rewrites.push((UpdateRowId::Mem(index), row, new_row));
-                }
-            }
-        }
-        SourceRows::Kv {
-            rows,
-            partition_ids,
-        } => {
-            let accountant = ctx
-                .statement_memory()
-                .write_accountant(mem_quota::label::UPDATE);
-            update_partitions = partition_ids;
-            let PhysicalWriteRows {
-                rows,
-                field_types: physical_field_types,
-            } = rows;
-            for row in rows {
-                let computed = row_evaluator.compute(
-                    &row.stored,
-                    extra_handle_value(&row.handle),
-                    Some((&row.output, &physical_field_types)),
-                    &mut matched,
-                )?;
-                if let Some(new_row) = computed {
-                    accountant
-                        .account_row(&new_row)
-                        .map_err(DriverError::from)?;
-                    rewrites.push((UpdateRowId::Kv(row.handle), row.stored, new_row));
-                }
-            }
-        }
+    let accountant = ctx
+        .statement_memory()
+        .write_accountant(mem_quota::label::UPDATE);
+    let PhysicalWriteRows {
+        rows,
+        field_types: physical_field_types,
+    } = source_rows;
+    for row in rows {
+        let handle = match &row.id {
+            UpdateRowId::Kv(handle) => extra_handle_value(handle),
+            UpdateRowId::Mem(_) => None,
+        };
+        let new_row = row_evaluator.compute(
+            &row.stored,
+            handle,
+            Some((&row.output, &physical_field_types)),
+            &mut matched,
+        )?;
+        accountant
+            .account_row(&new_row)
+            .map_err(DriverError::from)?;
+        rewrites.push((row.id, row.stored, new_row));
     }
     for (row_index, (id, old_row, mut new_row)) in rewrites.into_iter().enumerate() {
         let outcome = records.write(
@@ -3398,7 +3144,7 @@ fn run_update_with_physical(
             &id,
             &old_row,
             &mut new_row,
-            update_partitions.as_deref(),
+            partition_ids.as_deref(),
             update.ignore,
             GeneratedWrite::Update { row_index },
             ctx,
@@ -3421,7 +3167,6 @@ fn run_update_with_physical(
 struct UpdateRowEvaluator<'a> {
     field_types: &'a [FieldType],
     column_names: &'a [String],
-    predicate: &'a Option<DmlExpression>,
     set_exprs: &'a [(usize, UpdateExpression)],
     catalog: &'a Catalog,
     current_db: &'a str,
@@ -3441,7 +3186,7 @@ impl UpdateRowEvaluator<'_> {
         handle: Option<i64>,
         physical_input: Option<(&[Datum], &[FieldType])>,
         matched: &mut u64,
-    ) -> Result<Option<Vec<Datum>>, DriverError> {
+    ) -> Result<Vec<Datum>, DriverError> {
         // `_tidb_rowid` is the record HANDLE, so it joins the row only for
         // the reading half of this statement. The row that gets STAGED is
         // still `row` -- Go's write composes its new row from the
@@ -3462,12 +3207,6 @@ impl UpdateRowEvaluator<'_> {
             .map(|(values, field_types)| row_chunk(values, field_types))
             .transpose()?;
         let physical_row = physical_chunk.as_ref().map(|chunk| chunk.get_row(0));
-        if let Some(predicate) = self.predicate {
-            let selected = predicate.eval(row, self.catalog, self.current_db, self.ctx)?;
-            if !datum_is_true(&selected) {
-                return Ok(None);
-            }
-        }
         // Matched rows include unchanged rows; the record owner separately
         // counts touched and affected rows.
         *matched += 1;
@@ -3504,7 +3243,7 @@ impl UpdateRowEvaluator<'_> {
         if self.extra_handle {
             new_row.truncate(new_row.len() - 1);
         }
-        Ok(Some(new_row))
+        Ok(new_row)
     }
 }
 
@@ -3513,18 +3252,13 @@ impl UpdateRowEvaluator<'_> {
 /// Go `executor.DeleteExec`: every row the `WHERE` selects is removed, and the
 /// affected-row count is simply that count.
 ///
-/// `DELETE IGNORE` runs as a plain `DELETE`: Go's `IGNORE` downgrades a
-/// per-row failure to a skipped row plus a warning, and the only per-row
-/// failure a `DELETE` can raise is a foreign-key restriction, which this
-/// engine does not model at all -- so with nothing to downgrade the two
-/// spellings really are one statement here. Captured from Go: without a
-/// referencing child row, `DELETE IGNORE` and `DELETE` remove the same rows
-/// and report the same count. Multi-table `DELETE` lives in `multi_dml`.
+/// `DELETE IGNORE` checks restrictions before each candidate row and
+/// downgrades violations to warnings; ordinary checks see the final buffer.
 ///
 /// `QUICK` is a parser-only storage hint in Go: neither its planner nor its
 /// executor reads `DeleteStmt.Quick`, so it has the same row/count behavior
 /// as plain `DELETE` here. Single-table `ORDER BY`/`LIMIT` is supported (see
-/// `order_rows_for_dml`, `dml_row_limit`). A `RETURNING` clause is parsed and
+/// the retained physical read child). A `RETURNING` clause is parsed and
 /// silently ignored, matching Go, where the planner and executor never read
 /// `DeleteStmt.Returning`.
 pub fn run_delete_on(
@@ -3604,12 +3338,10 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         }
     }
     let source = delete_source_query(delete);
-    // Multi-table DELETE retains its existing per-target execution path;
-    // it has no single-table SelectPlan or FK target specification.
-    let mut fresh = (physical_plan.is_none()
-        && matches!(delete.kind, tidb_ast::DeleteKind::Single(_)))
-        .then(|| {
-            physical_dml_plan(
+    let mut fresh = physical_plan
+        .is_none()
+        .then(|| match &delete.kind {
+            tidb_ast::DeleteKind::Single(_) => physical_dml_plan(
                 "Delete",
                 source.as_ref(),
                 None,
@@ -3617,7 +3349,13 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
                 current_db,
                 ctx,
                 &fk_spec_for_delete(delete, current_db)?,
-            )
+            ),
+            tidb_ast::DeleteKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(
+                super::multi_dml::MultiDmlRef::Delete(delete),
+                catalog,
+                current_db,
+                ctx,
+            ),
         })
         .transpose()?;
     let mut physical_plan = physical_plan.or(fresh.as_mut());
@@ -3625,11 +3363,16 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
-    let physical_source = match physical_plan {
-        Some(plan) => dml_select_plan_mut(plan, "Delete")?,
-        None => None,
-    };
-    run_delete_with_physical(delete, catalog, current_db, ctx, physical_source, runtime)
+    let (physical_source, fk_triggers) = dml_execution_parts(physical_plan, "Delete")?;
+    run_delete_with_physical(
+        delete,
+        catalog,
+        current_db,
+        ctx,
+        physical_source,
+        fk_triggers,
+        runtime,
+    )
 }
 
 pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_ast::QueryStmt> {
@@ -3652,6 +3395,7 @@ fn run_delete_with_physical(
     current_db: &str,
     ctx: &crate::StmtContext,
     mut physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
@@ -3669,33 +3413,12 @@ fn run_delete_with_physical(
                 current_db,
                 ctx,
                 physical_source,
+                fk_triggers,
                 runtime,
             );
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
-    let column_list = catalog
-        .get_in(&database, &name)
-        .ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
-        })?
-        .column_list();
-    // As in UPDATE: Go gives the write's `DataSource` the same schema a read
-    // gets, so `_tidb_rowid` resolves in a `DELETE`'s `WHERE` too. The row
-    // handed to the DELETE itself stays the stored one.
-    let mut column_list = column_list;
-    let extra_handle = statement_names_extra_handle(delete.where_clause.iter())
-        .then(|| {
-            catalog
-                .get_in(&database, &name)
-                .and_then(crate::driver::from::extra_handle_column)
-        })
-        .flatten()
-        .inspect(|column| column_list.push(column.clone()))
-        .is_some();
-    let column_list = column_list;
     if !table_ref.partitions.is_empty()
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
     {
@@ -3704,189 +3427,38 @@ fn run_delete_with_physical(
             table: name.clone(),
         });
     }
-    // As in UPDATE: `DELETE FROM u AS y WHERE y.id = 1` resolves and
-    // `WHERE u.id = 1` does not.
-    let resolver = TableResolver {
-        table_name: table_ref.alias.as_deref().unwrap_or(&name),
-        columns: &column_list,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        clause_message: "expression",
-    };
-    let predicate = match &delete.where_clause {
-        Some(expr) => Some(DmlExpression::build(
-            expr,
-            dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx),
-            catalog,
-            current_db,
-            ctx,
-        )?),
-        None => None,
-    };
-    let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
-    let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
-    let row_limit = dml_row_limit(&delete.limit)?;
-    let physical_kv_source = matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)));
-    // Go `buildLimit`'s zero short-circuit; see the `Update` twin above.
-    if !physical_kv_source && row_limit == Some(0) {
-        // As in UPDATE: Go resolves the whole plan before `buildLimit`'s zero
-        // short-circuit, so the target's writability, the partition list, and
-        // the `ORDER BY` columns are checked even when nothing is read.
-        match catalog.get_in(&database, &name) {
-            Some(TableEntry::View(_)) => {
-                return Err(DriverError::DeleteViewUnsupported(name.clone()));
-            }
-            Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
-            }
-            Some(TableEntry::Kv(kv)) if !table_ref.partitions.is_empty() => {
-                let Some(spec) = kv.partition() else {
-                    return Err(DriverError::UnknownPartition {
-                        partition: table_ref.partitions[0].clone(),
-                        table: name.clone(),
-                    });
-                };
-                crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
-                    .map_err(|partition| DriverError::UnknownPartition {
-                        partition,
-                        table: name.clone(),
-                    })?;
-            }
-            _ => {}
-        }
-        order_rows_for_dml(
-            &mut [] as &mut [(crate::kv_table::TableHandle, Vec<Datum>)],
-            &delete.order_by,
-            &field_types,
-            &resolver,
-            &column_names,
-            ctx,
-        )?;
-        ctx.notify_before_executor_first_run();
-        return Ok(0);
+    let physical = physical_source
+        .as_deref_mut()
+        .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
+    let mut rows = execute_physical_write_rows(
+        physical,
+        catalog,
+        &database,
+        &name,
+        ctx,
+        runtime,
+        mem_quota::label::DELETE,
+    )?
+    .rows;
+    // Memory-table identities are snapshot positions. Removing from the back
+    // preserves each remaining identity, independently of read-plan ordering.
+    if matches!(catalog.get_in(&database, &name), Some(TableEntry::Mem(_))) {
+        rows.sort_by(|left, right| right.id.cmp(&left.id));
     }
-    let predicate = if physical_kv_source { None } else { predicate };
-    enum SourceRows {
-        Mem(Vec<Vec<Datum>>),
-        Kv(PhysicalWriteRows),
-    }
-    let source_rows = if physical_kv_source {
-        let physical = physical_source
-            .as_deref_mut()
-            .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
-        SourceRows::Kv(execute_physical_write_rows(
-            physical,
+    let mut records = DeleteRecords::new(fk_triggers);
+    let mut deleted = 0;
+    for row in rows {
+        deleted += u64::from(records.write(
             catalog,
             &database,
             &name,
+            &row.id,
+            &row.stored,
+            delete.ignore,
             ctx,
-            runtime,
-            mem_quota::label::DELETE,
-        )?)
-    } else {
-        let entry = catalog.get_in(&database, &name).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
-        })?;
-        match entry {
-            TableEntry::View(_) => {
-                return Err(DriverError::DeleteViewUnsupported(name.clone()));
-            }
-            TableEntry::Sequence(_) => {
-                return Err(DriverError::DeleteSequenceUnsupported(name.clone()));
-            }
-            TableEntry::Mem(mem) => {
-                ctx.notify_before_executor_first_run();
-                SourceRows::Mem(mem.rows.clone())
-            }
-            TableEntry::Kv(_) => unreachable!("byte-backed tables use the physical child"),
-        }
-    };
-    let mut deleted = 0u64;
-    let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
-    match source_rows {
-        SourceRows::Mem(rows) => {
-            let mut kept = Vec::with_capacity(rows.len());
-            for row in rows {
-                if dml_row_is_selected(&row, &predicate, catalog, current_db, ctx)? {
-                    deleted += 1;
-                } else {
-                    kept.push(row);
-                }
-            }
-            let Some(TableEntry::Mem(mem)) = catalog.get_mut_in(&database, &name) else {
-                unreachable!("the delete source kind cannot change within one statement")
-            };
-            mem.rows = kept;
-        }
-        SourceRows::Kv(rows) => {
-            // Go `DeleteExec.deleteSingleTableByChunk`: the child's chunk is
-            // charged as it arrives in execute_physical_write_rows. The
-            // retained output/stored rows are already charged here.
-            // Selected first, deleted after: the parent-side cascade below
-            // needs the table released, because it writes the DEPENDENT
-            // tables the statement never named.
-            for row in rows.rows {
-                if dml_row_is_selected_with_handle(
-                    &row.stored,
-                    extra_handle
-                        .then(|| extra_handle_value(&row.handle))
-                        .flatten(),
-                    &predicate,
-                    catalog,
-                    current_db,
-                    ctx,
-                )? {
-                    doomed.push((row.handle, row.stored));
-                }
-            }
-        }
+        )?);
     }
-    if !doomed.is_empty() {
-        if ctx.foreign_key_checks() {
-            // Under IGNORE each row stands or falls alone, so the cascade
-            // runs per row and a restricted row is dropped from the
-            // statement with a warning instead of failing it.
-            if delete.ignore {
-                let mut surviving = Vec::with_capacity(doomed.len());
-                for (handle, row) in doomed {
-                    let changes = [crate::foreign_key::ParentChange::Delete(&row)];
-                    match crate::foreign_key::cascade_parent_changes(
-                        catalog, &database, &name, &changes, ctx,
-                    ) {
-                        Ok(()) => surviving.push((handle, row.clone())),
-                        Err(error) => {
-                            let warning = error.to_mysql_error();
-                            ctx.append_warning_parts(warning.code, &warning.message);
-                        }
-                    }
-                }
-                doomed = surviving;
-            } else {
-                let changes: Vec<crate::foreign_key::ParentChange<'_>> = doomed
-                    .iter()
-                    .map(|(_, row)| crate::foreign_key::ParentChange::Delete(row))
-                    .collect();
-                crate::foreign_key::cascade_parent_changes(
-                    catalog, &database, &name, &changes, ctx,
-                )?;
-            }
-        }
-        let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-            unreachable!("only a byte-backed table stages deletions")
-        };
-        let kv = std::sync::Arc::make_mut(kv);
-        for (handle, old_row) in &doomed {
-            // One read per deleted row: the fetch above already produced the
-            // old row its index entries are removed from (Go RemoveRecord).
-            kv.delete_row_with_old_context(handle, old_row, ctx)
-                .map_err(|e| kv_read_error("row delete failed", e))?;
-            deleted += 1;
-        }
-    }
+    records.finish(catalog, ctx)?;
     Ok(deleted)
 }
 
@@ -3902,7 +3474,7 @@ fn run_delete_with_physical(
 /// `HandleSourceExec` performs for a `SELECT`'s `Point_Get`, and it answers
 /// `None` for a key no record carries -- Go's point get that finds nothing.
 struct PhysicalWriteRow {
-    handle: crate::kv_table::TableHandle,
+    id: UpdateRowId,
     stored: Vec<Datum>,
     output: Vec<Datum>,
 }
@@ -3932,14 +3504,26 @@ fn execute_physical_write_rows(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
-        return Err(DriverError::unsupported(
-            "a physical write child does not read a byte-backed table",
-        ));
+    let table = catalog.get_in(database, name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))
+    })?;
+    let stored_width = match table {
+        TableEntry::Kv(kv) => kv.columns().len(),
+        _ => table.column_list().len(),
     };
-    let stored_width = table.columns.len();
-    let has_extra_handle =
-        table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
+    let has_extra_handle = match table {
+        TableEntry::Kv(table) => {
+            table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty()
+        }
+        TableEntry::Mem(_) => true,
+        _ => {
+            return Err(DriverError::unsupported(
+                "a physical write child is not a writable table",
+            ))
+        }
+    };
     let expected_width = stored_width + usize::from(has_extra_handle);
     let accountant = ctx.statement_memory().write_accountant(memory_label);
     let mut rows = Vec::new();
@@ -3955,42 +3539,63 @@ fn execute_physical_write_rows(
                     row.len()
                 )));
             }
-            let handle = if let Some(offset) = table.pk_handle_offset() {
-                match row.get(offset) {
-                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+            let id = match table {
+                TableEntry::Kv(table) => {
+                    UpdateRowId::Kv(if let Some(offset) = table.pk_handle_offset() {
+                        match row.get(offset) {
+                            Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                            Some(Datum::UInt(value)) => {
+                                crate::kv_table::TableHandle::Int(*value as i64)
+                            }
+                            _ => {
+                                return Err(DriverError::unsupported(
+                                    "a physical write child returned an invalid integer handle",
+                                ));
+                            }
+                        }
+                    } else if !table.common_handle_offsets().is_empty() {
+                        let values = table
+                            .common_handle_offsets()
+                            .iter()
+                            .map(|offset| row[*offset].clone())
+                            .collect::<Vec<_>>();
+                        table
+                            .common_handle_of_values(&values, &ctx.session_zone())
+                            .map_err(kv_write_error)?
+                    } else {
+                        match row.get(stored_width) {
+                            Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                            Some(Datum::UInt(value)) => {
+                                crate::kv_table::TableHandle::Int(*value as i64)
+                            }
+                            _ => {
+                                return Err(DriverError::unsupported(
+                                    "a physical write child returned no _tidb_rowid handle",
+                                ));
+                            }
+                        }
+                    })
+                }
+                TableEntry::Mem(_) => match row.get(stored_width) {
+                    Some(Datum::UInt(index)) => {
+                        UpdateRowId::Mem(usize::try_from(*index).map_err(|_| {
+                            DriverError::unsupported("invalid memory-table row position")
+                        })?)
+                    }
                     _ => {
                         return Err(DriverError::unsupported(
-                            "a physical write child returned an invalid integer handle",
-                        ));
+                            "a physical write child returned no memory-table row position",
+                        ))
                     }
-                }
-            } else if !table.common_handle_offsets().is_empty() {
-                let values = table
-                    .common_handle_offsets()
-                    .iter()
-                    .map(|offset| row[*offset].clone())
-                    .collect::<Vec<_>>();
-                table
-                    .common_handle_of_values(&values, &ctx.session_zone())
-                    .map_err(kv_write_error)?
-            } else {
-                match row.get(stored_width) {
-                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
-                    _ => {
-                        return Err(DriverError::unsupported(
-                            "a physical write child returned no _tidb_rowid handle",
-                        ));
-                    }
-                }
+                },
+                _ => unreachable!(),
             };
             let stored = row[..stored_width].to_vec();
             // Both representations stay live until the write phase.
             accountant.account_row(&row).map_err(DriverError::from)?;
             accountant.account_row(&stored).map_err(DriverError::from)?;
             rows.push(PhysicalWriteRow {
-                handle,
+                id,
                 stored,
                 output: row,
             });
@@ -4001,48 +3606,6 @@ fn execute_physical_write_rows(
         runtime.extend(collected);
     }
     Ok(PhysicalWriteRows { rows, field_types })
-}
-
-fn dml_row_is_selected(
-    row: &[Datum],
-    predicate: &Option<DmlExpression>,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<bool, DriverError> {
-    dml_row_is_selected_with_handle(row, None, predicate, catalog, current_db, ctx)
-}
-
-/// [`dml_row_is_selected`] where the statement also names `_tidb_rowid`.
-///
-/// The handle joins the row only for the reading half: the row the write
-/// stages is the stored one, which is the schema Go composes its write from.
-fn dml_row_is_selected_with_handle(
-    row: &[Datum],
-    handle: Option<i64>,
-    predicate: &Option<DmlExpression>,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<bool, DriverError> {
-    let Some(predicate) = predicate else {
-        return Ok(true);
-    };
-    let evaluated: std::borrow::Cow<'_, [Datum]> = match handle {
-        Some(handle) => {
-            let mut widened = Vec::with_capacity(row.len() + 1);
-            widened.extend_from_slice(row);
-            widened.push(Datum::Int(handle));
-            std::borrow::Cow::Owned(widened)
-        }
-        None => std::borrow::Cow::Borrowed(row),
-    };
-    Ok(datum_is_true(&predicate.eval(
-        evaluated.as_ref(),
-        catalog,
-        current_db,
-        ctx,
-    )?))
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.

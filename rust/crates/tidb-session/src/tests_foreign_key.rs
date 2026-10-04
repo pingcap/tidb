@@ -1855,3 +1855,548 @@ fn foreign_key_catalog_rows_preserve_constraint_metadata() {
         "{create}"
     );
 }
+
+// Go's ExecStmt handles non-IGNORE checks against the final statement buffer.
+#[test]
+fn dml_trigger_batch_insert_checks_final_self_references() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE self_fk(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES self_fk(id))").unwrap();
+    session
+        .run("INSERT INTO self_fk VALUES(1,2),(2,NULL)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id,pid FROM self_fk ORDER BY id"),
+        vec![vec!["1", "2"], vec!["2", "NULL"]]
+    );
+    assert_eq!(
+        code(&mut session, "INSERT INTO self_fk VALUES(3,4),(4,99)"),
+        Some(1452)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT count(*) FROM self_fk"),
+        vec![vec!["2"]]
+    );
+    session
+        .run("INSERT INTO self_fk VALUES(3,3) ON DUPLICATE KEY UPDATE pid=VALUES(pid)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT pid FROM self_fk WHERE id=3"),
+        vec![vec!["3"]]
+    );
+}
+
+#[test]
+fn dml_trigger_batch_delete_checks_final_multi_target_rows() {
+    let mut session = pair("");
+    session
+        .run("DELETE p,c FROM p JOIN c ON p.id=c.pid")
+        .unwrap();
+    assert_eq!(rows(&mut session, "SELECT id FROM p"), vec![vec!["2"]]);
+    assert!(rows(&mut session, "SELECT * FROM c").is_empty());
+    session.run("CREATE TABLE self_fk(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES self_fk(id))").unwrap();
+    session.run("INSERT INTO self_fk VALUES(1,NULL)").unwrap();
+    session.run("INSERT INTO self_fk VALUES(2,1)").unwrap();
+    session.run("DELETE FROM self_fk").unwrap();
+    assert!(rows(&mut session, "SELECT * FROM self_fk").is_empty());
+}
+
+#[test]
+fn dml_trigger_batch_prepared_checks_refresh_after_column_reorder_and_switch() {
+    let mut session = pair("ON UPDATE CASCADE ON DELETE CASCADE");
+    session
+        .run("PREPARE fk_stmt FROM 'UPDATE p SET id=? WHERE id=?'")
+        .unwrap();
+    session.run("SET @a=3,@b=1").unwrap();
+    session.run("EXECUTE fk_stmt USING @a,@b").unwrap();
+    assert_eq!(rows(&mut session, "SELECT pid FROM c"), vec![vec!["3"]]);
+    session
+        .run("ALTER TABLE c ADD COLUMN padding INT DEFAULT 99 FIRST")
+        .unwrap();
+    session.run("SET @a=4,@b=3").unwrap();
+    session.run("EXECUTE fk_stmt USING @a,@b").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT padding,pid FROM c"),
+        vec![vec!["99", "4"]]
+    );
+    session.run("SET foreign_key_checks=0").unwrap();
+    session.run("SET @a=5,@b=4").unwrap();
+    session.run("EXECUTE fk_stmt USING @a,@b").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT @@last_plan_from_cache"),
+        vec![vec!["0"]]
+    );
+    assert_eq!(rows(&mut session, "SELECT pid FROM c"), vec![vec!["4"]]);
+}
+
+#[test]
+fn dml_trigger_batch_covering_fk_index_is_executable_and_explained() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE wide_parent(id INT, v INT, KEY covering(id,v))")
+        .unwrap();
+    session.run("CREATE TABLE wide_child(pid INT, FOREIGN KEY named_fk(pid) REFERENCES wide_parent(id))").unwrap();
+    let plan = rows(&mut session, "EXPLAIN INSERT INTO wide_child VALUES(1)");
+    assert!(
+        plan.iter()
+            .flatten()
+            .any(|value| value.contains("foreign_key:named_fk, check_exist")),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .flatten()
+            .any(|value| value.contains("index:covering")),
+        "{plan:?}"
+    );
+    assert_eq!(
+        code(&mut session, "INSERT INTO wide_child VALUES(1)"),
+        Some(1452)
+    );
+    session.run("INSERT INTO wide_parent VALUES(1,7)").unwrap();
+    session.run("INSERT INTO wide_child VALUES(1)").unwrap();
+    assert_eq!(code(&mut session, "DELETE FROM wide_parent"), Some(1451));
+}
+
+// This SQL contract includes rollback, owned by Session/ExecStmt.
+/// Go `foreign_key_test.go:115::TestForeignKeyOnInsertChildTable` (cases 1–4
+/// and the primary-key-handle twins, cases 10/11): orphan child inserts fail
+/// 1452 (`ErrNoReferencedRow2`) on every index shape, NULL child keys pass,
+/// INSERT … SELECT enforces per row, and a child column falling back to its
+/// DEFAULT participates in the check.
+#[test]
+fn fk_source_foreign_key_on_insert_child_table() {
+    let mut session = Session::new();
+    session
+        .run("create table t_data (id int, a int, b int)")
+        .unwrap();
+    session
+        .run("insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2)")
+        .unwrap();
+
+    // foreignKeyTestCase1 cases 1-4: unique/non-unique indexes over exactly
+    // the FK columns and over FK+extra columns. (Cases 5-8 additionally
+    // toggle @@tidb_enable_clustered_index, a session variable with no
+    // surface here; the PRIMARY KEY FK shape itself is exercised by the
+    // case-10 block below.)
+    let prepare: [&[&str]; 4] = [
+        &[
+            "create table t1 (id int, a int, b int, unique index(id), unique index(a, b))",
+            "create table t2 (b int, name varchar(10), a int, id int, unique index(id), unique index (a,b), foreign key fk(a, b) references t1(a, b))",
+        ],
+        &[
+            "create table t1 (id int key, a int, b int, unique index(id), unique index(a, b, id))",
+            "create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b))",
+        ],
+        &[
+            "create table t1 (id int key, a int, b int, unique index(id), index(a, b))",
+            "create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b))",
+        ],
+        &[
+            "create table t1 (id int key, a int, b int, unique index(id), index(a, b, id))",
+            "create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b))",
+        ],
+    ];
+    for statements in prepare {
+        for sql in statements {
+            session.run(sql).unwrap();
+        }
+        session
+            .run("insert into t1 (id, a, b) values (1, 1, 1)")
+            .unwrap();
+        session
+            .run("insert into t2 (id, a, b) values (1, 1, 1)")
+            .unwrap();
+        // NULL FK components pass the check in Go for every non-notNull case.
+        session
+            .run("insert into t2 (id, a, b) values (2, null, 1)")
+            .unwrap();
+        session
+            .run("insert into t2 (id, a, b) values (3, 1, null)")
+            .unwrap();
+        session
+            .run("insert into t2 (id, a, b) values (4, null, null)")
+            .unwrap();
+        // Orphans on either component fail 1452.
+        assert_eq!(
+            code(&mut session, "insert into t2 (id, a, b) values (5, 1, 0)"),
+            Some(1452)
+        );
+        assert_eq!(
+            code(&mut session, "insert into t2 (id, a, b) values (6, 0, 1)"),
+            Some(1452)
+        );
+        assert_eq!(
+            code(&mut session, "insert into t2 (id, a, b) values (7, 2, 2)"),
+            Some(1452)
+        );
+        // INSERT ... SELECT enforces per source row.
+        session.run("delete from t2").expect("delete");
+        session
+            .run("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
+            .unwrap();
+        assert_eq!(
+            code(
+                &mut session,
+                "insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=2"
+            ),
+            Some(1452)
+        );
+        for name in ["t2", "t1"] {
+            session
+                .run(&format!("drop table {name}"))
+                .unwrap_or_else(|e| panic!("drop {name}: {e:?}"));
+        }
+    }
+
+    // Case-10: the FK column is covered by the integer handle PK and HAS a
+    // default — `insert into t2 (id) values (10)` fills a=0 and fails 1452.
+    session
+        .run("create table t1 (id int,a int, primary key(id))")
+        .unwrap();
+    session.run("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id))").unwrap();
+    session.run("insert into t1 values (1, 1)").unwrap();
+    session.run("insert into t2 values (1, 1)").unwrap();
+    assert_eq!(
+        code(&mut session, "insert into t2 (id) values (10)"),
+        Some(1452)
+    );
+    assert_eq!(
+        code(&mut session, "insert into t2 values (3, 2)"),
+        Some(1452)
+    );
+    // Go keeps case-10's parent for case-11; only the child is replaced.
+    session
+        .run("drop table t2")
+        .unwrap_or_else(|e| panic!("drop t2: {e:?}"));
+
+    // Case-11: without the default the same insert fills NULL and passes.
+    session
+        .run("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id))")
+        .unwrap();
+    session.run("insert into t2 values (1, 1)").unwrap();
+    session.run("insert into t2 (id) values (10)").unwrap();
+    assert_eq!(
+        code(&mut session, "insert into t2 values (3, 2)"),
+        Some(1452)
+    );
+    assert_eq!(
+        rows(&mut session, "select id, a from t2 order by id"),
+        vec![vec!["1", "1"], vec!["10", "NULL"]],
+    );
+}
+
+// This SQL contract includes rollback, owned by Session/ExecStmt.
+/// Go `foreign_key_test.go:501::TestForeignKeyOnInsertOnDuplicateParentTableCheck`
+/// (notNull primary-key arms + case-10): parent-side ODKU updates that would
+/// orphan a referenced key fail 1451 (`ErrRowIsReferenced2`), plain parent
+/// updates/deletes of referenced keys fail 1451, and id-repointing ODKU
+/// moves rows.
+#[test]
+fn fk_source_foreign_key_on_insert_on_duplicate_parent_table_check() {
+    let mut session = Session::new();
+    session
+        .run("create table t1 (id int, a int, b int, unique index(id), unique index(a, b))")
+        .unwrap();
+    session.run("create table t2 (b int, name varchar(10), a int, id int, unique index(id), unique index (a,b), foreign key fk(a, b) references t1(a, b))").unwrap();
+    session
+        .run("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+        .unwrap();
+    session
+        .run("insert into t2 (id, a, b, name) values (1, 11, 21, 'a')")
+        .unwrap();
+
+    // Parent ODKU rewrites that keep the referenced (a, b) succeed, exactly
+    // as in Go's two-statement sequence: 12 -> 112 -> 1112, 13 -> 1013.
+    session
+        .run(
+            "insert into t1 (id, a, b) values (2, 12, 22) on duplicate key update a=a+100, b=b+200",
+        )
+        .unwrap();
+    session.run("insert into t1 (id, a, b) values (3, 13, 23), (2, 12, 22) on duplicate key update a=a+1000, b=b+2000").unwrap();
+    // Re-pointing the parent's id (the referenced (a, b) stays) succeeds.
+    session
+        .run("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "select id, a, b from t1 order by id"),
+        vec![
+            vec!["2", "1112", "2222"],
+            vec!["3", "1013", "2023"],
+            vec!["4", "14", "24"],
+            vec!["11", "11", "21"],
+        ],
+    );
+    assert_eq!(
+        rows(&mut session, "select id, a, b, name from t2 order by id"),
+        vec![vec!["1", "11", "21", "a"]],
+    );
+
+    // Rewriting the referenced (a, b) of a parent row fails 1451 (plain
+    // UPDATE form), while retaining the statement rollback owner.
+    assert_eq!(
+        code(&mut session, "update t1 set a=a+10, b=b+20 where id = 11"),
+        Some(1451)
+    );
+
+    // Parent DELETE of a referenced key fails 1451 (Go's pessimistic arms).
+    let error = session
+        .run("delete from t1 where id = 11")
+        .expect_err("referenced parent row");
+    assert_eq!(error.clone().to_mysql_error().code, 1451, "{error:?}");
+    assert_eq!(
+        error.to_mysql_error().message,
+        "Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`a`, `b`) REFERENCES `t1` (`a`, `b`))",
+    );
+}
+
+// This SQL contract includes rollback, owned by Session/ExecStmt.
+/// Go `TestForeignKeyOnUpdateParentTableCheck` (:694): changing a referenced
+/// parent key is restricted, but changing only an unreferenced column is not.
+#[test]
+fn fk_source_foreign_key_on_update_parent_table_check() {
+    let mut session = Session::new();
+    session
+        .run("create table p (id int primary key, a int unique, note int)")
+        .unwrap();
+    session
+        .run("create table c (id int primary key, pid int, foreign key fk(pid) references p(a))")
+        .unwrap();
+    session
+        .run("insert into p values (1,11,21),(2,12,22)")
+        .unwrap();
+    session.run("insert into c values (1,11)").unwrap();
+
+    session
+        .run("update p set note=99 where id=1")
+        .expect("unreferenced parent columns do not trigger FK action");
+    assert_eq!(
+        code(&mut session, "update p set a=111 where id=1"),
+        Some(1451)
+    );
+    assert_eq!(
+        rows(&mut session, "select id,a,note from p order by id"),
+        vec![
+            vec!["1".to_owned(), "11".to_owned(), "99".to_owned()],
+            vec!["2".to_owned(), "12".to_owned(), "22".to_owned()],
+        ],
+    );
+}
+
+// This SQL contract includes rollback, owned by Session/ExecStmt.
+/// Go `TestForeignKeyOnDeleteParentTableCheck` (:745): a referenced parent
+/// row cannot be deleted under the default restricting action.
+#[test]
+fn fk_source_foreign_key_on_delete_parent_table_check() {
+    let mut session = Session::new();
+    session
+        .run("create table p (id int primary key, a int unique)")
+        .unwrap();
+    session
+        .run("create table c (id int primary key, pid int, foreign key fk(pid) references p(a))")
+        .unwrap();
+    session
+        .run("insert into p values (1,11),(2,12),(3,13)")
+        .unwrap();
+    session.run("insert into c values (1,11)").unwrap();
+
+    session
+        .run("delete from p where id=2")
+        .expect("an unreferenced parent row can be deleted");
+    assert_eq!(code(&mut session, "delete from p where id=1"), Some(1451));
+    assert_eq!(
+        rows(&mut session, "select id from p order by id"),
+        vec![vec!["1".to_owned()], vec!["3".to_owned()]]
+    );
+}
+
+/// Go `TestForeignKeyOnUpdateChildTable` (:598): an UPDATE on the child is
+/// checked against the parent, while a NULL in any MATCH SIMPLE component is
+/// exempt. The same 1452 contract is exercised for composite keys here.
+#[test]
+fn fk_source_foreign_key_on_update_child_table() {
+    let mut session = Session::new();
+    session
+        .run("create table p (id int primary key, a int, b int, unique key ab(a,b))")
+        .unwrap();
+    session.run("create table c (id int primary key, a int, b int, name varchar(10), foreign key fk(a,b) references p(a,b))").unwrap();
+    session
+        .run("insert into p values (1,11,21),(2,12,22),(3,13,23)")
+        .unwrap();
+    session.run("insert into c values (1,11,21,'a')").unwrap();
+
+    assert_eq!(
+        code(&mut session, "update c set a=100,b=200 where id=1"),
+        Some(1452)
+    );
+    assert_eq!(
+        code(&mut session, "update c set a=12,b=23 where id=1"),
+        Some(1452)
+    );
+    session
+        .run("update c set a=12,b=22 where id=1")
+        .expect("existing composite parent key is accepted");
+    session
+        .run("update c set a=null,b=22 where id=1")
+        .expect("NULL exempts the composite child key");
+    session
+        .run("update c set b=null where id=1")
+        .expect("a second NULL component remains exempt");
+    session
+        .run("update c set a=13,b=23 where id=1")
+        .expect("the child can be restored to an existing parent key");
+    assert_eq!(
+        rows(&mut session, "select id,a,b,name from c"),
+        vec![vec![
+            "1".to_owned(),
+            "13".to_owned(),
+            "23".to_owned(),
+            "a".to_owned()
+        ]],
+    );
+}
+
+/// Go `TestForeignKeyOnDeleteCascade` (:807): parent deletion removes direct
+/// dependents, including rows found through an ordinary child index.
+#[test]
+fn fk_source_foreign_key_on_delete_cascade() {
+    let mut session = Session::new();
+    session.run("create table p (id int primary key)").unwrap();
+    session.run("create table c (id int primary key, pid int, index pid_idx(pid), foreign key fk(pid) references p(id) on delete cascade)").unwrap();
+    session.run("insert into p values (1),(2),(3)").unwrap();
+    session
+        .run("insert into c values (10,1),(11,1),(12,2)")
+        .unwrap();
+
+    session
+        .run("delete from p where id=1")
+        .expect("cascade delete");
+    assert_eq!(
+        rows(&mut session, "select id,pid from c order by id"),
+        vec![vec!["12".to_owned(), "2".to_owned()]],
+    );
+}
+
+/// Go `TestForeignKeyOnDeleteCascade2` (:1017): self-referential cascades
+/// recurse through the dependent chain.
+#[test]
+fn fk_source_foreign_key_on_delete_cascade2() {
+    let mut session = Session::new();
+    session
+        .run("create table t (id int primary key, pid int, index pid_idx(pid))")
+        .unwrap();
+    session
+        .run("alter table t add foreign key fk(pid) references t(id) on delete cascade")
+        .expect("add self-referential cascade foreign key");
+    session.run("insert into t values (1,null)").unwrap();
+    session.run("insert into t values (2,1)").unwrap();
+    session.run("insert into t values (3,2)").unwrap();
+    session.run("insert into t values (4,3)").unwrap();
+
+    session
+        .run("delete from t where id=1")
+        .expect("transitive cascade");
+    assert!(rows(&mut session, "select id,pid from t").is_empty());
+}
+
+/// Go `TestForeignKeyOnDeleteSetNull` (:1276): deleting a parent nulls the
+/// child key instead of deleting the child row.
+#[test]
+fn fk_source_foreign_key_on_delete_set_null() {
+    let mut session = Session::new();
+    session.run("create table p (id int primary key)").unwrap();
+    session.run("create table c (id int primary key, pid int, index pid_idx(pid), foreign key fk(pid) references p(id) on delete set null)").unwrap();
+    session.run("insert into p values (1),(2)").unwrap();
+    session
+        .run("insert into c values (10,1),(11,2),(12,null)")
+        .unwrap();
+
+    session.run("delete from p where id=1").expect("set null");
+    assert_eq!(
+        rows(&mut session, "select id,pid from c order by id"),
+        vec![
+            vec!["10".to_owned(), "NULL".to_owned()],
+            vec!["11".to_owned(), "2".to_owned()],
+            vec!["12".to_owned(), "NULL".to_owned()],
+        ],
+    );
+}
+
+/// Go `TestForeignKeyOnDeleteSetNull2` (:1400): the SET NULL action also
+/// works for a self-referential table and leaves deeper rows in place.
+#[test]
+fn fk_source_foreign_key_on_delete_set_null2() {
+    let mut session = Session::new();
+    session
+        .run("create table t (id int primary key, pid int, index pid_idx(pid))")
+        .unwrap();
+    session
+        .run("alter table t add foreign key fk(pid) references t(id) on delete set null")
+        .expect("add self-referential set-null foreign key");
+    session.run("insert into t values (1,null)").unwrap();
+    session.run("insert into t values (2,1)").unwrap();
+    session.run("insert into t values (3,2)").unwrap();
+
+    session
+        .run("delete from t where id=1")
+        .expect("set null chain");
+    assert_eq!(
+        rows(&mut session, "select id,pid from t order by id"),
+        vec![
+            vec!["2".to_owned(), "NULL".to_owned()],
+            vec!["3".to_owned(), "2".to_owned()],
+        ],
+    );
+}
+
+/// Go `TestForeignKeyOnUpdateCascade` (:1605): an UPDATE of the parent key
+/// propagates to the child key, while NULL child keys remain unaffected.
+#[test]
+fn fk_source_foreign_key_on_update_cascade() {
+    let mut session = Session::new();
+    session.run("create table p (id int primary key)").unwrap();
+    session.run("create table c (id int primary key, pid int, index pid_idx(pid), foreign key fk(pid) references p(id) on update cascade)").unwrap();
+    session.run("insert into p values (1),(2)").unwrap();
+    session
+        .run("insert into c values (10,1),(11,2),(12,null)")
+        .unwrap();
+
+    session
+        .run("update p set id=10 where id=1")
+        .expect("update cascade");
+    assert_eq!(
+        rows(&mut session, "select id,pid from c order by id"),
+        vec![
+            vec!["10".to_owned(), "10".to_owned()],
+            vec!["11".to_owned(), "2".to_owned()],
+            vec!["12".to_owned(), "NULL".to_owned()],
+        ],
+    );
+}
+
+/// Go `TestForeignKeyOnUpdateCascade2` (:1842): a self-referential update
+/// cascades through a changed parent id without touching unrelated rows.
+#[test]
+fn fk_source_foreign_key_on_update_cascade2() {
+    let mut session = Session::new();
+    session
+        .run("create table t (id int primary key, pid int, index pid_idx(pid))")
+        .unwrap();
+    session
+        .run("alter table t add foreign key fk(pid) references t(id) on update cascade")
+        .expect("add self-referential update-cascade foreign key");
+    session.run("insert into t values (1,null)").unwrap();
+    session.run("insert into t values (2,1)").unwrap();
+    session.run("insert into t values (3,2)").unwrap();
+
+    session
+        .run("update t set id=10 where id=1")
+        .expect("self-referential update cascade");
+    assert_eq!(
+        rows(&mut session, "select id,pid from t order by id"),
+        vec![
+            vec!["2".to_owned(), "10".to_owned()],
+            vec!["3".to_owned(), "2".to_owned()],
+            vec!["10".to_owned(), "NULL".to_owned()],
+        ],
+    );
+}

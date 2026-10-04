@@ -16,12 +16,10 @@
 //! (`FKCheckExec`/`FKCascadeExec`) and the plan builders that install them
 //! (`pkg/planner/core/foreign_key.go`).
 //!
-//! Go attaches an `FKCheck` operator to every write whose table declares a
-//! foreign key (the CHILD side) and an `FKCascade` operator to every write
-//! whose table is REFERRED to by one (the PARENT side). This module is those
-//! two operators, expressed as functions over the catalog rather than as plan
-//! nodes, because this tier's writes are catalog mutations rather than a
-//! pipeline.
+//! DML builders attach resolved FKCheck/FKCascade policies to their physical
+//! root. Row callbacks consume those policies, and statement completion runs
+//! ordinary checks before cascades. Dependent cascades use the same policy
+//! builder; DDL validation still resolves the new constraint being installed.
 //!
 //! # The rules, each re-confirmed via `rust/difftests/gorun`
 //!
@@ -94,22 +92,15 @@ use tidb_datatype::Datum;
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::kv_table::{FkAction, KvForeignKey};
 use tidb_hack::GoToLower;
+use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
 /// raises `ErrFkExceedMaxDepth` (3008).
 const MAX_CASCADE_DEPTH: usize = 15;
 
-/// Which side of a mutation a violation was found on, so the caller can raise
-/// the 1452 or the 1451 that Go raises.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Side {
-    Child,
-    Parent,
-}
-
 /// Renders the constraint the way Go's error text quotes it, which is the
 /// `CONSTRAINT ... FOREIGN KEY ... REFERENCES ...` clause.
-fn constraint_text(foreign_key: &KvForeignKey) -> String {
+pub(crate) fn constraint_text(foreign_key: &KvForeignKey) -> String {
     format!(
         "CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}` (`{}`)",
         foreign_key.name,
@@ -117,21 +108,6 @@ fn constraint_text(foreign_key: &KvForeignKey) -> String {
         foreign_key.ref_table,
         foreign_key.ref_cols.join("`, `"),
     )
-}
-
-fn violation(side: Side, database: &str, table: &str, foreign_key: &KvForeignKey) -> DriverError {
-    let name = format!("`{database}`.`{table}`");
-    let constraint = constraint_text(foreign_key);
-    match side {
-        Side::Child => DriverError::ForeignKeyNoReferencedRow {
-            table: name,
-            constraint,
-        },
-        Side::Parent => DriverError::ForeignKeyRowIsReferenced {
-            table: name,
-            constraint,
-        },
-    }
 }
 
 /// The key a row presents to one foreign key, or `None` when MATCH SIMPLE
@@ -246,102 +222,86 @@ fn parent_offsets(
     Some((offsets, names))
 }
 
-/// Go `FKCheckExec` on the CHILD side: for each candidate row, the name of
-/// the first foreign key it violates.
-///
-/// The rows are not yet written, which is why they are passed in rather than
-/// read back: Go checks the row it is about to add, not the table.
-pub(crate) fn check_child_rows(
-    catalog: &mut Catalog,
-    database: &str,
-    table: &str,
-    rows: &[Vec<Datum>],
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Vec<Option<DriverError>>, DriverError> {
-    check_child_row_changes(catalog, database, table, None, rows, zone)
+/// Whether the retained root owns a constraint for this target.
+pub(crate) fn has_triggers(triggers: &[FkTriggerNode], database: &str, table: &str) -> bool {
+    triggers.iter().any(|node| targets(node, database, table))
 }
 
+fn targets(node: &FkTriggerNode, database: &str, table: &str) -> bool {
+    let (db, name) = if node.kind == FkTriggerKind::ChildCheck {
+        (&node.child_database, &node.child_table)
+    } else {
+        (&node.parent_database, &node.parent_table)
+    };
+    db.eq_ignore_ascii_case(database) && name.eq_ignore_ascii_case(table)
+}
+
+fn planned_violation(node: &FkTriggerNode) -> DriverError {
+    let table = format!("`{}`.`{}`", node.child_database, node.child_table);
+    let constraint = node.constraint.clone();
+    if node.kind == FkTriggerKind::ChildCheck {
+        DriverError::ForeignKeyNoReferencedRow { table, constraint }
+    } else {
+        DriverError::ForeignKeyRowIsReferenced { table, constraint }
+    }
+}
+
+/// Go FKCheckExec uses the offsets and constraints selected by the DML plan.
 pub(crate) fn require_updated_child_rows(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     old: &[Vec<Datum>],
     new: &[Vec<Datum>],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
-    match check_child_row_changes(catalog, database, table, Some(old), new, zone)?
-        .into_iter()
-        .flatten()
-        .next()
-    {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    check_child_row_changes(catalog, triggers, database, table, Some(old), new, zone)
 }
 
 fn check_child_row_changes(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     old: Option<&[Vec<Datum>]>,
     rows: &[Vec<Datum>],
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<Vec<Option<DriverError>>, DriverError> {
-    let mut verdicts = vec![None; rows.len()];
-    let (keys, columns) = declared(catalog, database, table);
-    for foreign_key in &keys {
-        let Some(child) = child_offsets(&columns, foreign_key) else {
-            continue;
-        };
-        // Every row's key for this constraint, deduplicated so a wide insert
-        // scans the parent once. A `Datum` is not hashable (its numeric
-        // variants compare across representations), so the association is an
-        // association list rather than a map.
-        let mut wanted: Vec<(Vec<Datum>, Vec<usize>)> = Vec::new();
+) -> Result<(), DriverError> {
+    for node in triggers
+        .iter()
+        .filter(|node| node.kind == FkTriggerKind::ChildCheck && targets(node, database, table))
+    {
+        let child = &node.child_offsets;
+        let mut wanted: Vec<Vec<Datum>> = Vec::new();
         for (index, row) in rows.iter().enumerate() {
-            if verdicts[index].is_some() {
-                continue;
-            }
-            let Some(key) = key_at(row, &child) else {
+            let Some(key) = key_at(row, child) else {
                 continue;
             };
-            // FKCheckExec.updateRowNeedToCheck skips unchanged child keys.
-            if old.is_some_and(|old| key_at(&old[index], &child).as_ref() == Some(&key)) {
+            if old.is_some_and(|old| key_at(&old[index], child).as_ref() == Some(&key)) {
                 continue;
             }
-            match wanted.iter_mut().find(|(seen, _)| *seen == key) {
-                Some((_, indexes)) => indexes.push(index),
-                None => wanted.push((key, vec![index])),
+            if !wanted.contains(&key) {
+                wanted.push(key);
             }
         }
         if wanted.is_empty() {
             continue;
         }
-        let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
-            // The parent is gone (only reachable with foreign_key_checks off
-            // at CREATE TABLE time); Go has nothing to check against either.
-            continue;
-        };
-        let Some(parent_rows) = scan(
-            catalog,
-            &foreign_key.ref_schema,
-            &foreign_key.ref_table,
-            zone,
-        ) else {
+        let Some(parent_rows) = scan(catalog, &node.parent_database, &node.parent_table, zone)
+        else {
             continue;
         };
         for parent in &parent_rows {
-            if let Some(key) = key_at(parent, &offsets) {
-                wanted.retain(|(seen, _)| *seen != key);
+            if let Some(key) = key_at(parent, &node.parent_offsets) {
+                wanted.retain(|seen| *seen != key);
             }
         }
-        for (_, indexes) in &wanted {
-            for index in indexes {
-                verdicts[*index] = Some(violation(Side::Child, database, table, foreign_key));
-            }
+        if !wanted.is_empty() {
+            return Err(planned_violation(node));
         }
     }
-    Ok(verdicts)
+    Ok(())
 }
 
 /// Go `checkForeignKeyConstrain`: the rows a table ALREADY holds, checked
@@ -392,7 +352,10 @@ pub(crate) fn require_existing_rows(
             .iter()
             .any(|parent| key_at(parent, &offsets).is_some_and(|found| found == key))
         {
-            return Err(violation(Side::Child, database, table, foreign_key));
+            return Err(DriverError::ForeignKeyNoReferencedRow {
+                table: format!("`{database}`.`{table}`"),
+                constraint: constraint_text(foreign_key),
+            });
         }
     }
     Ok(())
@@ -402,19 +365,13 @@ pub(crate) fn require_existing_rows(
 /// violating row fails the whole statement.
 pub(crate) fn require_child_rows(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
-    match check_child_rows(catalog, database, table, rows, zone)?
-        .into_iter()
-        .flatten()
-        .next()
-    {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    check_child_row_changes(catalog, triggers, database, table, None, rows, zone)
 }
 
 /// What a parent-side statement does to one parent row.
@@ -431,33 +388,35 @@ pub(crate) enum ParentChange<'a> {
 }
 
 /// Go `FKCascadeExec` on the parent side. UPDATE completes these actions
-/// after the statement's record writes and checks; DELETE/REPLACE currently
-/// call here before withdrawing their parent rows. Statement staging owns
+/// after the statement's record writes and checks, including DELETE/REPLACE. Statement staging owns
 /// rollback of both parent and dependent rows if any action fails.
 pub(crate) fn cascade_parent_changes(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     changes: &[ParentChange<'_>],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    cascade_at_depth(catalog, database, table, changes, 0, false, ctx)
+    cascade_at_depth(catalog, triggers, database, table, changes, 0, false, ctx)
 }
 
 /// The restricting FK checks run before cascades and, under IGNORE, before
-/// the candidate row is written. Reuse the cascade planner without applying it.
+/// the candidate row is written. Consume only the retained check policies.
 pub(crate) fn check_parent_changes(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     changes: &[ParentChange<'_>],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    cascade_at_depth(catalog, database, table, changes, 0, true, ctx)
+    cascade_at_depth(catalog, triggers, database, table, changes, 0, true, ctx)
 }
 
 fn cascade_at_depth(
     catalog: &mut Catalog,
+    triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
     changes: &[ParentChange<'_>],
@@ -468,7 +427,10 @@ fn cascade_at_depth(
     if depth > MAX_CASCADE_DEPTH {
         return Err(DriverError::ForeignKeyCascadeTooDeep);
     }
-    let dependents = referring(catalog, database, table);
+    let dependents: Vec<_> = triggers
+        .iter()
+        .filter(|node| node.kind != FkTriggerKind::ChildCheck && targets(node, database, table))
+        .collect();
     if dependents.is_empty() {
         return Ok(());
     }
@@ -484,25 +446,32 @@ fn cascade_at_depth(
     // Every dependent's RESTRICT verdict is taken BEFORE any of them mutates,
     // so a statement whose first dependent cascades and whose second
     // restricts changes nothing at this level.
-    let mut plans = Vec::with_capacity(dependents.len());
-    for (child_db, child_table, foreign_key) in dependents {
-        // `ON DELETE`/`ON UPDATE` are separate actions on the same
-        // constraint; which one applies is decided by the statement.
-        let deleting = changes
-            .iter()
-            .any(|change| matches!(change, ParentChange::Delete(_)));
-        let action = if deleting {
-            foreign_key.on_delete
-        } else {
-            foreign_key.on_update
+    for node in dependents {
+        let (child_db, child_table) = (&node.child_database, &node.child_table);
+        let (action, deleting) = match node.kind {
+            FkTriggerKind::ChildCheck => unreachable!(),
+            FkTriggerKind::ParentCheck => (
+                FkAction::Restrict,
+                changes
+                    .iter()
+                    .any(|change| matches!(change, ParentChange::Delete(_))),
+            ),
+            FkTriggerKind::Cascade {
+                on_delete,
+                set_null,
+            } => (
+                if set_null {
+                    FkAction::SetNull
+                } else {
+                    FkAction::Cascade
+                },
+                on_delete,
+            ),
         };
-        if check_only && !action.is_restricting() {
+        if check_only != (node.kind == FkTriggerKind::ParentCheck) {
             continue;
         }
-
-        let Some((offsets, _)) = parent_offsets(catalog, &foreign_key) else {
-            continue;
-        };
+        let offsets = &node.parent_offsets;
         // The referenced keys this statement withdraws, paired with the
         // replacement an `ON UPDATE CASCADE` would write.
         let mut withdrawn: Vec<(Vec<Datum>, Option<Vec<Datum>>)> = Vec::new();
@@ -530,10 +499,7 @@ fn cascade_at_depth(
         if withdrawn.is_empty() {
             continue;
         }
-        let (_, child_columns) = declared(catalog, &child_db, &child_table);
-        let Some(child) = child_offsets(&child_columns, &foreign_key) else {
-            continue;
-        };
+        let child = &node.child_offsets;
         let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
         };
@@ -551,32 +517,8 @@ fn cascade_at_depth(
             continue;
         }
         if action.is_restricting() {
-            return Err(violation(
-                Side::Parent,
-                &child_db,
-                &child_table,
-                &foreign_key,
-            ));
+            return Err(planned_violation(node));
         }
-        plans.push((
-            child_db,
-            child_table,
-            foreign_key,
-            action,
-            deleting,
-            affected,
-            child,
-        ));
-    }
-
-    if check_only {
-        return Ok(());
-    }
-
-    for (child_db, child_table, _foreign_key, action, deleting, affected, child) in plans {
-        let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
-            continue;
-        };
         match action {
             FkAction::NoOption | FkAction::Restrict | FkAction::NoAction | FkAction::SetDefault => {
                 unreachable!("a restricting action returned above")
@@ -590,8 +532,22 @@ fn cascade_at_depth(
                     .collect();
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
+                let nested_triggers =
+                    cascade_triggers(catalog, child_db, child_table, true, child, ctx)?;
+                delete_rows(catalog, child_db, child_table, &doomed, ctx)?;
                 cascade_at_depth(
                     catalog,
+                    &nested_triggers,
+                    child_db,
+                    child_table,
+                    &nested,
+                    depth + 1,
+                    true,
+                    ctx,
+                )?;
+                cascade_at_depth(
+                    catalog,
+                    &nested_triggers,
                     &child_db,
                     &child_table,
                     &nested,
@@ -599,7 +555,6 @@ fn cascade_at_depth(
                     false,
                     ctx,
                 )?;
-                delete_rows(catalog, &child_db, &child_table, &doomed, ctx)?;
             }
             FkAction::Cascade | FkAction::SetNull => {
                 // ON UPDATE CASCADE repoints the referencing columns; SET
@@ -644,8 +599,33 @@ fn cascade_at_depth(
                     .iter()
                     .map(|(old, new)| ParentChange::Update { old, new })
                     .collect();
+                let nested_triggers =
+                    cascade_triggers(catalog, child_db, child_table, false, child, ctx)?;
+                rewrite_rows(catalog, child_db, child_table, &rewritten, ctx)?;
+                let old: Vec<_> = rewritten.iter().map(|(old, _)| old.clone()).collect();
+                let new: Vec<_> = rewritten.iter().map(|(_, new)| new.clone()).collect();
+                require_updated_child_rows(
+                    catalog,
+                    &nested_triggers,
+                    child_db,
+                    child_table,
+                    &old,
+                    &new,
+                    &ctx.session_zone(),
+                )?;
                 cascade_at_depth(
                     catalog,
+                    &nested_triggers,
+                    child_db,
+                    child_table,
+                    &nested,
+                    depth + 1,
+                    true,
+                    ctx,
+                )?;
+                cascade_at_depth(
+                    catalog,
+                    &nested_triggers,
                     &child_db,
                     &child_table,
                     &nested,
@@ -653,11 +633,43 @@ fn cascade_at_depth(
                     false,
                     ctx,
                 )?;
-                rewrite_rows(catalog, &child_db, &child_table, &rewritten, ctx)?;
             }
         }
     }
     Ok(())
+}
+
+/// Cascades build a dependent statement in Go; resolve that statement's
+/// policy through the same builder rather than rediscovering constraints in
+/// the row callbacks.
+fn cascade_triggers(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    deleting: bool,
+    columns: &[usize],
+    ctx: &crate::StmtContext,
+) -> Result<Vec<FkTriggerNode>, DriverError> {
+    let names = catalog
+        .get_in(database, table)
+        .map(TableEntry::column_names)
+        .unwrap_or_default();
+    let spec = crate::driver::fk_trigger_plan::FkPlanSpec {
+        database: database.to_owned(),
+        table: table.to_owned(),
+        updated_cols: columns
+            .iter()
+            .filter_map(|offset| names.get(*offset).cloned())
+            .collect(),
+        ..Default::default()
+    };
+    crate::driver::fk_trigger_plan::build_fk_triggers(
+        catalog,
+        ctx,
+        if deleting { "Delete" } else { "Update" },
+        &spec,
+        &tidb_planner::plan_base::PlanIdAllocator::new(),
+    )
 }
 
 /// Deletes the rows equal to `rows`, matched by value because a cascade names

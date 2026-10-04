@@ -458,6 +458,7 @@ pub(crate) fn run_multi_update(
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    fk_triggers: &[tidb_planner::physical::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let source = build_multi_layout(from, catalog, current_db, ctx)?;
@@ -479,20 +480,8 @@ pub(crate) fn run_multi_update(
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
     let rows = {
-        let mut fresh = None;
-        let plan = match physical_plan {
-            Some(plan) => plan,
-            None => super::dml::dml_select_plan_mut(
-                fresh.insert(multi_dml_physical_plan(
-                    MultiDmlRef::Update(update),
-                    catalog,
-                    current_db,
-                    ctx,
-                )?),
-                "",
-            )?
-            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
-        };
+        let plan = physical_plan
+            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
         planned_source_rows(
             &source,
             plan,
@@ -538,7 +527,7 @@ pub(crate) fn run_multi_update(
     let accountant = ctx
         .statement_memory()
         .write_accountant(crate::mem_quota::label::UPDATE);
-    let mut records = UpdateRecords::default();
+    let mut records = UpdateRecords::new(fk_triggers);
     let mut once: UpdateOnce = BTreeMap::new();
     let mut matched_rows = 0u64;
     let mut touched_rows = 0u64;
@@ -790,25 +779,14 @@ pub(crate) fn run_multi_delete(
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    fk_triggers: &[tidb_planner::physical::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let source = build_multi_layout(from, catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
     let rows = {
-        let mut fresh = None;
-        let plan = match physical_plan {
-            Some(plan) => plan,
-            None => super::dml::dml_select_plan_mut(
-                fresh.insert(multi_dml_physical_plan(
-                    MultiDmlRef::Delete(delete),
-                    catalog,
-                    current_db,
-                    ctx,
-                )?),
-                "",
-            )?
-            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?,
-        };
+        let plan = physical_plan
+            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
         planned_source_rows(
             &source,
             plan,
@@ -838,59 +816,17 @@ pub(crate) fn run_multi_delete(
         }
     }
 
-    if ctx.foreign_key_checks() {
-        if delete.ignore {
-            let mut surviving = BTreeMap::new();
-            for (key, location) in doomed {
-                let table = &source.tables[location.1];
-                let row = &rows[location.0].1[table.offset..table.end()];
-                let changes = [crate::foreign_key::ParentChange::Delete(row)];
-                match crate::foreign_key::cascade_parent_changes(
-                    catalog, &key.0, &key.1, &changes, ctx,
-                ) {
-                    Ok(()) => {
-                        surviving.insert(key, location);
-                    }
-                    Err(error) => {
-                        let warning = error.to_mysql_error();
-                        ctx.append_warning_parts(warning.code, &warning.message);
-                    }
-                }
-            }
-            doomed = surviving;
-        } else {
-            for ((database, name, _), location) in &doomed {
-                let table = &source.tables[location.1];
-                let row = &rows[location.0].1[table.offset..table.end()];
-                let changes = [crate::foreign_key::ParentChange::Delete(row)];
-                crate::foreign_key::cascade_parent_changes(catalog, database, name, &changes, ctx)?;
-            }
-        }
+    let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
+    let mut deleted = 0;
+    // Snapshot positions require descending removals for a memory table.
+    for ((database, name, id), location) in doomed.into_iter().rev() {
+        let table = &source.tables[location.1];
+        let old = &rows[location.0].1[table.offset..table.end()];
+        deleted +=
+            u64::from(records.write(catalog, &database, &name, &id, old, delete.ignore, ctx)?);
     }
+    records.finish(catalog, ctx)?;
 
-    let deleted = doomed.len() as u64;
-    // A matrix-backed table identifies rows by position, so its removals are
-    // applied from the back; a stored table's handle is position-independent.
-    for ((database, name, id), _) in doomed.into_iter().rev() {
-        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                "{database}.{name}"
-            )))
-        })?;
-        match (entry, &id) {
-            (TableEntry::Mem(mem), RowId::Mem(index)) => {
-                mem.rows.remove(*index);
-            }
-            (TableEntry::Kv(kv), RowId::Kv(handle)) => std::sync::Arc::make_mut(kv)
-                .delete_row_with_context(handle, ctx)
-                .map_err(|e| super::dml::kv_read_error("row delete failed", e))?,
-            _ => {
-                return Err(DriverError::unsupported(
-                    "table storage changed during a multi-table write",
-                ))
-            }
-        }
-    }
     Ok(deleted)
 }
 

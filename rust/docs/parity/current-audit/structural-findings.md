@@ -1,224 +1,12 @@
-# Remaining structural mismatches, reviewed 2026-10-03
+# Remaining structural mismatches, maintained 2026-10-04
 
-The [shared-read removal](dml-interpreter-removal-repair.md) retires the whole matrix joined-DML interpreter and unused materializers, removes obsolete TopN candidate truncation, and freezes the pre-WHERE DML schema: **595 net production lines removed; 315 grouped tests pass**. E03 remains partial; **57 unresolved**. Single-table matrix execution and final write buffering remain. Earlier checkpoints below are historical. No push.
+**86 tracked: 29 repaired and 57 unresolved (39 open, 18 partial).** [Machine-readable dispositions](structural-findings.json) and the [ten owner batches](remaining-batches.md) are the scheduling authority. Counts describe findings, not accepted packages.
 
+Current [DML read/FK maintenance](dml-trigger-owner-batch-repair.md) advances E02/E03 together and removes obsolete source/test owners. It preserves both partial statuses; 260 grouped session tests pass. Other 55 unresolved IDs retain prior evidence, not fresh behavioral reproduction in this batch.
 
-The [DML removal continuation](dml-removal-batch-repair.md) removes duplicate base/view/derived metadata construction, executable LATERAL probing, source-kind AST traversal and matrix EXPLAIN refusal. **144 grouped SQL cases pass**. E03 remains partial for physical identity/chunk migration; **57 unresolved** remain. No push.
+Go references mean separately refreshed master `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, PD client `v0.0.0-20260805103528-afa43111d149`, etcd API `v3.5.15`, and TiPB `v0.0.0-20260908093239-fed7bc47c39d`.
 
-
-The [DML metadata batch](dml-owner-batch-repair.md) advances **A01/E02/E03 together**: metadata-only joined sources, shared write-target authorization and per-table FK plans. Retained failures also repair synchronous FK-ID rollback and strict single-statement parsing. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; executable FK objects, row identities and matrix execution are still open. See the validation receipt for actual grouped checks. No complete package acceptance or push.
-
-
-The [transport/expression cleanup](transport-expression-empty-test-removal.md) removes **80 empty ignored tests and five pure placeholder modules**, with **102 candidate rows relocated** to the [obligation ledger](transport-expression-empty-test-obligations.json). All retained executable test code is byte-for-byte unchanged. Counts remain **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)**. This cleanup closes no finding and accepts no whole Go package. Three original expression failures remain explicit; the local HTTP fixture passes outside the socket sandbox. No push.
-
-
-The [admission-policy batch](admission-policy-batch-repair.md) maintains **A02/A03 together**: retained passwords and CIPHER/ISSUER/SUBJECT/SAN use shared account storage and verified socket evidence, with CREATE/ALTER/SHOW and durable writeback. Seven runtime baseline failures, **126 distinct passing Rust cases** and 52 Go URI plus three Go JSON oracle cases validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; A02/A03 stay partial for the named wider owners. Other 55 IDs retain earlier evidence rather than fresh behavioral reproduction. No complete package acceptance or push.
-
-Earlier checkpoints below are historical.
-
-The [account TLS batch](account-tls-policy-batch-repair.md) advances **A02/A03/N03 together**: durable global_priv, verified TLS/X509 admission and shared CA/protocol startup. Five runtime baseline failures, **114 distinct passing Rust cases** and 12 Go JSON controls validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain. A03 moves from open to partial; the other 54 IDs retain previous evidence. No complete package acceptance or push.
-
-Earlier checkpoints below are historical.
-
-The [MPP transport batch](mpp-transport-batch-repair.md) advances **M04/N03 together** through cluster TLS, shared store limits and cancellation/deadline setup. Five independent baseline failures and 32 distinct passing Rust cases validate the connected repairs. Both findings remain partial for their named wider owners. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)**; other 55 IDs retain prior evidence. No push.
-
-Earlier checkpoints below are historical.
-
-The [structural batch map](remaining-batches.md) assigns all **57 unresolved findings to ten shared-owner batches**, with explicit dependencies and completion boundaries. Whole Go packages retain atomic acceptance. Regression filters/compatible targets are grouped; final required gates run at the completed batch boundary.
-
-The [table-policy batch](table-policy-batch-repair.md) repairs **six Go contracts across T01/K03**, with **57 distinct passing Rust cases**, lint, all-target checks and locked server build. Both findings stay partial. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial).** Other 55 IDs retain prior evidence. No push.
-
-Earlier checkpoints below are historical.
-
-The [statement attribution batch](statement-attribution-batch-repair.md) repairs three connected producer gaps under **O11/O18**, which remain partial: failed physical compilation is not an execution, summaries consume existing deduplicated table visits, and real parse/physical compile measurements share the statement lifetime. **51 distinct Rust tests and 12 MySQL/unistore checks pass**. Broader profiling, complete visits/phases and transport remain open. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** Other IDs retain prior evidence. No push.
-
-The exhaustive placeholder cleanup below is historical.
-
-The [exhaustive planner cleanup](planner-empty-module-removal.md) removes **612 ignored empty tests across 64 pure-placeholder modules**. All 72 retained test files are unchanged; no pure-placeholder module remains. All contracts/current Go identities and 674 relocated candidate rows remain in the [unverified ledger](planner-empty-module-obligations.json). The retained aggregate passes 277 tests with 362 ignored; 355 distinct Rust cases pass overall. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** No production behavior or finding status changed.
-
-The preceding 55-entry cleanup below is historical.
-
-The [placeholder cleanup](placeholder-test-removal.md) removes **55 ignored empty tests in five planner modules** and two assertion-free LRU diagnostic loops. All 55 Go declarations and their historical contracts remain in an [unverified ledger](placeholder-test-obligations.json); 81 dangling candidate-index rows moved there. Every other aggregate test entry is preserved. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** Production owners and safety fallbacks are unchanged.
-
-The cache/Apply checkpoint below is historical.
-
-The [cache/Apply batch](cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.
-
-The statement-observation checkpoint below is historical.
-
-The [statement observation batch](statement-observation-batch-repair.md) advances **O18, O11 and N03 together**: shared SQL completion/counters, routed durable publication, full current/history schema, persistent startup/fallback/readers and joined shutdown. **58 unresolved (42 open, sixteen partial), 28 repaired, 86 tracked.** Detailed telemetry and complete profiling/transport remain unresolved; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
-
-The DML checkpoint below is historical.
-
-The [DML policy batch](dml-policy-batch-repair.md) advances **E03 and T01 together** to partial: physical row consumption/early quota/cleanup and explicit caller-owned absence/assertion metadata. **58 unresolved (44 open, fourteen partial), 28 repaired, 86 tracked.** Complete planner/matrix/system-index/pessimistic owners remain open; no whole-package acceptance is claimed. Other IDs retain their prior evidence.
-
-The MPP checkpoint below is historical.
-
-The [MPP read batch](mpp-read-batch-repair.md) repairs **M02 and M03 together** and advances M04 to partial through canonical process PD/cache ownership and stale-region invalidation. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Three fail-before regressions and 37 targeted Rust cases validate ranges, streaming and cleanup. Thirty ignored empty shells are removed with all [upstream/golden obligations retained](mpp-unverified-test-obligations.json). No full MPP package, transport or live multi-node acceptance is claimed; the other findings retain their prior evidence.
-
-The TiFlash checkpoint below is historical.
-
-The [TiFlash replica batch](tiflash-replica-batch-repair.md) maintains F01/F02/F03 together and connects N03's cluster HTTP configuration consumer. **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked.** F03's recorded classic polling gap is repaired; F01/F02 remain partial for placement/GC and complete durable partition phases. Eight empty ignored test shells are removed without retiring their [upstream obligations](tiflash-unverified-test-obligations.json). This is focused runtime/source validation; the other findings retain their recorded evidence.
-
-The preceding cache checkpoint below is historical.
-
-The [shared cache batch](shared-cache-batch-repair.md) repairs **B01, B02, C03
-and C04 together** against freshly fetched Go master
-`93a01d31f6da205ae4bf376825293903a6899fdb`. It starts at integration
-`b38a25eb0e361739460d81263a17bc75455a3974` and preserves concurrent MDL-default
-commit `7b991676da79f044774caf6da4dfffe247160feb`; native remains `19a56cc`.
-**61 remain unresolved (52 open, nine partial), 25 repaired, 86 tracked.**
-Of these, 59 concern live behavior or missing runtime owners and two are
-explicit disabled seeds. All 65 previously unresolved recorded source references
-were compared: 51 unchanged, fourteen sharing edited files. Four are repaired;
-the other ten still lack their separately recorded owners. This is source
-continuity plus focused runtime validation, not 65 fresh runtime reproductions.
-The root Ristretto and LFU package receipts are atomic; broader bindinfo/copr,
-Domain, inference and planner packages retain separate acceptance boundaries.
-
-The [account history batch](account-history-locking-repair.md) previously closed
-A04 and advanced A02. The [configuration/statistics maintenance batch](config-statistics-maintenance-repair.md)
-closed O07 and advanced N03. Their remaining security/configuration consumers
-stay open. Historical receipts below retain their original checkpoint counts.
-
-D11 remains partial. The [allocator follow-up](alter-allocator-repair.md),
-[index follow-up](alter-index-preparation-repair.md) and
-[column follow-up](alter-column-preparation-repair.md) repaired shared counter
-side effects, original-schema column/index admission, conflicts and stable
-metadata identities. Fresh allocator diagnostics confirm the old symptom is
-removed. Other action admission and durable execution/recovery remain open.
-Current [per-ID evidence](mdl-review-recheck/source-continuity.json) distinguishes
-fresh observations from carried source evidence; historical receipts retain
-their original scope.
-
-The prior full-register review compared integration `cfc6a174bb3e46312dae48a7b85a53053b2f5ea0` with freshly fetched
-TiDB master `93a01d31f6da205ae4bf376825293903a6899fdb`. Both implementation
-branches were already current; native client-rust was `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`.
-That [full-register follow-up](worker-followup-structural-review.md) rechecked all 75 then-unresolved IDs after the shared worker repairs: 73 concerned live behavior or missing runtime integration; D09/D10 were disabled seeds. Six SQL/wire diagnostics and a controlled cache regression supplied fresh observations for 14 IDs; 59 others retained source/caller evidence. No entire unresolved ID was disproved or closed by that review.
-
-The subsequent [atomic health-publication repair](../../health-feedback-publication-execplan.md)
-closes T04 using native client-rust `c97dafb89883312deb526dc8d8f36cc7f7001f47`,
-synchronized through the maintained dependency workflow. At that checkpoint the
-register was **74 unresolved (68 open, six partial), eleven repaired, 85 tracked**. Earlier
-full-register source snapshots retain their original pins and dispositions.
-
-The [PD request-ownership repair](../../pd-request-ownership-execplan.md) then
-closes P07 with native `952013279bc64e590f17c18b9c9222fdaf5a3604`. At that checkpoint the
-register was **73 unresolved (67 open, six partial), twelve repaired, 85 tracked**.
-
-The [projection close-lifetime repair](../../projection-close-ownership-execplan.md)
-closes E06. At that checkpoint the register was **72 unresolved (66 open, six partial),
-thirteen repaired, 85 tracked**. Native client-rust remains current at 19a56cc;
-this executor maintenance grants no complete package acceptance.
-
-The [server command-admission repair](../../command-admission-ownership-execplan.md)
-closes N02, removes the metrics-only guard and restores the configured per-server
-command lifetime. Its panic-path review also adds N06: recovery has already lost
-the framed writer before it could attempt Go's ERR packet. At that checkpoint the register
-was **72 unresolved (66 open, six partial), fourteen repaired, 86 tracked**.
-At that checkpoint N03 remained open; token-limit refusal in older reviews is now historical.
-
-The [connection recovery repair](../../connection-recovery-ownership-execplan.md)
-closes N06 by retaining the live writer/session until the panic ERR attempt,
-then retiring transport before session cleanup. At that checkpoint the register was
-**71 unresolved (65 open, six partial), fifteen repaired, 86 tracked**.
-
-The [generated-write ownership repair](../../generated-write-ownership-execplan.md)
-partially repairs K03: generated mutations use the statement conversion/NULL owner,
-and storage no longer evaluates them a second time. Read/DDL conversion remains
-unresolved. At that checkpoint the register was **71 unresolved (64 open, seven partial),
-fifteen repaired, 86 tracked**.
-
-The [generated-read ownership repair](../../generated-read-ownership-execplan.md)
-further repairs K03: row decoding, table/point reads and ANALYZE use the shared
-column-cast owner. The fixed-flags conversion bypass is removed; virtual-fill
-NULL/unsigned rules remain distinct from reorg decoding. Lower datatype identity,
-legacy ENUM/SET context and ANALYZE diagnostic-transport gaps keep K03 partial.
-The count remains **71 unresolved (64 open, seven partial), fifteen repaired,
-86 tracked**.
-
-The [ANALYZE error ownership repair](../../analyze-error-ownership-execplan.md)
-removes generated sample and remote virtual-row string adapters. Shared execution
-errors now survive local/cluster ANALYZE into SQL delivery; job history renders
-the same diagnostic. K03 remains partial for lower datatype identities,
-generated-expression diagnostic context and legacy ENUM/SET collation context.
-Other ANALYZE storage/build diagnostics still use generic adapters. At that checkpoint counts remained
-**71 unresolved (64 open, seven partial), fifteen repaired, 86 tracked**.
-
-Go means this master, including its selected external modules:
-client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto
-`v0.0.0-20260820070758-623e58e60fa9`, PD client
-`v0.0.0-20260805103528-afa43111d149`, etcd API `v3.5.15`, and TiPB
-`v0.0.0-20260908093239-fed7bc47c39d`.
-
-This consolidates the **known open structural findings**, including the earlier
-DDL and storage findings, rather than repeatedly listing only the latest fix.
-It does **not** certify that all semantic mismatches have been discovered.
-The complete artifact inventories cover 856 TiDB package directories, 41
-client-go directories, 41 kvproto directories, 24 PD-client directories, 7
-etcd-API directories and all 83 Rust manifests.
-These are inventory snapshots; current-master package acceptance is established
-only by complete linked receipts, including [globalconfigsync](global-config-sync-repair.md).
-The [restore-utils receipt](restore-utils-protocol-repair.md) records P04's
-complete package review and protocol repair with explicit integration limits. The 2,043 search
-candidate lines are not a defect count. Historical receipts and ignored-test
-comments can be stale; they are not substituted for current source review.
-
-Paths below are relative to the repository root. Go function references refer
-to the master above, not this branch's Go working tree. Unless marked as a
-reproduction, findings are source comparisons and their stated consequences
-are inferences; no live distributed failure or benchmark is claimed.
-
-The register contains **86 tracked findings: 66 unresolved (including partial
-repairs) and twenty repaired ownership/contract findings (C01, D04, D06, D07, E01, E06, N02, N06, O07, O12, O19,
-P01, P02, P04, P05, P07, S01, S02, T03, T04)**. This is not a count of accepted packages. E02 has a runtime
-repair with plan integration still open; see [the shared UPDATE repair receipt](shared-update-owner-repair.md).
-P05 was found and repaired during the complete range-tree package follow-up;
-see [its package receipt](rtree-protocol-repair.md).
-The complete [statistics LFU review](lfu-lifecycle-repair.md) adds C04 at master
-93a01d31f6da205ae4bf376825293903a6899fdb, including a reproduced dependency gap.
-The latest 18 additions are Q01, X01, C03, K01–K03, I04, S03–S04, E06–E07,
-N04–N05, O10–O13 and P04; see [the subsystem review](subsystem-structure-review.md).
-The preceding 13 additions are A01–A04, B01–B02, E05, N01–N03 and O07–O09;
-their source comparisons, six groups of executable observations and controls
-are in [the expanded ownership review](expanded-ownership-review.md).
-The prior 12 additions were D11, C01–C02, E01–E04, S01–S02 and I01–I03. Five of those groups have SQL
-reproductions in [the session/executor review](session-ownership-review.md):
-D11, C01, E01, E02 and I01. The other seven are source-confirmed design or
-integration differences with unmeasured runtime consequences.
-
-The [earlier register expansion](remaining-structure-review.md) reconciles all 74
-older entries and adds 11 source-confirmed boundaries: T04, P06–P07, O14–O19,
-X02 and M05. The [machine-readable register](structural-findings.json) lists
-every entry and status. The old source locations below retain historical line
-numbers; [source continuity](worker-followup-recheck/source-continuity.json) records exact
-reviewed file blobs and changes since the previous review. Six retained SQL/wire
-diagnostics were rerun as described in the current follow-up; other reproductions
-remain historical evidence.
-
-The [PD deadline prerequisite repair](pd-deadline-owner-repair.md) advances P06
-to partial with real stalled-stream and cancellation regressions. Public PD close
-and complete parent lifecycles remain open, so the total stays 77 unresolved.
-The earlier source-continuity snapshot retains its recorded baseline; this
-repair receipt identifies the subsequent changed files and native revision.
-
-The subsequent [shared pause lifecycle repair](../../ddl-pause-lifecycle-execplan.md)
-advances D04 to partial without closing its cancellation gap. The count remains
-77 unresolved (71 open and six partial); the historical review snapshots below
-retain their original states and source hashes.
-
-The subsequent [cancellation and error-checkpoint repair](../../ddl-cancellation-lifecycle-execplan.md)
-closes the recorded D04/D06 control/object-validation gaps and advances D05 to
-partial. At that checkpoint there were 75 unresolved (69 open and six partial),
-with ten repaired findings. Complete Go package acceptance, unsupported actions and D05's
-remaining error/transaction/retry policy are not implied by those dispositions.
-
-The [action panic recovery repair](../../ddl-panic-owner-execplan.md) then recovers
-planner and staged-validator unwinds through that original transaction, preserving
-Go's distinct panic state/count rules and shared panic counter. D05 remains partial:
-its external-effect allegation is qualified against all live handlers, and complete
-error classification, retry timing and whole-action integration remain open. Counts
-stay unchanged; this maintenance does not accept any upstream package.
+Paths are relative to the repository root. Unless explicitly reproduced, consequences are source-based inferences. Complete source/generated/platform/build/test/fixture coverage remains required for package acceptance; no live multi-node or performance acceptance is implied. The [audit index](README.md) links historical reviews/receipts and retained failed validations. Duplicate historical summaries and stale count snapshots have been removed from this current register; original receipts retain their pins and results.
 
 ## Privilege and account policy owners
 
@@ -283,8 +71,8 @@ removal does not resolve D01–D11 or accept the whole Go DDL package.
 | ID | Confirmed difference and impact | Rust evidence | Go owner and replacement boundary |
 | --- | --- | --- | --- |
 | E01 | **Repaired in the shared UPDATE owner follow-up (historical evidence below).** Multi-update writes each alias's full row from the original join output, lacking shared merge state for aliases of one physical row. **Reproduced:** `a.x=11,b.y=21` through two aliases of `(1,10,20)` succeeds but leaves `(1,10,21)`. | `rust/crates/tidb-executor/src/driver/multi_dml.rs:897`, `:918`, `:1066` | `pkg/executor/update.go::mergeNonGenerated`, `mergeGenerated`, `updateRows`: merge by table ID/handle while retaining per-target-position changed-row rules. Changing only the deduplication key would lose legitimate assignments. |
-| E02 | **Partially repaired:** joined UPDATE/DELETE now construct per-table FK check/cascade plan nodes with the shared DML allocator and resolved targets; assignments through aliases merge by physical table identity. Untouched FK columns and foreign_key_checks=0 are excluded. Existing runtime checks/cascades remain enforced. The former empty multi-table FK spec is removed. These nodes remain EXPLAIN metadata: runtime enforcement still resolves policy from the catalog, so complete Go plan-owned executable FK objects and their lifecycle remain open. | `rust/crates/tidb-executor/src/driver/multi_dml.rs::multi_dml_physical_plan`; `driver/dml.rs::physical_multi_dml_plan`; `driver/fk_trigger_plan.rs`; receipt `dml-owner-batch-repair.md` | Go `buildUpdate` and `pkg/executor/update.go::exec` pass per-table FK plans into shared `updateRecord`. Move the complete UPDATE policy into that shared owner. Multi-DELETE already enforces referred checks/cascades; its control probe fails correctly. |
-| E03 | **Partially repaired:** both joined UPDATE/DELETE now consume the shared physical read, including matrix snapshot identities. Removed the positional matrix source interpreter, private joins/LATERAL rebinding/selection/sort/limit/late accounting, orphan derived/view materializers and obsolete TopN candidate truncation. DML output freezes the pre-WHERE source schema. Shared planner metadata, physical visits, quota and close remain maintained. Final row vectors, reconstructed stored handles, single-table matrix fallback and complete Go chunk/write lifecycle remain open. | `rust/crates/tidb-executor/src/driver/multi_dml.rs::build_multi_layout`, `planned_source_rows`; `driver/physical_builder.rs::build_mem_table`; `tidb-planner/src/plan_builder.rs::build_dml_source`; `tidb-executor/src/topn.rs::run_one_segment`; receipt `dml-interpreter-removal-repair.md` | Go pkg/planner/core buildUpdate/buildDelete freezes source schema and supplies TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. sortexec.TopNExec retains whole child chunks before heap trimming. Complete finalized metadata and write streaming remain unaccepted. |
+| E02 | **Partially repaired:** physical FK leaves carry resolved check/cascade policy consumed by INSERT/ODKU/REPLACE and single/joined UPDATE/DELETE. Shared update/removal owners defer ordinary checks until the final statement buffer, retain IGNORE checks before candidate writes and run checks before cascades. Generated-column dependencies, covering index prefixes and the prepared ForeignKeyChecks cache key follow Go. Removed render-only policy duplication and obsolete direct-executor rollback harnesses. Full indexed lookup/locking, physical cascade substatements, runtime statistics and complete package lifecycle remain open. | `tidb-planner/src/physical/mod.rs::FkTriggerNode`; `tidb-executor/src/driver/fk_trigger_plan.rs::build_fk_triggers`; `driver/dml/update_record.rs`; `driver/dml/delete_record.rs`; `foreign_key.rs`; receipt `dml-trigger-owner-batch-repair.md` | Go physicalop/foreign_key.go builds FKCheck/FKCascade policies; executor builders, updateRecord/removeRow and ExecStmt.handleForeignKeyTrigger share row callbacks and final statement checks/cascades. plan_cache_utils.go keys ForeignKeyChecks. Full indexed checks/locks and dependent physical substatements remain unaccepted. |
+| E03 | **Partially repaired:** single and joined UPDATE/DELETE consume retained physical reads, including internal matrix snapshot positions. Removed the last single-memory-table WHERE/order/limit interpreter and helper matrix after the joined-source migration. Shared reads own subquery lowering, sorting, LIMIT, quota and close; hidden adapter identity stays out of stored SQL rows. Final write-row vectors, reconstructed stored handles, complete planner handle metadata and Go chunk/write streaming remain open. | `rust/crates/tidb-executor/src/driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; `driver/dml/delete_record.rs`; preceding shared read in `driver/physical_builder.rs::build_mem_table`; receipt `dml-trigger-owner-batch-repair.md` | Go pkg/planner/core buildUpdate/buildDelete supplies source schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. All current matrix callers now use shared physical reads; final buffering/handle reconstruction and full write streaming still require migration. |
 | E04 | **Partially repaired:** the runtime switch now enables independently rebound parallel Apply workers. Shared Joiner/NULL/filter semantics, bounded ordered/unordered queues, common inner cache, merged runtime counters, errors/panics, request-child cancellation and joined close/reopen are composed. CTE/shuffle inner trees retain broader serial fallback than Go; full clone/recursive/golden/failpoint matrices and live TiKV/performance remain unresolved. | `tidb-planner/src/physical/mod.rs::enable_parallel_apply`, `clone_for_apply_worker`; `tidb-executor/src/driver/physical_builder.rs::build_apply`; `tidb-executor/src/apply/parallel.rs`; `tidb-session/src/stmt_ctx.rs`; [batch receipt](cache-apply-batch-repair.md) | `pkg/executor/builder.go::buildApply` clones eligible inner plans for ParallelNestedLoopApplyExec; `parallel_apply.go` owns ordered workers, cache, errors and cleanup. Rust needs worker-safe contexts and Go's serial fallback. Serial result tests do not validate this path; performance is unmeasured. |
 | E05 | **P1; complete import owner still open:** the unsafe private IMPORT INTO file/SELECT execution pipeline is withdrawn. Its local CSV parser, nested precheck/INSERT loop and SELECT-to-INSERT rewrite are removed; execution now explicitly refuses before reading files or modifying tables. The prior skip_rows/assignment omissions are historical observations of the removed pipeline. Go supports both forms through its import controller, with durable job/task lifecycle for file imports; that complete owner and runtime integration remain absent. | `rust/crates/tidb-session/src/dispatch.rs::DmlStmt::ImportInto`; `src/tests_core/dml.rs::import_into_refusal_preserves_file_targets_and_options`; `::import_into_refusal_preserves_select_targets_and_transaction`; receipt `../../import-shortcut-removal-execplan.md`; historical `expanded-ownership-probe.txt` | `pkg/executor/import_into.go::ImportIntoExec.Next`/`submitTask`, `pkg/executor/importer` controller and `pkg/dxf/importinto` (including standalone tasks). Replace the complete import lifecycle and option/encoding ownership; SELECT import has its own Go path and is not used to infer file-import result shape. |
 
@@ -453,7 +241,7 @@ limits and the complete [scope matrix](structural-coverage.md).
 | Candidate | Why it needs review before removal |
 | --- | --- |
 | Remaining configured-session transaction cases | S01/S02 establish the alternate owners and missing two-table refresh. Full transaction/autocommit semantics and all configured/test callers still need review before deletion. |
-| DML identity edge cases | E01 alias merging and the E02 orphan-acceptance symptom are repaired; fresh alias/FK/USING controls still hold. E02 retains its planner FK contract gap and E03 the materialized handoff. Derived/outer joins, pruning and partitioned handles still need a complete plan-schema comparison; do not infer failure from a different data representation alone. |
+| DML identity edge cases | E01 alias merging and the E02 orphan-acceptance symptom are repaired; fresh alias/FK/USING controls still hold. E02 retains indexed checks/locking and physical cascade ownership; E03 retains the materialized write handoff. Derived/outer joins, pruning and partitioned handles still need a complete plan-schema comparison; do not infer failure from a different data representation alone. |
 | Cluster multi-action ALTER failure paths | D11's in-process catalog and eager shared-allocator leaks are repaired. Durable cluster metadata/data failure recovery is a separate unresolved owner; no partial cluster commit is inferred from the local reproduction. |
 | Error identity and required system-table errors | Shared cancellation, coded error/SQLSTATE conversion, checkpoints and worker continuation are repaired. The old blanket-1105 allegation is stale. D05 now preserves source identity in migrated persisted producers and CHECK validation; other admission/storage adapters still lose it; complete taxonomy, transaction classification, configurable retry timing and metrics remain open. Required-table error cases need original-test comparison; a textual difference alone is insufficient. |
 | Partition/catalog/statistics integration | Existing failures may share a catalog/publication cause. The [fresh rerun](worker-followup-recheck/system-table-ddl.txt) still fails at the `p1 exists` catalog lookup after ADD PARTITION, before proving a notifier violation. Its root cause remains unclassified and it is not an additional counted structural ID. Current source already filters system-schema events. Do not implement another notifier exclusion to hide this failure. |

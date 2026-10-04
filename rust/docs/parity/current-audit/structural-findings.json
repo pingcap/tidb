@@ -244,19 +244,19 @@
       "id": "E02",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "**Partially repaired:** joined UPDATE/DELETE now construct per-table FK check/cascade plan nodes with the shared DML allocator and resolved targets; assignments through aliases merge by physical table identity. Untouched FK columns and foreign_key_checks=0 are excluded. Existing runtime checks/cascades remain enforced. The former empty multi-table FK spec is removed. These nodes remain EXPLAIN metadata: runtime enforcement still resolves policy from the catalog, so complete Go plan-owned executable FK objects and their lifecycle remain open.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/multi_dml.rs::multi_dml_physical_plan`; `driver/dml.rs::physical_multi_dml_plan`; `driver/fk_trigger_plan.rs`; receipt `dml-owner-batch-repair.md`",
-      "go_owner": "Go `buildUpdate` and `pkg/executor/update.go::exec` pass per-table FK plans into shared `updateRecord`. Move the complete UPDATE policy into that shared owner. Multi-DELETE already enforces referred checks/cascades; its control probe fails correctly.",
-      "review_basis": "Connected DML maintenance from Cloud integration 40ee71600bff5dccce1102a97126e85ed0a870ec against Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Seven new regressions failed together before implementation; current validation and remaining ownership limits are recorded in dml-owner-batch-validation.json. Parent status remains partial; no complete package acceptance."
+      "finding": "**Partially repaired:** physical FK leaves carry resolved check/cascade policy consumed by INSERT/ODKU/REPLACE and single/joined UPDATE/DELETE. Shared update/removal owners defer ordinary checks until the final statement buffer, retain IGNORE checks before candidate writes and run checks before cascades. Generated-column dependencies, covering index prefixes and the prepared ForeignKeyChecks cache key follow Go. Removed render-only policy duplication and obsolete direct-executor rollback harnesses. Full indexed lookup/locking, physical cascade substatements, runtime statistics and complete package lifecycle remain open.",
+      "rust_evidence": "`tidb-planner/src/physical/mod.rs::FkTriggerNode`; `tidb-executor/src/driver/fk_trigger_plan.rs::build_fk_triggers`; `driver/dml/update_record.rs`; `driver/dml/delete_record.rs`; `foreign_key.rs`; receipt `dml-trigger-owner-batch-repair.md`",
+      "go_owner": "Go physicalop/foreign_key.go builds FKCheck/FKCascade policies; executor builders, updateRecord/removeRow and ExecStmt.handleForeignKeyTrigger share row callbacks and final statement checks/cascades. plan_cache_utils.go keys ForeignKeyChecks. Full indexed checks/locks and dependent physical substatements remain unaccepted.",
+      "review_basis": "Connected Cloud maintenance from 2cecf1e7c2b4907a8c5d891f0288e18dda4d9850 against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Original session baseline1 pass/4 fail; actual original-server wire baseline0 pass/4 fail. Final grouped session260 pass/0 fail; see dml-trigger-owner-batch-validation.json for all checks and limits. No full-package acceptance or fresh behavioral revalidation of the other55 unresolved IDs."
     },
     {
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "**Partially repaired:** both joined UPDATE/DELETE now consume the shared physical read, including matrix snapshot identities. Removed the positional matrix source interpreter, private joins/LATERAL rebinding/selection/sort/limit/late accounting, orphan derived/view materializers and obsolete TopN candidate truncation. DML output freezes the pre-WHERE source schema. Shared planner metadata, physical visits, quota and close remain maintained. Final row vectors, reconstructed stored handles, single-table matrix fallback and complete Go chunk/write lifecycle remain open.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/multi_dml.rs::build_multi_layout`, `planned_source_rows`; `driver/physical_builder.rs::build_mem_table`; `tidb-planner/src/plan_builder.rs::build_dml_source`; `tidb-executor/src/topn.rs::run_one_segment`; receipt `dml-interpreter-removal-repair.md`",
-      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete freezes source schema and supplies TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. sortexec.TopNExec retains whole child chunks before heap trimming. Complete finalized metadata and write streaming remain unaccepted.",
-      "review_basis": "From 7957cf17dd2a25d7 against refreshed Go 93a01d31f6. Original baseline2 failures/1 control; migration187 pass/2 failures; final315 grouped cases pass. See dml-interpreter-removal-validation.json. Internal matrix identity is adapter maintenance, not a Go virtual-table feature or whole-package acceptance."
+      "finding": "**Partially repaired:** single and joined UPDATE/DELETE consume retained physical reads, including internal matrix snapshot positions. Removed the last single-memory-table WHERE/order/limit interpreter and helper matrix after the joined-source migration. Shared reads own subquery lowering, sorting, LIMIT, quota and close; hidden adapter identity stays out of stored SQL rows. Final write-row vectors, reconstructed stored handles, complete planner handle metadata and Go chunk/write streaming remain open.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; `driver/dml/delete_record.rs`; preceding shared read in `driver/physical_builder.rs::build_mem_table`; receipt `dml-trigger-owner-batch-repair.md`",
+      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete supplies source schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. All current matrix callers now use shared physical reads; final buffering/handle reconstruction and full write streaming still require migration.",
+      "review_basis": "Connected Cloud maintenance from 2cecf1e7c2b4907a8c5d891f0288e18dda4d9850 against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Original session baseline1 pass/4 fail; actual original-server wire baseline0 pass/4 fail. Final grouped session260 pass/0 fail; see dml-trigger-owner-batch-validation.json for all checks and limits. No full-package acceptance or fresh behavioral revalidation of the other55 unresolved IDs."
     },
     {
       "id": "E04",
@@ -793,28 +793,29 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "7957cf17dd2a25d7eeed2e7d6af18f051c9235a4",
+    "integration_start": "2cecf1e7c2b4907a8c5d891f0288e18dda4d9850",
     "findings": [
+      "E02",
       "E03"
     ],
     "statuses": {
+      "E02": "partial",
       "E03": "partial"
     },
-    "receipt": "dml-interpreter-removal-repair.md",
-    "validation": "dml-interpreter-removal-validation.json",
-    "scope": "Connected joined-DML interpreter retirement, frozen read schema and shared TopN candidate retention; complete packages remain unaccepted."
+    "receipt": "dml-trigger-owner-batch-repair.md",
+    "validation": "dml-trigger-owner-batch-validation.json",
+    "scope": "Retained DML read/FK execution owners, obsolete harness/test/doc removal and valid Git build-input watching; whole packages unaccepted."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "integration_start": "1e91cdb62d920b116a9edb1a424745a1fcba5f07",
-    "removed_empty_tests": 80,
-    "removed_modules": 5,
-    "relocated_candidate_rows": 102,
-    "retained_executable_source_verified_unchanged": true,
-    "production_behavior_changed": false,
+    "integration_start": "2cecf1e7c2b4907a8c5d891f0288e18dda4d9850",
+    "removed_modules": 2,
+    "retired_existing_tests": 9,
+    "relocated_go_tests": 11,
+    "withdrawn_new_adapter_tests": 2,
     "finding_statuses_changed": false,
-    "receipt": "transport-expression-empty-test-removal.md",
-    "obligation_ledger": "transport-expression-empty-test-obligations.json"
+    "receipt": "dml-trigger-owner-batch-repair.md",
+    "inventory": "dml-trigger-owner-batch-validation.json"
   },
   "test_cleanup_history": [
     {
@@ -841,6 +842,18 @@
       "receipt": "planner-empty-module-removal.md",
       "obligation_ledger": "planner-empty-module-obligations.json",
       "source_commit": "a1d57eefff46b4a1899337a5f5aa3e1cfc327705"
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "1e91cdb62d920b116a9edb1a424745a1fcba5f07",
+      "removed_empty_tests": 80,
+      "removed_modules": 5,
+      "relocated_candidate_rows": 102,
+      "retained_executable_source_verified_unchanged": true,
+      "production_behavior_changed": false,
+      "finding_statuses_changed": false,
+      "receipt": "transport-expression-empty-test-removal.md",
+      "obligation_ledger": "transport-expression-empty-test-obligations.json"
     }
   ],
   "repair_history": [
@@ -950,6 +963,19 @@
       "validation": "admission-policy-batch-validation.json",
       "scope": "Connected retained credential and specified verified-certificate admission maintenance; no complete Go package acceptance.",
       "source_identity": "Sources and receipt share a normal hook-gated local commit; hashes below identify validated source. Actual commit/recovery/draft outcomes are SHA-dependent external receipts."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "7957cf17dd2a25d7eeed2e7d6af18f051c9235a4",
+      "findings": [
+        "E03"
+      ],
+      "statuses": {
+        "E03": "partial"
+      },
+      "receipt": "dml-interpreter-removal-repair.md",
+      "validation": "dml-interpreter-removal-validation.json",
+      "scope": "Connected joined-DML interpreter retirement, frozen read schema and shared TopN candidate retention; complete packages remain unaccepted."
     }
   ],
   "execution_batches": {

@@ -1,0 +1,169 @@
+{
+  "date": "2026-10-04",
+  "start": "2cecf1e7c2b4907a8c5d891f0288e18dda4d9850",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "concurrent_remote_preserved_unmerged": "91010d96bb3e32468bd56ea2b07d255248485489",
+  "advanced": [
+    "E02",
+    "E03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "production_net_lines_removed": 388,
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/driver/access.rs": "4192b34fd7ef21fc4dba3938a1f5773e18cfa84a5699adfafdf59244beca0f51",
+    "rust/crates/tidb-executor/src/driver/dml.rs": "753aa61cc1b1739390a7417e03d306776614b88ee55d5ee2c2f5d871aa578bd4",
+    "rust/crates/tidb-executor/src/driver/dml/update_record.rs": "2a18ac99a25c156d17eecce5d07c359b89d47e91159a2784957441fa3b326551",
+    "rust/crates/tidb-executor/src/driver/fk_trigger_plan.rs": "b40ba86f2ace36dd67b469544547d5861aaf2a2c22513e03e6cd52dab4a4fae8",
+    "rust/crates/tidb-executor/src/driver/multi_dml.rs": "fe5942ce2a0aaeb56f65688d8f5787a5ebbf612a0a48d2a5fd46cbf6c9c0d0e8",
+    "rust/crates/tidb-executor/src/foreign_key.rs": "71c5ebfb51bbfbe91c17a62ff68c086928424fe3c0450b83faa1893be6474e34",
+    "rust/crates/tidb-executor/src/lib.rs": "a7c3b162166230cdb5420e0873321c5fe6f82055d432c649d1aebdfa90918877",
+    "rust/crates/tidb-planner/src/physical/mod.rs": "aad9ac78496d005c6679c071eea81fd254228dccedd2a679329d3bbd99fb29dc",
+    "rust/crates/tidb-session/src/prepared_ast.rs": "18f994894b5df9d10cfc3cf62267149aa50fe5e7253de49eecf8f92b99195da8",
+    "rust/crates/tidb-session/src/tests_foreign_key.rs": "7bdfb50ea6d7c82b79bb9b91ddb646641fe6a95ab1ae9111b6ae06a79e890aa3",
+    "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "9634ec053ee08a091d2f804c15a3a4d8040475d7209ad96715fabc0da0498330",
+    "rust/crates/tidb-util/build.rs": "94e7746e6e5d499f44dd485eef49ff051ba090c89a004b0e74d4a83bb5b1207d",
+    "rust/crates/tidb-executor/src/driver/dml/delete_record.rs": "27c92654cf286ecbeff62163b2c9acbaa5556affbc0f18baa2c5b39ea3c57434"
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- dml_trigger_batch_ --test-threads=1",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/baseline.log",
+      "sha256": "658f31225a6e7beb20aa8ff294d247b055f87dfd483716430981254d87c28772",
+      "passed": 1,
+      "failed": 4,
+      "ignored": 0
+    },
+    {
+      "command": "First grouped executor/session run; obsolete executor FK harness stopped the command before session execution",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/grouped-tests.log",
+      "sha256": "8dcc8c8ef8efaee82eceae860dced7a4d98f2ef6c78f9325868805e9c8ed0333",
+      "passed": 8,
+      "failed": 4,
+      "ignored": 0
+    },
+    {
+      "command": "Reuse built session ELF with grouped DML/FK/grant/quota/prepared/ALTER filters",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/session-migration.log",
+      "sha256": "bf7b895eec83da912e7132971269c66a0b84615622078ec03096170a4e06e95a",
+      "passed": 257,
+      "failed": 2,
+      "ignored": 0
+    },
+    {
+      "command": "Grouped retry: generated-column iteration compile error E0277; corrected Arc<Vec> iteration",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/compile-diagnostic.log",
+      "sha256": "ee32066fb9aabf93c7fd0f26791b9cc31c9f86a0585753b4336307d0db6645e8"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_multi_table_dml tests_foreign_key tests_grants::table_scope tests_mem_quota tests_prepared_statements tests_prepared_plan_cache tests_alter --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/final-tests.log",
+      "sha256": "46ac15a0b2ae6517ac311cb81e0813b3f75da03f564c3006138ac44cdd3641c8",
+      "passed": 260,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/all-targets.log",
+      "sha256": "ef5ba0a81179060ff545ae5cb1b76c7597015c1e512e85b915f23fb82c3bc90e"
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/dml-trigger-owner-batch/wire-regressions.py baseline-wire (original four-case version)",
+      "exit_code": 1,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/baseline-wire.log",
+      "sha256": "4417100b94061743c4835f9eaed9b2af0df766e9b4c77fb2319fc943824dab60"
+    },
+    {
+      "command": "python /workspace/.cloud-setup/dml-trigger-owner-batch/check-build-watch.py (actual build script in isolated loose/packed/loose/detached Git repo)",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-trigger-owner-batch/build-watch-after.log",
+      "sha256": "8e8c82b6fbfd319b9ce3e4ac0d7a110931949d7f0caecf6e41de8bab91201357"
+    }
+  ],
+  "test_removals_from_original_paths": [
+    {
+      "path": "rust/crates/tidb-executor/src/tests_fktest_source.rs",
+      "removed_test_names": [
+        "foreign_key_concurrent_insert_child_table_all_rows_valid",
+        "foreign_key_on_insert_child_table",
+        "foreign_key_on_insert_on_duplicate_parent_table_check"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tests_fktest_b134_source.rs",
+      "removed_test_names": [
+        "foreign_key_on_delete_cascade",
+        "foreign_key_on_delete_cascade2",
+        "foreign_key_on_delete_parent_table_check",
+        "foreign_key_on_delete_set_null",
+        "foreign_key_on_delete_set_null2",
+        "foreign_key_on_update_cascade",
+        "foreign_key_on_update_cascade2",
+        "foreign_key_on_update_child_table",
+        "foreign_key_on_update_parent_table_check"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_multi_table_dml.rs",
+      "removed_test_names": [
+        "dml_removal_matrix_derived_metadata_errors_precede_execution",
+        "dml_removal_matrix_explain_uses_shared_metadata_without_execution",
+        "dml_removal_matrix_lateral_has_no_executable_schema_probe",
+        "dml_removal_matrix_view_using_and_derived_delete_share_layout",
+        "dml_shared_read_matrix_aliases_and_prepared_reads_keep_identity_private",
+        "dml_shared_read_matrix_delete_lowers_where_subquery",
+        "dml_shared_read_matrix_positions_survive_duplicate_values_and_outer_join",
+        "dml_shared_read_matrix_update_lowers_where_subquery"
+      ]
+    }
+  ],
+  "cleanup": {
+    "retired_existing_tests": 9,
+    "retired_adapter_tests": 8,
+    "retired_serial_fake_concurrency_test": 1,
+    "relocated_go_tests": 11,
+    "new_fk_regressions": 4,
+    "withdrawn_new_adapter_tests": 2,
+    "retired_modules": 2,
+    "readme_lines_before": 769,
+    "readme_lines_after": 116,
+    "removed_documentation": "Duplicated milestone narratives/stale count snapshots in current index/register, copied completed protocol declaration tables; original receipts/JSON inventories remain."
+  },
+  "baseline_and_migration": "Original session1 pass/4 fail. First executor8 pass/4 fail revealed tests requiring absent statement rollback, not four independently established new defects. Moved all11 valid Go SQL cases to Session without weakening expectations; discarded the serial loop falsely labeled concurrency. Session migration257 pass/2 fail exposed generated reference dependencies, repaired against Go. Final260 pass/0 fail/0 ignored. The two temporary adapter regressions were removed with the Rust-only matrix fixture at user request; their external baseline remains evidence.",
+  "final_source_followup": "After grouped tests/checks/lint, self-review removed nine lines of REPLACE CHECK prevalidation that compensated for a direct executor harness. The normal hook compiles final source and a fifth final wire control verifies CHECK3819 and rollback. Formatting-only unrelated hunks were restored. Actual hook/wire outcome is recorded externally after commit, not preclaimed here.",
+  "build_efficiency": "Actual old build-script output watched missing .git/packed-refs. The replacement watches existing HEAD/ref inputs; actual script passes all four Git transitions. Final grouped retry compiled executor/session without rebuilding util/expr. Optional standalone util probe selected a different feature graph and was terminated; build-input-before.log is not a passing validation. No workload speedup claimed.",
+  "commit_gate": {
+    "hook": "hooks/pre-commit",
+    "core_hooks_path": "hooks",
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "mode": "Normal commit invokes actual hook. Exact SHA, hook result and final five-case real MySQL/unistore result go in /workspace/.cloud-setup/dml-trigger-owner-batch/final-handoff.json after completion. No redundant preliminary server build."
+  },
+  "limits": [
+    "Complete Go packages remain unaccepted; E02/E03 remain partial.",
+    "FK lookup still scans catalog rows (including inherited scan-error handling); complete indexed lookup/locking and physical cascade executor/runtime stats remain.",
+    "Final write-row buffering, reconstructed stored handles and complete planner handle/chunk ownership remain.",
+    "The retired serial FK loop never tested Go concurrent locking; original upstream concurrency obligation remains unverified.",
+    "Full Go suites, live multi-node TiKV, workload benchmarks and fresh-task unpublished commit restoration not verified.",
+    "Prior parser14 and expression3 failures were not rerun or erased.",
+    "No push or push dry run; native unchanged; concurrent remote changes preserved."
+  ]
+}

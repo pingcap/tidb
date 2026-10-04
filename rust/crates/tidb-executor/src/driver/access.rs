@@ -410,6 +410,7 @@ pub struct PreparedPlanCacheEnvironment {
     /// and any index range derived from it, so plans built under different
     /// values must never share a cache entry.
     enable_no_backslash_escapes_in_like: bool,
+    foreign_key_checks: bool,
     time_zone: String,
     pushdown_blacklist_generation: u64,
     connection_charset: String,
@@ -463,6 +464,7 @@ impl PreparedPlanCacheEnvironment {
             sql_mode,
             user_identity: String::new(),
             enable_no_backslash_escapes_in_like: true,
+            foreign_key_checks: true,
             time_zone,
             pushdown_blacklist_generation,
             connection_charset: String::new(),
@@ -480,6 +482,14 @@ impl PreparedPlanCacheEnvironment {
                 as u64,
             enable_generated_columns: true,
         }
+    }
+
+    /// Go NewPlanCacheKey includes ForeignKeyChecks because it changes the
+    /// FK policies retained in the DML root.
+    #[must_use]
+    pub const fn with_foreign_key_checks(mut self, enabled: bool) -> Self {
+        self.foreign_key_checks = enabled;
+        self
     }
 
     /// Keeps DML lock plans scoped to the transaction mode that built them.

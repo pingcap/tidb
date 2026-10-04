@@ -25,15 +25,14 @@ pub(crate) enum UpdateRowId {
     Mem(usize),
 }
 
-#[derive(Default)]
-pub(crate) struct UpdateRecords {
+pub(crate) struct UpdateRecords<'a> {
+    triggers: &'a [tidb_planner::physical::FkTriggerNode],
     tables: Vec<UpdateTable>,
 }
 
 struct UpdateTable {
     database: String,
     name: String,
-    has_foreign_keys: bool,
     updates: Vec<ForeignKeyUpdate>,
 }
 
@@ -66,7 +65,14 @@ impl UpdateOutcome {
     }
 }
 
-impl UpdateRecords {
+impl<'a> UpdateRecords<'a> {
+    pub(crate) fn new(triggers: &'a [tidb_planner::physical::FkTriggerNode]) -> Self {
+        Self {
+            triggers,
+            tables: Vec::new(),
+        }
+    }
+
     /// Assignments and on-update timestamps have been evaluated by the caller.
     /// Generated columns, write errors, locks and FK ownership are shared by
     /// all three SQL update entrypoints.
@@ -108,7 +114,7 @@ impl UpdateRecords {
                 return ignored_write_error(kv_write_error(error), ignore, ctx);
             }
         }
-        let fk_target = if ctx.foreign_key_checks() {
+        let fk_target = if crate::foreign_key::has_triggers(self.triggers, database, name) {
             let index = self
                 .tables
                 .iter()
@@ -117,18 +123,18 @@ impl UpdateRecords {
                     self.tables.push(UpdateTable {
                         database: database.to_owned(),
                         name: name.to_owned(),
-                        has_foreign_keys: crate::foreign_key::participates(catalog, database, name),
                         updates: Vec::new(),
                     });
                     self.tables.len() - 1
                 });
-            self.tables[index].has_foreign_keys.then_some(index)
+            Some(index)
         } else {
             None
         };
         if fk_target.is_some() && ignore {
             let check = crate::foreign_key::require_child_rows(
                 catalog,
+                self.triggers,
                 database,
                 name,
                 std::slice::from_ref(new),
@@ -137,6 +143,7 @@ impl UpdateRecords {
             .and_then(|()| {
                 crate::foreign_key::check_parent_changes(
                     catalog,
+                    self.triggers,
                     database,
                     name,
                     &[crate::foreign_key::ParentChange::Update { old, new }],
@@ -234,6 +241,7 @@ impl UpdateRecords {
             let new: Vec<_> = checked.iter().map(|update| update.new.clone()).collect();
             crate::foreign_key::require_updated_child_rows(
                 catalog,
+                self.triggers,
                 database,
                 name,
                 &old,
@@ -247,7 +255,14 @@ impl UpdateRecords {
                     new: &update.new,
                 })
                 .collect();
-            crate::foreign_key::check_parent_changes(catalog, database, name, &changes, ctx)?;
+            crate::foreign_key::check_parent_changes(
+                catalog,
+                self.triggers,
+                database,
+                name,
+                &changes,
+                ctx,
+            )?;
         }
         for table in self.tables.iter().filter(|table| !table.updates.is_empty()) {
             let (database, name, updates) = (&table.database, &table.name, &table.updates);
@@ -258,7 +273,14 @@ impl UpdateRecords {
                     new: &update.new,
                 })
                 .collect();
-            crate::foreign_key::cascade_parent_changes(catalog, database, name, &changes, ctx)?;
+            crate::foreign_key::cascade_parent_changes(
+                catalog,
+                self.triggers,
+                database,
+                name,
+                &changes,
+                ctx,
+            )?;
         }
         Ok(())
     }

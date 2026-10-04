@@ -39,14 +39,30 @@ fn emit_build_value(name: &str, value: &str) {
 }
 
 fn register_git_inputs() {
-    for name in ["HEAD", "packed-refs"] {
-        if let Some(path) = command_output("git", &["rev-parse", "--git-path", name]) {
-            println!("cargo:rerun-if-changed={path}");
-        }
+    let git_path = |name: &str| {
+        command_output("git", &["rev-parse", "--git-path", name]).map(std::path::PathBuf::from)
+    };
+    let watch = |path: &std::path::Path| println!("cargo:rerun-if-changed={}", path.display());
+    if let Some(head) = git_path("HEAD").filter(|path| path.exists()) {
+        watch(&head);
     }
     if let Some(reference) = command_output("git", &["symbolic-ref", "-q", "HEAD"]) {
-        if let Some(path) = command_output("git", &["rev-parse", "--git-path", &reference]) {
-            println!("cargo:rerun-if-changed={path}");
+        if let Some(path) = git_path(&reference) {
+            if path.exists() {
+                // A missing watched file makes Cargo rebuild on every run.
+                // The loose ref alone owns this branch's current revision.
+                watch(&path);
+            } else {
+                // Packed refs can become loose on the next commit. Watching
+                // the nearest existing parent detects that transition; the
+                // packed file detects updates while the ref stays packed.
+                if let Some(parent) = path.ancestors().skip(1).find(|path| path.exists()) {
+                    watch(parent);
+                }
+                if let Some(packed) = git_path("packed-refs").filter(|path| path.exists()) {
+                    watch(&packed);
+                }
+            }
         }
     }
 }

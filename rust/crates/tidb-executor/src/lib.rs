@@ -320,10 +320,6 @@ mod tests_executor_suite_metadata_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
 #[cfg(test)]
-mod tests_fktest_b134_source;
-#[cfg(test)]
-mod tests_fktest_source;
-#[cfg(test)]
 mod tests_hashagg_aggregate_suite_source;
 #[cfg(test)]
 mod tests_issuetest_b135_source;

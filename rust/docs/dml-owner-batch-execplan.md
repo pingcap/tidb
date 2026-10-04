@@ -1,5 +1,7 @@
 # Share multi-table DML planning metadata and consumers
 
+Current state is maintained in [the DML read/FK continuation](dml-trigger-owner-batch-execplan.md). The matrix interpreters and render-only FK policy described as pending below have since been replaced; this plan's earlier milestones remain historical evidence.
+
 
 This living ExecPlan follows PLANS.md. Update progress, discoveries, decisions and outcomes with the implementation. The user requires source fixes in connected batches with one combined baseline and grouped final validation, and forbids pushing.
 

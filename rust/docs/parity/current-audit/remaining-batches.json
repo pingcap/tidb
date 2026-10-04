@@ -67,7 +67,7 @@
         "pkg/session and sessiontxn providers",
         "pkg/planner/core, pkg/executor, pkg/table/tables, pkg/meta/autoid"
       ],
-      "completion_boundary": "One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Delete the matrix interpreter only after all its callers use the shared executor. T01/K03 maintenance is evidence inside this batch, not acceptance of it.",
+      "completion_boundary": "One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Matrix read interpreters are retired; complete chunk writes and indexed FK/cascade owners remain. Existing-owner maintenance does not accept this batch.",
       "acceptance": "unaccepted",
       "finding_statuses": {
         "A01": "partial",
@@ -80,15 +80,14 @@
         "S04": "open"
       },
       "latest_maintenance": {
-        "receipt": "dml-removal-batch-repair.md",
-        "preceding_receipt": "dml-owner-batch-repair.md",
+        "receipt": "dml-trigger-owner-batch-repair.md",
+        "preceding_receipt": "dml-interpreter-removal-repair.md",
         "advanced_findings": [
-          "A01",
           "E02",
           "E03"
         ],
         "complete_package_acceptance": false,
-        "remaining": "Executable FK objects, final row vectors, physical handles and positional matrix interpreter remain; the matrix schema probe and duplicate metadata builders are removed."
+        "remaining": "Final row vectors, stored-handle reconstruction, complete chunk/write streaming, indexed FK lookup/locking and physical cascade substatements remain; both matrix interpreters and render-only FK policy duplication are removed."
       }
     },
     {
@@ -336,5 +335,5 @@
       }
     }
   ],
-  "latest_evidence": "dml-interpreter-removal-validation.json"
+  "latest_evidence": "dml-trigger-owner-batch-validation.json"
 }

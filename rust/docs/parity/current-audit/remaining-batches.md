@@ -1,13 +1,6 @@
 # Structural execution batches for the remaining findings
 
-The [shared-read removal](dml-interpreter-removal-repair.md) retires the whole matrix joined-DML interpreter and unused materializers, removes obsolete TopN candidate truncation, and freezes the pre-WHERE DML schema: **595 net production lines removed; 315 grouped tests pass**. E03 remains partial; **57 unresolved**. Single-table matrix execution and final write buffering remain. Earlier checkpoints below are historical. No push.
-
-
-The [DML removal continuation](dml-removal-batch-repair.md) removes duplicate base/view/derived metadata construction, executable LATERAL probing, source-kind AST traversal and matrix EXPLAIN refusal. **144 grouped SQL cases pass**. E03 remains partial for physical identity/chunk migration; **57 unresolved** remain. No push.
-
-
-The [DML metadata batch](dml-owner-batch-repair.md) advances **A01/E02/E03 together**: metadata-only joined sources, shared write-target authorization and per-table FK plans. Retained failures also repair synchronous FK-ID rollback and strict single-statement parsing. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; executable FK objects, row identities and matrix execution are still open. See the validation receipt for actual grouped checks. No complete package acceptance or push.
-
+The [DML read/FK owner batch](dml-trigger-owner-batch-repair.md) advances E02/E03 together: single and joined UPDATE/DELETE consume retained physical reads, and FK checks/cascades consume resolved root policy. It removes the remaining single-table matrix interpreter, obsolete rollback harnesses, nine tracked adapter/false-concurrency tests and redundant REPLACE prevalidation. Eleven Go-derived FK cases move to the shared session harness. The grouped session run passes 260 tests. E02/E03 remain partial for indexed FK lookup/locking, complete cascade substatements and final chunk/write ownership. Other findings retain earlier evidence.
 
 Latest B05 maintenance: [admission-policy batch](admission-policy-batch-repair.md) repairs retained-password and specified certificate consumers together. Counts stay 57 unresolved; remaining durable login-counter/GRANT/cache and certificate reload/rotation/no-CA/platform owners stay explicit. Other 55 IDs retain earlier evidence.
 
@@ -48,7 +41,7 @@ Integration dependencies: none; external prerequisite packages still require com
 
 Source owners: pkg/session and sessiontxn providers; pkg/planner/core, pkg/executor, pkg/table/tables, pkg/meta/autoid.
 
-Completion: One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Delete the matrix interpreter only after all its callers use the shared executor. T01/K03 maintenance is evidence inside this batch, not acceptance of it.
+Completion: One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Matrix read interpreters are retired; complete chunk writes and indexed FK/cascade owners remain. Existing-owner maintenance does not accept this batch.
 
 Integration dependencies: B03.
 

@@ -2672,28 +2672,54 @@ pub struct PhysicalDmlRoot {
     /// Apply operators into `select_plan`. Non-subquery SET expressions are
     /// evaluated by the ordinary Update executor and remain `None` here.
     pub update_expressions: Vec<Option<Expression>>,
-    /// Go `Insert.FKChecks` / `Update.FKChecks` / `Delete.FKChecks` and the
-    /// matching cascade fields, flattened in `flat_plan.go` render order
-    /// (select children first, then FK checks, then FK cascades; the
-    /// multi-table maps render sorted by table id). These render-only nodes
-    /// carry the plan ids Go allocates when `BuildOn{Insert,Update,Delete}FK
-    /// Triggers` runs; the write path enforces the same constraints through
-    /// `crate::foreign_key`.
+    /// Go FK checks and cascades selected by the DML builder, in EXPLAIN
+    /// order. Execution consumes the same resolved policies.
     pub fk_triggers: Vec<FkTriggerNode>,
 }
 
-/// One Go `FKCheck` or `FKCascade` EXPLAIN leaf (`physicalop/foreign_key.go`).
+/// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FkTriggerKind {
+    /// A modified child key must exist in the parent.
+    ChildCheck,
+    /// A withdrawn parent key must have no child references.
+    ParentCheck,
+    /// A withdrawn parent key changes the referencing rows.
+    Cascade {
+        /// DELETE rather than UPDATE of the parent.
+        on_delete: bool,
+        /// SET NULL rather than CASCADE.
+        set_null: bool,
+    },
+}
+
+/// One Go FKCheck or FKCascade policy, retained by both execution and EXPLAIN.
 #[derive(Clone, Debug)]
 pub struct FkTriggerNode {
-    /// The plan id allocated at `Init` time from the session allocator.
+    /// The plan id allocated at Init time.
     pub id: i32,
-    /// Go operator identity: `Foreign_Key_Check` or `Foreign_Key_Cascade`.
+    /// Go operator identity.
     pub operator: &'static str,
-    /// Go `AccessObject().String()`: `table:<name>` or `table:<name>, index:<name>`.
+    /// Go AccessObject text.
     pub access: String,
-    /// Go `OperatorInfo()`: `foreign_key:<name>, check_exist` / `check_not_exist`
-    /// / `on_delete:<option>` / `on_update:<option>`.
+    /// Go OperatorInfo text.
     pub info: String,
+    /// The check or cascade chosen during planning.
+    pub kind: FkTriggerKind,
+    /// The declaring schema.
+    pub child_database: String,
+    /// The declaring table.
+    pub child_table: String,
+    /// The referenced schema.
+    pub parent_database: String,
+    /// The referenced table.
+    pub parent_table: String,
+    /// Declaring columns resolved in the statement schema.
+    pub child_offsets: Vec<usize>,
+    /// Referenced columns resolved in the statement schema.
+    pub parent_offsets: Vec<usize>,
+    /// The constraint clause used by Go's 1451/1452 diagnostic.
+    pub constraint: String,
 }
 
 /// Go `physicalop.PushedDownLimit`.
@@ -4187,6 +4213,28 @@ impl PhysicalPlan {
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
             total += match node {
+                Self::Dml(root) => {
+                    root.base.base.memory_usage()
+                        + (root.fk_triggers.capacity() * std::mem::size_of::<FkTriggerNode>())
+                            as i64
+                        + root
+                            .fk_triggers
+                            .iter()
+                            .map(|node| {
+                                (node.access.capacity()
+                                    + node.info.capacity()
+                                    + node.child_database.capacity()
+                                    + node.child_table.capacity()
+                                    + node.parent_database.capacity()
+                                    + node.parent_table.capacity()
+                                    + node.constraint.capacity()
+                                    + (node.child_offsets.capacity()
+                                        + node.parent_offsets.capacity())
+                                        * std::mem::size_of::<usize>())
+                                    as i64
+                            })
+                            .sum::<i64>()
+                }
                 Self::ShuffleReceiver(receiver) => {
                     receiver.base.base.memory_usage()
                         + std::mem::size_of::<Box<Self>>() as i64
