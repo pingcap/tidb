@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-04",
+  "start": "a8b3a0d7b449b06d33f0e560ada14f7f567c76b8",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "advanced": [
+    "E03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-session --lib dml_removal_ -- --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "expected_exit": 101,
+      "log": "/workspace/.cloud-setup/dml-removal-batch/baseline.log",
+      "sha256": "0bf7c4bd7487637b1490612e20f14a7cbb187c0cfbf8e194c565a0889afd3424",
+      "passed": 1,
+      "failed": 2,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- dml_removal_ dml_owner_ tests_multi_table_dml tests_foreign_key tests_grants::table_scope tests_alter --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "expected_exit": 0,
+      "log": "/workspace/.cloud-setup/dml-removal-batch/grouped-tests.log",
+      "sha256": "d1e7d83a41db632f8761850ae74575c73286b36b8507a85db5823124c3bd56c0",
+      "passed": 144,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo check --locked -p tidb-executor -p tidb-session --all-targets",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "expected_exit": 0,
+      "log": "/workspace/.cloud-setup/dml-removal-batch/all-target-check.log",
+      "sha256": "063b7131685d1365a5f010db7605155b6a75d2c2f34665ed2a85ce7fa90e3734"
+    },
+    {
+      "command": "make lint",
+      "working_directory": "/workspace/tidb",
+      "exit_code": 0,
+      "expected_exit": 0,
+      "log": "/workspace/.cloud-setup/dml-removal-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "removed": [
+    "scan_base_table and its repeated base/view metadata construction",
+    "scan_derived_table and repeated derived metadata/default construction",
+    "Executable matrix LATERAL schema probe and duplicate admission/name/type validation",
+    "join_reads_mem_table AST walker",
+    "Matrix-specific multi-DML EXPLAIN refusal"
+  ],
+  "self_review": [
+    "All materializing source callers consume the shared planner-validated layout.",
+    "Only actual row execution calls run_query_stmt; no synthetic metadata query remains in multi_dml.",
+    "Real matrix row identities and correlation binding remain until a valid replacement exists.",
+    "Both new failing regressions pass; early name validation and mixed-storage/view/USING/derived DELETE controls pass.",
+    "Two stale EXPLAIN comments removed after the runtime test build; no behavior changed afterward.",
+    "No lockfile/native/vendor changes, test deletion, push or dry run."
+  ],
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/driver/dml.rs": "374812fcf424296910106ab052474cdba40de501d681924085fe8ffbb55c5da6",
+    "rust/crates/tidb-executor/src/driver/multi_dml.rs": "e7bb0e6ec3266fc2a6612ba493cc7c120de209c69558337a61ad46dac0267c14",
+    "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "0e3082c00da24da526194bed7964749216e828e3ffdb69633916a9db69e3f666"
+  },
+  "commit_gate": {
+    "hook": "hooks/pre-commit",
+    "core_hooks_path": "hooks",
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "mode": "Normal git commit invokes the actual hook and must abort on failure. Do not run a redundant preliminary hook just to prefill this receipt.",
+    "log": "/workspace/.cloud-setup/dml-removal-batch/commit.log",
+    "post_commit_result": "/workspace/.cloud-setup/dml-removal-batch/final-handoff.json"
+  },
+  "limitations": [
+    "Whole pkg/planner/core/pkg/executor acceptance not claimed.",
+    "Matrix row interpreter, final vectors and physical handle reconstruction remain.",
+    "Full Go suites, live multi-node TiKV and performance unverified.",
+    "Broader parser:14 previously observed failures remain; see dml-owner-batch-validation.json.",
+    "Remote integration schemaver commit remains preserved and unmerged.",
+    "Fresh-task restoration of unpublished work unverified."
+  ]
+}

@@ -1,0 +1,9 @@
+# Remove duplicate DML schema execution
+
+This continuation starts at validated local commit `a8b3a0d7b449b06d33f0e560ada14f7f567c76b8` and follows Go master `93a01d31f6da205ae4bf376825293903a6899fdb`. It advances E03 within B02 without a whole-package claim; counts remain 86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial).
+
+Both DML adapters now obtain metadata from the shared logical FROM planner before opening a source. The matrix adapter reads rows into that already-resolved layout. Removed production paths include `scan_base_table`, `scan_derived_table`, their duplicate view/base/derived metadata/default construction, the executable LATERAL schema probe, duplicate LATERAL admission/alias/column-name validation, and `join_reads_mem_table`'s AST walk. EXPLAIN now uses shared physical planning instead of refusing matrix sources.
+
+The retained matrix adapter still supplies positional row identities and per-row correlation binding. Removing it wholesale would strand its callers; final row-vector/physical-handle migration remains an explicit E03 boundary. Actual view/derived query execution remains, once per real source evaluation. The logical planner owns metadata errors before row execution.
+
+The combined baseline has two failures (LATERAL consumes sequence value twice; matrix EXPLAIN refuses) and one passing early-metadata-error control. A further mixed storage/matrix control exercises view/USING UPDATE and derived DELETE while proving the non-target survives. Existing joined writes, FK, privilege and ALTER cases share the post-change run. See [validation](dml-removal-batch-validation.json) for outcomes and commands. No meaningful tests are removed, no unsupported feature is invented, and no push or dry run is authorized. Full Go suites, live multi-node TiKV, performance and whole-package/platform acceptance remain unverified.

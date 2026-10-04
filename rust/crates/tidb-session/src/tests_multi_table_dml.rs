@@ -1657,3 +1657,81 @@ fn dml_owner_multi_table_fk_plans_follow_resolved_targets() {
         "{disabled:?}"
     );
 }
+
+fn dml_removal_matrix_session() -> Session {
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    let session = Session::new();
+    session.shared_catalog().lock().unwrap().register(
+        "owner_m",
+        tidb_executor::driver::MemTable {
+            columns: vec![
+                ("id".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                ("v".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+            ],
+            rows: vec![vec![Datum::Int(1), Datum::Int(0)]],
+        },
+    );
+    session
+}
+
+#[test]
+fn dml_removal_matrix_lateral_has_no_executable_schema_probe() {
+    let mut session = dml_removal_matrix_session();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    assert_eq!(affected(&mut session, "UPDATE owner_m JOIN LATERAL (SELECT NEXTVAL(owner_seq) AS n WHERE owner_m.id>=0 LIMIT 1) d ON TRUE SET owner_m.v=d.n"), 1);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT LASTVAL(owner_seq)"), ["1"]);
+}
+
+#[test]
+fn dml_removal_matrix_explain_uses_shared_metadata_without_execution() {
+    let mut session = dml_removal_matrix_session();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    for sql in [
+        "EXPLAIN UPDATE owner_m JOIN (SELECT NEXTVAL(owner_seq) n) d ON TRUE SET owner_m.v=d.n",
+        "EXPLAIN DELETE owner_m FROM owner_m JOIN (SELECT NEXTVAL(owner_seq) n) d ON TRUE",
+    ] {
+        assert!(!column(&mut session, sql).is_empty());
+    }
+    assert_eq!(column(&mut session, "SELECT NEXTVAL(owner_seq)"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["0"]);
+}
+
+#[test]
+fn dml_removal_matrix_derived_metadata_errors_precede_execution() {
+    let mut session = dml_removal_matrix_session();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    let error = session.run("UPDATE owner_m JOIN (SELECT NEXTVAL(owner_seq) AS n, 1 AS n) d ON TRUE SET owner_m.v=1").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1060);
+    assert_eq!(column(&mut session, "SELECT NEXTVAL(owner_seq)"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["0"]);
+}
+
+#[test]
+fn dml_removal_matrix_view_using_and_derived_delete_share_layout() {
+    let mut session = dml_removal_matrix_session();
+    session
+        .run("CREATE TABLE owner_k(id INT PRIMARY KEY, other INT)")
+        .unwrap();
+    session.run("INSERT INTO owner_k VALUES(1,7)").unwrap();
+    session
+        .run("CREATE VIEW owner_v AS SELECT id,other FROM owner_k")
+        .unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE owner_m JOIN owner_v USING(id) SET owner_m.v=owner_v.other"
+        ),
+        1
+    );
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["7"]);
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE m FROM owner_m m JOIN (SELECT id AS k FROM owner_k) d ON m.id=d.k"
+        ),
+        1
+    );
+    assert!(column(&mut session, "SELECT v FROM owner_m").is_empty());
+    assert_eq!(column(&mut session, "SELECT other FROM owner_k"), ["7"]);
+}

@@ -1,5 +1,8 @@
 # Structural parity audit: current evidence
 
+The [DML removal continuation](dml-removal-batch-repair.md) removes duplicate base/view/derived metadata construction, executable LATERAL probing, source-kind AST traversal and matrix EXPLAIN refusal. **144 grouped SQL cases pass**. E03 remains partial for physical identity/chunk migration; **57 unresolved** remain. No push.
+
+
 The [DML metadata batch](dml-owner-batch-repair.md) advances **A01/E02/E03 together**: metadata-only joined sources, shared write-target authorization and per-table FK plans. Retained failures also repair synchronous FK-ID rollback and strict single-statement parsing. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; executable FK objects, row identities and matrix execution are still open. See the validation receipt for actual grouped checks. No complete package acceptance or push.
 
 

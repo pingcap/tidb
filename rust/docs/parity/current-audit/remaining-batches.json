@@ -80,14 +80,15 @@
         "S04": "open"
       },
       "latest_maintenance": {
-        "receipt": "dml-owner-batch-repair.md",
+        "receipt": "dml-removal-batch-repair.md",
+        "preceding_receipt": "dml-owner-batch-repair.md",
         "advanced_findings": [
           "A01",
           "E02",
           "E03"
         ],
         "complete_package_acceptance": false,
-        "remaining": "Executable FK policy objects, physical row identity/chunk ownership and matrix interpreter migration remain open; other B02 prerequisites unchanged."
+        "remaining": "Executable FK objects, final row vectors, physical handles and positional matrix interpreter remain; the matrix schema probe and duplicate metadata builders are removed."
       }
     },
     {

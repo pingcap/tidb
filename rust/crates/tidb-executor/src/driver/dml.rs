@@ -2973,7 +2973,7 @@ fn run_update_with_physical(
         tidb_ast::UpdateKind::Single(table_ref) => table_ref,
         // A multi-table write reads a joined row source that carries every
         // target's row identity, which is a different read path -- see
-        // `multi_dml`'s module doc. `EXPLAIN` has never described it.
+        // `multi_dml`'s shared metadata and row-identity owners.
         tidb_ast::UpdateKind::Multi { from, .. } => {
             return super::multi_dml::run_multi_update(
                 update,
@@ -3659,7 +3659,7 @@ fn run_delete_with_physical(
     // per-row skip with a warning. `QUICK` is parser-only and needs no branch.
     let table_ref = match &delete.kind {
         tidb_ast::DeleteKind::Single(table_ref) => table_ref,
-        // See `multi_dml`'s module doc; `EXPLAIN` has never described this.
+        // See `multi_dml`'s shared metadata and row-identity owners.
         tidb_ast::DeleteKind::Multi { targets, from, .. } => {
             return super::multi_dml::run_multi_delete(
                 delete,
