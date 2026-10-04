@@ -169,7 +169,7 @@ pub struct TrxSummary {
     /// How many transaction summaries each node keeps.
     #[serde(rename = "transaction-summary-capacity")]
     pub transaction_summary_capacity: usize,
-    /// Min execution duration to be recorded, in seconds-ish units.
+    /// Minimum physical transaction age to record, in milliseconds.
     #[serde(rename = "transaction-id-digest-min-duration")]
     pub transaction_id_digest_min_duration: usize,
 }

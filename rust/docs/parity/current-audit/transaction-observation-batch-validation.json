@@ -1,0 +1,565 @@
+{
+  "date": "2026-10-04",
+  "scope": {
+    "date": "2026-10-04",
+    "integration_start": "0faf5c205ea7caf399b48bac482bb9b6e98f7696",
+    "findings": [
+      "I01",
+      "N03",
+      "N05"
+    ],
+    "statuses": {
+      "I01": "partial",
+      "N03": "partial",
+      "N05": "partial"
+    },
+    "receipt": "transaction-observation-batch-validation.json",
+    "scope": "Connected transaction history, physical completion, SQL providers and startup/runtime controls; complete parent packages remain unaccepted."
+  },
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "remote_integration_preserved_unmerged": "86e41faa92c1a7bb244e6793d90d88c8ce49f44b",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 32,
+    "partial": 24
+  },
+  "implementation": [
+    "Shared synchronized recorder with physical-TS duration admission, ordered JSON, existing FNV/LRU ownership and immediate resize.",
+    "TRX_SUMMARY and local CLUSTER_TRX_SUMMARY exact columns and PROCESS visibility.",
+    "Canonical startup policy and both HTTP controls in Go order and ranges; refused positive settings assertions replaced by meaningful boundary tests.",
+    "Physical storage completion owns history; catalog completion cannot retire it early; routed text/prepared statements record once.",
+    "Internal sessions retain private publication and shared history; explicit session-drop rollback retires storage before process state."
+  ],
+  "source_evidence": [
+    {
+      "path": "pkg/session/txninfo/summary.go",
+      "sha256": "4f3791f8ee9503b7001e5c922ca7d44a3cdc91dac2266bccef267ed536edb63e"
+    },
+    {
+      "path": "pkg/session/txninfo/txn_info.go",
+      "sha256": "2a23b8f33d956aa170b1bcc076a96532c6741d98df33fabca73cbd13eaf1df31"
+    },
+    {
+      "path": "pkg/session/txn.go",
+      "sha256": "0523dc6d4fa6510501a508881cf7edaf84c41c8f8238df3910e69684d3b6ea07"
+    },
+    {
+      "path": "pkg/session/session.go",
+      "sha256": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3"
+    },
+    {
+      "path": "cmd/tidb-server/main.go",
+      "sha256": "2679ee3cd0480f67e1c8acf23db64b33139a3ba3666de4c70576a940a471223d"
+    },
+    {
+      "path": "pkg/server/handler/tikvhandler/tikv_handler.go",
+      "sha256": "97cec2607a6afdf48f2a23c001b6c0ef9c2101c23d079a5d87fa210bb98c9b01"
+    },
+    {
+      "path": "pkg/executor/infoschema_reader.go",
+      "sha256": "fb7e137b1530451b921545cb7e7a0da1e6a134175ded187b9b1678d8ae4d57c0"
+    },
+    {
+      "path": "pkg/infoschema/tables.go",
+      "sha256": "e015c10352b0e507c90c84c26422c8777d0e849f72f80e557298f5a3ecb4ac04"
+    },
+    {
+      "path": "pkg/infoschema/test/clustertablestest/tables_test.go",
+      "sha256": "e9d9272eb7ca8bb1f4bf0bfa51cc1dd82337a66f4af0b5d5a1a3eff3797c6c99"
+    }
+  ],
+  "validation_environment": "source /workspace/.cloud-setup/env.sh; export CARGO_BUILD_JOBS=1; export CARGO_INCREMENTAL=0; export RUST_MIN_STACK=33554432",
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-exec --test all -- txn_summary_source --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": 4,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/exec-tests.log",
+      "log_sha256": "3c2d45c5bdc434637ab9b4e88b301d0eecc4422b015b2e758be4a2835731ba42"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- transaction_observation_batch tidb_trx_reads_live_transactions process::tests:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": 7,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/session-tests-final.log",
+      "log_sha256": "7ee853ff4610748b39729f31c83df18d7df6f32734793c94dbd64b39380e420d"
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- transaction_observation_batch http_settings::tests:: cluster_session_node::tests::transactions:: cluster_session_node::tests::prepared_transactions:: cluster_session_node::tests::autocommit_transactions:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": 68,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/server-tests-final.log",
+      "log_sha256": "7591a477b55f6f9c111714e9bd2876e5565ef63e686b75c930565e4a4b706cc6"
+    },
+    {
+      "command": "./target/debug/build/tidb-server/77c9a1484da84886/out/tidb_server-77c9a1484da84886 --exact cluster_session_node::tests::observation_batch::observation_batch_text_and_binary_writes_publish_after_commit_verdict --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": 1,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/observation-regression.log",
+      "log_sha256": "cab2c29c0061c57c77eb2d3ad36e2c828b00f22255f1e8aec3fd850eecceec7a"
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-server -p tidb-config --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": null,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/check-complete.log",
+      "log_sha256": "b4e2007bd49c364e5ea5f6bf4a1797291a5b57f4ca9a44d09fabac591979d8de"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_cases": null,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/locked-build-final.log",
+      "log_sha256": "5ee89ce8b7440064953fff7f29c4003968e194298c648d9a565462ed2a8b0ca9"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "passed_cases": null,
+      "log": "/workspace/.cloud-setup/transaction-observation-batch/lint-final.log",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "distinct_rust_cases": 80,
+  "wire_command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/transaction-observation-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+  "wire_results": {
+    "before-expanded": {
+      "passed": 3,
+      "failed": 5,
+      "server_exit": 0,
+      "binary_sha256": "5074bc5375d5b20d8f893f94ddb823814dc5245690e19fdb5a5a6890477d7c29",
+      "checks": [
+        {
+          "name": "startup recorder stores complete explicit transaction",
+          "pass": false,
+          "error": [
+            1146,
+            "Table 'information_schema.TRX_SUMMARY' doesn't exist"
+          ]
+        },
+        {
+          "name": "live transaction uses physical storage timestamp",
+          "pass": true,
+          "published": [
+            [
+              469539697185783808,
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ]
+          ],
+          "actual": 469539697185783808
+        },
+        {
+          "name": "savepoint rollback retains transaction",
+          "pass": true
+        },
+        {
+          "name": "rollback retains ordered history and Go FNV identity",
+          "pass": false,
+          "error": [
+            1146,
+            "Table 'information_schema.TRX_SUMMARY' doesn't exist"
+          ]
+        },
+        {
+          "name": "consumed autocommit result retires live transaction",
+          "pass": true
+        },
+        {
+          "name": "transaction_summary_capacity=2",
+          "pass": false,
+          "status": 400,
+          "body": "transaction_summary_capacity: transaction-summary recorder is not installed"
+        },
+        {
+          "name": "transaction_id_digest_min_duration=0",
+          "pass": false,
+          "status": 400,
+          "body": "transaction_id_digest_min_duration: transaction-summary recorder is not installed"
+        },
+        {
+          "name": "ordered partial error retains capacity",
+          "pass": false,
+          "status": 400,
+          "body": "transaction_summary_capacity: transaction-summary recorder is not installed"
+        }
+      ]
+    },
+    "intermediate": {
+      "passed": 6,
+      "failed": 2,
+      "server_exit": 0,
+      "binary_sha256": "992b07d848e16bbc9c59c6b3098a87fc95d0d8e37a121e5f34a15f19fca7b480",
+      "checks": [
+        {
+          "name": "startup recorder stores complete explicit transaction",
+          "pass": false,
+          "rows": [
+            [
+              "a8ff316a9b4b009d",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "cbf29ce484222325",
+              "[]"
+            ]
+          ]
+        },
+        {
+          "name": "live transaction uses physical storage timestamp",
+          "pass": true,
+          "published": [
+            [
+              469539759049146368,
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ]
+          ],
+          "actual": 469539759049146368
+        },
+        {
+          "name": "savepoint rollback retains transaction",
+          "pass": true
+        },
+        {
+          "name": "rollback retains ordered history and Go FNV identity",
+          "pass": false,
+          "expected": [
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62"
+          ],
+          "rows": [
+            [
+              "c4f7b273385251ac",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "a8ff316a9b4b009d",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "cbf29ce484222325",
+              "[]"
+            ]
+          ]
+        },
+        {
+          "name": "consumed autocommit result retires live transaction",
+          "pass": true
+        },
+        {
+          "name": "transaction_summary_capacity=2",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "transaction_id_digest_min_duration=0",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "ordered partial error retains capacity",
+          "pass": true,
+          "status": 400,
+          "body": "transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"
+        }
+      ]
+    },
+    "intermediate-close": {
+      "passed": 7,
+      "failed": 3,
+      "server_exit": 0,
+      "binary_sha256": "992b07d848e16bbc9c59c6b3098a87fc95d0d8e37a121e5f34a15f19fca7b480",
+      "checks": [
+        {
+          "name": "startup recorder stores complete explicit transaction",
+          "pass": false,
+          "rows": [
+            [
+              "a8ff316a9b4b009d",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "cbf29ce484222325",
+              "[]"
+            ]
+          ]
+        },
+        {
+          "name": "live transaction uses physical storage timestamp",
+          "pass": true,
+          "published": [
+            [
+              469539848929411072,
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ]
+          ],
+          "actual": 469539848929411072
+        },
+        {
+          "name": "savepoint rollback retains transaction",
+          "pass": true
+        },
+        {
+          "name": "rollback retains ordered history and Go FNV identity",
+          "pass": false,
+          "expected": [
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62"
+          ],
+          "rows": [
+            [
+              "c4f7b273385251ac",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "a8ff316a9b4b009d",
+              "[\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ],
+            [
+              "cbf29ce484222325",
+              "[]"
+            ]
+          ]
+        },
+        {
+          "name": "consumed autocommit result retires live transaction",
+          "pass": true
+        },
+        {
+          "name": "disconnect records unfinished transaction once",
+          "pass": false,
+          "digests": [
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821"
+          ]
+        },
+        {
+          "name": "disconnect releases transaction locks",
+          "pass": true
+        },
+        {
+          "name": "transaction_summary_capacity=2",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "transaction_id_digest_min_duration=0",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "ordered partial error retains capacity",
+          "pass": true,
+          "status": 400,
+          "body": "transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"
+        }
+      ]
+    },
+    "after": {
+      "passed": 10,
+      "failed": 0,
+      "server_exit": 0,
+      "binary_sha256": "59a88b097189224ced475b6fb7305f44c7525da585c0ca491e0425dc0045b9d5",
+      "checks": [
+        {
+          "name": "startup recorder stores complete explicit transaction",
+          "pass": true,
+          "rows": [
+            [
+              "882f012c2b8de4fc",
+              "[\"e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"9505cacb7c710ed17125fcc6cb3669e8ddca6c8cd8af6a31f6b3cd64604c3098\"]"
+            ],
+            [
+              "206c79887575b26c",
+              "[\"04fa858fa491c62d194faec2ab427261cc7998b3f1ccf8f6844febca504cb5e9\"]"
+            ]
+          ]
+        },
+        {
+          "name": "live transaction uses physical storage timestamp",
+          "pass": true,
+          "published": [
+            [
+              469539875756179456,
+              "[\"e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\"]"
+            ]
+          ],
+          "actual": 469539875756179456
+        },
+        {
+          "name": "savepoint rollback retains transaction",
+          "pass": true
+        },
+        {
+          "name": "rollback retains ordered history and Go FNV identity",
+          "pass": true,
+          "expected": [
+            "e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5",
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",
+            "5190930a2cd07f333a0ab1922b1672763d1c04381489448576d9aec0ce8999f8",
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821",
+            "cd3ebfdd8db524df66aa9833ee2b5445ce2c78f8305c81e5017742c93922831e",
+            "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62"
+          ],
+          "rows": [
+            [
+              "438248741898710f",
+              "[\"e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44\",\"5190930a2cd07f333a0ab1922b1672763d1c04381489448576d9aec0ce8999f8\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"cd3ebfdd8db524df66aa9833ee2b5445ce2c78f8305c81e5017742c93922831e\",\"da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62\"]"
+            ],
+            [
+              "882f012c2b8de4fc",
+              "[\"e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821\",\"9505cacb7c710ed17125fcc6cb3669e8ddca6c8cd8af6a31f6b3cd64604c3098\"]"
+            ],
+            [
+              "206c79887575b26c",
+              "[\"04fa858fa491c62d194faec2ab427261cc7998b3f1ccf8f6844febca504cb5e9\"]"
+            ]
+          ]
+        },
+        {
+          "name": "consumed autocommit result retires live transaction",
+          "pass": true
+        },
+        {
+          "name": "disconnect records unfinished transaction once",
+          "pass": true,
+          "digests": [
+            "e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5",
+            "38b03afa5debbdf0326a014dbe5012a62c51957f1982b3093e748460f8b00821"
+          ]
+        },
+        {
+          "name": "disconnect releases transaction locks",
+          "pass": true
+        },
+        {
+          "name": "transaction_summary_capacity=2",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "transaction_id_digest_min_duration=0",
+          "pass": true,
+          "status": 200,
+          "body": ""
+        },
+        {
+          "name": "ordered partial error retains capacity",
+          "pass": true,
+          "status": 400,
+          "body": "transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"
+        }
+      ]
+    }
+  },
+  "baseline_limits": "Five baseline wire failures concern missing history/table and refused controls. Sampled physical timestamp and autocommit retirement already passed. Disconnect lock release passed the intermediate control; no baseline lock leak was reproduced. Drop change follows Go session.Close ownership.",
+  "intermediate_failures": "Initial session/check compilation failed from a stale recorder test reference and Datum string argument; corrected. Intermediate real-server probes exposed missing routed control digests. Final selected checks all pass. Warnings remain; no unrelated fixes.",
+  "formatting": [
+    {
+      "file": "rust/crates/tidb-config/src/config_tree/helpers.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-exec/src/cluster_table_storage.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-exec/src/txn_summary.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-exec/tests/txn_summary_source.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-executor/src/driver/infoschema_meta.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/bin/cluster-session-smoke.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/cluster_session_node/record_set.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/cluster_session_node/tests/transactions.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/cluster_session_node/transactions.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/http_settings.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-server/src/lib.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-session/src/dispatch.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-session/src/lib.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-session/src/observation.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-session/src/process.rs",
+      "changed_hunk_format_differences": []
+    },
+    {
+      "file": "rust/crates/tidb-session/src/tests_system_schemas.rs",
+      "changed_hunk_format_differences": []
+    }
+  ],
+  "diff_check": "git diff --check passed before documentation; repeated before commit.",
+  "self_review": "Reviewed physical/logical ownership, idempotent completion, lock ordering, routed digest uniqueness, private internal registration, config ranges/order and all migrated commit-helper callers. Existing statement-summary verdict regression also passes.",
+  "unverified": [
+    "Complete upstream package acceptance and all artifact obligations",
+    "Remote CLUSTER_TRX_SUMMARY fanout (I03)",
+    "Full txninfo typed state/metrics and internal diagnostics",
+    "Full Go or full Rust suites",
+    "Live multi-node TiKV and TLS matrix",
+    "Performance/benchmark improvements",
+    "Fresh-task restoration and Git write access",
+    "Other 53 unresolved roots not freshly reproduced"
+  ],
+  "publication": {
+    "push": false,
+    "dry_run": false,
+    "native_changes": false,
+    "git_read_access": "managed HTTPS read/fetch succeeds; no read blocker",
+    "historical_only_permission_diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut. HTTP403; account role versus app scope undetermined. Not a current write probe.",
+    "actual_hook_and_commit": "Normal local commit must pass executable hooks/pre-commit locked server build; final commit/hook/bundle/draft results recorded outside Git at /workspace/.cloud-setup/transaction-observation-batch/final-handoff.json"
+  }
+}

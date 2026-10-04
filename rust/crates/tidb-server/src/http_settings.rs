@@ -109,15 +109,31 @@ impl Settings {
         if let Some(value) = get("tidb_enable_mutation_checker") {
             (self.set_global)("tidb_enable_mutation_checker", bit(value)?)?;
         }
-        for name in [
-            "transaction_summary_capacity",
-            "transaction_id_digest_min_duration",
-        ] {
-            if get(name).is_some() {
-                return Err(format!(
-                    "{name}: transaction-summary recorder is not installed"
-                ));
+        if let Some(value) = get("transaction_summary_capacity") {
+            let capacity = integer(value).map_err(|_| "illegal argument")?;
+            if !(0..=5000).contains(&capacity) {
+                return Err(
+                    "transaction_summary_capacity out of range, should be in 0 to 5000".into(),
+                );
             }
+            update_global(|config| {
+                config.trx_summary.transaction_summary_capacity = capacity as usize
+            });
+            tidb_exec::txn_summary::RECORDER.resize(capacity as usize);
+        }
+        if let Some(value) = get("transaction_id_digest_min_duration") {
+            let duration = integer(value).map_err(|_| "illegal argument")?;
+            if !(0..=2147483647).contains(&duration) {
+                return Err(
+                    "transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"
+                        .into(),
+                );
+            }
+            update_global(|config| {
+                config.trx_summary.transaction_id_digest_min_duration = duration as usize
+            });
+            tidb_exec::txn_summary::RECORDER
+                .set_min_duration(std::time::Duration::from_millis(duration as u64));
         }
         Ok(())
     }
@@ -273,8 +289,10 @@ mod tests {
             "deadlock_history_collect_retryable=TrUe",
             "tidb_general_log=true",
             "check_mb4_value_in_utf8=2",
-            "transaction_summary_capacity=1",
-            "transaction_id_digest_min_duration=1",
+            "transaction_summary_capacity=-1",
+            "transaction_summary_capacity=5001",
+            "transaction_id_digest_min_duration=-1",
+            "transaction_id_digest_min_duration=2147483648",
         ] {
             assert!(
                 settings.apply(&parse_form("", form).unwrap()).is_err(),
@@ -303,6 +321,69 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_str(&settings.read().unwrap()).unwrap();
         assert_eq!(json["instance"]["tidb_check_mb4_value_in_utf8"], "true");
+    }
+
+    #[test]
+    fn transaction_observation_batch_settings_share_recorder_and_ordered_failures() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_exec::txn_summary::RECORDER;
+        let settings = Settings::new(GlobalSysvars::default(), Arc::new(|_, _| Ok(())));
+        settings
+            .apply(
+                &parse_form(
+                    "",
+                    "transaction_summary_capacity=3&transaction_id_digest_min_duration=0",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        RECORDER.on_transaction_end(1 << 18, vec!["alpha".into()]);
+        assert_eq!(RECORDER.rows().len(), 1);
+        assert_eq!(
+            get_global_config().trx_summary.transaction_summary_capacity,
+            3
+        );
+        assert_eq!(
+            get_global_config()
+                .trx_summary
+                .transaction_id_digest_min_duration,
+            0
+        );
+        let error = settings
+            .apply(
+                &parse_form(
+                    "",
+                    "transaction_summary_capacity=0&transaction_id_digest_min_duration=-1",
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"
+        );
+        assert!(RECORDER.rows().is_empty());
+        assert_eq!(
+            get_global_config().trx_summary.transaction_summary_capacity,
+            0
+        );
+        for (field, max) in [
+            ("transaction_summary_capacity", 5000_i64),
+            ("transaction_id_digest_min_duration", 2147483647),
+        ] {
+            for value in [0, max] {
+                settings
+                    .apply(&parse_form("", &format!("{field}={value}")).unwrap())
+                    .unwrap();
+            }
+            for value in ["invalid".to_owned(), (max + 1).to_string(), "-1".to_owned()] {
+                assert!(settings
+                    .apply(&parse_form("", &format!("{field}={value}")).unwrap())
+                    .is_err());
+            }
+        }
     }
 
     #[test]

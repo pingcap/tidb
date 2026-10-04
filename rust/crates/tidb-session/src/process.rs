@@ -26,10 +26,7 @@
 //! the registry stores it behind the [`ProcessKillTarget`] trait. A session
 //! therefore kills a peer without knowing anything about sockets.
 //!
-//! NOT MODELLED (Go has these on `ProcessInfo`, and inventing values would be
-//! worse than omitting them): plan and resource-consumption columns of
-//! `information_schema.processlist`, and global-kill's server-id-routed
-//! `KILL` across instances.
+//! Remote server-ID-routed KILL remains a separate integration obligation.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -169,6 +166,8 @@ struct ProcessEntry {
     oom_alarm_variables_info: OOMAlarmVariablesInfo,
     kill: Option<Arc<dyn ProcessKillTarget>>,
     transaction: Option<TransactionEntry>,
+    external_transaction_owner: bool,
+    transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
     process_plan_info: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
     /// Result-set owners retaining the current command after execution has
     /// returned. Go clears `ProcessInfo` only when the server command ends,
@@ -243,6 +242,36 @@ impl ProcessEntry {
         }
     }
 
+    fn activate_transaction(&mut self, start_ts: u64) {
+        if start_ts == 0 || start_ts == u64::MAX || self.transaction.is_some() {
+            return;
+        }
+        let digest = (!self.digest.is_empty()).then(|| self.digest.clone());
+        self.transaction = Some(TransactionEntry {
+            start_ts,
+            current_sql_digest: digest.clone(),
+            state: if self.info.is_some() {
+                "Running"
+            } else {
+                "Idle"
+            },
+            waiting_start: None,
+            mem_buffer_keys: 0,
+            mem_buffer_bytes: 0,
+            all_sql_digests: digest.into_iter().collect(),
+            related_table_ids: std::collections::HashSet::new(),
+        });
+        self.cur_txn_start_ts = start_ts;
+    }
+
+    fn finish_transaction(&mut self) {
+        if let Some(transaction) = self.transaction.take() {
+            self.transaction_history
+                .on_transaction_end(transaction.start_ts, transaction.all_sql_digests);
+        }
+        self.cur_txn_start_ts = 0;
+    }
+
     fn release_statement(&mut self, db: &str, state: &str) {
         self.statement_holds = self.statement_holds.saturating_sub(1);
         self.statement_finished(db, state);
@@ -261,10 +290,21 @@ pub trait TlsManager: Send + Sync {
 /// Cloning shares one registry, as every session of one TiDB instance sees
 /// one `sessmgr.Manager`. Like Go session.processInfo, each connection owns
 /// its publication state; the directory lock never covers entry updates.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ProcessRegistry {
     entries: Arc<Mutex<HashMap<u64, SharedProcessEntry>>>,
     tls: Arc<Mutex<Option<Arc<dyn TlsManager>>>>,
+    transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
+}
+
+impl Default for ProcessRegistry {
+    fn default() -> Self {
+        Self {
+            entries: Arc::default(),
+            tls: Arc::default(),
+            transaction_history: Arc::clone(&tidb_exec::txn_summary::RECORDER),
+        }
+    }
 }
 
 impl std::fmt::Debug for ProcessRegistry {
@@ -276,6 +316,21 @@ impl std::fmt::Debug for ProcessRegistry {
 }
 
 impl ProcessRegistry {
+    #[cfg(test)]
+    pub(crate) fn with_transaction_history(
+        history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
+    ) -> Self {
+        Self {
+            transaction_history: history,
+            ..Self::default()
+        }
+    }
+
+    /// Completed transaction rows from this process's shared recorder.
+    pub fn transaction_history_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        self.transaction_history.rows()
+    }
+
     /// Attach this server's shared TLS configuration owner.
     pub fn set_tls_manager(&self, manager: Arc<dyn TlsManager>) {
         *self
@@ -347,6 +402,8 @@ impl ProcessRegistry {
             oom_alarm_variables_info: OOMAlarmVariablesInfo::default(),
             kill,
             transaction: None,
+            external_transaction_owner: false,
+            transaction_history: Arc::clone(&self.transaction_history),
             process_plan_info: None,
             statement_holds: 0,
         }));
@@ -356,6 +413,15 @@ impl ProcessRegistry {
             id,
             entry,
         }
+    }
+
+    /// Internal sessions retain transaction history without entering the client list.
+    pub fn register_internal(&self, id: u64, db: String) -> ProcessGuard {
+        Self {
+            transaction_history: Arc::clone(&self.transaction_history),
+            ..Self::default()
+        }
+        .register(id, String::new(), String::new(), db, None)
     }
 
     /// Records one execution in transaction history and publishes its process
@@ -414,27 +480,19 @@ impl ProcessRegistry {
     /// Publishes a newly activated transaction for `TIDB_TRX`.
     pub fn transaction_started(&self, id: u64, start_ts: u64) {
         self.with_entry(id, |entry| {
-            let running = entry.info.is_some();
-            let digest = (!entry.digest.is_empty()).then(|| entry.digest.clone());
-            entry.transaction = Some(TransactionEntry {
-                start_ts,
-                current_sql_digest: digest.clone(),
-                state: if running { "Running" } else { "Idle" },
-                waiting_start: None,
-                mem_buffer_keys: 0,
-                mem_buffer_bytes: 0,
-                all_sql_digests: digest.into_iter().collect(),
-                related_table_ids: std::collections::HashSet::new(),
-            });
-            entry.cur_txn_start_ts = start_ts;
+            if !entry.external_transaction_owner {
+                entry.finish_transaction();
+                entry.activate_transaction(start_ts);
+            }
         });
     }
 
-    /// Removes the transaction after commit or rollback.
+    /// Local sessions finish here; a physical owner finishes after storage.
     pub fn transaction_finished(&self, id: u64) {
         self.with_entry(id, |entry| {
-            entry.transaction = None;
-            entry.cur_txn_start_ts = 0;
+            if !entry.external_transaction_owner {
+                entry.finish_transaction();
+            }
         });
     }
 
@@ -640,6 +698,43 @@ pub struct ProcessGuard {
     entry: SharedProcessEntry,
 }
 
+/// Retained physical transaction observation, independent of statement publication.
+#[derive(Clone)]
+pub struct ProcessTransactionObserver {
+    entry: SharedProcessEntry,
+}
+
+impl std::fmt::Debug for ProcessTransactionObserver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessTransactionObserver")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProcessTransactionObserver {
+    /// Marks storage, rather than the catalog copy, as the completion owner.
+    pub fn use_external_owner(&self) {
+        self.entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .external_transaction_owner = true;
+    }
+    /// Publishes the first real storage timestamp, retaining it across later reads.
+    pub fn activated(&self, start_ts: u64) {
+        self.entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .activate_transaction(start_ts);
+    }
+    /// Retires a transaction exactly once after storage completion or rollback.
+    pub fn finished(&self) {
+        self.entry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .finish_transaction();
+    }
+}
+
 /// Keeps one process-list statement active until its result set is finished.
 pub struct ProcessStatementGuard {
     entry: SharedProcessEntry,
@@ -671,6 +766,13 @@ impl Drop for ProcessStatementGuard {
 }
 
 impl ProcessGuard {
+    /// Retains this connection's transaction observation for physical storage.
+    pub fn transaction_observer(&self) -> ProcessTransactionObserver {
+        ProcessTransactionObserver {
+            entry: Arc::clone(&self.entry),
+        }
+    }
+
     /// The registered connection's identity.
     #[must_use]
     pub const fn id(&self) -> u64 {
@@ -744,6 +846,7 @@ impl std::fmt::Debug for ProcessGuard {
 
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
+        self.transaction_observer().finished();
         self.registry.lock().remove(&self.id);
     }
 }

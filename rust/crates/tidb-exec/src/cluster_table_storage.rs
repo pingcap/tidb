@@ -1844,6 +1844,7 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
     timeout: Duration,
     options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    on_activated: impl FnOnce(u64),
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
     if buffer.is_empty() {
         return Ok(None);
@@ -1857,6 +1858,7 @@ pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePd
         None => opener.begin(),
     }
     .map_err(coordinator_sql_error)?;
+    on_activated(transaction.start_ts());
     let mut transaction = transaction;
     *transaction.mem_buffer() = buffer.take_native_buffer();
     // This fallback activates the transaction at publication, retaining the

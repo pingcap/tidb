@@ -3194,6 +3194,13 @@ impl QuerySessionFactory for ClusterSessionFactory {
                     context.close.clone(),
                 ))),
             );
+            guard.transaction_observer().use_external_owner();
+            session.attach_process(context.connection_id, guard);
+        } else {
+            let guard = self
+                .processes
+                .register_internal(context.connection_id, session.current_database().to_owned());
+            guard.transaction_observer().use_external_owner();
             session.attach_process(context.connection_id, guard);
         }
         session.attach_privileges(self.privileges.clone());
@@ -4508,6 +4515,14 @@ enum PessimisticStep {
     },
 }
 
+impl Drop for ClusterServerSession {
+    fn drop(&mut self) {
+        // Go session.Close rolls back before releasing session/process state.
+        // The same path retires history, native locks, schema pins and buffers.
+        let _ = self.discard_explicit();
+    }
+}
+
 impl ClusterServerSession {
     fn control_transaction_parsed_inner(
         &mut self,
@@ -4934,7 +4949,8 @@ impl ClusterServerSession {
         // The statement's own timestamp, filled in by its first read and read
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
-        let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
+        let read_ts = transactions::StatementReadTs::new(self.session.current_tso())
+            .with_observer(self.session.transaction_observer());
         self.session
             .begin_external_executor_breakpoint_scope(notify_executor_breakpoint);
         let result = self.attempt_statement_inner(
@@ -4953,6 +4969,9 @@ impl ClusterServerSession {
         // @@tidb_current_ts` after a failed autocommit statement reads a
         // timestamp of a transaction that is not open.
         if autocommit {
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.finished();
+            }
             self.session.current_tso().clear();
         }
         result
@@ -5500,6 +5519,9 @@ impl ClusterServerSession {
             .map_err(SqlQueryError::unknown)?;
         transaction.bind_mutation_buffer(&self.buffer);
         self.session.current_tso().publish(transaction.start_ts());
+        if let Some(observer) = self.session.transaction_observer() {
+            observer.activated(transaction.start_ts());
+        }
         self.explicit = Some(transaction);
         // The transaction reads this catalog version until it ends; the pin
         // is what a Go owner's `WaitVersionSynced` waits out (Go
@@ -5642,6 +5664,7 @@ impl ClusterServerSession {
             resource_group,
             self.schema_lease_checker(),
             crate::session_transaction::transaction_options(self.session.vars()),
+            self.session.transaction_observer(),
         ) {
             Ok(()) => {
                 self.refresh_committed_bindings(bindings_changed);
@@ -5688,6 +5711,9 @@ impl ClusterServerSession {
         let txn_opened_at = transaction.opened_at();
         let txn_statement_count = transaction.statement_count() as f64;
         let commit_result = transaction.commit(&self.buffer);
+        if let Some(observer) = self.session.transaction_observer() {
+            observer.finished();
+        }
         let (duration_label, num_label) = if commit_result.is_ok() {
             ("commit", "ok")
         } else {
@@ -5786,6 +5812,9 @@ impl ClusterServerSession {
                 let txn_opened_at = transaction.opened_at();
                 let txn_statement_count = transaction.statement_count() as f64;
                 let result = transaction.rollback();
+                if let Some(observer) = self.session.transaction_observer() {
+                    observer.finished();
+                }
                 tidb_session::metrics::TRANSACTION_DURATION
                     .with_label_values(&[txn_mode, "abort", "general"])
                     .observe(txn_opened_at.elapsed().as_secs_f64());

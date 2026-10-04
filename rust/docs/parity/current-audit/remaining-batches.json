@@ -203,7 +203,7 @@
           "N03"
         ],
         "complete_package_acceptance": false,
-        "remaining": "Transaction-summary recorder controls, broader administrative/HTTP/TLS/shutdown owners and native/config defaults remain. I01 shares live configuration consumption in B09."
+        "remaining": "Historical checkpoint; transaction-summary controls are now connected by transaction-observation-batch-validation.json. Broader administrative/HTTP/TLS/shutdown owners and native/config defaults remain."
       },
       "observation_plan_checkpoint": {
         "date": "2026-10-04",
@@ -222,6 +222,15 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "Remote KILL and cluster/server identity, complete statement-context lifetime and remaining security/config/information providers remain unaccepted."
+      },
+      "latest_transaction_observation_maintenance": {
+        "receipt": "transaction-observation-batch-validation.json",
+        "advanced_findings": [
+          "N03",
+          "N05"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "Complete configuration/native defaults, HTTP/TLS/shutdown, transaction-state diagnostics, dynamic providers and remote fanout remain unaccepted."
       }
     },
     {
@@ -368,6 +377,14 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "Remote KILL and cluster/server identity, complete statement-context lifetime and remaining security/config/information providers remain unaccepted."
+      },
+      "latest_transaction_observation_maintenance": {
+        "receipt": "transaction-observation-batch-validation.json",
+        "advanced_findings": [
+          "I01"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "Complete configuration/native defaults, HTTP/TLS/shutdown, transaction-state diagnostics, dynamic providers and remote fanout remain unaccepted."
       }
     },
     {
@@ -394,18 +411,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
+    "integration_start": "0faf5c205ea7caf399b48bac482bb9b6e98f7696",
     "findings": [
-      "E03",
-      "T01",
-      "K03"
+      "I01",
+      "N03",
+      "N05"
     ],
     "statuses": {
-      "E03": "partial",
-      "T01": "partial",
-      "K03": "partial"
+      "I01": "partial",
+      "N03": "partial",
+      "N05": "partial"
     },
-    "receipt": "table-mutation-batch-validation.json",
-    "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
+    "receipt": "transaction-observation-batch-validation.json",
+    "scope": "Connected transaction history, physical completion, SQL providers and startup/runtime controls; complete parent packages remain unaccepted."
   }
 }

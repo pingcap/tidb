@@ -2087,6 +2087,53 @@ const MEMORY_USAGE_OPS_HISTORY_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableTrxSummaryCols`.
+const TRX_SUMMARY_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: Some("Digest of a transaction"),
+    },
+    InfoColumn {
+        name: "ALL_SQL_DIGESTS",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: Some("A list of the digests of SQL statements that the transaction has executed"),
+    },
+];
+
+const CLUSTER_TRX_SUMMARY_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "INSTANCE",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
+    InfoColumn {
+        name: "DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 16,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+        comment: Some("Digest of a transaction"),
+    },
+    InfoColumn {
+        name: "ALL_SQL_DIGESTS",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+        comment: Some("A list of the digests of SQL statements that the transaction has executed"),
+    },
+];
+
 /// Go `infoschema.tableDeadlocksCols`.
 const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
@@ -4028,6 +4075,8 @@ const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("STATEMENTS_SUMMARY", STATEMENTS_SUMMARY_COLUMNS),
     ("STATEMENTS_SUMMARY_HISTORY", STATEMENTS_SUMMARY_COLUMNS),
     ("TIDB_TRX", WORKLOAD_TIDB_TRX_COLUMNS),
+    ("TRX_SUMMARY", TRX_SUMMARY_COLUMNS),
+    ("CLUSTER_TRX_SUMMARY", CLUSTER_TRX_SUMMARY_COLUMNS),
     ("USER_PRIVILEGES", USER_PRIVILEGES_COLUMNS),
     ("USER_ATTRIBUTES", USER_ATTRIBUTES_COLUMNS),
     ("VIEWS", VIEWS_COLUMNS),

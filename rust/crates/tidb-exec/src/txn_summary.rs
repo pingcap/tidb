@@ -16,9 +16,8 @@
 //!
 //! TiDB identifies a completed transaction by the FNV-1a digest of its SQL
 //! digest sequence and keeps the most recent distinct sequences in an LRU
-//! cache. This leaf ports that deterministic digest/LRU boundary only. JSON
-//! rendering, duration filtering, mutex/global-recorder ownership, and live
-//! transaction/infoschema wiring remain external.
+//! cache. The process recorder owns synchronization, duration admission and
+//! rendering; session/storage completion and server configuration share it.
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
@@ -146,3 +145,99 @@ fn fnv1a_digest(sql_digests: &[String]) -> u64 {
     }
     hash
 }
+
+/// Go TrxHistoryRecorder: one synchronized policy and cache per process.
+#[derive(Debug)]
+pub struct TransactionHistoryRecorder {
+    state: std::sync::Mutex<HistoryState>,
+}
+
+#[derive(Debug)]
+struct HistoryState {
+    min_duration: std::time::Duration,
+    summaries: TransactionSummaryCache,
+}
+
+impl TransactionHistoryRecorder {
+    /// Creates a recorder; Go's unconfigured recorder has capacity zero.
+    pub fn new(capacity: usize, min_duration: std::time::Duration) -> Self {
+        Self {
+            state: std::sync::Mutex::new(HistoryState {
+                min_duration,
+                summaries: TransactionSummaryCache::new(capacity),
+            }),
+        }
+    }
+
+    /// Records an ended transaction using the physical milliseconds of its TSO.
+    pub fn on_transaction_end(&self, start_ts: u64, digests: Vec<String>) {
+        self.on_transaction_end_at(start_ts, digests, std::time::SystemTime::now());
+    }
+
+    /// Explicit observation time for deterministic source-contract checks.
+    pub fn on_transaction_end_at(
+        &self,
+        start_ts: u64,
+        digests: Vec<String>,
+        now: std::time::SystemTime,
+    ) {
+        let start = std::time::UNIX_EPOCH + std::time::Duration::from_millis(start_ts >> 18);
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Go compares a signed duration, so a future TSO fails even at zero.
+        if now
+            .duration_since(start)
+            .is_ok_and(|duration| duration >= state.min_duration)
+        {
+            state.summaries.on_transaction_end(digests);
+        }
+    }
+
+    /// Changes duration admission without discarding retained history.
+    pub fn set_min_duration(&self, duration: std::time::Duration) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .min_duration = duration;
+    }
+
+    /// Resizes immediately, evicting oldest entries; zero clears and disables retention.
+    pub fn resize(&self, capacity: usize) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .summaries
+            .resize(capacity);
+    }
+
+    /// Returns source FNV digests and ordered JSON SQL-digest arrays, newest first.
+    pub fn rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .summaries
+            .summaries()
+            .into_iter()
+            .map(|summary| {
+                vec![
+                    tidb_datatype::Datum::new_string(summary.digest_hex()),
+                    tidb_datatype::Datum::new_string(
+                        serde_json::to_string(summary.sql_digests())
+                            .expect("digest strings serialize"),
+                    ),
+                ]
+            })
+            .collect()
+    }
+}
+
+/// Go txninfo.Recorder, initialized from canonical configuration at startup.
+pub static RECORDER: std::sync::LazyLock<std::sync::Arc<TransactionHistoryRecorder>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Arc::new(TransactionHistoryRecorder::new(
+            0,
+            std::time::Duration::from_secs(1),
+        ))
+    });

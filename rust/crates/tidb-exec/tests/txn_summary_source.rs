@@ -60,3 +60,79 @@ fn transaction_summary_cache_resize_and_zero_capacity_match_source() {
     cache.on_transaction_end(["c"]);
     assert!(cache.summaries().is_empty());
 }
+
+#[test]
+fn transaction_summary_recorder_preserves_duration_boundary_and_json_order() {
+    use std::time::{Duration, UNIX_EPOCH};
+    use tidb_exec::txn_summary::TransactionHistoryRecorder;
+    let recorder = TransactionHistoryRecorder::new(2, Duration::from_millis(500));
+    let start = 1000 << 18;
+    let values = vec![
+        "begin".into(),
+        "update".into(),
+        "update".into(),
+        "commit".into(),
+    ];
+    recorder.on_transaction_end_at(
+        start,
+        values.clone(),
+        UNIX_EPOCH + Duration::from_millis(1499),
+    );
+    assert!(recorder.rows().is_empty());
+    recorder.on_transaction_end_at(
+        start,
+        values.clone(),
+        UNIX_EPOCH + Duration::from_millis(1500),
+    );
+    let rows = recorder.rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0][1].sql_string().unwrap(),
+        r#"["begin","update","update","commit"]"#
+    );
+    recorder.set_min_duration(Duration::ZERO);
+    recorder.on_transaction_end_at(
+        start,
+        vec!["future".into()],
+        UNIX_EPOCH + Duration::from_millis(999),
+    );
+    assert_eq!(recorder.rows(), rows);
+    for word in ["second", "third"] {
+        recorder.on_transaction_end_at(
+            start,
+            vec![word.into()],
+            UNIX_EPOCH + Duration::from_millis(1500),
+        );
+    }
+    assert_eq!(recorder.rows().len(), 2);
+    recorder.resize(1);
+    assert_eq!(recorder.rows()[0][1].sql_string().unwrap(), r#"["third"]"#);
+    recorder.resize(0);
+    recorder.on_transaction_end_at(start, values, UNIX_EPOCH + Duration::from_millis(1500));
+    assert!(recorder.rows().is_empty());
+}
+
+#[test]
+fn transaction_summary_recorder_serializes_concurrent_completion_and_resize() {
+    use std::sync::Arc;
+    use std::time::{Duration, UNIX_EPOCH};
+    use tidb_exec::txn_summary::TransactionHistoryRecorder;
+    let recorder = Arc::new(TransactionHistoryRecorder::new(8, Duration::ZERO));
+    std::thread::scope(|scope| {
+        for i in 0..8 {
+            let recorder = Arc::clone(&recorder);
+            scope.spawn(move || {
+                for _ in 0..50 {
+                    recorder.on_transaction_end_at(
+                        1 << 18,
+                        vec![i.to_string()],
+                        UNIX_EPOCH + Duration::from_millis(2),
+                    );
+                }
+            });
+        }
+    });
+    assert_eq!(recorder.rows().len(), 8);
+    recorder.resize(3);
+    assert_eq!(recorder.rows().len(), 3);
+}

@@ -695,6 +695,24 @@ impl Session {
                 || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
             {
                 self.statement_summary_table_rows(&table_name, &columns)?
+            } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY")
+                || table_name.eq_ignore_ascii_case("CLUSTER_TRX_SUMMARY")
+            {
+                let mut rows = if self.has_process_privilege() {
+                    self.process.as_ref().map_or_else(
+                        || tidb_exec::txn_summary::RECORDER.rows(),
+                        |guard| guard.registry().transaction_history_rows(),
+                    )
+                } else {
+                    Vec::new()
+                };
+                if table_name.eq_ignore_ascii_case("CLUSTER_TRX_SUMMARY") {
+                    let instance = self.cluster_instance_address();
+                    for row in &mut rows {
+                        row.insert(0, tidb_datatype::Datum::new_string(instance.as_str()));
+                    }
+                }
+                rows
             } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
                 self.tidb_trx_table_rows()
             } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {

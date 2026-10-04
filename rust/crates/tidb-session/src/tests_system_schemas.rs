@@ -1408,3 +1408,85 @@ fn client_errors_summary_uses_the_shared_counters_and_process_rules() {
     );
     assert!(rows.is_empty());
 }
+
+#[test]
+fn transaction_observation_batch_summary_completion_visibility_and_physical_identity() {
+    let recorder = std::sync::Arc::new(tidb_exec::txn_summary::TransactionHistoryRecorder::new(
+        32,
+        std::time::Duration::ZERO,
+    ));
+    let registry =
+        process::ProcessRegistry::with_transaction_history(std::sync::Arc::clone(&recorder));
+    let mut session = Session::new();
+    let guard = registry.register(501, "alice".into(), "localhost".into(), "test".into(), None);
+    session.attach_process(501, guard);
+    for terminal in ["COMMIT", "ROLLBACK"] {
+        session.run("BEGIN").unwrap();
+        session.run("SELECT 11").unwrap();
+        session.run(terminal).unwrap();
+        let digests: Vec<String> = ["BEGIN", "SELECT 11", terminal]
+            .iter()
+            .map(|sql| crate::normalize_statement_digest(sql).1.to_string())
+            .collect();
+        let rows = row_text(
+            session.run("SELECT DIGEST, ALL_SQL_DIGESTS FROM information_schema.TRX_SUMMARY"),
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r[1] == serde_json::to_string(&digests).unwrap()),
+            "{rows:?}"
+        );
+    }
+    session.set_user("alice@%".into(), "alice@localhost".into());
+    assert!(row_text(session.run("SELECT * FROM information_schema.TRX_SUMMARY")).is_empty());
+    session.set_process_privilege(true);
+    assert!(!row_text(session.run("SELECT * FROM information_schema.TRX_SUMMARY")).is_empty());
+
+    let guard = registry.register(502, "bob".into(), "localhost".into(), "test".into(), None);
+    let observer = guard.transaction_observer();
+    observer.use_external_owner();
+    registry.statement_started(502, "SELECT 123", "");
+    registry.transaction_started(502, 5); // catalog timestamp must be ignored
+    assert!(registry
+        .transaction_snapshot()
+        .iter()
+        .all(|t| t.session_id != 502));
+    let actual = (chrono::Utc::now().timestamp_millis() as u64 - 10) << 18;
+    observer.activated(actual);
+    observer.activated(actual + (1 << 18)); // later read timestamps do not replace StartTS
+    assert_eq!(
+        registry
+            .transaction_snapshot()
+            .iter()
+            .find(|t| t.session_id == 502)
+            .unwrap()
+            .start_ts,
+        actual
+    );
+    registry.transaction_finished(502); // catalog completion must not retire storage
+    assert!(registry
+        .transaction_snapshot()
+        .iter()
+        .any(|t| t.session_id == 502));
+    observer.finished();
+    assert!(registry
+        .transaction_snapshot()
+        .iter()
+        .all(|t| t.session_id != 502));
+    let rows = recorder.rows();
+    observer.finished();
+    assert_eq!(recorder.rows(), rows);
+    let internal = registry.register_internal(503, "mysql".into());
+    assert!(registry.snapshot().iter().all(|row| row.id != 503));
+    internal.registry().statement_started(503, "SELECT 234", "");
+    internal.registry().transaction_started(503, actual);
+    drop(internal);
+    assert!(recorder
+        .rows()
+        .iter()
+        .any(|row| row[1].sql_string().unwrap().contains(
+            &crate::normalize_statement_digest("SELECT 234")
+                .1
+                .to_string()
+        )));
+}

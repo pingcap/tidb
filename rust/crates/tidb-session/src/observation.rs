@@ -309,6 +309,22 @@ impl Session {
     pub fn begin_routed_statement_observation(&mut self, sql: &str, stmt: &Stmt) {
         self.begin_statement_observation(sql);
         self.observe_statement_node(stmt, self.binary_prepared_execution);
+        // The outer routed execution owns one LazyTxn.onStmtStart, including
+        // transaction control and SET. Its inner executor only republishes.
+        if self.routed_statement_observation_depth == 0 {
+            if let Some(guard) = &self.process {
+                let digest = self
+                    .statement_observation
+                    .as_ref()
+                    .map(|o| o.digest.to_string());
+                guard.registry().statement_started_with_digest(
+                    guard.id(),
+                    sql,
+                    digest.as_deref(),
+                    &self.status_text(),
+                );
+            }
+        }
         if let Some(observation) = &mut self.statement_observation {
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
         }
@@ -331,6 +347,7 @@ impl Session {
         self.routed_statement_observation_depth -= 1;
         if self.routed_statement_observation_depth == 0 {
             self.publish_statement_observation(succeeded, affected_rows, 0);
+            self.refresh_process_status();
         }
     }
 

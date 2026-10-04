@@ -93,7 +93,8 @@ impl ClusterServerSession {
             _pin: self
                 .schema_pins
                 .hold(self.connection_id, self.schema_version),
-            read_ts: transactions::StatementReadTs::new(self.session.current_tso()),
+            read_ts: transactions::StatementReadTs::new(self.session.current_tso())
+                .with_observer(self.session.transaction_observer()),
             savepoint: self.buffer.checkpoint(),
             autocommit,
             resource_group: resource_group.to_owned(),
@@ -133,6 +134,11 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
+        if statement.autocommit {
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.finished();
+            }
+        }
         self.buffer.release(statement.savepoint);
         self.session.end_external_executor_breakpoint_scope();
         // Keep this statement's timestamp until the next statement prepares

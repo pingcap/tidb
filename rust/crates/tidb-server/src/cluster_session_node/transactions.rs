@@ -187,7 +187,11 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
+        observer: Option<tidb_session::process::ProcessTransactionObserver>,
     ) -> Result<(), SqlQueryError> {
+        if let (Some(observer), Some(ts)) = (observer, read_ts) {
+            observer.activated(ts);
+        }
         self.commit(buffer, read_ts, resource_group, options)
     }
 
@@ -468,6 +472,7 @@ pub(crate) fn stage_pessimistic_statement<T>(
 pub(crate) struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
     current_tso: tidb_executor::CurrentTso,
+    observer: Option<tidb_session::process::ProcessTransactionObserver>,
 }
 
 impl StatementReadTs {
@@ -475,7 +480,16 @@ impl StatementReadTs {
         Self {
             value: Arc::default(),
             current_tso,
+            observer: None,
         }
+    }
+
+    pub(crate) fn with_observer(
+        mut self,
+        observer: Option<tidb_session::process::ProcessTransactionObserver>,
+    ) -> Self {
+        self.observer = observer;
+        self
     }
 
     fn record(&self, start_ts: u64) {
@@ -484,6 +498,9 @@ impl StatementReadTs {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = Some(start_ts);
         self.current_tso.publish(start_ts);
+        if let Some(observer) = &self.observer {
+            observer.activated(start_ts);
+        }
     }
 
     /// The timestamp the statement read at, or `None` if it never read.
@@ -1195,7 +1212,7 @@ where
         resource_group: &str,
         options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
-        self.commit_with_schema_lease(buffer, read_ts, resource_group, None, options)
+        self.commit_with_schema_lease(buffer, read_ts, resource_group, None, options, None)
     }
 
     fn commit_with_schema_lease(
@@ -1205,6 +1222,7 @@ where
         resource_group: &str,
         schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
+        observer: Option<tidb_session::process::ProcessTransactionObserver>,
     ) -> Result<(), SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
@@ -1219,6 +1237,11 @@ where
             self.timeout,
             options,
             schema_lease_checker,
+            |ts| {
+                if let Some(observer) = observer {
+                    observer.activated(ts);
+                }
+            },
         )
         .map(|_| ())
         .map_err(sql_error)

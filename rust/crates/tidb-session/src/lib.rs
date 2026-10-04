@@ -1203,6 +1203,13 @@ impl Session {
         self.current_tso.clone()
     }
 
+    /// Retains transaction observation at the physical storage boundary.
+    pub fn transaction_observer(&self) -> Option<process::ProcessTransactionObserver> {
+        self.process
+            .as_ref()
+            .map(process::ProcessGuard::transaction_observer)
+    }
+
     /// Updates the live `TIDB_TRX` row from the cluster transaction's native
     /// MemBuffer authority.
     pub fn publish_transaction_buffer_metrics(&self, keys: usize, bytes: u64) {
@@ -2300,12 +2307,14 @@ impl Session {
                 .as_ref()
                 .map(|(_, digest)| digest.to_string())
                 .or_else(|| observation.map(|(_, digest)| digest.to_string()));
-            registry.statement_started_with_digest(
-                guard.id(),
-                sql,
-                digest.as_deref(),
-                &self.status_text(),
-            );
+            if self.routed_statement_observation_depth == 0 {
+                registry.statement_started_with_digest(
+                    guard.id(),
+                    sql,
+                    digest.as_deref(),
+                    &self.status_text(),
+                );
+            }
             // Go reads these off typed `SessionVars` fields; the snapshot is
             // their parsed form, refreshed only when the variable table
             // changes, so a statement start does not re-parse five values.
@@ -2440,10 +2449,14 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .report();
         }
-        if let Some(guard) = &self.process {
-            guard
-                .registry()
-                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+        if self.routed_statement_observation_depth == 0 {
+            if let Some(guard) = &self.process {
+                guard.registry().statement_finished(
+                    guard.id(),
+                    &self.current_db,
+                    &self.status_text(),
+                );
+            }
         }
         if let Err(error) = &result {
             // The statement's fold-time diagnostics precede the error row in

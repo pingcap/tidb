@@ -1153,3 +1153,59 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
         "a committed transaction is no longer open"
     );
 }
+
+#[test]
+fn transaction_observation_batch_text_prepared_and_failed_commit_share_history() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    use tidb_exec::txn_summary::RECORDER;
+    RECORDER.set_min_duration(std::time::Duration::ZERO);
+    for binary in [false, true] {
+        for fail_commit in [false, true] {
+            let (mut session, cluster) = open_session();
+            session
+                .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+                .unwrap();
+            RECORDER.resize(0);
+            RECORDER.resize(32);
+            let sql = "UPDATE t SET v = v + ? WHERE id = ?";
+            let prepared = binary.then(|| session.prepare_general(sql).unwrap());
+            session.control_transaction("BEGIN").unwrap();
+            let executed = if let Some(prepared) = &prepared {
+                session
+                    .execute_general(
+                        prepared,
+                        &[
+                            tidb_protocol::PreparedValue::SignedLongLong(1),
+                            tidb_protocol::PreparedValue::SignedLongLong(1),
+                        ],
+                    )
+                    .unwrap();
+                sql
+            } else {
+                let text = "UPDATE t SET v = v + 1 WHERE id = 1";
+                session.execute_write(text).unwrap();
+                text
+            };
+            cluster.fail_commit.store(fail_commit, Ordering::Release);
+            assert_eq!(session.control_transaction("COMMIT").is_err(), fail_commit);
+            let expected = ["BEGIN", executed, "COMMIT"]
+                .map(|sql| tidb_parser::normalize_digest(sql).1.to_string());
+            let expected = serde_json::to_string(&expected).unwrap();
+            let found = RECORDER.rows();
+            assert!(
+                found
+                    .iter()
+                    .any(|row| row[1].sql_string().unwrap() == expected),
+                "binary={binary}, failed={fail_commit}: {found:?}, expected {expected}"
+            );
+            drop(session);
+            assert_eq!(
+                RECORDER.rows(),
+                found,
+                "drop must not record the ended transaction again"
+            );
+        }
+    }
+}
