@@ -23,3 +23,5 @@ Three real-session regressions fail before and pass after. Seven new cases also 
 O11 and O18 remain **partial**. Complete SQL/plan registration, digest/profiling/reporting transport, runtime enable/fast-plan policy, complete visits/metadata and administrative/EXPLAIN/external compile phases remain unresolved. Full Go package/platform/generated/fixture acceptance, live multi-node TiKV and performance were not verified. Other 55 unresolved findings retain prior evidence, not fresh runtime reproduction. Counts remain **86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)**.
 
 The [living ExecPlan](../../statement-attribution-batch-execplan.md) records steps and recovery. Local commits must pass the actual locked server-build hook. Cloud statement-attribution/final-handoff.json records final hook, bundle and draft readback; fresh-task restoration remains unverified. Nothing is pushed.
+
+Source `fb9510d33d849f8999f6006c6a1a70990e917d98` committed locally through the actual mandatory locked server-build hook. No push. The final Cloud handoff records the receipt hook, exact bundle and draft readback.

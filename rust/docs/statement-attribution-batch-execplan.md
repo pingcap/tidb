@@ -15,7 +15,7 @@ Repair connected O11/O18 producer gaps: failed physical planning must not increm
 - [x] Add real-session regressions and capture failures before repair.
 - [x] Share physical first-run observation, phase measurements and existing privilege visits; preserve prepared/routed/close lifetimes.
 - [x] Run relevant tests, lint, all-target checking and locked server build; update both registers and receipts.
-- [ ] Commit through actual locked-build hooks, verify recovery and Cloud draft without pushing.
+- [x] Commit through actual locked-build hooks, verify recovery and Cloud draft without pushing.
 
 ## Context and Orientation
 
@@ -57,4 +57,4 @@ The optional StmtContext phase callback is an Arc-backed Send+Sync Fn(StatementP
 ## Outcomes & Retrospective
 
 
-Three behavioral gaps repaired under O11/O18, which remain partial. Fifty-one distinct Rust cases and twelve real MySQL/unistore checks pass; lint, all-target checking and locked server build pass after documented disk recovery. Final normal hook commits/recovery/draft delivery are pending. Full Go package fixtures, generated/platform/profiling transport, live multi-node TiKV and performance remain unverified.
+Three behavioral gaps repaired under O11/O18, which remain partial. Fifty-one distinct Rust cases and twelve real MySQL/unistore checks pass; lint, all-target checking and locked server build pass after documented disk recovery. Source committed through the actual mandatory hook; final receipt and verified recovery/draft delivery are recorded in the Cloud handoff. Full Go package fixtures, generated/platform/profiling transport, live multi-node TiKV and performance remain unverified.

@@ -222,5 +222,16 @@
       "ngaut/client-rust master"
     ],
     "native_changed": false
+  },
+  "source_commit": "fb9510d33d849f8999f6006c6a1a70990e917d98",
+  "actual_precommit_hook": {
+    "status": "passed",
+    "exit_code": 0,
+    "hooks_path": "hooks",
+    "command": "cd rust && cargo build --locked -p tidb-server",
+    "commit_command": "TERM=xterm git commit -m \"fix: share statement phases and table attribution\"",
+    "bypass": false,
+    "log": "/workspace/.cloud-setup/statement-attribution/source-hook.log",
+    "sha256": "04e6a3155087eeafb10fd86f8ae3eeb48d10079dbc2ab74eae279d17b815145d"
   }
 }

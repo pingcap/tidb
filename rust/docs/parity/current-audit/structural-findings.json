@@ -799,7 +799,8 @@
     "statuses_unchanged": true,
     "receipt": "statement-attribution-batch-repair.md",
     "validation": "statement-attribution-batch-validation.json",
-    "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim."
+    "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim.",
+    "source_commit": "fb9510d33d849f8999f6006c6a1a70990e917d98"
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
