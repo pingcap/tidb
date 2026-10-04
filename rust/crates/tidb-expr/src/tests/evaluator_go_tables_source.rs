@@ -353,21 +353,3 @@ fn sleep_errctx_levels_and_null_arguments_follow_the_caller() {
         Err(EvalError::IncorrectArguments(_))
     ));
 }
-
-/// Timing-and-interrupt half of `pkg/expression/evaluator_test.go:102
-/// TestSleep` (see [`sleep_errctx_levels_and_null_arguments_follow_the_caller`]
-/// for the split rationale).
-#[test]
-#[ignore = "go-parity-gap: SQLKiller.SendKillSignal interruptibility and the InInsertStmt kill path need real execution time absent from the value-tier ctx"]
-fn test_sleep_timing_and_kill_signal_halves() {}
-
-/// `pkg/expression/evaluator_test.go:626 TestOptionalProp` pins
-/// `GetOptionalEvalPropsForExpr`: PLUS over current_user/tidb_is_ddl_owner
-/// scalar functions requires CURRENT_USER | DDL_OWNER, adding GetLock unions
-/// ADVISORY_LOCK, PLAIN PLUS requires nothing, and `EvaluatorSuite`
-/// aggregates the union across its expressions. No expression-level prop
-/// walk exists in this crate -- `required_optional_eval_props` lives only on
-/// provider readers (`expropt/*`) and sets live in `exprctx.rs`.
-#[test]
-#[ignore = "go-parity-gap: GetOptionalEvalPropsForExpr/EvaluatorSuite.RequiredOptionalEvalProps aggregation is unported; tidb-expr tracks prop sets only on providers, not on expression trees"]
-fn test_optional_prop() {}

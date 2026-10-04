@@ -236,24 +236,3 @@ fn no_duplicate_column_reuse() {
     }
     alloc.reset();
 }
-
-// go-parity-gap: the free-list length caps asserted by Go `TestAllocator`
-// (`len(alloc.free) == maxFreeChunks`) and `TestColumnAllocator`'s pooled
-// allocator size cap read private state; only the observable layout and reuse
-// behavior are ported above.
-#[test]
-#[ignore = "go-parity-gap: allocator free-list internals are not exposed to Rust tests"]
-fn allocator_free_list_bounds() {}
-
-// go-parity-gap: Go `TestColumnAllocatorLimit` asserts per-bucket free-column
-// counts after InitChunkAllocSize changes (`alloc.columnAlloc.pool[..].Len()`);
-// those buckets are private here. The CheckReuseAllocSize half is ported above.
-#[test]
-#[ignore = "go-parity-gap: allocator free-list internals are not exposed to Rust tests"]
-fn column_allocator_limit_pool_sizes() {}
-
-// go-parity-gap: Go `TestColumnAllocatorCheck` counts recycled columns per
-// physical width inside the private column pool; this port cannot inspect it.
-#[test]
-#[ignore = "go-parity-gap: allocator pool internals are not exposed to Rust tests"]
-fn column_allocator_check() {}

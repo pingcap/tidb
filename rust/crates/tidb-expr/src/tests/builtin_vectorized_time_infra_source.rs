@@ -281,13 +281,6 @@ fn elementwise_plus_over_columns_matches_the_mock_contract() {
     }
 }
 
-/// GO PORT of `pkg/expression/builtin_vectorized_test.go:122
-/// TestMockVecPlusIntParallel`: Go races five threads against the shared
-/// buffer allocator to prove concurrency safety.
-#[test]
-#[ignore = "go-parity-gap: the enableAlloc result-buffer allocator (and therefore its concurrency-safety race) has no counterpart; elementwise correctness is pinned serially"]
-fn mock_vec_plus_int_parallel_allocator_race() {}
-
 /// GO PORT of `pkg/expression/builtin_vectorized_test.go:564/:589
 /// TestDoubleRow2Vec/TestDoubleVec2Row`'s essence: every eval type projects a
 /// bare Column through BOTH evaluation directions (Go's transfer path and its
@@ -351,12 +344,6 @@ fn double_evaluation_reproduces_the_projected_column_exactly() {
         }
     }
 }
-
-/// GO PORT of `pkg/expression/builtin_vectorized_test.go:744/:758
-/// BenchmarkMockDoubleRow/BenchmarkMockDoubleVec`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_mock_double_row_and_vec() {}
 
 /// GO PORT of `pkg/expression/builtin_vectorized_test.go:775
 /// TestVectorizedCheck`: Constants, Columns, and a column-backed correlated
@@ -429,28 +416,3 @@ fn vectorized_builtin_vec_families_match_master_shapes() {
     // the CosineDistance `[0,0,0]` NaN-origin NULL shape rides the same
     // distance path those tests carry.
 }
-
-/// GO PORT of `pkg/expression/builtin_vectorized_test.go:804
-/// TestFloat32ColVec`.
-#[test]
-#[ignore = "go-parity-gap: FLOAT32 columnar storage (mysql.TypeFloat chunks) is not modeled; vector floats exist only as scalar datums"]
-fn float32_col_vectorization() {}
-
-/// GO PORT of `pkg/expression/builtin_vectorized_test.go:836 TestVecEvalBool`.
-#[test]
-#[ignore = "go-parity-gap: VecEvalBool/EvalBool selection machinery (selected/nulls buffers over expression conjunctions) is not modeled in this crate"]
-fn vec_eval_bool_matches_row_eval_bool() {}
-
-/// GO PORT of `pkg/expression/builtin_vectorized_test.go:857
-/// TestRowBasedFilterAndVectorizedFilter`.
-#[test]
-#[ignore = "go-parity-gap: the rowBasedFilter/vectorizedFilter equivalence harness needs the missing VecEvalBool layer"]
-fn row_based_filter_and_vectorized_filter_agree() {}
-
-/// GO PORT of the batch slice's Benchmark* harnesses
-/// (`builtin_time_vec_generated_test.go:11726/:11730`,
-/// `builtin_time_vec_test.go:602/:606`, `builtin_vec_vec_test.go:205`,
-/// `builtin_vectorized_test.go:148/:158/:170/:181/:194`).
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmarks, excluded by the gate"]
-fn benchmark_vectorized_harnesses() {}

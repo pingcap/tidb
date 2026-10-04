@@ -810,16 +810,15 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "integration_start": "6d625b5223f5d7a94865f55ea7298e91982a54f9",
-    "removed_empty_tests": 612,
-    "removed_modules": 64,
-    "relocated_candidate_rows": 674,
-    "retained_test_files_unchanged": 72,
+    "integration_start": "1e91cdb62d920b116a9edb1a424745a1fcba5f07",
+    "removed_empty_tests": 80,
+    "removed_modules": 5,
+    "relocated_candidate_rows": 102,
+    "retained_executable_source_verified_unchanged": true,
     "production_behavior_changed": false,
     "finding_statuses_changed": false,
-    "receipt": "planner-empty-module-removal.md",
-    "obligation_ledger": "planner-empty-module-obligations.json",
-    "source_commit": "a1d57eefff46b4a1899337a5f5aa3e1cfc327705"
+    "receipt": "transport-expression-empty-test-removal.md",
+    "obligation_ledger": "transport-expression-empty-test-obligations.json"
   },
   "test_cleanup_history": [
     {
@@ -833,6 +832,19 @@
       "receipt": "placeholder-test-removal.md",
       "obligation_ledger": "placeholder-test-obligations.json",
       "source_commit": "e20b110a9d2df0b531aae231f6b931088c3e2c5d"
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "6d625b5223f5d7a94865f55ea7298e91982a54f9",
+      "removed_empty_tests": 612,
+      "removed_modules": 64,
+      "relocated_candidate_rows": 674,
+      "retained_test_files_unchanged": 72,
+      "production_behavior_changed": false,
+      "finding_statuses_changed": false,
+      "receipt": "planner-empty-module-removal.md",
+      "obligation_ledger": "planner-empty-module-obligations.json",
+      "source_commit": "a1d57eefff46b4a1899337a5f5aa3e1cfc327705"
     }
   ],
   "repair_history": [

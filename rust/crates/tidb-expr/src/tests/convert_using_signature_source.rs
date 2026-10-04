@@ -125,11 +125,3 @@ fn convert_using_unknown_charset_fails_before_evaluation() {
         "wrongcharset must fail parsing"
     );
 }
-
-/// go-parity-gap: TestConvert's last block mutates an ALREADY-BUILT
-/// builtinConvertSig's FieldType at runtime and expects the evaluation to fail
-/// with the unknown-charset error; the Rust tier exposes no such post-build
-/// mutation seam, so that half has no faithful carrier here.
-#[test]
-#[ignore = "go-parity-gap: no post-build FieldType mutation seam to reproduce wrongFunction.tp.SetCharset"]
-fn convert_runtime_charset_mutation_gap() {}

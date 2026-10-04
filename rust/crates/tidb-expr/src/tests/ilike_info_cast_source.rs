@@ -210,29 +210,6 @@ fn like_pattern_cache_reuses_only_within_context() {
     assert!(ilike.is_match(b"abc"));
 }
 
-/// go-parity-gap: `TestVectorizedBuiltinIlikeFunc`
-/// (`pkg/expression/builtin_ilike_test.go:161`) runs the fixed
-/// candidate-pair generators through the vec-vs-scalar differential harness
-/// with per-case escape constants ('A'/'a'/'\\'); there is no vectorized
-/// signature tier to differentiate against. The scalar equivalents of the
-/// generator pairs and escapes are pinned by [`test_ilike`] and
-/// `ilike_uses_source_ascii_lowering_and_escape_rules`.
-#[test]
-#[ignore = "go-parity-gap: ILIKE vec-vs-scalar differential without a vectorized tier"]
-fn vectorized_builtin_ilike_harness_gap() {}
-
-/// go-parity-gap: `TestVectorizedBuiltinIlikeForConstants`
-/// (`pkg/expression/builtin_ilike_test.go:171`) mixes CONSTANT pattern /
-/// constant expr into an otherwise-columnar input chunk and asserts the
-/// vectorized output equals the per-row scalar answers. With no separate vec
-/// tier both routes collapse into one evaluator, so there is nothing to
-/// differentiate; the constants-handling half of the contract (an unchanged
-/// literal driving column comparisons) is exercised by [`test_ilike`]'s
-/// rewritten-chunk path, where every operand passes through Constant nodes.
-#[test]
-#[ignore = "go-parity-gap: const-mixed ILIKE chunk differential without a vectorized tier"]
-fn vectorized_builtin_ilike_for_constants_gap() {}
-
 // ---------------------------------------------------------------------------
 // builtin_info_test.go family
 // ---------------------------------------------------------------------------
@@ -390,27 +367,6 @@ fn test_current_resource_group_ast_path() {
 // embed-text / inference family
 // ---------------------------------------------------------------------------
 
-/// go-parity-gap: `TestEmbedTextBuiltin`
-/// (`pkg/expression/builtin_inference_test.go:32`) requires
-/// `inference.NewEmbedFn`, the starter deployment mode switch
-/// (`kerneltype.IsNextGen`, `deploymode.Set`) and VectorFloat32 evaluation
-/// through `NewFunction`; none of the inference/runtime symbols are
-/// transcreated in the workspace yet, so EMBED_TEXT construction, option
-/// propagation ([2,3,4] mock embedder outputs) and the EvalContext-wrapper
-/// indirection have no carrier.
-#[test]
-#[ignore = "go-parity-gap: EMBED_TEXT/inference module not transcreated (no NewFunction vector evaluation, deploymode, or EmbedFn registry)"]
-fn test_embed_text_builtin() {}
-
-/// go-parity-gap: `TestEmbedTextBuiltinNullAndErrors`
-/// (`pkg/expression/builtin_inference_test.go:76`) drives EvalEmbedTextArgs/
-/// EvalEmbedTextArgsFromExpr/EvalEmbedTextArgsToDatum error contracts
-/// (invalid usage, JSON options errors, dimension cap 16383, deploy-mode
-/// refusals); the same missing inference carriers as above apply.
-#[test]
-#[ignore = "go-parity-gap: EvalEmbedTextArgs* helpers not transcreated"]
-fn test_embed_text_builtin_null_and_errors() {}
-
 // ---------------------------------------------------------------------------
 // cast-vectorized specials (builtin_cast_vec_test.go)
 // ---------------------------------------------------------------------------
@@ -460,26 +416,3 @@ fn test_vectorized_cast_real_as_time() {
         );
     }
 }
-
-/// go-parity-gap: `TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion`
-/// (`pkg/expression/builtin_cast_vec_test.go:248`) constructs
-/// `builtinCastStringAsDecimalSig` with `inUnion=true` plus `UnsignedFlag`
-/// and re-checks 1024 random strings both signs. b066's port batch already
-/// records the remaining string-to-DECIMAL `inUnion` seam. The integer cast
-/// carrier is now implemented by `cast_unsigned_in_union`; without a
-/// target-specific decimal carrier this signature still cannot be driven.
-#[test]
-#[ignore = "go-parity-gap: the vectorized string-to-DECIMAL inUnion signature remains unmodeled; scalar source-specific UNION casts are covered"]
-fn vectorized_cast_string_as_decimal_union_gap() {}
-
-/// go-parity-gap: `TestVectorizedBuiltinCastEvalOneVec` /
-/// `TestVectorizedBuiltinCastFunc`
-/// (`pkg/expression/builtin_cast_vec_test.go:151,155`) run the ~50-family
-/// `vecBuiltinCastCases` map through the shared eval-one-vec / full-vector
-/// differentials. No vectorized tier exists here, so there is no second code
-/// path to compare against; the VALUE content of the main cast families was
-/// already ported by b066 (`aggregation_arithmetic_cast_source.rs`), which
-/// is why these stubs carry the harness gap alone.
-#[test]
-#[ignore = "go-parity-gap: CAST vec-vs-scalar differentials need a vectorized tier"]
-fn vectorized_builtin_cast_harness_gap() {}

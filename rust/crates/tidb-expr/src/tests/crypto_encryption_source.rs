@@ -1399,35 +1399,3 @@ fn uncompress_rejects_handcrafted_payload_larger_than_declared_length() {
         "expected ZlibZBuf warning among {logged:?}"
     );
 }
-
-/// go-parity-gap: `TestVectorizedBuiltinEncryptionFunc`
-/// (`pkg/expression/builtin_encryption_vec_test.go:83`) feeds
-/// `vecBuiltinEncryptionCases` (AES mode/generator pairs across every family
-/// member plus SM3 and RANDOM_BYTES arms) through the vec-vs-scalar harness;
-/// no vectorized signature tier exists here, so there is nothing to run the
-/// differential against. The scalar halves are pinned by this module's table
-/// ports.
-#[test]
-#[ignore = "go-parity-gap: ENCRYPTION-family vec-vs-scalar differential without a vectorized tier"]
-fn vectorized_builtin_encryption_harness_gap() {}
-
-/// go-parity-gap: the tracker-driven halves of
-/// `TestUncompressRejectsInflatedDataLargerThanDeclaredLength`
-/// (`tracker.MaxConsumed() <= declaredLength`),
-/// `TestUncompressTracksInflateMemory` (LogOnExceed hook firing once, limit
-/// 32 bytes around a 4096-byte inflate), and the memory assertions in
-/// `TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized`
-/// exercise `StmtCtx.MemTracker`, which the expression tier does not model.
-#[test]
-#[ignore = "go-parity-gap: Uncompress/inflate memory accounting runs on StmtCtx.MemTracker (mem.MemoryTracker + LogOnExceed), not modeled on tidb-expr's Columns"]
-fn uncompress_memory_tracker_gaps() {}
-
-/// GO PORT skeleton for `pkg/expression/builtin_encryption_test.go:852
-/// TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized`: the
-/// rejection itself is pinned column-free by
-/// [`uncompress_rejects_payload_deeper_than_declared_length`] (identical
-/// sig code path); what remains is only the `vecEvalString` plumbing over a
-/// one-row chunk.
-#[test]
-#[ignore = "go-parity-gap: no separate vectorized signature tier exists in tidb-expr to route this through f.vecEvalString; the value-level behavior is covered"]
-fn uncompress_overlong_declared_length_vectorized_gap() {}

@@ -478,11 +478,6 @@ fn vectorized_builtin_info_func() {
     assert_eq!(eval_rewritten("benchmark(3, 1)", &ctx), Datum::Int(0));
 }
 
-/// Go `pkg/expression/builtin_info_vec_test.go:119 BenchmarkVectorizedBuiltinInfoFunc`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_info_func() {}
-
 // ---------------------------------------------------------------------------
 // builtin_json_test.go
 // ---------------------------------------------------------------------------
@@ -1664,11 +1659,6 @@ fn vectorized_builtin_json_func() {
     );
 }
 
-/// Go `pkg/expression/builtin_json_vec_test.go:156 BenchmarkVectorizedBuiltinJSONFunc`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_json_func() {}
-
 // ---------------------------------------------------------------------------
 // builtin_like_test.go
 // ---------------------------------------------------------------------------
@@ -1792,11 +1782,6 @@ fn vectorized_builtin_like_func() {
     assert_eq!(e("'a' regexp 'a'"), "INT:1");
     assert_eq!(chunk_e("'baab' like 'b_%b'"), "INT:1");
 }
-
-/// Go `pkg/expression/builtin_like_vec_test.go:39 BenchmarkVectorizedBuiltinLikeFunc`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_like_func() {}
 
 // ---------------------------------------------------------------------------
 // builtin_math_test.go

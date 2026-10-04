@@ -105,22 +105,6 @@ fn test_scalar_function() {
     assert!(cloned.get_static_type().unwrap().equal(&longlong_type()));
 }
 
-/// go-parity-gap: the second half of `TestScalarFunction`
-/// (`scalar_function_test.go:107-117`) drives
-/// `NewValuesFunc(ctx, 0, TypeLonglong)` (`expression.go:1168`) and asserts
-/// the CONCRETE signature identity `newSf.Function.(*builtinValuesIntSig)` in
-/// addition to name/ret-type/coercibility/repertoire round-trips. The shared
-/// active regression `values_function_reads_the_current_insert_row` now covers
-/// the transcreated constructor/runtime behavior (name, result type, offset,
-/// zero-argument arity, and current-row lookup). This ignored carrier retains
-/// only the concrete signature identity and collation `Repertoire()` halves:
-/// this crate removed the per-signature object model (see
-/// [`crate::scalar_function`]'s BRIDGE DECISION), so no runtime value can prove
-/// a `values` node carries the int signature and `Repertoire()` has no carrier.
-#[test]
-#[ignore = "go-parity-gap: NewValuesFunc concrete builtinValuesIntSig identity and Repertoire() need the per-signature object model this crate replaced"]
-fn new_values_func_sig_identity() {}
-
 /// GO PORT of `scalar_function_test.go:120`
 /// `TestScalarFunctionEqualAfterCleanHashCode`: two structurally different
 /// functions stay unequal AFTER hash codes were computed once and then
@@ -359,16 +343,6 @@ fn test_issue_23309() {
     let operand_type = sf.get_args()[1].static_type().expect("typed operand");
     assert!(!operand_type.has_flag(FieldTypeFlags::NOT_NULL));
 }
-
-/// go-parity-gap: `TestScalarFuncs2Exprs` (`scalar_function_test.go:197`)
-/// drives `ScalarFuncs2Exprs` (`scalar_function.go:345`), which widens a
-/// `[]*ScalarFunction` into an `[]Expression` box-for-box. In this crate a
-/// scalar function's arguments already live as `Vec<Expression>`
-/// (`scalar_function.rs:228`), so there is no separate slice-of-signatures
-/// container for the widening to be exercised against.
-#[test]
-#[ignore = "go-parity-gap: ScalarFuncs2Exprs widens []*ScalarFunction, a representation this name-keyed port does not have (args are Vec<Expression> directly)"]
-fn test_scalar_funcs_2_exprs() {}
 
 /// go-parity-gap: `TestScalarFunctionHash64Equals`
 /// (`scalar_function_test.go:213`) drives `ScalarFunction.Hash64(h)` /

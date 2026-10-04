@@ -1,0 +1,86 @@
+{
+  "starting_head": "1e91cdb62d920b116a9edb1a424745a1fcba5f07",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "removed_empty_tests": 80,
+  "removed_modules": 5,
+  "relocated_candidate_rows": 102,
+  "retained_executable_source_unchanged": true,
+  "results": {
+    "chunk_library_passed": 270,
+    "distsql_library_passed": 37,
+    "distsql_integration_passed": 258,
+    "expression_library_passed": 1239,
+    "expression_loopback_case_passed_with_permission": 1,
+    "distinct_passed": 1805,
+    "library_ignored_nonempty": 20,
+    "expression_behavior_failures_reproduced_on_original_sources": [
+      "tests::builtin_info_json_math_source::exp",
+      "tests::builtin_math_misc_op_source::vectorized_builtin_op_func",
+      "time_fn::tests::str_to_date_partial_formats_follow_no_zero_date"
+    ],
+    "expression_suite_all_green": false
+  },
+  "commands": [
+    {
+      "command": "cargo test --locked -p tidb-expr -p tidb-chunk -p tidb-distsql --lib",
+      "exit": 101,
+      "log": "/workspace/.cloud-setup/empty-test-batch/lib-tests.log",
+      "log_sha256": "f9206c6360441a9abd3a319fea8e942a5810126c3916438bca51cd40c84e1eaf"
+    },
+    {
+      "command": "cargo test --locked -p tidb-expr --lib -- json_schema_valid_resolves_file_and_http_references tests::builtin_info_json_math_source::exp tests::builtin_math_misc_op_source::vectorized_builtin_op_func str_to_date_partial_formats_follow_no_zero_date --test-threads=1 (original test sources restored temporarily)",
+      "exit": 101,
+      "log": "/workspace/.cloud-setup/empty-test-batch/baseline-failures.log",
+      "log_sha256": "f8fdf4a40bfe7f2fc0a94609a08316334d0d1b7b2c5de3dac0d57426b8843c4b"
+    },
+    {
+      "command": "existing cleanup test executable --exact builtin_ext::json::tests::json_schema_valid_resolves_file_and_http_references (approved loopback execution)",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/empty-test-batch/schema-reference-test.log",
+      "log_sha256": "58ba422630fbcb86478472a778d6bda3f60e9ce9a312b020bae598c54618bcf3"
+    },
+    {
+      "command": "cargo test --locked -p tidb-distsql --test all",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/empty-test-batch/distsql-tests.log",
+      "log_sha256": "1c63b8e61d3c5e6b0431f4b324d2b5b5992807c0e77ae7f25c0e5f451aa0b269"
+    },
+    {
+      "command": "cargo check --locked -p tidb-expr -p tidb-chunk -p tidb-distsql --all-targets",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/empty-test-batch/check.log",
+      "log_sha256": "48f882f5f2cd84aaa60e441d426fd6f8ea464c8f0005a6465e12d1e386cef476"
+    },
+    {
+      "command": "rustfmt --check --edition 2021 --config skip_children=true (17 retained changed files)",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/empty-test-batch/format.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "make lint (after network permission granted)",
+      "exit": 0,
+      "log": "/workspace/.cloud-setup/empty-test-batch/lint-retry.log",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "commit_hook": {
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "actual_result": "SHA-dependent final-handoff.json outside checkout; no preclaim"
+  },
+  "incoming_integration": {
+    "fetched": "1ed2cf975c4336fad03649da20ba702f0afd17b4",
+    "changed_path": "rust/crates/tidb-schemaver/src/etcd_syncer.rs",
+    "merged": false,
+    "reason": "preserve concurrent source changes; independent pending integration outside cleanup validation"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "no_push": true,
+  "no_whole_package_acceptance": true
+}

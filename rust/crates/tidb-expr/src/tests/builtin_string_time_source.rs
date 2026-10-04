@@ -1584,38 +1584,6 @@ fn test_vectorized_builtin_string_func_2() {
     test_vectorized_builtin_string_eval_one_vec_2();
 }
 
-/// Go `pkg/expression/builtin_string_vec_test.go:575 Benchmark*` pair — Go
-/// `testing.B` microbenchmarks excluded by the gate filter.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_string_eval_one_vec() {}
-
-/// See [`benchmark_vectorized_builtin_string_eval_one_vec`].
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_string_func() {}
-
-/// Go `pkg/expression/builtin_string_vec_test.go:591 Benchmark*2` pair.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_string_eval_one_vec_2() {}
-
-/// See [`benchmark_vectorized_builtin_string_eval_one_vec_2`].
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_string_func_2() {}
-
-/// Go `pkg/expression/builtin_string_vec_generated_test.go:45 Benchmark*`
-/// pair.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_generated_builtin_string_eval_one_vec() {}
-
-/// See [`benchmark_vectorized_generated_builtin_string_eval_one_vec`].
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_generated_builtin_string_func() {}
-
 // ---------------------------------------------------------------------------
 // builtin_test.go
 // ---------------------------------------------------------------------------

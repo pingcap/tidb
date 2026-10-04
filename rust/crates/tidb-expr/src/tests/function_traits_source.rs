@@ -37,17 +37,3 @@ fn unfoldable_functions_contains_sysdate() {
     assert!(!crate::scalar_function::is_unfoldable_function("abs"));
     assert!(!crate::scalar_function::is_unfoldable_function("plus"));
 }
-
-/// go-parity-gap: `TestIllegalFunctions4GeneratedColumns`
-/// (`function_traits_test.go:40`) compares `GetBuiltinList()` against
-/// `IllegalFunctions4GeneratedColumns`. In this workspace the blocklist was
-/// transcreated OUTSIDE the owning crate, as `DISALLOWED_FUNCTIONS` in
-/// `tidb-executor/src/generated_column.rs` (Go places it in `function_traits.go`
-/// next to `unFoldableFunctions`); depending on tidb-executor from tidb-expr
-/// would invert the layering, and no blocklist symbol exists inside this crate
-/// to compare against. The generated-column rejection behavior is otherwise
-/// exercised from the owning side (tidb-session's
-/// tests_expression_indexes.rs pins the error text against real statements).
-#[test]
-#[ignore = "go-parity-gap: IllegalFunctions4GeneratedColumns lives in tidb-executor::generated_column in this workspace, so tidb-expr cannot compare builtin_list() against it without a layering inversion"]
-fn test_illegal_functions_4_generated_columns_known_good_list() {}

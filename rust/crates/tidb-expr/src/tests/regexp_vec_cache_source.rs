@@ -367,12 +367,3 @@ fn regexp_cache_identity_by_statement_context() {
     .expect("replace result");
     assert_eq!(new_context, Datum::new_string("abY".to_owned()));
 }
-
-/// go-parity-gap: Go testing.B microbenchmarks behind the vec regexp cases
-/// (`BenchmarkVectorizedBuiltinRegexpForConstants`,
-/// `BenchmarkVectorizedBuiltinOtherFunc`, and the generated
-/// EVALONEVEC/FUNC benchmark twins) have no nextest equivalent; the gate's
-/// `/bench/` filter excludes them by construction.
-#[test]
-#[ignore = "go-parity-gap: testing.B benchmarks excluded from the gate"]
-fn regexp_and_other_vec_benchmark_gap() {}

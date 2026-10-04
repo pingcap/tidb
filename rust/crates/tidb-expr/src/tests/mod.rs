@@ -35,13 +35,10 @@ mod control;
 mod convert_using_signature_source;
 mod crypto_encryption_source;
 mod datetime;
-mod distsql_pb_roundtrip_gap_source;
 mod etint_argument;
 mod etstring_argument;
 mod evaluator_binop;
 mod evaluator_go_tables_source;
-mod expr_to_pb_lowering_gap_source;
-mod expr_to_pb_switcher_source;
 mod expression_null_const_source;
 mod expression_with_null_source;
 mod filter_extract_dnf_source;
@@ -64,7 +61,6 @@ mod scalar_function_semantics_source;
 mod setvar_getvar_values_getparam_source;
 mod util_filter_condition_source;
 mod vectorizable_and_chunk_eval_source;
-mod vectorized_filter_consider_null_gap_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {

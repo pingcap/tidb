@@ -1,5 +1,8 @@
 # Structural parity audit: current evidence
 
+The [transport/expression cleanup](transport-expression-empty-test-removal.md) removes **80 empty ignored tests and five pure placeholder modules**, with **102 candidate rows relocated** to the [obligation ledger](transport-expression-empty-test-obligations.json). All retained executable test code is byte-for-byte unchanged. Counts remain **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)**. This cleanup closes no finding and accepts no whole Go package. Three original expression failures remain explicit; the local HTTP fixture passes outside the socket sandbox. No push.
+
+
 The [admission-policy batch](admission-policy-batch-repair.md) maintains **A02/A03 together**: retained passwords and CIPHER/ISSUER/SUBJECT/SAN use shared account storage and verified socket evidence, with CREATE/ALTER/SHOW and durable writeback. Seven runtime baseline failures, **126 distinct passing Rust cases** and 52 Go URI plus three Go JSON oracle cases validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; A02/A03 stay partial for the named wider owners. Other 55 IDs retain earlier evidence rather than fresh behavioral reproduction. No complete package acceptance or push.
 
 Earlier checkpoints below are historical.

@@ -17,23 +17,10 @@ rust/crates/tidb-ast/tests/parser_ast_misc_package_source.rs	309	#[ignore = "go-
 rust/crates/tidb-ast/tests/parser_ast_misc_package_source.rs	313	#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
 rust/crates/tidb-ast/tests/parser_ast_procedure_package_source.rs	270	#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
 rust/crates/tidb-ast/tests/parser_ast_procedure_package_source.rs	275	#[ignore = "go-parity-gap: TestProcedure only asserts parses succeed (tidb-parser grammar)"]
-rust/crates/tidb-chunk/src/tests_alloc.rs	20	//! test is whitebox it is `#[ignore]`d with a `go-parity-gap` note.
-rust/crates/tidb-chunk/src/tests_alloc.rs	224	// go-parity-gap: Go `TestNoDuplicateColumnReuse` inspects the allocator's
-rust/crates/tidb-chunk/src/tests_alloc.rs	228	#[ignore = "go-parity-gap: allocator pool internals are not exposed to Rust tests"]
-rust/crates/tidb-chunk/src/tests_alloc.rs	240	// go-parity-gap: the free-list length caps asserted by Go `TestAllocator`
-rust/crates/tidb-chunk/src/tests_alloc.rs	245	#[ignore = "go-parity-gap: allocator free-list internals are not exposed to Rust tests"]
-rust/crates/tidb-chunk/src/tests_alloc.rs	248	// go-parity-gap: Go `TestColumnAllocatorLimit` asserts per-bucket free-column
-rust/crates/tidb-chunk/src/tests_alloc.rs	252	#[ignore = "go-parity-gap: allocator free-list internals are not exposed to Rust tests"]
-rust/crates/tidb-chunk/src/tests_alloc.rs	255	// go-parity-gap: Go `TestColumnAllocatorCheck` counts recycled columns per
-rust/crates/tidb-chunk/src/tests_alloc.rs	258	#[ignore = "go-parity-gap: allocator pool internals are not exposed to Rust tests"]
 rust/crates/tidb-chunk/src/tests_mutrow.rs	227	// go-parity-gap: ShallowCopyPartialRow snapshotted instead of
 rust/crates/tidb-codec/src/column.rs	281	write!(formatter, "typed chunk column {field_type:?} is not implemented")
 rust/crates/tidb-distsql/src/chunk_decode.rs	207	"typed tipb row decoding is not implemented for {encode_type:?}"
 rust/crates/tidb-distsql/src/response_channel.rs	1274	"TypeCHBlock row materialization is not implemented".to_owned(),
-rust/crates/tidb-distsql/tests/select_result_gaps_source.rs	19	// go-parity-gap: `distsql_test.go::TestSelectResultRuntimeStats` asserts the
-rust/crates/tidb-distsql/tests/select_result_gaps_source.rs	28	#[ignore = "go-parity-gap: selectResultRuntimeStats.String()/RegionRequestRuntimeStats formatting is unported"]
-rust/crates/tidb-distsql/tests/select_result_gaps_source.rs	31	// go-parity-gap: the closing block of `select_result_test.go::
-rust/crates/tidb-distsql/tests/select_result_gaps_source.rs	41	#[ignore = "go-parity-gap: post-IntoIter misuse is prevented structurally by response ownership; no runtime error exists"]
 rust/crates/tidb-error/src/tidb/errname/consts_4.rs	30	raw: "not implemented",
 rust/crates/tidb-exec/src/foreign_key_build.rs	188	return Err(refusal(DriverError::unsupported("MATCH PARTIAL is not supported yet")));
 rust/crates/tidb-exec/src/wide_scan_selection.rs	58	//! Two refusals are deliberate and are not "not implemented yet":
@@ -328,100 +315,11 @@ rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	198	// go-parity-
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	288	// go-parity-gap: documented divergence — this tier truncates IN PLACE
 rust/crates/tidb-expr/src/rewriter.rs	2449	"a CAST with the ARRAY modifier is not supported yet",
 rust/crates/tidb-expr/src/simple_expr.rs	72	//!   (`rewriter.rs`, "a CAST with the ARRAY modifier is not supported yet"),
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	522	#[ignore = "go-parity-gap: the Rust owner has no separate vectorized evaluator tier (one row-based path covers both); scalar DECIMAL overflow expression text is pinned by test_decimal_err_overflow, while this vectorized-only differential remains unobservable"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	534	#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported -- tidb-proto's select.proto projection carries none of the ~25 aggregate ExprType values, so PB round-trips cannot be modeled in this crate"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	542	#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported -- tidb-proto's select.proto projection lacks ExprType_SumInt"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	549	#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported; tidb-proto lacks aggregate ExprType members"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	563	#[ignore = concat!("go-parity-gap: the aggregate RUNTIME half (GetAggFunc/CreateContext/Update/GetResult) is not ported in tidb-expr; the workspace evaluates aggregates in tidb-exec::aggregate::runtime outside this batch's gate scope")]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	616	#[ignore = "go-parity-gap: util.go's createDistinctChecker (the EVALUATOR half) is not ported in tidb-expr; the workspace's checker lives in the executor crates outside this batch's gate scope"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	2479	#[ignore = "go-parity-gap: ARRAY-typed field types (tp.SetArray(true)) and the cast-as-array function class are not ported; BuildCastFunctionWithCheck on an array target has no equivalent"]
-rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs	2486	#[ignore = "go-parity-gap: the workspace has ONE row-based evaluator; Go's randomized vec-vs-scalar differential harness (vecEvalInt vs evalInt over genCastIntAsInt, plus the inUnion+unsigned variant) has no separate vectorized tier to compare against"]
-rust/crates/tidb-expr/src/tests/builtin_math_misc_op_source.rs	963	#[ignore = "go-parity-gap: SQLKiller interruptibility and wall-clock duration \
 rust/crates/tidb-expr/src/tests/builtin_time_calendars_source.rs	340	// go-parity-gap: TestDateArithFuncs' trailing DURATION block feeds a
-rust/crates/tidb-expr/src/tests/builtin_vectorized_time_infra_source.rs	288	#[ignore = "go-parity-gap: the enableAlloc result-buffer allocator (and therefore its concurrency-safety race) has no counterpart; elementwise correctness is pinned serially"]
-rust/crates/tidb-expr/src/tests/builtin_vectorized_time_infra_source.rs	436	#[ignore = "go-parity-gap: FLOAT32 columnar storage (mysql.TypeFloat chunks) is not modeled; vector floats exist only as scalar datums"]
-rust/crates/tidb-expr/src/tests/builtin_vectorized_time_infra_source.rs	441	#[ignore = "go-parity-gap: VecEvalBool/EvalBool selection machinery (selected/nulls buffers over expression conjunctions) is not modeled in this crate"]
-rust/crates/tidb-expr/src/tests/builtin_vectorized_time_infra_source.rs	447	#[ignore = "go-parity-gap: the rowBasedFilter/vectorizedFilter equivalence harness needs the missing VecEvalBool layer"]
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	259	/// go-parity-gap: negative literals represented as unaryminus trees in the
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	268	#[ignore = "go-parity-gap: negative literal folding before context-free comparison casts"]
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	561	/// go-parity-gap: `TestCoalesce`'s mixed-fsp rows expect Go's arg-cast to
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	810	/// go-parity-gap: `TestVectorizedBuiltinCompareEvalOneVec` /
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	821	#[ignore = "go-parity-gap: no vectorized signature tier to differentiate against"]
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	824	/// go-parity-gap: the GENERATED twin (`TestVectorizedGeneratedBuiltinCompareEvalOneVec`/
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	830	#[ignore = "go-parity-gap: generated vec-vs-scalar differential without a vectorized tier"]
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	833	/// go-parity-gap: `TestVectorizedBuiltinControlEvalOneVecGenerated` /
-rust/crates/tidb-expr/src/tests/compare_control_source.rs	838	#[ignore = "go-parity-gap: control-family vec differential without a vectorized tier; scalar If/CaseWhen halves live in control.rs and this module"]
 rust/crates/tidb-expr/src/tests/compare_time_builtin_rows_source.rs	187	// go-parity-gap: the companion `show warnings` assertions at
-rust/crates/tidb-expr/src/tests/constant_test_go_tables_source.rs	690	#[ignore = "go-parity-gap: the eleven typed EvalInt/EvalReal/EvalDecimal/EvalString/EvalTime/EvalDuration/EvalJSON/EvalVectorFloat32 rows are not exposed as separate Rust evaluator APIs"]
-rust/crates/tidb-expr/src/tests/constant_test_go_tables_source.rs	742	#[ignore = "go-parity-gap: deferred-constant EvalXxx forwarding needs an error-valued/mock expression seam; evaluation is reported Unsupported today"]
-rust/crates/tidb-expr/src/tests/constant_test_go_tables_source.rs	843	#[ignore = "go-parity-gap: Constant-with-DeferredExpr evaluation is unported; parameter-marker constants are evaluated through their live marker values"]
-rust/crates/tidb-expr/src/tests/convert_using_signature_source.rs	129	/// go-parity-gap: TestConvert's last block mutates an ALREADY-BUILT
-rust/crates/tidb-expr/src/tests/convert_using_signature_source.rs	134	#[ignore = "go-parity-gap: no post-build FieldType mutation seam to reproduce wrongFunction.tp.SetCharset"]
-rust/crates/tidb-expr/src/tests/crypto_encryption_source.rs	1403	/// go-parity-gap: `TestVectorizedBuiltinEncryptionFunc`
-rust/crates/tidb-expr/src/tests/crypto_encryption_source.rs	1411	#[ignore = "go-parity-gap: ENCRYPTION-family vec-vs-scalar differential without a vectorized tier"]
-rust/crates/tidb-expr/src/tests/crypto_encryption_source.rs	1414	/// go-parity-gap: the tracker-driven halves of
-rust/crates/tidb-expr/src/tests/crypto_encryption_source.rs	1422	#[ignore = "go-parity-gap: Uncompress/inflate memory accounting runs on StmtCtx.MemTracker (mem.MemoryTracker + LogOnExceed), not modeled on tidb-expr's Columns"]
-rust/crates/tidb-expr/src/tests/crypto_encryption_source.rs	1432	#[ignore = "go-parity-gap: no separate vectorized signature tier exists in tidb-expr to route this through f.vecEvalString; the value-level behavior is covered"]
-rust/crates/tidb-expr/src/tests/distsql_pb_roundtrip_gap_source.rs	26	#[ignore = "go-parity-gap: PBToExpr decode-and-rebuild (distsql_builtin.go) is unported; tidb-expr has no tipb::Expr -> Expression decoder to feed truncated payloads"]
-rust/crates/tidb-expr/src/tests/distsql_pb_roundtrip_gap_source.rs	35	#[ignore = "go-parity-gap: tipb.Expr.Eval (distsql_builtin.go exprEval) is unported; neither the datum-decoding nor the boolean-signature reconstruction exists in this crate"]
-rust/crates/tidb-expr/src/tests/distsql_pb_roundtrip_gap_source.rs	44	#[ignore = "go-parity-gap: PBToExpr's collation-id <-> name table with negated new-collation encoding is unported"]
-rust/crates/tidb-expr/src/tests/distsql_pb_roundtrip_gap_source.rs	50	#[ignore = "go-parity-gap: PBToExpr's ScalarFuncSig registry lookup (including the RegexpSig family) is unported"]
-rust/crates/tidb-expr/src/tests/evaluator_go_tables_source.rs	361	#[ignore = "go-parity-gap: SQLKiller.SendKillSignal interruptibility and the InInsertStmt kill path need real execution time absent from the value-tier ctx"]
-rust/crates/tidb-expr/src/tests/evaluator_go_tables_source.rs	372	#[ignore = "go-parity-gap: GetOptionalEvalPropsForExpr/EvaluatorSuite.RequiredOptionalEvalProps aggregation is unported; tidb-expr tracks prop sets only on providers, not on expression trees"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	38	#[ignore = "go-parity-gap: PushDownExprs + ExpressionsToPBList column-ref lowering with exact per-type FieldType serialization is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	45	#[ignore = "go-parity-gap: comparison signature assignment inside ExpressionsToPBList is unported; pb_predicate.rs covers only the separate int predicate builder"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	51	#[ignore = "go-parity-gap: LIKE's escape-subexpression PB wrapping is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	58	#[ignore = "go-parity-gap: arithmetic signature selection during PB lowering is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	64	#[ignore = "go-parity-gap: date-function PB signature assignment is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	70	#[ignore = "go-parity-gap: logical-function PB lowering is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	76	#[ignore = "go-parity-gap: bitwise-function PB lowering is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	82	#[ignore = "go-parity-gap: control-function PB lowering is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	88	#[ignore = "go-parity-gap: other-function PB lowering (Coalesce/IsNull codes) is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	95	#[ignore = "go-parity-gap: ExpressionsToPBList plus the per-store Flash-only JSON admission walk are unported; infer_pushdown.rs models only scalar-name/sign policy"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	103	#[ignore = "go-parity-gap: Flash-targeted ExpressionsToPBList lowering (client capability checks) is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	110	#[ignore = "go-parity-gap: store-scoped conversion entry points (ExpressionsToPBList vs only-flash) are unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	118	#[ignore = "go-parity-gap: full TiKV ExpressionsToPBList lowering with signature-code serialization is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	125	#[ignore = "go-parity-gap: store-scoped refusal for TiKV-only functions needs the unported dual-client converter"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	131	#[ignore = "go-parity-gap: GroupByItemToPB wrapper is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	137	#[ignore = "go-parity-gap: SortByItemToPB wrapper is unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	145	#[ignore = "go-parity-gap: needs BOTH directions (ExpressionsToPBList + PBToExpr), neither ported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	152	#[ignore = "go-parity-gap: new-collation negated-id wire encoding lives in the unported field-type-to-PB path"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_lowering_gap_source.rs	160	#[ignore = "go-parity-gap: BuildCastFunction(In|4Union) metadata plumbing and PbConverter.ExprToPB byte serialization are unported"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	21	//! go-parity-gap reason and an anchor naming what WOULD be exercised.
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	23	/// go-parity-gap: TestPushDownSwitcher (`expr_to_pb_test.go:2087`) needs
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	39	#[ignore = "go-parity-gap: ExpressionsToPBList/PbConverter lowering and the PushDownTestSwitcher failpoint are unported; only policy-level admission (infer_pushdown.rs) exists"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	42	/// go-parity-gap: TestPanicIfPbCodeUnspecified (`expr_to_pb_test.go:2183`)
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	49	#[ignore = "go-parity-gap: signatures carry no pbCode state in tidb-expr and the PanicIfPbCodeUnspecified failpoint is not modeled"]
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	52	/// go-parity-gap: TestProjectionColumn2Pb (`expr_to_pb_test.go:2204`) requires
-rust/crates/tidb-expr/src/tests/expr_to_pb_switcher_source.rs	58	#[ignore = "go-parity-gap: ExpressionsToPBList and ProjectionExpressionsToPBList are unported, so the TypeSet-rejected/Projection-accepted split cannot be pinned"]
 rust/crates/tidb-expr/src/tests/expression_null_const_source.rs	18	//! their go-parity-gap reasons.
-rust/crates/tidb-expr/src/tests/expression_with_null_source.rs	296	/// go-parity-gap: the parameter-marker half of
-rust/crates/tidb-expr/src/tests/expression_with_null_source.rs	307	#[ignore = "go-parity-gap: parameter-marker constants refuse evaluation in the fold path, and new_function(\"cast\") refuses cast nodes, so neither Go's deferred Constant(lt(NULL, ?)) outcome nor the ParseToJSONFlag strip-and-persist walk can be reproduced"]
-rust/crates/tidb-expr/src/tests/function_traits_source.rs	41	/// go-parity-gap: `TestIllegalFunctions4GeneratedColumns`
-rust/crates/tidb-expr/src/tests/function_traits_source.rs	52	#[ignore = "go-parity-gap: IllegalFunctions4GeneratedColumns lives in tidb-executor::generated_column in this workspace, so tidb-expr cannot compare builtin_list() against it without a layering inversion"]
 rust/crates/tidb-expr/src/tests/helper_current_timestamp_source.rs	182	// go-parity-gap carriers (Go tests without any Rust-side counterpart yet)
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	213	/// go-parity-gap: `TestVectorizedBuiltinIlikeFunc`
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	221	#[ignore = "go-parity-gap: ILIKE vec-vs-scalar differential without a vectorized tier"]
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	224	/// go-parity-gap: `TestVectorizedBuiltinIlikeForConstants`
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	233	#[ignore = "go-parity-gap: const-mixed ILIKE chunk differential without a vectorized tier"]
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	393	/// go-parity-gap: `TestEmbedTextBuiltin`
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	402	#[ignore = "go-parity-gap: EMBED_TEXT/inference module not transcreated (no NewFunction vector evaluation, deploymode, or EmbedFn registry)"]
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	405	/// go-parity-gap: `TestEmbedTextBuiltinNullAndErrors`
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	411	#[ignore = "go-parity-gap: EvalEmbedTextArgs* helpers not transcreated"]
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	464	/// go-parity-gap: `TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion`
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	472	#[ignore = "go-parity-gap: the vectorized string-to-DECIMAL inUnion signature remains unmodeled; scalar source-specific UNION casts are covered"]
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	475	/// go-parity-gap: `TestVectorizedBuiltinCastEvalOneVec` /
-rust/crates/tidb-expr/src/tests/ilike_info_cast_source.rs	484	#[ignore = "go-parity-gap: CAST vec-vs-scalar differentials need a vectorized tier"]
-rust/crates/tidb-expr/src/tests/regexp_vec_cache_source.rs	371	/// go-parity-gap: Go testing.B microbenchmarks behind the vec regexp cases
-rust/crates/tidb-expr/src/tests/regexp_vec_cache_source.rs	377	#[ignore = "go-parity-gap: testing.B benchmarks excluded from the gate"]
-rust/crates/tidb-expr/src/tests/scalar_function_semantics_source.rs	108	/// go-parity-gap: the second half of `TestScalarFunction`
-rust/crates/tidb-expr/src/tests/scalar_function_semantics_source.rs	121	#[ignore = "go-parity-gap: NewValuesFunc concrete builtinValuesIntSig identity and Repertoire() need the per-signature object model this crate replaced"]
-rust/crates/tidb-expr/src/tests/scalar_function_semantics_source.rs	363	/// go-parity-gap: `TestScalarFuncs2Exprs` (`scalar_function_test.go:197`)
-rust/crates/tidb-expr/src/tests/scalar_function_semantics_source.rs	370	#[ignore = "go-parity-gap: ScalarFuncs2Exprs widens []*ScalarFunction, a representation this name-keyed port does not have (args are Vec<Expression> directly)"]
-rust/crates/tidb-expr/src/tests/scalar_function_semantics_source.rs	373	/// go-parity-gap: `TestScalarFunctionHash64Equals`
 rust/crates/tidb-expr/src/tests/vectorizable_and_chunk_eval_source.rs	18	//! go-parity-gap reason.
-rust/crates/tidb-expr/src/tests/vectorized_filter_consider_null_gap_source.rs	27	/// go-parity-gap: VectorizedFilterConsiderNull's two paths converge on
-rust/crates/tidb-expr/src/tests/vectorized_filter_consider_null_gap_source.rs	31	#[ignore = "go-parity-gap: VecEvalBool/rowBasedFilter/vectorizedFilter selection machinery (builtin_vectorized.go) is unported"]
 rust/crates/tidb-meta/tests/meta_test_go_parity.rs	50	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 ListTablesWithSpecialAttribute pipeline"]
 rust/crates/tidb-meta/tests/meta_test_go_parity.rs	63	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 TableByID/TableByName/FindTableByPartitionID"]
 rust/crates/tidb-meta/tests/meta_test_go_parity.rs	76	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchema policy/group/FK/temp-table catalogs"]

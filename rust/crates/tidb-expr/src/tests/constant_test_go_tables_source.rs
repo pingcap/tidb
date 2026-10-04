@@ -681,15 +681,6 @@ fn test_constant_propagation_for_outer_join() {
     }));
 }
 
-/// `pkg/expression/constant_test.go:336 TestDeferredParamNotNull` reads
-/// `PlanCacheParams.GetParamValue(order)` through each typed evaluator.
-/// Rust's cache owner refreshes `Constant.value` before construction and
-/// `Constant::eval` now reads that current value. The per-EvalType table is
-/// still pending because this crate exposes a single Datum evaluator here.
-#[test]
-#[ignore = "go-parity-gap: the eleven typed EvalInt/EvalReal/EvalDecimal/EvalString/EvalTime/EvalDuration/EvalJSON/EvalVectorFloat32 rows are not exposed as separate Rust evaluator APIs"]
-fn test_deferred_param_not_null() {}
-
 /// Typed-evaluation half of `pkg/expression/constant_test.go:403
 /// TestDeferredExprNotNull`: a deferred expression surfaces its inner error
 /// through every `EvalXxx`, collapses to NULL when the inner expression does,
@@ -732,15 +723,6 @@ fn deferred_constant_clone_preserves_the_deferred_expression() {
         Constant::new(Datum::Int(9), int_field_type()).hash64()
     );
 }
-
-/// Value-forwarding half of `pkg/expression/constant_test.go:403
-/// TestDeferredExprNotNull`: reading a deferred constant evaluates the INNER
-/// expression against the live context (`2333`, `'abc'`, decimal/time/duration/
-/// JSON forwards in the source table) instead of returning the placeholder.
-/// Those MockExpr seams stay Go-side; nothing here pretends otherwise.
-#[test]
-#[ignore = "go-parity-gap: deferred-constant EvalXxx forwarding needs an error-valued/mock expression seam; evaluation is reported Unsupported today"]
-fn test_deferred_expr_not_null() {}
 
 /// Go `TestGetTypeThreadSafe`: parameter types are independent on each call.
 /// Rust returns owned FieldTypes, so mutating one cannot alter another or the
@@ -832,13 +814,3 @@ fn vectorized_constant_fills_whole_output_chunks() {
         );
     }
 }
-
-/// Deferred-literal halves of `pkg/expression/constant_test.go:478
-/// TestVectorizedConstant`: `{RetType: newIntFieldType(), DeferredExpr:
-/// &Constant{...2333}}` must fill the output chunk with 2333 exactly like its
-/// literal sibling, for fixed-length AND var-length types. Reading a deferred
-/// constant is reported Unsupported by `constant.rs` today, so the fill
-/// cannot be driven; nothing here fakes a value.
-#[test]
-#[ignore = "go-parity-gap: Constant-with-DeferredExpr evaluation is unported; parameter-marker constants are evaluated through their live marker values"]
-fn vectorized_constant_deferred_forms_fill_like_literals() {}

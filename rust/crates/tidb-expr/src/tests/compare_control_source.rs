@@ -256,18 +256,6 @@ fn ast_rewrite_refines_integer_constant_before_comparison_casts() {
     assert_eq!(shape(&built), "lt(col(Some(Long)), Const:INT:1)");
 }
 
-/// go-parity-gap: negative literals represented as unaryminus trees in the
-/// context-free rewriter can acquire casts before constant refinement.
-///
-/// `builtin_compare.rs` documents these drops as shape-only (identical
-/// per-row answers; plan speed/warning-count differences), so the port pins
-/// the surviving shapes inside [`test_compare_function_with_refine`] instead
-/// of asserting outputs it cannot reproduce; those retained structural rows
-/// include the comparison casts selected for their original operand types.
-#[test]
-#[ignore = "go-parity-gap: negative literal folding before context-free comparison casts"]
-fn refine_exceptional_folds_are_not_modeled() {}
-
 /// GO PORT of `pkg/expression/builtin_compare_test.go:80 TestCompare`
 /// (signature table): every row reproduces Go's operand pairing through the
 /// SQL types `primitiveValsToConstants` would produce and asserts the row's
@@ -806,34 +794,3 @@ fn test_refine_args_with_cast_enum() {
 // ---------------------------------------------------------------------------
 // Vectorized harness family (builtin_compare_vec_test.go and friends)
 // ---------------------------------------------------------------------------
-
-/// go-parity-gap: `TestVectorizedBuiltinCompareEvalOneVec` /
-/// `TestVectorizedBuiltinCompareFunc`
-/// (`pkg/expression/builtin_compare_vec_test.go:168,172`) drive Go's
-/// vec-vs-scalar differential harness over `vecBuiltinCompareCases`
-/// (signed/unsigned child-field-type combinations for NE/LE/LT/GT/GE plus
-/// the NullEQ and Greatest/Least/Interval tables). No separate vectorized
-/// signature tier exists in tidb-expr -- `Expression::eval` walks chunks
-/// row-by-row with a single code path -- so the differential has nothing to
-/// run against. The signed/unsigned COMPARE semantics the case table binds
-/// are covered by `evaluator_binop.rs` and `tests/compare.rs`.
-#[test]
-#[ignore = "go-parity-gap: no vectorized signature tier to differentiate against"]
-fn vectorized_builtin_compare_harness_gap() {}
-
-/// go-parity-gap: the GENERATED twin (`TestVectorizedGeneratedBuiltinCompareEvalOneVec`/
-/// `TestVectorizedGeneratedBuiltinCompareFunc`,
-/// `builtin_compare_vec_generated_test.go:157,161`) differs only in listing
-/// every eval-type cross product per operator from generator sources; same
-/// missing-carrier reason as [`vectorized_builtin_compare_harness_gap`].
-#[test]
-#[ignore = "go-parity-gap: generated vec-vs-scalar differential without a vectorized tier"]
-fn vectorized_generated_builtin_compare_harness_gap() {}
-
-/// go-parity-gap: `TestVectorizedBuiltinControlEvalOneVecGenerated` /
-/// `TestVectorizedBuiltinControlFuncGenerated`
-/// (`builtin_control_vec_generated_test.go:116,120`) run the If/CaseWhen
-/// case generators through the same differential harness.
-#[test]
-#[ignore = "go-parity-gap: control-family vec differential without a vectorized tier; scalar If/CaseWhen halves live in control.rs and this module"]
-fn vectorized_generated_builtin_control_harness_gap() {}

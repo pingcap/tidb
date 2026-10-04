@@ -617,18 +617,6 @@ fn vectorized_builtin_math_func_for_rand() {
     assert!((0.0..1.0).contains(&sample));
 }
 
-/// Go `pkg/expression/builtin_math_vec_test.go:167
-/// BenchmarkVectorizedBuiltinMathEvalOneVec`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_math_eval_one_vec() {}
-
-/// Go `pkg/expression/builtin_math_vec_test.go:171
-/// BenchmarkVectorizedBuiltinMathFunc`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_math_func() {}
-
 // ---------------------------------------------------------------------------
 // pkg/expression/builtin_miscellaneous_test.go (items 200–217)
 // ---------------------------------------------------------------------------
@@ -963,17 +951,6 @@ fn sleep_row(arg: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
 #[ignore = "go-parity-gap: SQLKiller interruptibility and wall-clock duration \
             bounds need real execution time absent from the value-tier ctx"]
 fn sleep_vectorized_timing_strict_real_duration_and_kill_signal() {}
-
-/// Go `pkg/expression/builtin_miscellaneous_vec_test.go:124/132` benchmarks.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_miscellaneous_eval_one_vec() {}
-
-/// Go `pkg/expression/builtin_miscellaneous_vec_test.go:136
-/// BenchmarkVectorizedBuiltinMiscellaneousFunc`.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_miscellaneous_func() {}
 
 // ---------------------------------------------------------------------------
 // pkg/expression/builtin_op_test.go (items 223–236)
@@ -1531,11 +1508,6 @@ fn vectorized_builtin_op_func() {
         assert!(out.starts_with("INT:"), "{out}");
     }
 }
-
-/// Go `pkg/expression/builtin_op_vec_test.go:162` benchmark half.
-#[test]
-#[ignore = "skipped-reason: Go testing.B microbenchmark, excluded by the gate"]
-fn benchmark_vectorized_builtin_op_func() {}
 
 // ---------------------------------------------------------------------------
 // pkg/expression/builtin_other_test.go (item 240)

@@ -293,20 +293,6 @@ fn evaluate_expr_with_null_folds_a_column_against_a_literal() {
     );
 }
 
-/// go-parity-gap: the parameter-marker half of
-/// `pkg/expression/expression_test.go:85 TestEvaluateExprWithNullAndParameters`
-/// and all of `:111 TestEvaluateExprWithNullNoChangeRetType` are unportable
-/// until parameter-marker constants can evaluate during constant folding
-/// (`Constant::eval` refuses them today) and until this crate's
-/// `new_function("cast")` routes casts through BuildCastFunction again --
-/// master's `newFunctionImpl` has `case ast.Cast: return BuildCastFunction(...)` (`scalar_function.go:212`),
-/// which is what lets the null walk REBUILD a cast under the comparison and
-/// re-clear `ParseToJSONFlag`; both halves pin behavior the Rust fold chain
-/// cannot produce yet.
-#[test]
-#[ignore = "go-parity-gap: parameter-marker constants refuse evaluation in the fold path, and new_function(\"cast\") refuses cast nodes, so neither Go's deferred Constant(lt(NULL, ?)) outcome nor the ParseToJSONFlag strip-and-persist walk can be reproduced"]
-fn evaluate_expr_with_null_parameter_marker_and_json_flag_halves() {}
-
 /// Guards the composition above against silent drift: with the PRESERVING
 /// builder alone the same inputs keep the rebuilt ifnull node, proving the
 /// fold came from the folded-builder choice rather than from the walk itself

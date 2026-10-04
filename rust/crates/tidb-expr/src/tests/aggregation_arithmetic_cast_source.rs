@@ -2481,7 +2481,3 @@ fn test_cast_array_func() {
     // Go casts JSON arrays to array(fieldtype) targets: identity succeeds,
     // mismatched element types fail per row.
 }
-
-#[test]
-#[ignore = "go-parity-gap: the workspace has ONE row-based evaluator; Go's randomized vec-vs-scalar differential harness (vecEvalInt vs evalInt over genCastIntAsInt, plus the inUnion+unsigned variant) has no separate vectorized tier to compare against"]
-fn test_cast_int_as_int_vec() {}
