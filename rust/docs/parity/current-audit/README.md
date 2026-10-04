@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [account TLS batch](account-tls-policy-batch-repair.md) advances **A02/A03/N03 together**: durable global_priv, verified TLS/X509 admission and shared CA/protocol startup. Five runtime baseline failures, **114 distinct passing Rust cases** and 12 Go JSON controls validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain. A03 moves from open to partial; the other 54 IDs retain previous evidence. No complete package acceptance or push.
+
+Earlier checkpoints below are historical.
+
 The [shared MPP lifecycle batch](shared-mpp-lifecycle-repair.md) advances **M04/N03/T02 together**: one process fleet, generation retirement/joined close, and actual PD/store security bootstrap. Five runtime baseline failures and 58 distinct passing Rust cases validate this maintenance. **86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)** remain; other 54 IDs retain previous evidence. No whole-package acceptance or push.
 
 The [MPP transport batch](mpp-transport-batch-repair.md) advances **M04/N03 together** through cluster TLS, shared store limits and cancellation/deadline setup. Five independent baseline failures and 32 distinct passing Rust cases validate the connected repairs. Both findings remain partial for their named wider owners. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)**; other 55 IDs retain prior evidence. No push.

@@ -71,6 +71,8 @@ impl std::error::Error for MysqlTlsError {}
 #[derive(Clone)]
 pub struct MysqlServerTls {
     config: Arc<ServerConfig>,
+    certificates: Vec<CertificateDer<'static>>,
+    key: Arc<PrivateKeyDer<'static>>,
     /// How the material was obtained, for the startup line.
     origin: &'static str,
 }
@@ -117,15 +119,67 @@ impl MysqlServerTls {
         key: PrivateKeyDer<'static>,
         origin: &'static str,
     ) -> Result<Self, MysqlTlsError> {
+        Self::from_material_with_policy(certs, key, origin, None, "")
+    }
+
+    fn from_material_with_policy(
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        origin: &'static str,
+        ca: Option<&Path>,
+        min_version: &str,
+    ) -> Result<Self, MysqlTlsError> {
+        if !matches!(min_version, "" | "TLSv1.2" | "TLSv1.3") {
+            eprintln!("Invalid TLS version {min_version:?}, using TLSv1.2 minimum");
+        }
+        let versions: &[&'static rustls::SupportedProtocolVersion] = if min_version == "TLSv1.3" {
+            &[&rustls::version::TLS13]
+        } else {
+            &[&rustls::version::TLS13, &rustls::version::TLS12]
+        };
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let config = ServerConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|error| MysqlTlsError::Material(error.to_string()))?
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
+        let builder = ServerConfig::builder_with_provider(Arc::clone(&provider))
+            .with_protocol_versions(versions)
+            .map_err(|error| MysqlTlsError::Material(error.to_string()))?;
+        let builder = if let Some(ca) = ca {
+            let file = fs::File::open(ca)
+                .map_err(|error| MysqlTlsError::Material(format!("{}: {error}", ca.display())))?;
+            let mut roots = rustls::RootCertStore::empty();
+            // Go AppendCertsFromPEM keeps valid certificates and ignores invalid
+            // blocks; an empty pool leaves client verification disabled.
+            for cert in rustls_pemfile::certs(&mut BufReader::new(file)).flatten() {
+                let _ = roots.add(cert);
+            }
+            if roots.is_empty() {
+                builder.with_no_client_auth()
+            } else {
+                let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(roots),
+                    provider,
+                );
+                let verifier = if tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    verifier
+                } else {
+                    verifier.allow_unauthenticated()
+                };
+                builder.with_client_cert_verifier(
+                    verifier
+                        .build()
+                        .map_err(|error| MysqlTlsError::Material(error.to_string()))?,
+                )
+            }
+        } else {
+            builder.with_no_client_auth()
+        };
+        let config = builder
+            .with_single_cert(certs.clone(), key.clone_key())
             .map_err(|error| MysqlTlsError::Material(error.to_string()))?;
         Ok(Self {
             config: Arc::new(config),
+            certificates: certs,
+            key: Arc::new(key),
             origin,
         })
     }
@@ -169,18 +223,35 @@ pub fn resolve_server_tls(
                 Ok(None)
             }
         }
-        // Go's `LoadTLSCertificates` treats a lone cert or key as "no
-        // material" and silently falls through to the auto-TLS branch.
-        // Refusing is the better shape: a half-configured pair is an operator
-        // mistake, and serving a self-signed certificate in place of the
-        // operator's own would hide it.
-        (Some(_), None) => Err(MysqlTlsError::Material(
-            "--ssl-cert requires --ssl-key".to_owned(),
-        )),
-        (None, Some(_)) => Err(MysqlTlsError::Material(
-            "--ssl-key requires --ssl-cert".to_owned(),
-        )),
+        (Some(_), None) | (None, Some(_)) => {
+            if auto_tls {
+                MysqlServerTls::self_signed().map(Some)
+            } else {
+                Ok(None)
+            }
+        }
     }
+}
+
+/// Resolves configured inbound CA and minimum protocol together with material.
+pub fn resolve_server_tls_with_policy(
+    cert: Option<&Path>,
+    key: Option<&Path>,
+    auto_tls: bool,
+    ca: Option<&Path>,
+    min_version: &str,
+) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
+    let Some(tls) = resolve_server_tls(cert, key, auto_tls)? else {
+        return Ok(None);
+    };
+    MysqlServerTls::from_material_with_policy(
+        tls.certificates,
+        tls.key.clone_key(),
+        tls.origin,
+        ca,
+        min_version,
+    )
+    .map(Some)
 }
 
 fn read_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, MysqlTlsError> {
@@ -242,6 +313,18 @@ impl ClientStream {
             &*self.inner.lock().expect("client stream lock"),
             ClientStreamInner::Tls(_)
         )
+    }
+
+    /// A completed handshake with peer certs under a configured verifier.
+    /// rustls exposes peers only after its verifier accepted their chain.
+    pub fn has_verified_client_certificate(&self) -> bool {
+        match &*self.inner.lock().expect("client stream lock") {
+            ClientStreamInner::Tls(stream) => stream
+                .conn
+                .peer_certificates()
+                .is_some_and(|chain| !chain.is_empty()),
+            _ => false,
+        }
     }
 
     /// Performs Go's `upgradeToTLS`: the same socket becomes a TLS server
@@ -462,5 +545,167 @@ mod tiflash_cluster_http_tests {
     #[test]
     fn tiflash_batch_cluster_http_rejects_an_untrusted_peer() {
         exercise_tls_discovery(false);
+    }
+}
+
+#[cfg(test)]
+mod account_tls_batch_tests {
+    use super::*;
+
+    #[test]
+    fn account_tls_batch_partial_pair_uses_go_auto_tls_fallback() {
+        assert!(
+            resolve_server_tls(Some(Path::new("unused.pem")), None, false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            resolve_server_tls(None, Some(Path::new("unused.pem")), true)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn account_tls_batch_configured_ca_is_loaded_before_serving() {
+        let result = resolve_server_tls_with_policy(
+            None,
+            None,
+            true,
+            Some(Path::new("/nonexistent-tidb-ca.pem")),
+            "TLSv1.3",
+        );
+        assert!(
+            result.is_err(),
+            "CA read failure must prevent configured TLS startup"
+        );
+    }
+}
+
+#[cfg(test)]
+mod account_tls_batch_handshake_tests {
+    use super::*;
+    use crate::configured_user_store::ConfiguredUserStore;
+    use crate::secure_transport::TransportKind;
+    use std::net::TcpListener;
+    use tidb_session::privilege::{PrivilegeRegistry, SslType};
+
+    // Real TLS plus the exact transport-to-account handoff used by wire auth.
+    fn handshake(client_kind: u8, tls12_only: bool, minimum: &str) -> (bool, bool, bool) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
+        let tls = resolve_server_tls_with_policy(
+            Some(&dir.join("server.crt")),
+            Some(&dir.join("server.key")),
+            false,
+            Some(&dir.join("ca.crt")),
+            minimum,
+        )
+        .unwrap()
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut stream = ClientStream::plain(socket);
+            if stream.upgrade_to_tls(&tls).is_err() {
+                return (false, false, false);
+            }
+            let verified = stream.has_verified_client_certificate();
+            let registry = PrivilegeRegistry::default();
+            registry.set_ssl_type("root", "%", SslType::X509);
+            let users = ConfiguredUserStore::from_accounts(registry);
+            let admission = users
+                .admit_transport(TransportKind::DirectTls)
+                .unwrap()
+                .with_verified_client_certificate(verified);
+            let authenticated = users
+                .authenticate_admitted("root", "127.0.0.1", &[0; 20], &[], admission)
+                .is_ok();
+            stream.write_all(&[42]).unwrap();
+            stream.flush().unwrap();
+            (true, verified, authenticated)
+        });
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in read_certificates(&dir.join("ca.crt")).unwrap() {
+            roots.add(cert).unwrap();
+        }
+        let versions: &[&'static rustls::SupportedProtocolVersion] = if tls12_only {
+            &[&rustls::version::TLS12]
+        } else {
+            &[&rustls::version::TLS13, &rustls::version::TLS12]
+        };
+        let builder = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(versions)
+        .unwrap()
+        .with_root_certificates(roots);
+        let config = match client_kind {
+            0 => builder.with_no_client_auth(),
+            1 => builder
+                .with_client_auth_cert(
+                    read_certificates(&dir.join("client.crt")).unwrap(),
+                    read_private_key(&dir.join("client.key")).unwrap(),
+                )
+                .unwrap(),
+            _ => {
+                let wrong =
+                    rcgen::generate_simple_self_signed(vec!["wrong-client".into()]).unwrap();
+                builder
+                    .with_client_auth_cert(
+                        vec![wrong.cert.der().clone()],
+                        PrivateKeyDer::try_from(wrong.signing_key.serialize_der()).unwrap(),
+                    )
+                    .unwrap()
+            }
+        };
+        let connection = rustls::ClientConnection::new(
+            Arc::new(config),
+            rustls::pki_types::ServerName::try_from("localhost").unwrap(),
+        )
+        .unwrap();
+        let socket = TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut client = StreamOwned::new(connection, socket);
+        let mut byte = [0];
+        let received = client.read_exact(&mut byte).is_ok();
+        let result = worker.join().unwrap();
+        assert_eq!(received, result.0);
+        result
+    }
+
+    #[test]
+    fn account_tls_batch_verified_client_satisfies_x509_authentication() {
+        assert_eq!(handshake(1, false, "TLSv1.3"), (true, true, true));
+    }
+
+    #[test]
+    fn account_tls_batch_optional_certificate_tls_does_not_satisfy_x509() {
+        assert_eq!(handshake(0, false, ""), (true, false, false));
+    }
+
+    #[test]
+    fn account_tls_batch_untrusted_client_is_rejected_by_transport() {
+        assert_eq!(handshake(2, false, ""), (false, false, false));
+    }
+
+    #[test]
+    fn account_tls_batch_minimum_tls13_rejects_tls12_only_peer() {
+        assert_eq!(handshake(0, true, "TLSv1.3"), (false, false, false));
+        assert_eq!(
+            handshake(0, true, "invalid-defaults-to-tls12"),
+            (true, false, false)
+        );
     }
 }

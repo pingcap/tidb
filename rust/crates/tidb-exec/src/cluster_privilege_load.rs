@@ -32,10 +32,7 @@
 //! `password_last_changed` is decoded in UTC so publication preserves the
 //! stored instant rather than interpreting it in a session timezone.
 //!
-//! Remaining scope gap: **`mysql.global_priv` is not read.** That table holds the JSON
-//!   connection-attribute policy (SSL/SAN requirements), which this node's
-//!   login path does not enforce at all; reading it would imply an
-//!   enforcement that does not exist.
+//! Connection-policy text is loaded independently, including orphan rows.
 
 use std::fmt;
 
@@ -317,9 +314,22 @@ pub struct LoadedPasswordHistory {
     pub password: Option<String>,
 }
 
+/// One durable connection-policy row; JSON text is retained for Go consumers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedGlobalPriv {
+    /// Account host pattern.
+    pub host: String,
+    /// Account user.
+    pub user: String,
+    /// Unmodified mysql.global_priv.Priv text, including unknown properties.
+    pub priv_json: String,
+}
+
 /// Everything one snapshot of `mysql.*` says about accounts and grants.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClusterPrivileges {
+    /// Durable connection policy, independent of user-row existence.
+    pub global_priv: Vec<LoadedGlobalPriv>,
     /// mysql.password_history, including orphan rows until explicitly removed.
     pub password_history: Vec<LoadedPasswordHistory>,
     /// `mysql.user`, in stored key order.
@@ -525,6 +535,24 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
             password_locking,
             privileges: granted_names(&row, USER_PRIVILEGE_COLUMNS)?,
         });
+    }
+
+    if catalog.databases.iter().any(|db| {
+        db.info.name.original().eq_ignore_ascii_case("mysql")
+            && db
+                .tables
+                .iter()
+                .any(|table| table.name.original().eq_ignore_ascii_case("global_priv"))
+    }) {
+        let view = SystemTableView::locate(catalog, "global_priv", &["host", "user", "priv"])?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
+            loaded.global_priv.push(LoadedGlobalPriv {
+                host: row.text("host")?.unwrap_or_default(),
+                user: row.text("user")?.unwrap_or_default(),
+                priv_json: row.text("priv")?.unwrap_or_default(),
+            });
+        }
     }
 
     if let Ok(view) = SystemTableView::locate(

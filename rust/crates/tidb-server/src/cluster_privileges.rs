@@ -107,6 +107,8 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
         registry.grant(&user.user, &user.host, mask);
     }
 
+    registry.load_global_priv(loaded.global_priv.clone());
+
     for grant in &loaded.db_grants {
         let mut mask = 0u64;
         for privilege in &grant.privileges {
@@ -252,6 +254,7 @@ pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
 pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivileges {
     let exported = registry.export();
     ClusterPrivileges {
+        global_priv: registry.global_priv_rows(),
         password_history: exported.password_history,
         users: exported
             .users
@@ -1291,5 +1294,182 @@ mod tests {
             &active_roles,
             GlobalPriv::Select
         ));
+    }
+}
+
+#[cfg(test)]
+mod account_tls_batch_tests {
+    use super::*;
+    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_session::privilege::SslType;
+
+    fn policy(json: &str) -> ClusterPrivileges {
+        let registry = PrivilegeRegistry::default();
+        let mut image = cluster_image_from_registry(&registry);
+        image.global_priv.push(LoadedGlobalPriv {
+            user: "root".into(),
+            host: "%".into(),
+            priv_json: json.into(),
+        });
+        image
+    }
+
+    #[test]
+    fn account_tls_batch_reload_restores_ssl_requirement() {
+        let loaded = registry_from_cluster(&policy(r#"{"ssl_type":1}"#));
+        assert_eq!(loaded.registry.ssl_type("root", "%"), SslType::Any);
+    }
+
+    #[test]
+    fn account_tls_batch_roundtrip_retains_unknown_and_orphan_policy() {
+        let mut image = policy(r#"{"ssl_type":2,"issuer":"/CN=ca","other":{"x":1}}"#);
+        image.global_priv.push(LoadedGlobalPriv {
+            user: "orphan".into(),
+            host: "%".into(),
+            priv_json: "{}".into(),
+        });
+        let exported = cluster_image_from_registry(&registry_from_cluster(&image).registry);
+        assert_eq!(exported.global_priv, image.global_priv);
+    }
+
+    #[test]
+    fn account_tls_batch_require_ssl_survives_export() {
+        let registry = PrivilegeRegistry::default();
+        registry.set_ssl_type("root", "%", SslType::Any);
+        let image = cluster_image_from_registry(&registry);
+        assert_eq!(image.global_priv.len(), 1);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&image.global_priv[0].priv_json).unwrap()
+                ["ssl_type"],
+            1
+        );
+    }
+}
+
+#[cfg(test)]
+mod account_tls_batch_policy_controls {
+    use super::*;
+    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_session::privilege::SslType;
+
+    #[test]
+    fn account_tls_batch_host_policy_matches_independently_and_broken_json_denies() {
+        let registry = PrivilegeRegistry::default();
+        registry.load_global_priv(vec![LoadedGlobalPriv {
+            user: "root".into(),
+            host: "127.%".into(),
+            priv_json: r#"{"ssl_type":1}"#.into(),
+        }]);
+        assert!(!registry.admits_account_tls("root", "127.0.0.1", false, false));
+        assert!(registry.admits_account_tls("root", "localhost", false, false));
+        for json in [
+            "broken",
+            r#"{"ssl_type":"1"}"#,
+            r#"{"ssl_type":0,"x509_subject":1}"#,
+            r#"{"ssl_type":0,"san":"EMAIL:a@b"}"#,
+            r#"{"ssl_type":"1","SSL_TYPE":0}"#,
+            r#"{"x509_subject":1,"X509_SUBJECT":"ok"}"#,
+        ] {
+            registry.load_global_priv(vec![LoadedGlobalPriv {
+                user: "root".into(),
+                host: "%".into(),
+                priv_json: json.into(),
+            }]);
+            assert!(
+                !registry.admits_account_tls("root", "localhost", true, true),
+                "{json}"
+            );
+        }
+        for json in [
+            r#"{"SSL_TYPE":1}"#,
+            r#"{"ſsl_type":1}"#,
+            r#"{"ssl_type":0,"SSL_TYPE":1}"#,
+            r#"{"ssl_type":1,"SSL_TYPE":null}"#,
+        ] {
+            registry.load_global_priv(vec![LoadedGlobalPriv {
+                user: "root".into(),
+                host: "%".into(),
+                priv_json: json.into(),
+            }]);
+            assert!(
+                !registry.admits_account_tls("root", "localhost", false, false),
+                "{json}"
+            );
+        }
+        for json in [
+            "",
+            "null",
+            r#"{"SSL_TYPE":1,"ssl_type":0}"#,
+            r#"{"ssl_type":null}"#,
+            r#"{"ssl_type":0,"san":"DNS:localhost"}"#,
+        ] {
+            registry.load_global_priv(vec![LoadedGlobalPriv {
+                user: "root".into(),
+                host: "%".into(),
+                priv_json: json.into(),
+            }]);
+            assert!(
+                registry.admits_account_tls("root", "localhost", false, false),
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_tls_batch_rename_drop_and_reload_use_the_same_policy_rows() {
+        let registry = PrivilegeRegistry::default();
+        registry.set_ssl_type("root", "%", SslType::X509);
+        assert!(registry.rename_user("root", "%", "renamed", "%"));
+        assert_eq!(registry.ssl_type("renamed", "%"), SslType::X509);
+        assert!(registry.drop_user("renamed", "%"));
+        assert!(registry.global_priv_rows().is_empty());
+        let fresh = PrivilegeRegistry::default();
+        fresh.set_ssl_type("root", "%", SslType::Any);
+        registry.replace_from(&fresh);
+        assert_eq!(registry.ssl_type("root", "%"), SslType::Any);
+    }
+}
+
+#[cfg(test)]
+mod account_tls_batch_admission_controls {
+    use super::*;
+    use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
+    use crate::secure_transport::TransportKind;
+    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    use tidb_session::privilege::SslType;
+
+    #[test]
+    fn account_tls_batch_authentication_uses_go_canonical_account_host() {
+        let registry = PrivilegeRegistry::default();
+        registry.load_global_priv(vec![LoadedGlobalPriv {
+            user: "root".into(),
+            host: "127.%".into(),
+            priv_json: r#"{"ssl_type":2}"#.into(),
+        }]);
+        let users = ConfiguredUserStore::from_accounts(registry);
+        // MatchIdentity selected root@%; ConnectionVerification uses that
+        // authHost, rather than performing another match against the peer IP.
+        assert!(users
+            .authenticate("root", "127.0.0.1", &[0; 20], &[], TransportKind::DirectTls)
+            .is_ok());
+    }
+
+    #[test]
+    fn account_tls_batch_require_ssl_does_not_treat_unix_as_tls() {
+        let registry = PrivilegeRegistry::default();
+        registry.set_ssl_type("root", "%", SslType::Any);
+        let users = ConfiguredUserStore::from_accounts(registry);
+        assert_eq!(
+            users
+                .authenticate(
+                    "root",
+                    "localhost",
+                    &[0; 20],
+                    &[],
+                    TransportKind::UnixSocket
+                )
+                .unwrap_err(),
+            AuthenticationFailure::AccessDenied
+        );
     }
 }

@@ -267,6 +267,23 @@ pub fn plan_account_write<S: MetaSnapshot>(
                 })
                 .collect(),
         ),
+        (
+            AccountTable {
+                name: "global_priv",
+                key_columns: &["host", "user"],
+                value_columns: &["priv"],
+            },
+            desired
+                .global_priv
+                .iter()
+                .map(|row| {
+                    (
+                        vec![row.host.clone(), row.user.clone()],
+                        BTreeMap::from([("priv", row.priv_json.clone())]),
+                    )
+                })
+                .collect(),
+        ),
         (db_table(), db_rows(desired)),
         (global_grants_table(), dynamic_rows(desired)),
         (role_edges_table(), role_edge_rows(desired)),

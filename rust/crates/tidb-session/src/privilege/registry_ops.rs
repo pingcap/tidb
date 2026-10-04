@@ -274,6 +274,7 @@ impl PrivilegeRegistry {
             auth_string,
             tidb_mysql::consts::AuthNativePassword,
             false,
+            None,
         )
     }
 
@@ -286,7 +287,19 @@ impl PrivilegeRegistry {
         auth_string: &str,
         plugin: &str,
     ) -> bool {
-        self.create_account(user, host, auth_string, plugin, false)
+        self.create_account(user, host, auth_string, plugin, false, None)
+    }
+
+    /// Publishes REQUIRE policy before the new SQL account becomes visible.
+    pub fn create_user_with_plugin_and_tls(
+        &self,
+        user: &str,
+        host: &str,
+        auth_string: &str,
+        plugin: &str,
+        ssl_type: SslType,
+    ) -> bool {
+        self.create_account(user, host, auth_string, plugin, false, Some(ssl_type))
     }
 
     /// `CREATE ROLE`, which is `CREATE USER` writing the same `mysql.user`
@@ -295,7 +308,14 @@ impl PrivilegeRegistry {
     /// kind (captured: `CREATE USER r1` after `CREATE ROLE r1` reports
     /// `Operation CREATE USER failed for 'r1'@'%'`, and vice versa).
     pub fn create_role(&self, role: &str, host: &str) -> bool {
-        self.create_account(role, host, "", tidb_mysql::consts::AuthNativePassword, true)
+        self.create_account(
+            role,
+            host,
+            "",
+            tidb_mysql::consts::AuthNativePassword,
+            true,
+            None,
+        )
     }
 
     fn create_account(
@@ -305,11 +325,15 @@ impl PrivilegeRegistry {
         auth_string: &str,
         plugin: &str,
         is_role: bool,
+        ssl_type: Option<SslType>,
     ) -> bool {
         let key = (user.to_owned(), host.to_owned());
         let mut guard = self.lock();
         if guard.contains_key(&key) {
             return false;
+        }
+        if let Some(ssl_type) = ssl_type {
+            self.store_ssl_type(user, host, ssl_type);
         }
         let created_at = self.clock.now_unix();
         guard.insert(
@@ -331,7 +355,6 @@ impl PrivilegeRegistry {
                 password_expired: is_role,
                 password_lifetime: None,
                 password_last_changed: Some(password_change_timestamp(created_at)),
-                ssl_type: SslType::None,
             },
         );
         true
@@ -442,6 +465,8 @@ impl PrivilegeRegistry {
     /// anything the moment this call removes its edges -- the active-role
     /// list is no longer changed, but it stops mattering.
     pub fn replace_from(&self, fresh: &Self) {
+        // Publish connection policy before newly admitted user rows.
+        *self.global_priv.lock().unwrap() = std::mem::take(&mut *fresh.global_priv.lock().unwrap());
         *self.lock() = std::mem::take(&mut *fresh.lock());
         *self.password_history.lock().unwrap() =
             std::mem::take(&mut *fresh.password_history.lock().unwrap());
@@ -474,6 +499,12 @@ impl PrivilegeRegistry {
             let Some(record) = guard.remove(&old_key) else {
                 return false;
             };
+            for row in self.global_priv.lock().unwrap().iter_mut() {
+                if row.user == old_user && row.host == old_host {
+                    row.user = new_user.into();
+                    row.host = new_host.into();
+                }
+            }
             guard.insert(new_key, record);
         }
         for row in self.password_history.lock().unwrap().iter_mut() {
@@ -869,10 +900,17 @@ impl PrivilegeRegistry {
     /// fails unless the caller handles `IF EXISTS` itself. Returns whether
     /// the account existed (and was removed).
     pub fn drop_user(&self, user: &str, host: &str) -> bool {
-        let removed = self
-            .lock()
-            .remove(&(user.to_owned(), host.to_owned()))
-            .is_some();
+        let removed = {
+            let mut accounts = self.lock();
+            let removed = accounts
+                .remove(&(user.to_owned(), host.to_owned()))
+                .is_some();
+            self.global_priv
+                .lock()
+                .unwrap()
+                .retain(|row| row.user != user || row.host != host);
+            removed
+        };
         self.clear_password_history(user, host);
         // Go deletes the account's `mysql.db`/`mysql.tables_priv` rows in the
         // same transaction (captured: after `DROP USER`, `mysql.db` has no
@@ -1366,18 +1404,77 @@ impl PrivilegeRegistry {
     /// `nil` means: `checkSSL` is not even called.
     #[must_use]
     pub fn ssl_type(&self, user: &str, host: &str) -> SslType {
-        self.lock()
-            .get(&(user.to_owned(), host.to_owned()))
-            .map_or(SslType::None, |record| record.ssl_type)
+        let rows = self.global_priv.lock().unwrap();
+        let Some(row) = rows.iter().find(|row| row.user == user && row.host == host) else {
+            return SslType::None;
+        };
+        global_ssl_type(&row.priv_json).unwrap_or(SslType::Specified)
     }
 
-    /// `CREATE`/`ALTER USER ... REQUIRE <...>` and `GRANT ... REQUIRE <...>`,
-    /// which all write the same `mysql.global_priv` row. Go REPLACES the
-    /// whole `PRIV` JSON, so a later `REQUIRE NONE` clears the requirement
-    /// (captured: `{"ssl_type":1}` becomes `{}`).
+    /// Retains the complete durable table, including unrecognized policy fields.
+    pub fn load_global_priv(&self, rows: Vec<tidb_exec::cluster_privilege_load::LoadedGlobalPriv>) {
+        *self.global_priv.lock().unwrap() = rows;
+    }
+
+    /// Exports the same table used by reload and admission.
+    pub fn global_priv_rows(&self) -> Vec<tidb_exec::cluster_privilege_load::LoadedGlobalPriv> {
+        self.global_priv.lock().unwrap().clone()
+    }
+
+    /// Checks the independently matched global_priv host pattern, as Go does.
+    pub fn admits_account_tls(
+        &self,
+        user: &str,
+        host: &str,
+        is_tls: bool,
+        verified_client: bool,
+    ) -> bool {
+        let rows = self.global_priv.lock().unwrap();
+        let Some(row) = rows
+            .iter()
+            .filter(|row| row.user == user && host_matches(&row.host, host))
+            .min_by(|left, right| compare_host(&left.host, &right.host))
+        else {
+            return true;
+        };
+        global_ssl_type(&row.priv_json)
+            .is_some_and(|policy| policy.admits_verified(is_tls, verified_client))
+    }
+
+    /// REQUIRE replaces Priv as in Go; unrelated account updates retain it.
     pub fn set_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
-        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            record.ssl_type = ssl_type;
+        let accounts = self.lock();
+        if !accounts.contains_key(&(user.to_owned(), host.to_owned())) {
+            return;
+        }
+        self.store_ssl_type(user, host, ssl_type);
+    }
+
+    // The caller holds the user lock through publication/retirement.
+    fn store_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
+        let value = match ssl_type {
+            SslType::None => 0,
+            SslType::Any => 1,
+            SslType::X509 => 2,
+            SslType::Specified => 3,
+        };
+        let json = if value == 0 {
+            "{}".into()
+        } else {
+            format!("{{\"ssl_type\":{value}}}")
+        };
+        let mut rows = self.global_priv.lock().unwrap();
+        if let Some(row) = rows
+            .iter_mut()
+            .find(|row| row.user == user && row.host == host)
+        {
+            row.priv_json = json;
+        } else {
+            rows.push(tidb_exec::cluster_privilege_load::LoadedGlobalPriv {
+                user: user.into(),
+                host: host.into(),
+                priv_json: json,
+            });
         }
     }
 
@@ -1987,5 +2084,100 @@ mod tests {
     #[test]
     fn database_matching_folds_non_ascii_like_go_strings_to_upper() {
         assert!(database_matches("ТЕ%", "тест"));
+    }
+}
+
+// Broken JSON denies login as in checkSSL. Unknown numeric policies fail closed
+// rather than propagating Go's panic into Rust authentication.
+fn global_ssl_type(json: &str) -> Option<SslType> {
+    if json.is_empty() {
+        return Some(SslType::None);
+    }
+    let fields: GlobalPrivJsonFields = serde_json::from_str(json).ok()?;
+    let object = fields.0;
+    for key in ["ssl_cipher", "x509_issuer", "x509_subject", "san"] {
+        if object
+            .get(key)
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+        {
+            return None;
+        }
+    }
+    if let Some(san) = object
+        .get("san")
+        .and_then(serde_json::Value::as_str)
+        .filter(|san| !san.is_empty())
+    {
+        for item in san.split(',') {
+            let (kind, _) = item.split_once(':')?;
+            if !matches!(kind.trim().to_uppercase().as_str(), "URI" | "DNS" | "IP") {
+                return None;
+            }
+        }
+    }
+    match object.get("ssl_type").map_or(Some(0), |value| {
+        if value.is_null() {
+            Some(0)
+        } else {
+            value.as_i64()
+        }
+    })? {
+        -1 | 0 => Some(SslType::None),
+        1 => Some(SslType::Any),
+        2 => Some(SslType::X509),
+        3 => Some(SslType::Specified),
+        _ => None,
+    }
+}
+
+// encoding/json matches tagged struct fields case-insensitively and applies
+// duplicate fields in input order. Preserve that order while keeping raw text
+// unchanged for writeback; a sorted JSON object cannot implement this rule.
+struct GlobalPrivJsonFields(std::collections::HashMap<String, serde_json::Value>);
+
+impl<'de> serde::Deserialize<'de> for GlobalPrivJsonFields {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Fields;
+        impl<'de> serde::de::Visitor<'de> for Fields {
+            type Value = GlobalPrivJsonFields;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("global_priv JSON object or null")
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(GlobalPrivJsonFields(Default::default()))
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut fields = std::collections::HashMap::new();
+                while let Some((key, value)) = map.next_entry::<String, serde_json::Value>()? {
+                    let folded: String = key
+                        .chars()
+                        .map(|c| match c {
+                            'ſ' => 's',
+                            'K' => 'k',
+                            _ => c.to_ascii_lowercase(),
+                        })
+                        .collect();
+                    // Go ignores null for scalar struct fields, including
+                    // duplicates, and retains any earlier type error.
+                    if value.is_null() {
+                        continue;
+                    }
+                    let valid = match folded.as_str() {
+                        "ssl_type" => value.as_i64().is_some(),
+                        "ssl_cipher" | "x509_issuer" | "x509_subject" | "san" => value.is_string(),
+                        _ => true,
+                    };
+                    if !valid {
+                        return Err(serde::de::Error::custom("invalid global_priv field type"));
+                    }
+                    fields.insert(folded, value);
+                }
+                Ok(GlobalPrivJsonFields(fields))
+            }
+        }
+        deserializer.deserialize_any(Fields)
     }
 }

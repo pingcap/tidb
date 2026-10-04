@@ -48,19 +48,15 @@ fn auto_tls_generates_material_when_none_is_configured() {
 }
 
 #[test]
-fn a_half_configured_pair_is_refused_rather_than_silently_self_signed() {
+fn a_half_configured_pair_follows_go_auto_tls_fallback() {
     let cert = PathBuf::from("/nonexistent/cert.pem");
     let key = PathBuf::from("/nonexistent/key.pem");
-    let cert_only = resolve_server_tls(Some(&cert), None, true);
-    assert!(
-        cert_only.is_err(),
-        "--ssl-cert without --ssl-key must be refused, not replaced by a generated pair"
-    );
-    let key_only = resolve_server_tls(None, Some(&key), true);
-    assert!(
-        key_only.is_err(),
-        "--ssl-key without --ssl-cert must be refused"
-    );
+    assert!(resolve_server_tls(Some(&cert), None, true)
+        .unwrap()
+        .is_some());
+    assert!(resolve_server_tls(None, Some(&key), false)
+        .unwrap()
+        .is_none());
 }
 
 #[test]

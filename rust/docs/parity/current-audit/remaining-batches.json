@@ -5,7 +5,9 @@
   "counts": {
     "tracked": 86,
     "unresolved": 57,
-    "repaired": 29
+    "repaired": 29,
+    "open": 39,
+    "partial": 18
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
@@ -174,7 +176,7 @@
       "acceptance": "unaccepted",
       "finding_statuses": {
         "A02": "partial",
-        "A03": "open",
+        "A03": "partial",
         "N01": "open",
         "N03": "partial",
         "N04": "open",

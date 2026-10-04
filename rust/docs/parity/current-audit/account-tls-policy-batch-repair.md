@@ -1,0 +1,11 @@
+# Shared durable account TLS policy maintenance
+
+A02/A03/N03 are maintained as one lifecycle batch against fresh Go master `93a01d31f6da205ae4bf376825293903a6899fdb`. Native client remains `19a56ccda1e128218cd33c69709038219aced9bc`. A03 advances to partial; A02/N03 stay partial. The register now has 86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial). The other 54 IDs retain recorded evidence.
+
+The actual storage loader/writer retains raw mysql.global_priv independently of user rows, including unknown JSON and orphan policies. The shared registry owns NONE/SSL/X509 requirements through create/alter/export/reload/drop/rename; the duplicate user-record enum is removed. JSON decoding follows Go field folding, duplicate order, ignored null scalars and retained type errors. Authentication checks the canonical matched account host, and a Unix socket does not satisfy REQUIRE SSL.
+
+Shared ssl-ca/tls-version settings now reach actual inbound server TLS. CA verification produces opaque peer evidence carried from the socket to authentication. Trusted certificates satisfy REQUIRE X509; absent certificates fail that account policy while optional TLS succeeds; untrusted certificates fail transport. TLS1.3 minimums reject TLS1.2, invalid minimums fall back to TLS1.2, and a partial cert/key pair follows Go's auto-TLS fallback. Specified policy remains explicitly unsupported or denied.
+
+Five independent cases failed before repair; 114 distinct Rust cases and twelve Go encoding/json controls pass afterward with no focused ignored cases. Full account-writer integration and existing socket-upgrade controls are retained. Affected all-target checks, make lint and explicit locked build pass; the normal precommit must repeat the same build. See [machine receipt](account-tls-policy-batch-validation.json) for exact logs, hashes and limitations. Build-space failures and corrected fixture assumptions are excluded from behavioral evidence.
+
+Stale X509-refusal, partial-key refusal and eight SHOW GRANTS quote expectations are corrected. Useful scope/order/negative-policy assertions remain; no useful test is removed. No performance or complete package claim. Specified TLS properties, certificate reload/automatic rotation, no-CA certificate requesting and full mixed-node security remain open. No push or dry run.

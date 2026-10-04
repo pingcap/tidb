@@ -39,7 +39,7 @@
 //! every client that asks.
 //!
 //! STILL EXPLICIT BOUNDARIES, refused rather than faked: client-certificate
-//! authentication (`--ssl-ca` and `REQUIRE X509`), `COM_FIELD_LIST`,
+//! specified certificate-property authentication (ISSUER/SUBJECT/SAN), `COM_FIELD_LIST`,
 //! `COM_SET_OPTION`, `COM_RESET_CONNECTION`, and every unknown command.
 //!
 //! This paragraph claimed "database selection" and "general prepared

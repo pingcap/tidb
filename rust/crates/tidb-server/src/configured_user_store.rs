@@ -67,6 +67,14 @@ pub struct AuthenticatedIdentity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TransportAdmission {
     secure_for_account_policy: bool,
+    verified_client_certificate: bool,
+}
+
+impl TransportAdmission {
+    pub(crate) fn with_verified_client_certificate(mut self, verified: bool) -> Self {
+        self.verified_client_certificate = self.secure_for_account_policy && verified;
+        self
+    }
 }
 
 /// Why [`ConfiguredUserStore::authenticate_native`] refused a login. Go's
@@ -468,7 +476,11 @@ impl ConfiguredUserStore {
         );
         policy.admit(transport)?;
         Ok(TransportAdmission {
-            secure_for_account_policy: !matches!(transport, TransportKind::PlainTcp),
+            secure_for_account_policy: matches!(
+                transport,
+                TransportKind::DirectTls | TransportKind::GatewayTls
+            ),
+            verified_client_certificate: false,
         })
     }
 
@@ -536,10 +548,12 @@ impl ConfiguredUserStore {
         // row before the password is compared, and reports the generic
         // access-denied on failure.
         if identity.as_ref().is_some_and(|identity| {
-            !self
-                .accounts
-                .ssl_type(identity.username(), identity.host())
-                .admits(is_tls)
+            !self.accounts.admits_account_tls(
+                identity.username(),
+                identity.host(),
+                is_tls,
+                admission.verified_client_certificate,
+            )
         }) {
             return Err(AuthenticationFailure::AccessDenied);
         }

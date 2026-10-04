@@ -167,6 +167,10 @@ pub struct NodeConfig {
     pub ssl_cert: Option<PathBuf>,
     /// Private key matching [`Self::ssl_cert`] (TiDB's `[security] ssl-key`).
     pub ssl_key: Option<PathBuf>,
+    /// Inbound client-certificate trust roots.
+    pub ssl_ca: Option<PathBuf>,
+    /// Minimum inbound TLS protocol from the shared configuration.
+    pub min_tls_version: String,
     /// TiDB's `[security] disconnect-on-expired-password`, default `true`:
     /// refuse a login whose password has expired with 1862 instead of
     /// admitting it into a sandbox session.
@@ -354,6 +358,7 @@ impl NodeConfig {
         let mut legacy_cluster_session_option = false;
         let mut ssl_cert = None;
         let mut ssl_key = None;
+        let mut ssl_ca = None;
         let mut no_auto_tls = false;
         let mut no_disconnect_on_expired_password = false;
         let mut cluster_ssl_ca = None;
@@ -429,6 +434,7 @@ impl NodeConfig {
                 "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
                 "--ssl-cert" => set_once(&mut ssl_cert, option, value)?,
                 "--ssl-key" => set_once(&mut ssl_key, option, value)?,
+                "--ssl-ca" => set_once(&mut ssl_ca, option, value)?,
                 "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
                 "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
                 "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
@@ -480,6 +486,7 @@ impl NodeConfig {
                 for (target, value) in [
                     (&mut config.security.ssl_cert, &ssl_cert),
                     (&mut config.security.ssl_key, &ssl_key),
+                    (&mut config.security.ssl_ca, &ssl_ca),
                     (&mut config.security.cluster_ssl_ca, &cluster_ssl_ca),
                     (&mut config.security.cluster_ssl_cert, &cluster_ssl_cert),
                     (&mut config.security.cluster_ssl_key, &cluster_ssl_key),
@@ -618,6 +625,8 @@ impl NodeConfig {
             load_privileges,
             ssl_cert: nonempty(global_config.security.ssl_cert.clone()).map(PathBuf::from),
             ssl_key: nonempty(global_config.security.ssl_key.clone()).map(PathBuf::from),
+            ssl_ca: nonempty(global_config.security.ssl_ca.clone()).map(PathBuf::from),
+            min_tls_version: global_config.security.min_tls_version.clone(),
             auto_tls: global_config.security.auto_tls,
             disconnect_on_expired_password: global_config.security.disconnect_on_expired_password,
             sem_enabled: global_config.security.enable_sem,
@@ -720,7 +729,7 @@ impl NodeConfig {
 [--host <listen-ip>] [-P <port>|--port <port>] [--store tikv|unistore] \
 [--affinity-cpus <cpu[,cpu...]>] \
 [--max-allowed-packet <bytes>] \
-[--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
+[--ssl-cert <cert-pem> --ssl-key <key-pem> [--ssl-ca <ca-pem>]] [--no-auto-tls] \
 [--no-disconnect-on-expired-password] \
 [--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>]]"
     }
@@ -1263,6 +1272,7 @@ level = "warn"
 [security]
 auto-tls = true
 ssl-ca = "ca.pem"
+tls-version = "TLSv1.3"
 [performance]
 stats-lease = "-1s"
 "#,
@@ -1308,6 +1318,8 @@ stats-lease = "-1s"
         assert_eq!(json["log"]["level"], "error");
         assert_eq!(json["security"]["auto-tls"], false);
         assert_eq!(json["security"]["ssl-ca"], "ca.pem");
+        assert_eq!(config.ssl_ca, Some(std::path::PathBuf::from("ca.pem")));
+        assert_eq!(config.min_tls_version, "TLSv1.3");
         assert_eq!(json["security"]["ssl-cert"], "cert.pem");
     }
 

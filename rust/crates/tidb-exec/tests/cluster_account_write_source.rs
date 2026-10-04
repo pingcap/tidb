@@ -679,3 +679,49 @@ fn history_policy_attributes_and_microsecond_keys_roundtrip_without_rewrites() {
             .is_empty()
     );
 }
+
+#[test]
+fn account_tls_batch_durable_global_priv_roundtrip_update_rename_and_delete() {
+    use tidb_exec::cluster_privilege_load::LoadedGlobalPriv;
+    let assert_policy = |mut actual: Vec<LoadedGlobalPriv>, mut expected: Vec<LoadedGlobalPriv>| {
+        // Stored key order can change when rename replaces the identity.
+        actual.sort_by(|a, b| (&a.host, &a.user).cmp(&(&b.host, &b.user)));
+        expected.sort_by(|a, b| (&a.host, &a.user).cmp(&(&b.host, &b.user)));
+        assert_eq!(actual, expected);
+    };
+    let mut store = bootstrapped();
+    let mut desired = store.accounts();
+    desired.global_priv = vec![
+        LoadedGlobalPriv {
+            user: "root".into(),
+            host: "%".into(),
+            priv_json: r#"{"ssl_type":2,"other":{"preserved":true}}"#.into(),
+        },
+        LoadedGlobalPriv {
+            user: "orphan".into(),
+            host: "localhost".into(),
+            priv_json: "broken policy text".into(),
+        },
+    ];
+    let read = store.write(&desired);
+    assert_policy(read.global_priv.clone(), desired.global_priv.clone());
+    let catalog = store.catalog();
+    assert!(plan_account_write(&mut store, &catalog, &read, timestamp())
+        .unwrap()
+        .is_empty());
+    desired.global_priv[0].priv_json = r#"{"ssl_type":1}"#.into();
+    assert_policy(
+        store.write(&desired).global_priv,
+        desired.global_priv.clone(),
+    );
+    desired.global_priv[0].user = "renamed".into();
+    assert_policy(
+        store.write(&desired).global_priv,
+        desired.global_priv.clone(),
+    );
+    desired.global_priv.remove(0);
+    assert_policy(
+        store.write(&desired).global_priv,
+        desired.global_priv.clone(),
+    );
+}

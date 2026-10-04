@@ -215,15 +215,9 @@ fn role_identity(spec: &tidb_ast::RoleSpec) -> privilege::Account {
 /// LAST option of each kind winning, and starts from `SslTypeNotSpecified`
 /// -- which stores and admits identically to `NONE`.
 ///
-/// REFUSED, by name rather than silently accepted: `X509`, `CIPHER`,
-/// `ISSUER`, `SUBJECT`, `SAN`. Each demands a VERIFIED CLIENT CERTIFICATE
-/// CHAIN (Go's `checkSSL` reads `tlsState.VerifiedChains`), and this
-/// server's TLS is configured `with_no_client_auth()` -- it never requests a
-/// client certificate, so it can never have one to verify. Storing the
-/// requirement anyway would leave an account that Go refuses on this
-/// transport being ADMITTED here over ordinary TLS, which is the fail-OPEN
-/// direction. `TOKEN_ISSUER` is refused for the same reason one level over:
-/// it belongs to `tidb_auth_token`, whose login this tier does not serve.
+/// NONE, SSL and X509 use the shared durable policy. Specified certificate
+/// properties and token issuer remain explicitly unsupported until their
+/// complete admission owners exist.
 pub(crate) fn ssl_type_of(
     tls_options: &[tidb_ast::AlterUserTlsOption],
 ) -> Result<privilege::SslType, DriverError> {
@@ -232,21 +226,22 @@ pub(crate) fn ssl_type_of(
         ssl_type = match option {
             tidb_ast::AlterUserTlsOption::None => privilege::SslType::None,
             tidb_ast::AlterUserTlsOption::Ssl => privilege::SslType::Any,
+            tidb_ast::AlterUserTlsOption::X509 => privilege::SslType::X509,
             other => {
                 let clause = match other {
-                    tidb_ast::AlterUserTlsOption::X509 => "X509",
                     tidb_ast::AlterUserTlsOption::Cipher(_) => "CIPHER",
                     tidb_ast::AlterUserTlsOption::Issuer(_) => "ISSUER",
                     tidb_ast::AlterUserTlsOption::Subject(_) => "SUBJECT",
                     tidb_ast::AlterUserTlsOption::San(_) => "SAN",
                     tidb_ast::AlterUserTlsOption::TokenIssuer(_) => "TOKEN_ISSUER",
-                    tidb_ast::AlterUserTlsOption::None | tidb_ast::AlterUserTlsOption::Ssl => {
+                    tidb_ast::AlterUserTlsOption::None
+                    | tidb_ast::AlterUserTlsOption::Ssl
+                    | tidb_ast::AlterUserTlsOption::X509 => {
                         unreachable!("handled above")
                     }
                 };
                 return Err(DriverError::unsupported(format!(
-                    "REQUIRE {clause} needs a verified client certificate, which this server \
-                     does not request; only REQUIRE NONE and REQUIRE SSL are supported"
+                    "REQUIRE {clause} needs a verified client certificate, whose specified-property policy is not implemented; REQUIRE NONE, SSL and X509 are supported"
                 )));
             }
         };
@@ -603,7 +598,8 @@ impl Session {
                 Self::resolve_auth_string_and_plugin(spec.auth.as_ref(), &default_plugin)?;
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
-            if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
+            if registry.create_user_with_plugin_and_tls(user, host, &auth_string, &plugin, ssl_type)
+            {
                 registry.merge_user_attributes(
                     user,
                     host,
@@ -622,7 +618,6 @@ impl Session {
                     true,
                     false,
                 )?;
-                registry.set_ssl_type(user, host, ssl_type);
                 // The `mysql.user` row Go's INSERT writes for this account.
                 // Column values come from the statement's own clauses, the
                 // way Go's `plOptions` feeds the VALUES list.

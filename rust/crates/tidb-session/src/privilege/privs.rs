@@ -125,23 +125,20 @@ pub enum SslType {
 }
 
 impl SslType {
-    /// Whether an account with this requirement may authenticate over a
-    /// connection whose TLS state is `is_tls` -- Go's `checkSSL`
-    /// (`privileges.go` line 795), for a server that performs no client
-    /// certificate verification.
-    ///
-    /// `X509` and `Specified` are `false` even over TLS, and that is not a
-    /// shortcut: Go answers them from `tlsState.VerifiedChains`, and a
-    /// server configured `with_no_client_auth()` never has one, so Go's own
-    /// answer on this transport is `hasCert == false`. They are also refused
-    /// at `CREATE`/`ALTER USER` time (see `account.rs`), so no account can
-    /// reach this arm without an operator having been told why.
+    /// Compatibility check without verified peer certificate evidence.
     #[must_use]
     pub fn admits(self, is_tls: bool) -> bool {
+        self.admits_verified(is_tls, false)
+    }
+
+    /// Go checkSSL requires a nonempty verified chain for REQUIRE X509.
+    #[must_use]
+    pub fn admits_verified(self, is_tls: bool, verified_client: bool) -> bool {
         match self {
             Self::None => true,
             Self::Any => is_tls,
-            Self::X509 | Self::Specified => false,
+            Self::X509 => is_tls && verified_client,
+            Self::Specified => false,
         }
     }
 

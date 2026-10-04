@@ -154,14 +154,6 @@ struct UserRecord {
     /// Stored UTC TIMESTAMP; the login epoch is derived from this one value.
     /// NULL is retained instead of fabricating a password change on reload.
     password_last_changed: Option<tidb_datatype::Time>,
-    /// Go's `mysql.global_priv` row for this account -- its `PRIV` JSON's
-    /// `ssl_type` member, which is where a `REQUIRE` clause is stored (NOT
-    /// in `mysql.user`). Captured: `CREATE USER 'ssl'@'%' REQUIRE SSL`
-    /// leaves `mysql.global_priv.PRIV` = `{"ssl_type":1}`, `REQUIRE X509`
-    /// leaves `{"ssl_type":2}`, and a plain account (or one later given
-    /// `REQUIRE NONE`) leaves `{}` -- `ssl_type` carries `omitempty`, so
-    /// zero and absent are the same row.
-    ssl_type: SslType,
 }
 
 /// One Go `mysql.Columns_priv` row: the privileges an account holds on a
@@ -182,6 +174,7 @@ struct ColumnPrivRecord {
 pub struct PrivilegeRegistry {
     users: Arc<Mutex<HashMap<(String, String), UserRecord>>>,
     password_history: Arc<Mutex<Vec<tidb_exec::cluster_privilege_load::LoadedPasswordHistory>>>,
+    global_priv: Arc<Mutex<Vec<tidb_exec::cluster_privilege_load::LoadedGlobalPriv>>>,
     /// Go `mysql.DB` rows: one bitmask per `(user, host, database)`, keyed
     /// by the database's exact written name (matching Go's case-sensitive
     /// storage of the DB column).
@@ -237,7 +230,7 @@ impl std::fmt::Debug for PrivilegeRegistry {
 /// Go bootstraps `root`@`%` with every privilege plus `WITH GRANT OPTION`
 /// (`mysql.CreateUserTable`'s bootstrap row). Captured:
 /// `SHOW GRANTS` for a fresh cluster's root reports
-/// `GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION`.
+/// ``GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION``.
 const BOOTSTRAP_ROOT_USER: &str = "root";
 const BOOTSTRAP_ROOT_HOST: &str = "%";
 
@@ -289,7 +282,6 @@ impl PrivilegeRegistry {
                         password_expired: false,
                         password_lifetime: None,
                         password_last_changed: Some(password_change_timestamp(bootstrapped_at)),
-                        ssl_type: SslType::None,
                     },
                 )
             })
@@ -297,6 +289,7 @@ impl PrivilegeRegistry {
         Self {
             users: Arc::new(Mutex::new(users)),
             password_history: Arc::new(Mutex::new(Vec::new())),
+            global_priv: Arc::new(Mutex::new(Vec::new())),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),
             column_privs: Arc::new(Mutex::new(Vec::new())),
@@ -323,7 +316,7 @@ mod tests {
         assert!(registry.has_global_priv("root", "%", GlobalPriv::OperateView));
         assert_eq!(
             registry.show_grants("root", "%", &[]).as_deref(),
-            Some("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+            Some("GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
         );
     }
 
@@ -333,7 +326,7 @@ mod tests {
         assert!(registry.create_user("u1", "%", ""));
         assert_eq!(
             registry.show_grants("u1", "%", &[]).as_deref(),
-            Some("GRANT USAGE ON *.* TO 'u1'@'%'")
+            Some("GRANT USAGE ON *.* TO `u1`@`%`")
         );
         // Creating it again is refused, not silently accepted.
         assert!(!registry.create_user("u1", "%", ""));
@@ -353,12 +346,12 @@ mod tests {
         // Captured from Go: SELECT,INSERT,UPDATE,PROCESS,SUPER.
         assert_eq!(
             registry.show_grants("u1", "%", &[]).as_deref(),
-            Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'")
+            Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO `u1`@`%`")
         );
         registry.revoke("u1", "%", GlobalPriv::Super.bit());
         assert_eq!(
             registry.show_grants("u1", "%", &[]).as_deref(),
-            Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'")
+            Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO `u1`@`%`")
         );
     }
 
@@ -378,7 +371,7 @@ mod tests {
         registry.grant("u1", "%", all_privs_mask());
         assert_eq!(
             registry.show_grants("u1", "%", &[]).as_deref(),
-            Some("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
+            Some("GRANT ALL PRIVILEGES ON *.* TO `u1`@`%`")
         );
     }
 
@@ -427,10 +420,10 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
             Some(
-                "GRANT SELECT ON *.* TO 'u'@'%'\n\
-                 GRANT SELECT ON `aaadb`.* TO 'u'@'%'\n\
-                 GRANT SELECT ON `db1`.* TO 'u'@'%'\n\
-                 GRANT SELECT,INSERT ON `db1`.`t1` TO 'u'@'%'"
+                "GRANT SELECT ON *.* TO `u`@`%`\n\
+                 GRANT SELECT ON `aaadb`.* TO `u`@`%`\n\
+                 GRANT SELECT ON `db1`.* TO `u`@`%`\n\
+                 GRANT SELECT,INSERT ON `db1`.`t1` TO `u`@`%`"
             )
         );
     }
@@ -443,8 +436,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO 'u'@'%'\n\
-                 GRANT ALL PRIVILEGES ON `db1`.* TO 'u'@'%'"
+                "GRANT USAGE ON *.* TO `u`@`%`\n\
+                 GRANT ALL PRIVILEGES ON `db1`.* TO `u`@`%`"
             )
         );
     }
@@ -471,8 +464,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO 'u'@'%'\n\
-                 GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u'@'%'"
+                "GRANT USAGE ON *.* TO `u`@`%`\n\
+                 GRANT ALL PRIVILEGES ON `db1`.`t1` TO `u`@`%`"
             )
         );
     }
@@ -489,8 +482,8 @@ mod tests {
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
             Some(
-                "GRANT USAGE ON *.* TO 'u'@'%'\n\
-                 GRANT SELECT ON `db1`.* TO 'u'@'%'"
+                "GRANT USAGE ON *.* TO `u`@`%`\n\
+                 GRANT SELECT ON `db1`.* TO `u`@`%`"
             )
         );
         registry.revoke_db("u", "%", "db1", GlobalPriv::Select.bit());
@@ -499,7 +492,7 @@ mod tests {
         assert!(registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
             registry.show_grants("u", "%", &[]).as_deref(),
-            Some("GRANT USAGE ON *.* TO 'u'@'%'")
+            Some("GRANT USAGE ON *.* TO `u`@`%`")
         );
     }
 

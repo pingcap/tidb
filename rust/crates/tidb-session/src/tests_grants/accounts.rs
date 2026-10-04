@@ -459,13 +459,9 @@ fn show_create_user_current_user_resolves_the_session_identity() {
 /// SHOW CREATE USER 'plain'@'%'  ... AS '' REQUIRE NONE PASSWORD EXPIRE ...
 /// ```
 ///
-/// This tier stores and prints the first two `ssl_type` values and REFUSES
-/// the rest: `X509`/`CIPHER`/`ISSUER`/`SUBJECT`/`SAN` all need a verified
-/// client certificate chain, and the server's TLS never requests one, so
-/// accepting the clause would leave an account Go refuses being admitted
-/// here over ordinary TLS.
+/// X509 is persisted; specified certificate properties remain refused.
 #[test]
-fn require_ssl_is_stored_and_shown_and_the_cert_forms_are_refused_by_name() {
+fn require_ssl_and_x509_are_stored_and_shown_and_specified_forms_are_refused() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'ssl'@'%' REQUIRE SSL").unwrap();
     session.run("CREATE USER 'plain'@'%'").unwrap();
@@ -487,11 +483,11 @@ fn require_ssl_is_stored_and_shown_and_the_cert_forms_are_refused_by_name() {
         .unwrap();
     assert!(shown(&mut session, "ssl").contains(" REQUIRE SSL "));
 
+    session.run("CREATE USER 'x509'@'%' REQUIRE X509").unwrap();
+    assert!(shown(&mut session, "x509").contains(" REQUIRE X509 "));
     for sql in [
-        "CREATE USER 'c1'@'%' REQUIRE X509",
         "CREATE USER 'c2'@'%' REQUIRE SUBJECT '/CN=x'",
         "CREATE USER 'c3'@'%' REQUIRE ISSUER '/CN=x'",
-        "ALTER USER 'plain'@'%' REQUIRE X509",
     ] {
         let refusal = session.run(sql).expect_err(sql).to_mysql_error().message;
         assert!(
@@ -500,6 +496,6 @@ fn require_ssl_is_stored_and_shown_and_the_cert_forms_are_refused_by_name() {
         );
     }
     // The refusal is a refusal, not a silent partial write.
-    assert!(session.run("SHOW CREATE USER 'c1'@'%'").is_err());
+    assert!(session.run("SHOW CREATE USER 'c2'@'%'").is_err());
     assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
 }

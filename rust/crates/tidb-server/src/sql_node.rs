@@ -40,7 +40,7 @@ use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{
     serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
-use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
+use crate::mysql_tls::{resolve_server_tls_with_policy, MysqlServerTls};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
 use crate::resultset_source::ResultSetSource;
 use crate::wire_status::WireStatus;
@@ -1868,10 +1868,12 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         factory: Arc<F>,
         users: Arc<ConfiguredUserStore>,
     ) -> Result<Self, SqlNodeError> {
-        let tls = resolve_server_tls(
+        let tls = resolve_server_tls_with_policy(
             config.ssl_cert.as_deref(),
             config.ssl_key.as_deref(),
             config.auto_tls,
+            config.ssl_ca.as_deref(),
+            &config.min_tls_version,
         )
         .map_err(|error| SqlNodeError::Tls(error.to_string()))?;
         let listener = TcpListener::bind((config.host, config.port)).map_err(SqlNodeError::Bind)?;
@@ -2558,6 +2560,8 @@ mod tests {
             load_privileges: false,
             ssl_cert: None,
             ssl_key: None,
+            ssl_ca: None,
+            min_tls_version: String::new(),
             // The unit tests here exercise worker lifecycle, not the wire, so
             // they take the plaintext port rather than pay for key generation.
             auto_tls: false,

@@ -1212,7 +1212,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         TransportKind::PlainTcp
     };
     let transport_admission = match users.admit_transport(transport) {
-        Ok(admission) => admission,
+        Ok(admission) => {
+            admission.with_verified_client_certificate(socket.has_verified_client_certificate())
+        }
         Err(_) => {
             write_error(
                 &mut output,
