@@ -247,8 +247,8 @@ func (*AnalysisJobFactory) CheckIndexesNeedAnalyze(tblInfo *model.TableInfo, tbl
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := tblStats.GetIdx(idx.ID); idxStats == nil && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
-			// Columnar index doesn't have stats currently.
-			if idx.IsColumnarIndex() {
+			// Columnar and fulltext indexes don't have stats currently.
+			if idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 				continue
 			}
 			indexIDs[idx.ID] = struct{}{}
@@ -322,8 +322,8 @@ func (*AnalysisJobFactory) CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		if idx.State != model.StatePublic || util.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
-		// Columnar index doesn't have stats currently.
-		if idx.IsColumnarIndex() {
+		// Columnar and fulltext indexes don't have stats currently.
+		if idx.IsColumnarIndex() || idx.IsTiKVFullTextIndex() {
 			continue
 		}
 

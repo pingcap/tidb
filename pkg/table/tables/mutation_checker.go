@@ -17,6 +17,7 @@ package tables
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -220,6 +221,9 @@ func checkIndexKeys(
 ) error {
 	useNewCollate := t.encoder.UseNewCollate()
 	var indexData []types.Datum
+	// A row's document is tokenized once per full-text index and reused for
+	// each of its entries; see checkFullTextIndexKey.
+	fullTextTerms := make(map[fullTextTermsKey]map[string]struct{})
 	for _, m := range indexMutations {
 		var value []byte
 		// Generate correct index id for check.
@@ -249,6 +253,20 @@ func checkIndexKeys(
 			value = append(value, curElem.Value...)
 		} else {
 			value = append(value, m.value...)
+		}
+
+		if indexInfo.IsTiKVFullTextIndex() {
+			// The key holds one analyzed term of the document rather than the
+			// column value, so the check is membership: the term must be one
+			// the row analyzes to.
+			row := rowToInsert
+			if len(value) == 0 || isTmpIdxValAndDeleted {
+				row = rowToRemove
+			}
+			if err := checkFullTextIndexKey(t, tc.Location(), indexInfo, m.key, row, extraIndexesLayout.GetIndexLayout(idxID), fullTextTerms); err != nil {
+				return errors.Trace(err)
+			}
+			continue
 		}
 
 		// when we cannot decode the key to get the original value
@@ -406,6 +424,74 @@ func compareIndexData(
 			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
 			return err
 		}
+	}
+	return nil
+}
+
+// fullTextTermsKey identifies a row's document under one full-text index:
+// the insertion and the removal of a row are checked against different rows.
+type fullTextTermsKey struct {
+	indexID int64
+	row     *types.Datum
+}
+
+// checkFullTextIndexKey checks that an entry of a FULLTEXT index built in
+// TiKV belongs to the row: its key-column values must be the ones the row
+// encodes to, and its term must be one the row's document analyzes to. A row
+// writes one entry per distinct term, so its document is tokenized once and
+// the terms are kept in cache for the row's other entries.
+func checkFullTextIndexKey(t *TableCommon, loc *time.Location, indexInfo *model.IndexInfo, key []byte, row []types.Datum, extraIndexLayout table.IndexRowLayoutOption, cache map[fullTextTermsKey]map[string]struct{}) error {
+	var idx *index
+	for _, candidate := range t.Indices() {
+		if candidate.Meta().ID == indexInfo.ID {
+			idx = asIndex(candidate)
+			break
+		}
+	}
+	if idx == nil || idx.fullText == nil {
+		return errors.Errorf("fulltext index %s not found on table %s", indexInfo.Name.O, t.Meta().Name.O)
+	}
+	keyValues, term, err := DecodeTiKVFullTextIndexKey(indexInfo, key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	offsetInRow := func(i int) int {
+		if len(extraIndexLayout) > 0 {
+			return extraIndexLayout[i]
+		}
+		return indexInfo.Columns[i].Offset
+	}
+	keyColumnCount := len(indexInfo.Columns) - 1
+	rowValues := make([]types.Datum, 0, keyColumnCount)
+	for i := range keyColumnCount {
+		rowValues = append(rowValues, row[offsetInRow(i)])
+	}
+	mismatch, err := idx.fullTextKeyColumnMismatch(loc, keyValues, rowValues)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if mismatch >= 0 {
+		col := t.Columns[indexInfo.Columns[mismatch].Offset].ColumnInfo
+		err = ErrInconsistentIndexedValue.GenWithStackByArgs(
+			t.Meta().Name.O, indexInfo.Name.O, col.Name.O, types.NewBytesDatum(keyValues[mismatch]).String(), rowValues[mismatch].String())
+		logutil.BgLogger().Error("inconsistent key column in fulltext index mutation", zap.Error(err))
+		return err
+	}
+	docOffset := offsetInRow(keyColumnCount)
+	cacheKey := fullTextTermsKey{indexID: indexInfo.ID, row: &row[docOffset]}
+	terms, ok := cache[cacheKey]
+	if !ok {
+		if terms, err = idx.fullTextTerms(row[docOffset]); err != nil {
+			return errors.Trace(err)
+		}
+		cache[cacheKey] = terms
+	}
+	if _, ok := terms[string(term)]; !ok {
+		col := t.Columns[indexInfo.Columns[keyColumnCount].Offset].ColumnInfo
+		err = ErrInconsistentIndexedValue.GenWithStackByArgs(
+			t.Meta().Name.O, indexInfo.Name.O, col.Name.O, string(term), row[docOffset].String())
+		logutil.BgLogger().Error("inconsistent indexed term in fulltext index mutation", zap.Error(err))
+		return err
 	}
 	return nil
 }

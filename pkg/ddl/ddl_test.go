@@ -686,12 +686,18 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
 		model.SetGlobalIndexV1Supported(false)
+		model.SetTiKVFullTextSupported(false)
 	}
-	t.Cleanup(reset)
+	t.Cleanup(func() {
+		reset()
+		// The rest of the package creates FULLTEXT indexes in TiKV.
+		model.SetTiKVFullTextSupported(true)
+	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 	require.False(t, model.GetGlobalIndexV1Supported())
+	require.False(t, model.GetTiKVFullTextSupported())
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
@@ -702,6 +708,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		}
 		require.True(t, model.GetGlobalIndexV1Supported())
+		require.True(t, model.GetTiKVFullTextSupported())
 	})
 
 	d.etcdCli = &clientv3.Client{}
@@ -726,6 +733,18 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		d.detectAndUpdateJobVersionOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		require.True(t, model.GetGlobalIndexV1Supported())
+		// An 8.5 node would maintain a FULLTEXT index built in TiKV as an
+		// ordinary index.
+		require.False(t, model.GetTiKVFullTextSupported())
+	})
+
+	t.Run("all support fulltext index in TiKV", func(t *testing.T) {
+		reset()
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v9.0.0-beta.2", "8.0.11-TiDB-v9.1.0")
+		d.detectAndUpdateJobVersionOnce()
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		require.True(t, model.GetGlobalIndexV1Supported())
+		require.True(t, model.GetTiKVFullTextSupported())
 	})
 
 	t.Run("all support v2 but not global index v1", func(t *testing.T) {
@@ -778,14 +797,21 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				require.False(t, model.GetGlobalIndexV1Supported())
 				// upgrade to version supporting global index v1
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6")
+			} else if iterateCnt == 7 {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.True(t, model.GetGlobalIndexV1Supported())
+				require.False(t, model.GetTiKVFullTextSupported())
+				// upgrade to version supporting fulltext index in TiKV
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-v9.0.0")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 				require.True(t, model.GetGlobalIndexV1Supported())
+				require.True(t, model.GetTiKVFullTextSupported())
 			}
 		})
 		d.detectAndUpdateJobVersion()
 		d.wg.Wait()
-		require.EqualValues(t, 7, iterateCnt)
+		require.EqualValues(t, 8, iterateCnt)
 	})
 }
 

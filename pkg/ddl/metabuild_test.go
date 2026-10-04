@@ -15,12 +15,15 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -128,6 +131,40 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 					NewMetaBuildContextWithSctx(sctx, metabuild.WithSuppressTooLongIndexErr(false)).
 						SuppressTooLongIndexErr(),
 				)
+			},
+		},
+		{
+			field: "tikvFullTextAnalyzer",
+			check: func(ctx *metabuild.Context) {
+				analyzer, err := ctx.GetTiKVFullTextAnalyzer()
+				require.NoError(t, err)
+				// A fresh session resolves the same settings an offline
+				// caller gets, so the two cannot drift.
+				require.Equal(t, metabuild.DefaultTiKVFullTextAnalyzer(), analyzer)
+			},
+			extra: func() {
+				globalAccessor := variable.NewMockGlobalAccessor4Tests()
+				globalAccessor.SessionVars = sessVars
+				sessVars.GlobalVarsAccessor = globalAccessor
+				require.NoError(t, globalAccessor.SetGlobalSysVarOnly(context.Background(), vardef.InnodbFtMinTokenSize, "8", false))
+				require.NoError(t, globalAccessor.SetGlobalSysVarOnly(context.Background(), vardef.NgramTokenSize, "3", false))
+				require.NoError(t, sessVars.SetSystemVar(vardef.InnodbFtEnableStopword, vardef.Off))
+				analyzer, err := NewMetaBuildContextWithSctx(sctx).GetTiKVFullTextAnalyzer()
+				require.NoError(t, err)
+				require.Equal(t, model.TiKVFullTextIndexInfo{
+					MinTokenSize:   8,
+					MaxTokenSize:   vardef.DefInnodbFtMaxTokenSize,
+					EnableStopword: false,
+					NgramTokenSize: 3,
+				}, analyzer)
+			},
+		},
+		{
+			field: "tikvFullTextAnalyzerErr",
+			extra: func() {
+				readErr := errors.New("cannot read")
+				_, err := NewMetaBuildContextWithSctx(sctx, metabuild.WithTiKVFullTextAnalyzerError(readErr)).GetTiKVFullTextAnalyzer()
+				require.ErrorIs(t, err, readErr)
 			},
 		},
 		{
