@@ -139,6 +139,23 @@ fn cluster_metadata_contains_only_discovered_nodes() {
         row_text(session.run(sql)),
         [["tidb", "192.0.2.20:4000"], ["tidb", "192.0.2.30:4000"]]
     );
+    // Go reads proxy /info records (not TTL keys) and TiCDC topology.
+    put_str(
+        &fake,
+        "/topology/tiproxy/[2001:db8::1]:6000/info",
+        r#"{"ip":"2001:db8::1","port":"6000","status_port":"3080","version":"v1.2.3"}"#,
+    );
+    put_str(&fake, "/topology/tiproxy/[2001:db8::1]:6000/ttl", "123");
+    put_str(
+        &fake,
+        "/topology/ticdc/default/capture/one",
+        r#"{"address":"192.0.2.40:8300","version":"v9.0.0"}"#,
+    );
+    assert_eq!(row_text(session.run(
+        "SELECT TYPE, INSTANCE, VERSION FROM information_schema.cluster_info WHERE TYPE <> 'tidb' ORDER BY TYPE")),
+        [["ticdc", "192.0.2.40:8300", "9.0.0"],
+         ["tiproxy", "[2001:db8::1]:6000", "v1.2.3"]]);
+    fake.delete_prefix("/topology/").unwrap();
     fake.delete(&server_info_key_path("first")).unwrap();
     assert_eq!(row_text(session.run(sql)), [["tidb", "192.0.2.30:4000"]]);
     assert_eq!(
@@ -470,4 +487,212 @@ fn assumed_server_info_syncer_cross_keyspace_arm() {
     // And the wiring this arm pins once the constructor exists:
     // NewCrossKSSyncer("1", getter, nil, nil, "ks1").GetLocalServerInfo()
     //   .Keyspace == "SYSTEM" (the global KeyspaceName, syncer.go:491).
+}
+
+// Go Domain.TestCheckReplicaRead and infoschema's component retriever contract.
+#[derive(Default)]
+struct TopologyDiscovery {
+    stores: Mutex<Vec<tidb_domain::cluster_topology::ClusterStore>>,
+    error: Mutex<Option<String>>,
+}
+impl tidb_domain::cluster_topology::ClusterDiscovery for TopologyDiscovery {
+    fn pd_servers(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> Result<Vec<tidb_domain::cluster_topology::ClusterServer>, String> {
+        warnings.push("one PD member unavailable".into());
+        Ok(vec![component("pd", "192.0.2.2:2379")])
+    }
+    fn stores(&self) -> Result<Vec<tidb_domain::cluster_topology::ClusterStore>, String> {
+        if let Some(error) = self.error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        Ok(self.stores.lock().unwrap().clone())
+    }
+    fn microservice_servers(
+        &self,
+        service: &str,
+        _: &mut Vec<String>,
+    ) -> Result<Vec<tidb_domain::cluster_topology::ClusterServer>, String> {
+        Ok(vec![component(service, "192.0.2.3:3379")])
+    }
+}
+fn component(kind: &str, address: &str) -> tidb_domain::cluster_topology::ClusterServer {
+    tidb_domain::cluster_topology::ClusterServer {
+        server_type: kind.into(),
+        address: address.into(),
+        status_address: address.into(),
+        ..Default::default()
+    }
+}
+fn zone_store(zone: &str) -> tidb_domain::cluster_topology::ClusterStore {
+    tidb_domain::cluster_topology::ClusterStore {
+        server: component("tikv", "192.0.2.4:20160"),
+        labels: vec![("zone".into(), zone.into())],
+        removing: false,
+    }
+}
+
+#[test]
+fn cluster_metadata_composes_retrievers_and_retains_warnings_on_failure() {
+    use crate::{tests_support::row_text, Session};
+    use tidb_domain::cluster_topology::ClusterTopology;
+    let fake = Arc::new(FakeEtcd::default());
+    let mut info = mock_server_info("one", "192.0.2.1", 4000);
+    info.static_info.server_id_getter = Some(Arc::new(|| 77));
+    let syncer = Arc::new(Syncer::new(info.clone(), Some(fake.clone())));
+    fake.put(&server_info_key_path("one"), &info.marshal().unwrap())
+        .unwrap();
+    put_str(
+        &fake,
+        "/topology/tiproxy/one/info",
+        r#"{"ip":"192.0.2.5","port":"6000","status_port":"3080"}"#,
+    );
+    put_str(
+        &fake,
+        "/topology/ticdc/one",
+        r#"{"address":"192.0.2.6:8300"}"#,
+    );
+    let discovery = Arc::new(TopologyDiscovery::default());
+    discovery.stores.lock().unwrap().push(zone_store("z1"));
+    let topology = Arc::new(ClusterTopology::new(
+        syncer.clone(),
+        Some(discovery.clone()),
+    ));
+    let mut session = Session::new();
+    session.set_server_info_syncer(syncer);
+    session.set_cluster_topology(topology);
+    assert_eq!(
+        row_text(session.run("SELECT TYPE FROM information_schema.cluster_info ORDER BY TYPE")),
+        [
+            ["pd"],
+            ["scheduling"],
+            ["ticdc"],
+            ["tidb"],
+            ["tikv"],
+            ["tiproxy"],
+            ["tso"]
+        ]
+    );
+    assert!(session
+        .warnings()
+        .iter()
+        .any(|warning| warning.message == "one PD member unavailable"));
+    assert_eq!(
+        row_text(
+            session
+                .run("SELECT SERVER_ID FROM information_schema.cluster_info WHERE TYPE = 'tidb'")
+        ),
+        [["77"]]
+    );
+    *discovery.error.lock().unwrap() = Some("PD stores unavailable".into());
+    assert_eq!(
+        session
+            .run("SELECT * FROM information_schema.cluster_info")
+            .unwrap_err()
+            .to_string(),
+        "PD stores unavailable"
+    );
+    assert!(session
+        .warnings()
+        .iter()
+        .any(|warning| warning.message == "one PD member unavailable"));
+    *discovery.error.lock().unwrap() = None;
+    put_str(&fake, "/topology/tiproxy/broken/info", "bad json");
+    assert!(session
+        .run("SELECT * FROM information_schema.cluster_info")
+        .is_err());
+    fake.delete("/topology/tiproxy/broken/info").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT COUNT(*) FROM information_schema.cluster_info")),
+        [["7"]]
+    );
+}
+
+#[test]
+fn closest_adaptive_balances_zones_and_updates_existing_sessions() {
+    use tidb_domain::cluster_topology::ClusterTopology;
+    use tidb_executor::ReplicaReadType;
+    let fake = Arc::new(FakeEtcd::default());
+    for (id, zone) in [
+        ("s1", "z1"),
+        ("s2", "z2"),
+        ("s22", "z2"),
+        ("s3", "z3"),
+        ("s4", "z4"),
+    ] {
+        let mut info = mock_server_info(id, "192.0.2.1", 4000);
+        info.dynamic_info.labels.insert("zone".into(), zone.into());
+        fake.put(&server_info_key_path(id), &info.marshal().unwrap())
+            .unwrap();
+    }
+    let discovery = Arc::new(TopologyDiscovery::default());
+    *discovery.stores.lock().unwrap() = ["z1", "z2", "z3"].into_iter().map(zone_store).collect();
+    let mut ignored = zone_store("z4");
+    ignored.labels.push(("engine".into(), "tiflash".into()));
+    discovery.stores.lock().unwrap().push(ignored);
+    let mut ignored = zone_store("z4");
+    ignored.removing = true;
+    discovery.stores.lock().unwrap().push(ignored);
+    for (id, zone, enabled) in [
+        ("s1", "z1", true),
+        ("s2", "z2", true),
+        ("s22", "z2", false),
+        ("s3", "z3", true),
+        ("s4", "z4", false),
+    ] {
+        let mut local = mock_server_info(id, "192.0.2.1", 4000);
+        local.dynamic_info.labels.insert("zone".into(), zone.into());
+        let syncer = Arc::new(Syncer::new(local, Some(fake.clone())));
+        let topology = Arc::new(ClusterTopology::new(
+            syncer.clone(),
+            Some(discovery.clone()),
+        ));
+        let mut session = crate::Session::new();
+        session.set_server_info_syncer(syncer);
+        session.set_cluster_topology(topology.clone());
+        session
+            .run("SET tidb_replica_read='closest-adaptive'")
+            .unwrap();
+        topology.check_replica_read("CLOSEST-ADAPTIVE").unwrap();
+        assert_eq!(topology.adaptive_enabled(), enabled, "{id}");
+        assert_eq!(
+            session.statement_context(false).replica_read(),
+            if enabled {
+                ReplicaReadType::ClosestAdaptive
+            } else {
+                ReplicaReadType::Leader
+            }
+        );
+        // Changing the global mode does not overwrite the retained decision.
+        topology.check_replica_read("leader").unwrap();
+        assert_eq!(topology.adaptive_enabled(), enabled);
+        // Both transport and registry errors preserve the last decision.
+        if zone != "z4" {
+            *discovery.error.lock().unwrap() = Some("PD failed".into());
+            assert!(topology.check_replica_read("closest-adaptive").is_err());
+            *discovery.error.lock().unwrap() = None;
+            *fake.get_error.lock().unwrap() = Some("etcd failed".into());
+            assert!(topology.check_replica_read("closest-adaptive").is_err());
+            *fake.get_error.lock().unwrap() = None;
+            assert_eq!(topology.adaptive_enabled(), enabled);
+        }
+        session.stmt_hints.has_replica_read_hint = true;
+        session.stmt_hints.replica_read = ReplicaReadType::Follower.raw();
+        assert_eq!(
+            session.effective_replica_read(ReplicaReadType::ClosestAdaptive),
+            ReplicaReadType::Follower
+        );
+        assert_eq!(
+            session.statement_context(false).replica_read(),
+            ReplicaReadType::Follower
+        );
+    }
+    let syncer = Arc::new(Syncer::new(
+        mock_server_info("no-zone", "192.0.2.1", 4000),
+        None,
+    ));
+    let topology = ClusterTopology::new(syncer, None);
+    topology.check_replica_read("closest-adaptive").unwrap();
+    assert!(!topology.adaptive_enabled());
 }

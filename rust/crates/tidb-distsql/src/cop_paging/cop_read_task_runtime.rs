@@ -428,6 +428,10 @@ impl std::fmt::Debug for CopReadTaskRuntime {
 }
 
 impl CopReadTaskRuntime {
+    pub(super) fn request_metadata(&self) -> &KvRequestMetadata {
+        &self.metadata
+    }
+
     pub(super) fn prepare_for_transport(
         metadata: &KvRequestMetadata,
         topology: &[RegionTaskTopology],
@@ -474,6 +478,12 @@ impl CopReadTaskRuntime {
             return Err(CopReadTaskError::StoreBatching);
         }
 
+        // Go copr.Send adjusts once after region tasks have been built. The
+        // adjusted metadata is retained across paging and region retries.
+        let mut metadata = metadata.clone();
+        if let Some(adjuster) = metadata.closest_replica_read_adjuster.clone() {
+            adjuster.adjust(&mut metadata, envelopes.len());
+        }
         let ema = Arc::new(ReadBytesEma::new(seed_read_bytes));
         let tasks: Vec<LogicalCopReadTask> = envelopes
             .into_iter()
@@ -497,7 +507,7 @@ impl CopReadTaskRuntime {
             .saturating_add(1);
         let mut runtime = Self {
             data: metadata.data.clone().unwrap_or_default().into(),
-            metadata: Arc::new(metadata.clone()),
+            metadata: Arc::new(metadata),
             tasks,
             in_flight: BTreeMap::new(),
             deferred: BTreeMap::new(),

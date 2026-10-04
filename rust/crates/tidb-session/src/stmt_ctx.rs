@@ -729,7 +729,8 @@ impl Session {
                     .vars
                     .get_system("transaction_isolation")
                     .is_ok_and(|value| value.eq_ignore_ascii_case("REPEATABLE-READ")),
-                leader_read: self.vars.replica_read() == tidb_executor::ReplicaReadType::Leader,
+                leader_read: self.effective_replica_read(self.vars.replica_read())
+                    == tidb_executor::ReplicaReadType::Leader,
                 staleness: read_staleness,
                 historical_read: self
                     .vars
@@ -1126,11 +1127,7 @@ impl Session {
         } else {
             snapshot.mem_quota
         };
-        let replica_read = if self.stmt_hints.has_replica_read_hint {
-            tidb_executor::ReplicaReadType::from_raw(self.stmt_hints.replica_read)
-        } else {
-            snapshot.replica_read
-        };
+        let replica_read = self.effective_replica_read(snapshot.replica_read);
         let isolation_read_engines = snapshot.isolation_read_engines.clone();
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;

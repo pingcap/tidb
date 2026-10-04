@@ -338,6 +338,23 @@ impl Syncer {
         decode_entries(&entries)
     }
 
+    /// Live topology records used by Go infosync's component retrievers.
+    pub(crate) fn topology_entries(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+        let Some(etcd) = &self.etcd else {
+            return Ok(Vec::new());
+        };
+        // infosync.KeyOpDefaultRetryCnt: retry transport failures, not invalid JSON.
+        let mut result = etcd.get_prefix(prefix);
+        for _ in 1..5 {
+            if result.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            result = etcd.get_prefix(prefix);
+        }
+        result
+    }
+
     /// Go `GetServerInfoByID`: the local info for this node's own id (no
     /// etcd read at all), otherwise the peer's entry -- and a MISSING peer
     /// is an error, not a `None`, exactly as Go's `get %s failed`.

@@ -295,27 +295,18 @@ impl EtcdWatchOps for EtcdClientOps {
 
 /// Go `getServerInfo` over the node's own configuration.
 ///
-/// `NodeConfig` is this tier's spelling of the pieces Go reads from the
-/// global config, so the two are mapped here rather than in `tidb-domain`:
-/// the ADVERTISE address is what a peer would dial, the DDL lease travels
-/// as the text Go stores, and the labels are empty until the config file's
-/// `labels` section is threaded (named, not silently dropped).
+/// Reuses the domain constructor over the canonical effective config, including
+/// advertised address, lease text and labels, instead of a second projection.
 pub(crate) fn node_server_info(
     config: &crate::node_config::NodeConfig,
 ) -> tidb_domain::serverinfo::ServerInfo {
-    let mut info = tidb_domain::serverinfo::ServerInfo::default();
-    info.static_info.id = tidb_domain::serverinfo_syncer::new_node_id();
-    info.static_info.ip = config.advertise_address.clone();
-    info.static_info.port = usize::from(config.port);
-    info.static_info.status_port = usize::from(config.status_port);
-    info.static_info.lease = format!("{}ms", config.schema_lease.as_millis());
-    info.static_info.start_timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs() as i64)
-        .unwrap_or_default();
-    info.static_info.version_info = tidb_domain::serverinfo::VersionInfo {
-        version: tidb_mysql::runtime_versions().server_version,
-        git_hash: tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
-    };
-    info
+    tidb_domain::serverinfo_syncer::server_info_from_config(
+        &tidb_domain::serverinfo_syncer::new_node_id(),
+        &config.global_config,
+        tidb_util::versioninfo::TIDB_GIT_HASH,
+        None,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs() as i64),
+    )
 }

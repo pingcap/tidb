@@ -245,7 +245,7 @@ impl TiFlashReplicaManager {
             pd_http
         };
         let endpoint = pd_http.trim_end_matches('/').to_owned();
-        let client = cluster_http_client(security)?;
+        let client = crate::cluster_http::cluster_http_client(security)?;
         let http = client.clone();
         let mut manager = Self::new(
             catalog,
@@ -608,31 +608,6 @@ impl TiFlashReplicaManager {
         }
         Ok(())
     }
-}
-
-fn cluster_http_client(
-    security: &tidb_pd_client::ClusterSecurity,
-) -> Result<reqwest::blocking::Client, String> {
-    let mut builder = reqwest::blocking::Client::builder();
-    if security.is_tls_enabled() {
-        let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
-        let roots =
-            reqwest::Certificate::from_pem_bundle(&ca).map_err(|error| error.to_string())?;
-        if roots.is_empty() {
-            return Err("cluster CA contains no certificates".to_owned());
-        }
-        builder = builder.tls_certs_only(roots);
-        if !security.cert_path().is_empty() && !security.key_path().is_empty() {
-            let mut identity =
-                std::fs::read(security.cert_path()).map_err(|error| error.to_string())?;
-            identity.push(b'\n');
-            identity.extend(std::fs::read(security.key_path()).map_err(|error| error.to_string())?);
-            builder = builder.identity(
-                reqwest::Identity::from_pem(&identity).map_err(|error| error.to_string())?,
-            );
-        }
-    }
-    builder.build().map_err(|error| error.to_string())
 }
 
 impl Drop for TiFlashReplicaManager {

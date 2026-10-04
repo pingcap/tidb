@@ -108,7 +108,7 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<Option<PdStore>, PdClientError>>,
     },
     GetAllStores {
-        reply: mpsc::Sender<Result<Vec<PdStore>, PdClientError>>,
+        reply: mpsc::Sender<Result<Vec<tidb_proto::metapb::Store>, PdClientError>>,
     },
     GetTimestamp {
         deadline: Instant,
@@ -615,6 +615,13 @@ impl PdClient {
     /// Stores PD marks tombstone or removed are omitted rather than reported,
     /// matching how `GetAllStores` callers treat a decommissioned store.
     pub fn all_stores(&self) -> Result<Vec<PdStore>, PdClientError> {
+        self.all_store_metadata()
+            .and_then(topology::project_all_stores)
+    }
+
+    /// Unprojected GetAllStores metadata for Go's component-specific consumers.
+    /// Routing callers retain the validated usable-store projection above.
+    pub fn all_store_metadata(&self) -> Result<Vec<tidb_proto::metapb::Store>, PdClientError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands

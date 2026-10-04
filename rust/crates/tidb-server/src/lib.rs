@@ -485,3 +485,5 @@ mod skip_grant_startup_tests {
         assert!(!arbitrator.stop());
     }
 }
+
+mod cluster_topology;

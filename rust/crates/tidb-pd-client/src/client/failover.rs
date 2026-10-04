@@ -456,7 +456,7 @@ pub(super) fn get_all_stores_with_failover(
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
-) -> Result<Vec<PdStore>, PdClientError> {
+) -> Result<Vec<tidb_proto::metapb::Store>, PdClientError> {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut attempted = HashSet::new();
     attempted.insert(snapshot.active_endpoint.clone());

@@ -1032,6 +1032,7 @@ pub struct ClusterSessionFactory {
     /// table empty, which is the honest answer for a node that never
     /// established an identity.
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -1187,6 +1188,7 @@ impl ClusterSessionFactory {
             auto_ids,
             cop_scans: None,
             server_info: None,
+            cluster_topology: None,
             global_vars,
             boot_skipped,
             statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
@@ -1956,7 +1958,20 @@ impl ClusterSessionFactory {
     /// `information_schema.TIDB_SERVERS_INFO`.
     #[must_use]
     pub fn with_server_info(mut self, syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>) -> Self {
+        self.cluster_topology = Some(Arc::new(
+            tidb_domain::cluster_topology::ClusterTopology::new(Arc::clone(&syncer), None),
+        ));
         self.server_info = Some(syncer);
+        self
+    }
+
+    /// Shares live component discovery and adaptive policy with every SQL session.
+    #[must_use]
+    pub fn with_cluster_topology(
+        mut self,
+        topology: Arc<tidb_domain::cluster_topology::ClusterTopology>,
+    ) -> Self {
+        self.cluster_topology = Some(topology);
         self
     }
 
@@ -3273,6 +3288,9 @@ impl ClusterSessionFactory {
         )));
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
+        }
+        if let Some(topology) = &self.cluster_topology {
+            session.set_cluster_topology(Arc::clone(topology));
         }
         // `ADMIN SHOW DDL` reports the version this node currently follows,
         // which moves as the reloader picks up peers' changes -- so it is

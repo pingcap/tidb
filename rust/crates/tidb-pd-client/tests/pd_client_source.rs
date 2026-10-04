@@ -719,7 +719,13 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
 fn all_stores_lists_usable_stores_and_omits_decommissioned_ones() {
     // pd-client/client.go:GetAllStores. PD returns every store it knows,
     // including tombstone/removed ones; callers treat those as absent.
-    let server = Server::start(valid_state());
+    let mut fixture = valid_state();
+    if let Reply::Value(response) = &mut fixture.all_stores {
+        response.stores[0].version = "v9.0.0".into();
+        response.stores[0].git_hash = "build-revision".into();
+        response.stores[0].start_timestamp = 1234;
+    }
+    let server = Server::start(fixture);
     let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let stores = client.all_stores().unwrap();
@@ -733,8 +739,15 @@ fn all_stores_lists_usable_stores_and_omits_decommissioned_ones() {
     assert_eq!(stores[1].state, PdStoreState::Offline);
     assert_eq!(stores[1].node_state, PdNodeState::Removing);
 
+    let raw = client.all_store_metadata().unwrap();
+    assert_eq!(raw.len(), 3);
+    assert_eq!(raw[0].version, "v9.0.0");
+    assert_eq!(raw[0].git_hash, "build-revision");
+    assert_eq!(raw[0].start_timestamp, 1234);
+    assert_eq!(raw[2].state, metapb::StoreState::Tombstone as i32);
+    assert_eq!(raw[2].node_state, metapb::NodeState::Removed as i32);
     let state = server.state.lock().unwrap();
-    assert_eq!(state.all_stores_requests.len(), 1);
+    assert_eq!(state.all_stores_requests.len(), 2);
     let request = &state.all_stores_requests[0];
     // The projection decides which lifecycle states count as absent, so the
     // request must not ask PD to pre-filter and hide that decision.

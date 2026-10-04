@@ -742,3 +742,41 @@ fn closest_replica_policy_with_labels_reaches_the_live_selector() {
     assert_eq!(calls.read().unwrap().len(), 1);
     assert_eq!(loader_calls.read().unwrap().as_slice(), &[b"a".to_vec()]);
 }
+
+#[test]
+fn closest_adjuster_receives_region_task_count_before_replica_selection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(RwLock::new(Vec::new()));
+    let adjusted = Arc::new(AtomicUsize::new(0));
+    let observed = adjusted.clone();
+    let mut request = metadata("a", "z");
+    request.replica_read = ReplicaReadType::ClosestAdaptive;
+    request.closest_replica_read_adjuster = Some(Arc::new(
+        move |request: &mut tidb_txnkv::Request, count: usize| -> bool {
+            assert_eq!(count, 2);
+            observed.fetch_add(1, Ordering::Relaxed);
+            request.replica_read = ReplicaReadType::Leader;
+            false
+        },
+    ));
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        calls.clone(),
+        [Ok(response(b"left")), Ok(response(b"right"))],
+        [
+            location_with_three_peers(1, "a", "m", "left"),
+            location_with_three_peers(2, "m", "z", "right"),
+        ],
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(request));
+    while result.next_raw().unwrap().is_some() {}
+    assert_eq!(adjusted.load(Ordering::Relaxed), 1);
+    assert_eq!(calls.read().unwrap().len(), 2);
+    assert!(calls
+        .read()
+        .unwrap()
+        .iter()
+        .all(
+            |call| call.replica_read_type == ClientReplicaReadType::Leader
+                && call.address.ends_with("-leader:20160")
+        ));
+}

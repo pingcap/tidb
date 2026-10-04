@@ -640,9 +640,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
                 DirectUnaryTransportError::UnsupportedOperation(dispatch.operation).to_string(),
             );
         }
-        let mut read_policy =
-            read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
-        read_policy.forwarding = self.config.enable_forwarding;
         // The SQL request may legitimately allow unordered region responses
         // (`PhysicalTableScan.KeepOrder=false`). This response owner still
         // consumes logical tasks in range order, so give the paging
@@ -674,6 +671,14 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             self.config.seed_read_bytes,
         )
         .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
+
+        let keep_order = metadata.keep_order;
+        let mut adjusted_metadata = runtime.request_metadata().clone();
+        adjusted_metadata.keep_order = keep_order;
+        let metadata = &adjusted_metadata;
+        let mut read_policy =
+            read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
+        read_policy.forwarding = self.config.enable_forwarding;
 
         let mut logical_order = Vec::new();
         let mut active_attempts = BTreeMap::new();

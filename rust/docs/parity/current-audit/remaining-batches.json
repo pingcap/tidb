@@ -6,8 +6,8 @@
     "tracked": 86,
     "unresolved": 57,
     "repaired": 29,
-    "open": 39,
-    "partial": 18
+    "open": 37,
+    "partial": 20
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
@@ -314,11 +314,11 @@
       "acceptance": "unaccepted",
       "finding_statuses": {
         "I01": "open",
-        "I02": "open",
+        "I02": "partial",
         "I03": "open",
         "O08": "open",
         "O11": "partial",
-        "O13": "open",
+        "O13": "partial",
         "O16": "open",
         "O17": "open",
         "O18": "partial"
@@ -346,5 +346,5 @@
       }
     }
   ],
-  "latest_evidence": "dml-trigger-owner-batch-validation.json"
+  "latest_evidence": "cluster-topology-validation.json"
 }

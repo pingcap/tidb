@@ -1,0 +1,201 @@
+{
+  "date": "2026-10-04",
+  "scope": "Existing-owner maintenance across I02, O13 and N03; no complete package acceptance.",
+  "baseline": {
+    "tidb": "ac241f4b3a49f13970893256fa56a188fa304e74",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "remote_integration_preserved_unmerged": "0a61ca9b586add9697a10f9bf8264931e3281a95"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 37,
+    "partial": 20
+  },
+  "rechecked_findings": [
+    "I02",
+    "O13",
+    "N03"
+  ],
+  "other_findings": "Other54 unresolved IDs retain prior evidence; this is not a fresh whole-register reproduction.",
+  "changes": [
+    "Compose TiDB/PD/store/TiProxy/TiCDC/TSO/scheduling metadata through one process topology; use live PD membership and unprojected store metadata without another PD runtime.",
+    "Carry component versions/build/start times, live TiDB IDs, IPv6 and loopback address policy; propagate retriever errors and preserve warnings even when a later source fails.",
+    "Domain closest-adaptive checker follows Go zone balance, ID ordering, excluded stores, global-setting gate and error-preserved decisions; immediate/minute refresh joins before PD retirement.",
+    "Existing sessions and index-lookup eligibility share live effective replica policy and hint precedence; configured zone reaches transport metrics.",
+    "Invoke the retained request adjuster once after region tasks exist, before replica selection, and carry its changes through the task lifecycle.",
+    "Remove duplicate startup server-info projection and reuse the canonical constructor; extract the existing internal HTTP TLS builder for discovery/TiFlash reuse."
+  ],
+  "before_regressions": [
+    {
+      "test": "cluster_metadata_contains_only_discovered_nodes",
+      "result": "FAIL: expected real TiProxy/TiCDC rows, got []",
+      "log": "before.log"
+    },
+    {
+      "test": "canonical_labels_and_lease",
+      "result": "FAIL over real MySQL/unistore: empty labels and 45000ms instead of rack=rack-a,zone=zone-1 and 45s",
+      "log": "before-wire.json"
+    },
+    {
+      "test": "configured_version_preserved",
+      "result": "FAIL over real MySQL/unistore: 9.0.0-custom instead of configured 8.0.11-TiDB-v9.0.0-custom",
+      "log": "before-wire.json"
+    }
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-domain -p tidb-session -p tidb-server -p tidb-exec --lib -- cluster_topology cluster_metadata closest_adaptive command_token_flag_reaches_effective_config store_metadata_preserves_go tests_domain_serverinfo_syncer_source tests_core::session_state::replica_read --test-threads=1",
+      "result": "PASS",
+      "distinct_passes": 14,
+      "ignored": 2,
+      "log": "grouped-tests-validated.log",
+      "log_sha256": "dd38bd47aa930016bbb18b7233cd64d4ae24e53d1a591589c1fc1922b91616b8",
+      "note": "No selected tests in tidb-domain here; its 21 server-info tests ran separately."
+    },
+    {
+      "command": "Built tidb-domain test executable -- serverinfo --test-threads=1",
+      "result": "PASS",
+      "distinct_passes": 21,
+      "ignored": 0,
+      "log": "domain-tests.log",
+      "log_sha256": "0bb9a9dcca7f14fc26c96153e73afcb37b7472c450124aacaed19fcb861697dc",
+      "note": ""
+    },
+    {
+      "command": "cargo test --locked --no-fail-fast -p tidb-distsql -p tidb-pd-client --test all -- direct_unary_dispatch_contract pd_client_source --test-threads=1",
+      "result": "PASS",
+      "distinct_passes": 13,
+      "ignored": 0,
+      "log": "transport-tests-validated.log",
+      "log_sha256": "acc529b60d8e7d29a3b4de1bca405f611b3d9c613399c83a29b7b4dc3f3a1b08",
+      "note": "Accept only the DistSQL target from this command. The PD target had a test-fixture count mistake; its corrected complete group passes in pd-tests-final.log."
+    },
+    {
+      "command": "cargo test --locked -p tidb-pd-client --test all -- pd_client_source --test-threads=1",
+      "result": "PASS",
+      "distinct_passes": 32,
+      "ignored": 0,
+      "log": "pd-tests-final.log",
+      "log_sha256": "16b2136f1cb69ee8b180e640c3c681e21bc77e6ff538b1a11766fdc2f95599dc",
+      "note": ""
+    },
+    {
+      "command": "cargo check --locked -p tidb-domain -p tidb-distsql -p tidb-pd-client -p tidb-session -p tidb-exec -p tidb-server --all-targets",
+      "result": "PASS",
+      "log": "all-targets-final.log",
+      "log_sha256": "7e108e093d15a4ab8a5b01e701e13d26ecd164be21db7893667fd4dec3ae593c"
+    },
+    {
+      "command": "make lint",
+      "result": "PASS",
+      "log": "lint.log",
+      "log_sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "note": "Root Go/dashboard checks; no Go or dashboard sources changed. Rust checking is recorded separately."
+    },
+    {
+      "command": "git diff --check; JSON/Markdown disposition/count and one-to-one batch-map validation",
+      "result": "PASS"
+    }
+  ],
+  "known_ignored_tests": [
+    "tests_domain_serverinfo_syncer_source::stale_ddl_owner_key_is_deleted_too: unimplemented owner cleanup; meaningful failing assertion retained.",
+    "tests_domain_serverinfo_syncer_source::assumed_server_info_syncer_cross_keyspace_arm: missing cross-keyspace constructor; existing source obligation retained."
+  ],
+  "limitations": {
+    "I02": "SEM address/start/uptime redaction and complete real mixed-cluster HTTP/discovery acceptance remain outstanding. Serial address resolution does not claim Go worker-pool structural acceptance.",
+    "O13": "SQL planner net-size/threshold adjuster producers, point/batch-read adjusters, scopes and counters are incomplete. The callback consumer is fixed, but ordinary SQL still lacks its adaptive threshold producer. PD tombstone exclusion is applied at projection rather than through a dedicated option. No live AZ/locality benchmark.",
+    "N03": "Remaining native defaults, generated certificate policy, broader configuration consumers and platform coverage stay partial.",
+    "general": "No full Go/Rust suite, live multi-node TiKV, workload or new-task restoration verification. No native edits or vendored sync required."
+  },
+  "publication": {
+    "push": "forbidden by user; no push or dry run",
+    "precommit": "Actual hooks/pre-commit must run cd rust && cargo build --locked -p tidb-server. Exact commit/hook/wire/recovery results recorded after the gate in /workspace/.cloud-setup/cluster-topology-batch/final-handoff.json."
+  },
+  "external_logs": "/workspace/.cloud-setup/cluster-topology-batch",
+  "recovered_setup_errors": [
+    "Initial patch used the repository-root relative path from rust; reapplied before session test compilation.",
+    "Offline cargo metadata wrote only the new workspace dependency edge, then could not fetch an unused Android package; subsequent locked target builds resolve correctly.",
+    "Initial grouped test compilation used an enum cast instead of ReplicaReadType.raw(); corrected.",
+    "Integration suites use the aggregate all target, not file-named targets.",
+    "Adjuster regression must accept the canonical public tidb_txnkv::Request, not its DistSQL wrapper/private module.",
+    "Raw-store test initially assumed four entries; corrected to the existing three-record fixture and added nonempty version/build/start metadata assertions."
+  ],
+  "artifact_pruning": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/af2aca2d4b523785/out/select_one_profile",
+      "size": 298832536,
+      "mtime": 1791122448.2595477,
+      "reason": "superseded regeneratable 14:00 binary; current 14:46 build retained; select_one_profile source retired in prior commit"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/00e5fcd5a6be8cfd/out/cluster_stats_dump",
+      "size": 198445400,
+      "mtime": 1791122441.5955656,
+      "reason": "superseded regeneratable 14:00 binary; current 14:46 build retained; select_one_profile source retired in prior commit"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/818882c440b98224/out/cluster_session_smoke",
+      "size": 377342080,
+      "mtime": 1791122443.68356,
+      "reason": "superseded regeneratable 14:00 binary; current 14:46 build retained; select_one_profile source retired in prior commit"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/f03cb90ef130f4b0/out/mysql_bootstrap",
+      "size": 295753296,
+      "mtime": 1791122450.1075428,
+      "reason": "superseded regeneratable 14:00 binary; current 14:46 build retained; select_one_profile source retired in prior commit"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/a368983458f5319f/out/tidb_server-a368983458f5319f",
+      "size": 428820480,
+      "mtime": 1791122673.8029213,
+      "reason": "superseded unit/server executable; current 5f499 unit test and 86e27 baseline server retained; no running process uses this path"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/e258006b21fe7667/out/tidb_server",
+      "size": 444469176,
+      "mtime": 1791122446.0995533,
+      "reason": "superseded unit/server executable; current 5f499 unit test and 86e27 baseline server retained; no running process uses this path"
+    }
+  ],
+  "distinct_rust_passes": 80,
+  "source_manifest": {
+    "rust/Cargo.lock": "88da2d0ed4376ffb55667a324ec894da873fa211cf31f74e00d0e623acb73ee9",
+    "rust/crates/tidb-distsql/src/cop_paging/cop_read_task_runtime.rs": "4c2a5555b21a74053bb4039051d393c448510b05c5ffeef9366df393660af4c9",
+    "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs": "bacbfcedd9516b5d37689a345f9adbcc280b5d14f301c54596ee715cfa09d275",
+    "rust/crates/tidb-distsql/tests/direct_unary_dispatch_contract.rs": "55dc440028c60d5371c0f771e9c48005ff49790086fcb0e9531547eeca823ffa",
+    "rust/crates/tidb-domain/src/cluster_topology.rs": "4d271210c931a71f90e519f670728ba25479cf518d152f8995be1eb3e767bb70",
+    "rust/crates/tidb-domain/src/lib.rs": "a6de416784d2421c6698727fdd2e655a8cbb4e431be68542ac4cc0c2c0f48c73",
+    "rust/crates/tidb-domain/src/serverinfo_syncer.rs": "d57a9f0f57c177c28b2d86c3076028fffd69bf3a70448f596b3e228da3933c06",
+    "rust/crates/tidb-exec/Cargo.toml": "59d5fdd1bd632a3da17a97864fa085ba17b0f5956868c590997e57cc30f50953",
+    "rust/crates/tidb-exec/src/cluster_discovery.rs": "fbd84a0962bdef09ef2ae3f136b30a5faabe3d67e40b592bf27ae3dd90c4919e",
+    "rust/crates/tidb-exec/src/cluster_http.rs": "9e92a098a629bcd393a1e4200541b7edb7fd76ef8058663c3a789a510c61b24c",
+    "rust/crates/tidb-exec/src/lib.rs": "7fb8d2b40a76229025f651337f3a7c3336e356533c5584f1ec9809ce151ed01a",
+    "rust/crates/tidb-exec/src/real_tikv_read.rs": "391ede9feb3059ac487e980c5456a3ce06af83d7459b4f40903609b87511fe7d",
+    "rust/crates/tidb-exec/src/tiflash_replica_manager.rs": "4e507950adb7dab4f1fedac3e41ec87d61a27cd9b2634e084b9a5eb9b8f03fa8",
+    "rust/crates/tidb-pd-client/src/client/failover.rs": "e386dff7e87a15c131cde64ff8d60de0163270cc451555724273eaa714b9d652",
+    "rust/crates/tidb-pd-client/src/client/mod.rs": "6bd5713f57aa2e7c3c84c9f5f996f73f4867e96354496bde451a792907168e47",
+    "rust/crates/tidb-pd-client/src/client/requests.rs": "bbd3414e116c3abed106d2828c1643db72d5c736bb35d75dd029580d3e341e13",
+    "rust/crates/tidb-pd-client/tests/pd_client_source.rs": "7f4d24be90999f0ac855bf4bfa500400d325feb0dcc8b0eac2005bfdd0a10981",
+    "rust/crates/tidb-server/src/cluster_session_node/boot.rs": "7723a351fa5fe6f8ed042906e2d74ecb71818d43401ecb4b40645a203f0dd8f6",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "56d75a17f8f60cd8ab9405bbbe1276cbdbfe3e9774a5f2c960332b4d28b6e141",
+    "rust/crates/tidb-server/src/cluster_topology.rs": "580c5254404e976cad6a79cb5a41267b9ee85efec25ecab01b3b87d7a4c2c2ec",
+    "rust/crates/tidb-server/src/lib.rs": "4e5cf39b2cb4bef4cab2643900d99ac958f274d437a0df28248d9dbcd6b2fcbe",
+    "rust/crates/tidb-server/src/node_config.rs": "cf23dde8e8b4dfde1220c4e967cd44b32477306a5c55dfdf7fcc5609d6b77e15",
+    "rust/crates/tidb-server/src/serverinfo_etcd.rs": "1d1b753ae5151e1897745cf9f7f27e156b8c605d4772ff52814f5f06017a4fcd",
+    "rust/crates/tidb-session/src/lib.rs": "6fd880bbc86590bad470b46f52fc7eb783d4b18862157747c0bc119d6c54dc33",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "6b24fb27ae3bc9c950b6414928b64e8083dfd5b327b893190ac212eb78ebf501",
+    "rust/crates/tidb-session/src/tests_domain_serverinfo_syncer_source.rs": "aa196b08c2b149a24568b3ae3e70eb5b63dc720d4f049cdc60a622e7020e6c21"
+  },
+  "other_log_sha256": {
+    "before.log": "dfde46a4c22b24b501532f681a7c0391ea5f198e8f1492cef1408ab9550b5376",
+    "before-wire.json": "18ffb24c7f304a782b869856750a957ac5a5e9c5d7c601de483648eca425c700",
+    "grouped-tests.log": "d2159e92f6284f59e06c239c60dd3c9ea409fd1250115d318fd6ec6587af5d6d",
+    "transport-tests.log": "40b4dddc77f01fcd9d54946b9f5e47e9670af48d7e248720c9783dbfb6285d0c",
+    "transport-tests-final.log": "2f2a623c30ead2bebfadd4ece699c83e6125eab65688839995fa01bbe178998f",
+    "transport-tests-pass.log": "0f8182106f1ff528a17b8b3eab467b576381f3a267fbdc9829ba588890a26096"
+  }
+}

@@ -144,6 +144,10 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
             DirectUnaryRuntimeConfig {
                 default_timeout: self.default_timeout,
                 shared_cache: self.copr_cache.clone(),
+                local_zone_label: tidb_config::config_tree::config::get_global_config()
+                    .labels
+                    .get("zone")
+                    .cloned(),
                 ..DirectUnaryRuntimeConfig::default()
             },
             self.lock_timestamp_source.clone(),

@@ -226,6 +226,26 @@ pub(crate) fn run_cluster_session_node_with_spill(
             None
         }
     };
+    let discovery = authority
+        .pd_client()
+        .map(|pd| {
+            tidb_exec::cluster_discovery::PdClusterDiscovery::new(pd, &config.cluster_security).map(
+                |discovery| {
+                    Arc::new(discovery) as Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery>
+                },
+            )
+        })
+        .transpose()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let cluster_topology = Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
+        Arc::clone(&server_info),
+        discovery,
+    ));
+    let replica_read_checker = crate::cluster_topology::ReplicaReadChecker::start(
+        Arc::clone(&cluster_topology),
+        users.global_vars(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let stats_owner: Arc<dyn tidb_owner::Manager> =
         match crate::real_tikv_node::connect_schema_notifier(&config) {
             Some(client) => Arc::new(tidb_owner::OwnerManager::new(
@@ -387,6 +407,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
+    .with_cluster_topology(cluster_topology)
     .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
     .with_schema_validator(Arc::clone(&schema_validator))
@@ -486,6 +507,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // Dropped FIRST: the runner removes this node's published
             // records before the etcd handles below it go away.
             server_info_runner,
+            replica_read_checker,
             // Dropped beside it: once the registration is gone nobody waits
             // on this node, so the acknowledger has nothing left to say.
             schema_sync_ack,
@@ -507,6 +529,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         authority,
         move |(
             server_info_runner,
+            replica_read_checker,
             schema_sync_ack,
             workload_repository,
             stats_maintenance,
@@ -555,6 +578,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             workload_repository.stop();
+            drop(replica_read_checker);
             drop(stats_maintenance);
             drop(replica_poll);
             drop(global_config_keeper);

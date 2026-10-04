@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn command_token_flag_reaches_effective_config() {
-        let config = NodeConfig::parse([
+        let mut config = NodeConfig::parse([
             "tidb-server",
             "--store",
             "unistore",
@@ -951,6 +951,19 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(config.global_config.token_limit, 1);
+        config
+            .global_config
+            .labels
+            .insert("zone".into(), "zone-1".into());
+        config.global_config.lease = "45s".into();
+        let info = crate::serverinfo_etcd::node_server_info(&config);
+        assert_eq!(info.dynamic_info.labels, config.global_config.labels);
+        assert_eq!(info.static_info.lease, "45s");
+        assert_eq!(info.static_info.port, config.global_config.port);
+        assert_eq!(
+            info.static_info.status_port,
+            config.global_config.status.status_port
+        );
     }
 
     #[test]

@@ -1,6 +1,8 @@
 # Audit and remove Go/Rust structural mismatches
 
-Current removal: [matrix write plan](matrix-write-removal-execplan.md) and [receipt](parity/current-audit/matrix-write-removal-validation.json). Remove alternate mutations and synthetic row identities across planner, executor and fixtures. E03 remains partial; counts stay29 repaired,57 unresolved(39 open,18 partial). No push.
+Current topology batch: [living plan](cluster-topology-execplan.md), [validation](parity/current-audit/cluster-topology-validation.json). I02/O13/N03 now share live component discovery, Domain AZ policy and canonical labels. I02/O13 move from open to partial; N03 stays partial. 86 tracked:29 repaired,57 unresolved(37 open,20 partial). Other54 unresolved IDs retain prior evidence. Complete packages, live mixed-cluster behavior and performance remain unaccepted. No push. Earlier checkpoints retain their original counts.
+
+Previous removal: [matrix write plan](matrix-write-removal-execplan.md) and [receipt](parity/current-audit/matrix-write-removal-validation.json). Remove alternate mutations and synthetic row identities across planner, executor and fixtures. E03 remains partial; counts stay29 repaired,57 unresolved(39 open,18 partial). No push.
 
 Previous TLS maintenance: [living plan](tls-owner-batch-execplan.md), [repair receipt](parity/current-audit/tls-owner-batch-repair.md) and [validation](parity/current-audit/tls-owner-batch-validation.json). A02/A03/N03 share account REQUIRE mutation, certificate refresh, SQL reload, request-only trust provenance, startup variables and joined renewal. All three remain partial; counts stay29 repaired,57 unresolved(39 open,18 partial). Other54 unresolved IDs retain earlier evidence. The preceding DML read/FK receipt remains linked in the audit index. No push.
 

@@ -31,8 +31,8 @@ use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdStore};
 
 use super::failover::{tonic_client, PdChannelCache};
 use super::topology::{
-    invalid_topology, project_all_stores, project_extended_region, project_member_set,
-    project_region, project_scan_regions, project_store,
+    invalid_topology, project_extended_region, project_member_set, project_region,
+    project_scan_regions, project_store,
 };
 use super::{block_on_rpc, PdMemberObservation, RpcCompletion, RpcControl};
 
@@ -277,7 +277,7 @@ pub(super) fn get_all_stores(
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
     cluster_id: u64,
-) -> Result<Vec<PdStore>, PdClientError> {
+) -> Result<Vec<tidb_proto::metapb::Store>, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
@@ -296,7 +296,7 @@ pub(super) fn get_all_stores(
         response.header.as_ref(),
         cluster_id,
     )?;
-    project_all_stores(response.stores)
+    Ok(response.stores)
 }
 
 pub(super) fn get_gc_state(

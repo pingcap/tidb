@@ -2,7 +2,7 @@
 
 The [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
 
-The current register has **57 unresolved findings: 39 open and 18 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
+The current register has **57 unresolved findings: 37 open and 20 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 

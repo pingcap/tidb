@@ -144,6 +144,7 @@
 //! symbol-by-symbol rather than assumed.
 
 pub mod cdcutil;
+pub mod cluster_topology;
 pub mod disttask;
 pub mod domain_sysvars;
 pub mod domainutil;

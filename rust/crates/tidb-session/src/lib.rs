@@ -637,6 +637,7 @@ pub struct Session {
     /// here is the tier that has no node identity at all -- an embedded
     /// session -- and reads back as an empty table.
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     /// The domain identity getter shared with server-info publication.
     server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
@@ -906,6 +907,7 @@ impl Session {
             current_tso: tidb_executor::CurrentTso::default(),
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
+            cluster_topology: None,
             server_id_getter: Arc::new(|| 0),
             cluster_schema_version: None,
             workload_repository: None,
@@ -1205,7 +1207,39 @@ impl Session {
             let id = info.static_info.json_server_id;
             Arc::new(move || id)
         });
+        self.cluster_topology = Some(Arc::new(
+            tidb_domain::cluster_topology::ClusterTopology::new(Arc::clone(&syncer), None),
+        ));
         self.server_info_syncer = Some(syncer);
+    }
+
+    fn effective_replica_read(
+        &self,
+        mode: tidb_executor::ReplicaReadType,
+    ) -> tidb_executor::ReplicaReadType {
+        // Go GetReplicaRead gives the statement hint priority over the domain
+        // switch. Planner eligibility and execution must use the same decision.
+        if self.stmt_hints.has_replica_read_hint {
+            return tidb_executor::ReplicaReadType::from_raw(self.stmt_hints.replica_read);
+        }
+        if mode == tidb_executor::ReplicaReadType::ClosestAdaptive
+            && self
+                .cluster_topology
+                .as_ref()
+                .is_some_and(|topology| !topology.adaptive_enabled())
+        {
+            tidb_executor::ReplicaReadType::Leader
+        } else {
+            mode
+        }
+    }
+
+    /// Binds the domain topology and live adaptive replica-read decision.
+    pub fn set_cluster_topology(
+        &mut self,
+        topology: Arc<tidb_domain::cluster_topology::ClusterTopology>,
+    ) {
+        self.cluster_topology = Some(topology);
     }
 
     /// The `host:port` Go persists as an analyze job's instance, or
@@ -1435,61 +1469,44 @@ impl Session {
         ]]
     }
 
-    /// The TiDB-source rows from Go's `GetClusterServerInfo`, rendered in
-    /// `dataForTiDBClusterInfo` column order. The other six service/store
-    /// retrievers remain unimplemented; never manufacture their records.
+    /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.
     pub(crate) fn cluster_info_table_rows(
-        &self,
+        &mut self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
-        let Some(syncer) = self.server_info_syncer.as_ref() else {
+        let Some(topology) = self.cluster_topology.as_ref() else {
             return Ok(Vec::new());
         };
-        let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
+        let mut warnings = Vec::new();
+        let servers = topology.servers(&mut warnings);
+        for warning in warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        let servers = servers.map_err(DriverError::unsupported)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_secs() as i64);
-        let mut ids: Vec<&String> = all.keys().collect();
-        ids.sort();
-        Ok(ids
+        Ok(servers
             .into_iter()
-            .map(|id| {
-                let info = &all[id].static_info;
+            .map(|info| {
                 let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-                // Go leaves UPTIME empty and START_TIME at "now" when the
-                // node reports no start timestamp.
-                let (start_time, uptime) = if info.start_timestamp > 0 {
+                let (start, uptime) = if info.start_timestamp > 0 {
                     (
                         info.start_timestamp,
-                        // Go prints `time.Since(startTime).String()`.
                         go_uptime_string(now - info.start_timestamp),
                     )
                 } else {
                     (now, String::new())
                 };
-                // go's CLUSTER_INFO VERSION cell reads the TiDB semver
-                // without the MySQL-protocol prefix or the tag's `v`
-                // (`8.4.0-...`, not `8.0.11-TiDB-v8.4.0-...`).
-                let tidb_version = info.version_info.version.split_once("-TiDB-").map_or_else(
-                    || info.version_info.version.clone(),
-                    |(_, rest)| rest.strip_prefix('v').unwrap_or(rest).to_owned(),
-                );
                 vec![
-                    text("tidb"),
-                    text(&tidb_domain::serverinfo_syncer::join_host_port(
-                        &info.ip, info.port,
-                    )),
-                    text(&tidb_domain::serverinfo_syncer::join_host_port(
-                        &info.ip,
-                        info.status_port,
-                    )),
-                    text(&tidb_version),
-                    text(&info.version_info.git_hash),
-                    // Go stores this as a DATETIME with no fractional part,
-                    // built from the node's own clock (`types.FromGoTime`).
-                    datetime_datum(start_time),
+                    text(&info.server_type),
+                    text(&info.address),
+                    text(&info.status_address),
+                    text(&info.version),
+                    text(&info.git_hash),
+                    datetime_datum(start),
                     text(&uptime),
-                    Datum::Int(info.json_server_id as i64),
+                    Datum::UInt(info.server_id),
                 ]
             })
             .collect())
@@ -2362,7 +2379,10 @@ impl Session {
             // evaluation-origin marker.
             let eval_fatal = matches!(error, DriverError::JsonDocumentNullKey)
                 || (reported.is_from_evaluation()
-                    && matches!(reported.code, 3140 | 3143 | 1411 | 1690 | 1105 | 1210 | 3158));
+                    && matches!(
+                        reported.code,
+                        3140 | 3143 | 1411 | 1690 | 1105 | 1210 | 3158
+                    ));
             if eval_fatal {
                 // Go's warning buffer stays EMPTY for these: the evaluation
                 // raised the error through `HandleError` at Error level, so
@@ -2374,18 +2394,14 @@ impl Session {
                 self.warnings
                     .retain(|w| !(w.code == reported.code && w.message == reported.message));
             }
-            if reported.code != 1148
-                && reported.code != 3057
-                && !eval_fatal
-            {
+            if reported.code != 1148 && reported.code != 3057 && !eval_fatal {
                 // The inner execution may have already filed this exact
                 // error row (the SET arm's `handleErr` append through the
                 // delegated-account route); go's SHOW WARNINGS carries it
                 // once.
-                let duplicated = self
-                    .warnings
-                    .last()
-                    .map_or(false, |w| w.code == reported.code && w.message == reported.message);
+                let duplicated = self.warnings.last().map_or(false, |w| {
+                    w.code == reported.code && w.message == reported.message
+                });
                 if !duplicated {
                     self.append_warning(WarningLevel::Error, reported.code, reported.message);
                 }
@@ -2577,8 +2593,6 @@ mod tests_compare_refinement;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]
-mod tests_observation_batch;
-#[cfg(test)]
 mod tests_datetime_year_compare;
 #[cfg(test)]
 mod tests_deadlock_history;
@@ -2672,6 +2686,8 @@ mod tests_multi_table_dml;
 mod tests_mview_session_vars;
 #[cfg(test)]
 mod tests_non_prepared_plan_cache;
+#[cfg(test)]
+mod tests_observation_batch;
 #[cfg(test)]
 mod tests_outer_join_elimination;
 #[cfg(test)]
