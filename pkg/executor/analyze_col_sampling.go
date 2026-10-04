@@ -870,7 +870,10 @@ workLoop:
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if statistics.UniqueBySchema(e.tableInfo, !task.isColumn, task.id) {
+				// Distinct values have no frequent value for TopN, and their
+				// row count is their NDV.
 				numTopN = 0
+				collector.Unique = true
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {

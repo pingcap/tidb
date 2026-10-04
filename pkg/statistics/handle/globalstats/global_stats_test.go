@@ -641,7 +641,8 @@ func TestGlobalStatsNDV(t *testing.T) {
 	checkNDV(13, 3, 3, 3, 4)
 
 	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV of the
-	// 32768 rows of tu, also for the single-column unique key on a.
+	// 32768 rows of tu, except for the column and index of the single-column
+	// unique key on a, which take the exact row count.
 	tk.MustExec(`create table tu (a int, b int not null, c int, primary key (a) nonclustered,
 	unique key ab(a, b), key ic(c)) partition by hash(a) partitions 2`)
 	tk.MustExec("insert into tu values (1, 1, 1)")
@@ -650,8 +651,9 @@ func TestGlobalStatsNDV(t *testing.T) {
 	}
 	// Two rows of tg move from p0 to p1, and only p1 is analyzed again. The
 	// stale stats of p0 and the new stats of p1 then both hold the values 1
-	// and 2 of c, which the global unique index uc keeps distinct. The merged
-	// FMSketch counts them once, so the global NDV of c and uc stays 6.
+	// and 2 of c, which the global unique index uc keeps distinct. The
+	// partition NDVs would count them twice, so the global NDV of c and uc
+	// comes from the merged FMSketch, which counts them once.
 	tk.MustExec("create table tg (a int, c int, unique key uc(c) global) partition by hash(a) partitions 2")
 	tk.MustExec("insert into tg values (0, 1), (2, 2), (4, 3), (6, 4), (8, null), (10, null), (1, 5), (3, 6)")
 	tk.MustExec("analyze table tg")
@@ -666,9 +668,9 @@ func TestGlobalStatsNDV(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
 		tk.MustExec("analyze table tu")
 		require.Equal(t, []string{
-			"global PRIMARY 32236", "global a 32236", "global ab 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"global PRIMARY 32768", "global a 32768", "global ab 32516", "global b 32236", "global c 32236", "global ic 32236",
 			"p0 PRIMARY 16384", "p0 a 16384", "p0 ab 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
-			"p1 PRIMARY 16128", "p1 a 16128", "p1 ab 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+			"p1 PRIMARY 16384", "p1 a 16384", "p1 ab 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
 		}, ndvs("tu"))
 		tk.MustExec("analyze table tg partition p1")
 		require.Equal(t, []string{
