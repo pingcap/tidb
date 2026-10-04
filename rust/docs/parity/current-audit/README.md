@@ -2,14 +2,14 @@
 
 The current register has **86 findings: 29 repaired and 57 unresolved (39 open, 18 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
 
-The [DML read/FK owner batch](dml-trigger-owner-batch-repair.md) advances E02/E03 together: single and joined UPDATE/DELETE consume retained physical reads, and FK checks/cascades consume resolved root policy. It removes the remaining single-table matrix interpreter, obsolete rollback harnesses, nine tracked adapter/false-concurrency tests and redundant REPLACE prevalidation. Eleven Go-derived FK cases move to the shared session harness. The grouped session run passes 260 tests. E02/E03 remain partial for indexed FK lookup/locking, complete cascade substatements and final chunk/write ownership. Other findings retain earlier evidence.
+The [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current DML plan](../../dml-trigger-owner-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current TLS plan](../../tls-owner-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](dml-trigger-owner-batch-validation.json): exact source/log identities, removed tests and verification limits.
+- [Validation receipt](tls-owner-batch-validation.json): exact source/log identities and verification limits.
 
 Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `19a56ccda1e128218cd33c69709038219aced9bc` at this checkpoint.
 
@@ -29,6 +29,7 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 
 The repeated milestone summaries and stale count tables formerly copied into this index are removed. The original receipts below and Git history retain their source pins and validation limits. Complete TiPB declaration before-images live in [tipb-mismatches-before.json](tipb-mismatches-before.json); other protocol before/after evidence lives in [protocol-projections.json](protocol-projections.json) and [protocol-contracts-after.json](protocol-contracts-after.json). These replace duplicated declaration tables, not the underlying obligations.
 
+- [DML read/FK owner batch](dml-trigger-owner-batch-repair.md)
 - [shared-read removal](dml-interpreter-removal-repair.md)
 - [DML removal continuation](dml-removal-batch-repair.md)
 - [DML metadata batch](dml-owner-batch-repair.md)

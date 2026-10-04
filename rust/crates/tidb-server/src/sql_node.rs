@@ -40,7 +40,7 @@ use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{
     serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
-use crate::mysql_tls::{resolve_server_tls_with_policy, MysqlServerTls};
+use crate::mysql_tls::{MysqlTlsManager, TlsRotation};
 use crate::node_config::{NodeConfig, MAX_CONNECTION_WORKERS};
 use crate::resultset_source::ResultSetSource;
 use crate::wire_status::WireStatus;
@@ -1433,6 +1433,14 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     /// Opens a session from already-running process authorities.
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError>;
 
+    /// Connect SQL and new connections to the same process TLS owner.
+    fn install_tls_manager(
+        &self,
+        _manager: Arc<dyn tidb_session::process::TlsManager>,
+        _variables: Vec<(&'static str, String)>,
+    ) {
+    }
+
     /// Returns the server's session manager for process memory control.
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         None
@@ -1577,7 +1585,7 @@ struct WorkerPool {
 #[derive(Clone)]
 struct WorkerConnectionConfig {
     max_allowed_packet: usize,
-    tls: Option<MysqlServerTls>,
+    tls: Option<Arc<MysqlTlsManager>>,
 }
 
 struct WorkerHandle {
@@ -1789,9 +1797,10 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     max_allowed_packet: usize,
-    /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
-    /// the only thing that lets a connection advertise `CLIENT_SSL`.
-    tls: Option<MysqlServerTls>,
+    /// Shared TLS owner; each accepted connection uses its current material
+    /// to advertise `CLIENT_SSL` and retains that snapshot through handshake.
+    tls: Arc<MysqlTlsManager>,
+    _tls_rotation: Option<TlsRotation>,
     /// Go's `Instance.MaxConnections`: the simultaneous-connection limit,
     /// where zero means unlimited (`server.go`'s `checkConnectionCount`).
     /// It also bounds the warm pool; demand past it spawns one dedicated
@@ -1868,23 +1877,21 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         factory: Arc<F>,
         users: Arc<ConfiguredUserStore>,
     ) -> Result<Self, SqlNodeError> {
-        let tls = resolve_server_tls_with_policy(
-            config.ssl_cert.as_deref(),
-            config.ssl_key.as_deref(),
-            config.auto_tls,
-            config.ssl_ca.as_deref(),
-            &config.min_tls_version,
-        )
-        .map_err(|error| SqlNodeError::Tls(error.to_string()))?;
+        let tls =
+            MysqlTlsManager::new(config).map_err(|error| SqlNodeError::Tls(error.to_string()))?;
         let listener = TcpListener::bind((config.host, config.port)).map_err(SqlNodeError::Bind)?;
         listener
             .set_nonblocking(true)
             .map_err(SqlNodeError::Listener)?;
         eprintln!(
             "{{\"event\":\"mysql_tls\",\"enabled\":{},\"origin\":{:?}}}",
-            tls.is_some(),
-            tls.as_ref().map_or("none", MysqlServerTls::origin)
+            tls.current().is_some(),
+            tls.current()
+                .as_ref()
+                .map_or("none", |material| material.origin())
         );
+        factory.install_tls_manager(tls.clone(), tls.variables());
+        let tls_rotation = TlsRotation::start(Arc::clone(&tls));
         let session_manager = factory.session_manager();
         let server_memory_limit = session_manager
             .as_ref()
@@ -1899,6 +1906,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             )),
             max_allowed_packet: config.max_allowed_packet,
             tls,
+            _tls_rotation: tls_rotation,
             worker_count: config.max_connections,
             shutdown: ShutdownHandle::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
@@ -1984,7 +1992,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.tracker,
             WorkerConnectionConfig {
                 max_allowed_packet: self.max_allowed_packet,
-                tls: self.tls.clone(),
+                tls: Some(Arc::clone(&self.tls)),
             },
         )?;
 
@@ -1993,7 +2001,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let mut next_worker_index = warm_workers;
         let connection_config = WorkerConnectionConfig {
             max_allowed_packet: self.max_allowed_packet,
-            tls: self.tls.clone(),
+            tls: Some(Arc::clone(&self.tls)),
         };
         let accept_result = (|| loop {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
@@ -2183,6 +2191,10 @@ fn serve_connection_work<F: QuerySessionFactory>(
         cancellation,
         registration: _registration,
     } = work;
+    let tls = connection
+        .tls
+        .as_ref()
+        .and_then(|manager| manager.current());
     if let Err(error) = serve_mysql_connection_with_runtime(
         stream,
         peer_addr,
@@ -2192,7 +2204,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
         tracker,
         MysqlConnectionRuntime {
             max_allowed_packet: connection.max_allowed_packet,
-            tls: connection.tls.as_ref(),
+            tls: tls.as_ref(),
         },
     ) {
         let message = error.to_string();

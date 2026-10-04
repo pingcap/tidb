@@ -73,7 +73,7 @@ fi
 echo "${reset}"
 
 echo -ne "Checking Rust tidb-server build (locked)... "
-rust_files=$(git diff --cached --name-only --diff-filter=ACMR | grep '^rust/' || true)
+rust_files=$(git diff --cached --name-only --diff-filter=ACMRD | grep '^rust/' || true)
 if [[ -n "${rust_files}" ]]; then
     if (cd rust && cargo build --locked -p tidb-server); then
         echo "${green}OK"

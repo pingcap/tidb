@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-04",
+  "start": "b50ef5254ea601e04b07b300246b1d3acca1d6ea",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "concurrent_remote_preserved_unmerged": "91010d96bb3e32468bd56ea2b07d255248485489",
+  "advanced": [
+    "A02",
+    "A03",
+    "N03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "source_sha256": {
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "7c48e4e655561f43e9a1c6acedf037cfb45929d3414ee670ddca3a55ecf60e5f",
+    "rust/crates/tidb-server/src/mysql_tls.rs": "531f9624fb6f3206b01d126b1a7fadc2bdefef8097b396a41db55d06c86fa9f6",
+    "rust/crates/tidb-server/src/pipeline_session.rs": "d4f364a7263bd8a96477d17a6a9717f02170e673a3d9608debe2ea80ac07abea",
+    "rust/crates/tidb-server/src/sql_node.rs": "7f0242bacbc0ea731d0c38da0ad3fecbb10162b749dadcbb952cea5c5e1ecc34",
+    "rust/crates/tidb-server/tests/mysql_tls_source.rs": "a063a4a751c4ad497792dd0b2827f53d266a039539d0fec10573e0b36b08e2ac",
+    "rust/crates/tidb-session/src/account.rs": "32e46f8e91a4a4054c5544c888ad29436f21fedc919aff0fbb1f439d2d79b6cf",
+    "rust/crates/tidb-session/src/classify.rs": "03787b382e020feb56259bdf5c8c59ae6038eabe84848da37bbe39f8c7eb4bcf",
+    "rust/crates/tidb-session/src/dispatch.rs": "2b06e1e3ab4658eb3c954837ee0640fd2aa457c1495a4d7a9c0d341c2403e6e9",
+    "rust/crates/tidb-session/src/process.rs": "9fe8155b315ff46b7322b8c79f32a4eb692200fd387f25575e6eca16b49b8808",
+    "rust/crates/tidb-session/src/tests_grants/static_grants.rs": "d00eb133d8f4ef35130eaf24337e6147e77a8fcee06f2f76ed92c7d5c391429a",
+    "hooks/pre-commit": "0e8a42b7bd1bb8dc6ac1d46c956dce8aa48a0bc625b95820e3733a060d29ff6a"
+  },
+  "checks": [
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/tls-owner-batch/wire-regressions.py baseline (original four-case runner)",
+      "exit_code": 1,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/baseline-wire.log",
+      "sha256": "4da52fe2319c88395881b1637756c5cfc6d64e5b8770485644317c4da0324dd0",
+      "passed": 0,
+      "failed": 4
+    },
+    {
+      "command": "cargo test --locked -p tidb-session -p tidb-server --lib --test all -- tests_grants mysql_tls tls_owner configured_user_store:: sql_node::tests --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/grouped-tests.log",
+      "sha256": "f6c7f7250aa90b740f23e7dd1931487bca505527367e6be3b4a5602847b7667a",
+      "passed": 150,
+      "failed": 0,
+      "ignored": 0,
+      "targets": {
+        "server_lib": 25,
+        "server_all": 7,
+        "session_lib": 118,
+        "session_all": 0
+      }
+    },
+    {
+      "command": "Same grouped command after adding SQL reload regression: moved-value test compile error",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/reload-test-compile-error.log",
+      "sha256": "3c84ec84e615b13dc62de36c6c394e3499e72b6c250e21876a4c1d81b34356be"
+    },
+    {
+      "command": "Same grouped command after compile fix: NodeConfig test fixture missing argv[0]",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/reload-test-fixture-error.log",
+      "sha256": "e5a84580114a46432f7f06ec00ff990c87ab9430fb6d0db6f6d8947ddf6c85b8",
+      "passed": 25,
+      "failed": 1
+    },
+    {
+      "command": "Server grouped retry: NodeConfig fixture missing explicit account source",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/reload-test-auth-fixture-error.log",
+      "sha256": "b4f2e1683cd3a3e86ab5107b599425685b858ec59f9292257c5734d8494e6dc3",
+      "passed": 25,
+      "failed": 1
+    },
+    {
+      "command": "cargo test --locked -p tidb-server --lib -- mysql_tls configured_user_store:: sql_node::tests --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/final-server-tests.log",
+      "sha256": "59ee6faf99d1f9d8f8c476ca2b28550aa8154c43e07a85655a9b214204cd4208",
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "command": "cargo check --locked -p tidb-session -p tidb-server --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/all-targets.log",
+      "sha256": "f828fc3dca78a18901d402d1458de9ccb434ca731e8bc6d0d6ae037ced351521"
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "rustfmt --check --edition 2021 --config skip_children=true crates/tidb-server/src/mysql_tls.rs crates/tidb-server/tests/mysql_tls_source.rs crates/tidb-session/src/process.rs crates/tidb-session/src/tests_grants/static_grants.rs",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/format-2021.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/tls-owner-batch/wire-regressions.py corrected-precommit",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/corrected-precommit-wire.log",
+      "sha256": "40ba91325ceead9041010463754cee9dd482b35483a3992f18d0508028fb67bb",
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "command": "bash -n hooks/pre-commit; isolated temporary Git index deletion: compare ACMR against ACMRD",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/tls-owner-batch/hook-deletion-filter.log",
+      "sha256": "527527a5a51f6e0ee953635ad34627b134fff7de08696ee692f3c7acd40edd7b",
+      "result": "Deletion-only rust/Cargo.toml is skipped before and selected after; actual checkout/index preserved."
+    }
+  ],
+  "distinct_rust_tests_passed": 151,
+  "zero_selection": "The session all aggregate matched zero filters and is not counted as coverage. Server25 plus server integration7 plus session118 passed, followed by server26 after adding the durable SQL reload regression. Only151 distinct Rust tests are claimed.",
+  "wire": {
+    "baseline_binary_sha256": "235f0ad7d02eef326aef424b5ae606ca521890a64efbf56f87f8e2560c616346",
+    "runner": "/workspace/.cloud-setup/tls-owner-batch/wire-regressions.py",
+    "runner_sha256": "0e69bc144282fdfda7b996082a514e2c9c2e416f9e37ab6eb5314208ca1d8a0b",
+    "baseline": "Original four probes all fail. Extended six-case corrected precommit runner passes including mysql.global_priv/FLUSH policy, reload rollback/no-rollback and SUPER1227. Final rebuilt-server replay occurs after the actual commit hook.",
+    "probe_correction": "First rebuilt probe exposed USAGE incorrectly mapped to an unregistered dynamic privilege, now fixed. Its expected SELECT capability strings were wrong: Go GetNativeValType converts YES to0 for TypeBool; SHOW returns YES. The catalog type is preserved."
+  },
+  "build_recovery": {
+    "record": "/workspace/.cloud-setup/tls-owner-batch/observed-build-errors.txt",
+    "sha256": "114d14d387955f5e1554c2cfd337f2739f5ec37356ea96e2eaab3dcdd223f703",
+    "cache_pruning": "/workspace/.cloud-setup/tls-owner-batch/cache-pruning.json",
+    "cache_pruning_sha256": "cbd1b9cbda9c6469905ef690299eb12f9f542064802ee30f40785e51f1b1d83b",
+    "notes": "Initial Cargo integration target linking exhausted32GiB disk;49 superseded archives/failed temporaries reclaimed4847MiB. The original link log was overwritten, so the diagnostic is an observation, not retained raw output. Wrong-cwd Cargo invocation was terminated and not accepted as validation."
+  },
+  "removals": "Removed unsupported GRANT REQUIRE branch, static node/worker TLS ownership and stale self-signed lifetime comment; both production session factories consume the shared manager. Existing meaningful Go-derived tests retained; no new runner/dependency/manifest/lockfile changes. Current N03 description and index consolidate superseded narratives rather than appending another stale status layer.",
+  "commit_gate": {
+    "hook": "hooks/pre-commit",
+    "core_hooks_path": "hooks",
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "mode": "Normal commit invokes actual hook. Exact SHA/hook result and final six-case MySQL/unistore outcome are written externally to /workspace/.cloud-setup/tls-owner-batch/final-handoff.json after completion. No push.",
+    "deletion_filter": "ACMRD includes Rust deletion-only commits; actual mixed batch continues to execute the identical locked build."
+  },
+  "limits": [
+    "A02/A03/N03 remain partial; no complete Go package acceptance. Other54 unresolved IDs retain previous evidence.",
+    "Durable login-counter writes, complete privilege-cache/platform owners and native deployment defaults/config consumers remain.",
+    "Generated RSA key sizing, hostname/CN/serial/temp-file publication still differ from Go. Broader TLS platform/algorithm/certificate parsing and secure startup remain unaccepted.",
+    "Full Go suites, live multi-node TiKV, workload benchmarks and fresh-task unpublished-commit restoration not verified.",
+    "Prior parser14 and expression3 failures were not rerun or erased.",
+    "No push or dry run; native unchanged; concurrent remote changes preserved."
+  ]
+}

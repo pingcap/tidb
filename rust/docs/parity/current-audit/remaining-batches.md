@@ -1,8 +1,6 @@
 # Structural execution batches for the remaining findings
 
-The [DML read/FK owner batch](dml-trigger-owner-batch-repair.md) advances E02/E03 together: single and joined UPDATE/DELETE consume retained physical reads, and FK checks/cascades consume resolved root policy. It removes the remaining single-table matrix interpreter, obsolete rollback harnesses, nine tracked adapter/false-concurrency tests and redundant REPLACE prevalidation. Eleven Go-derived FK cases move to the shared session harness. The grouped session run passes 260 tests. E02/E03 remain partial for indexed FK lookup/locking, complete cascade substatements and final chunk/write ownership. Other findings retain earlier evidence.
-
-Latest B05 maintenance: [admission-policy batch](admission-policy-batch-repair.md) repairs retained-password and specified certificate consumers together. Counts stay 57 unresolved; remaining durable login-counter/GRANT/cache and certificate reload/rotation/no-CA/platform owners stay explicit. Other 55 IDs retain earlier evidence.
+The [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
 
 The current register has **57 unresolved findings: 39 open and 18 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
 

@@ -3170,6 +3170,17 @@ impl QuerySessionFactory for ClusterSessionFactory {
         Ok(opened)
     }
 
+    fn install_tls_manager(
+        &self,
+        manager: Arc<dyn tidb_session::process::TlsManager>,
+        variables: Vec<(&'static str, String)>,
+    ) {
+        self.processes.set_tls_manager(manager);
+        for (name, value) in variables {
+            self.global_vars.set_startup(name, value);
+        }
+    }
+
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         Some(Arc::new(self.processes.clone()))
     }

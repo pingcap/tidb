@@ -438,12 +438,14 @@ impl Session {
             Stmt::Ddl(ddl)
                 if matches!(
                     ddl.as_ref(),
-                    tidb_ast::DdlStmt::CreateSequence(_)
+                    tidb_ast::DdlStmt::AlterInstance(_)
+                        | tidb_ast::DdlStmt::CreateSequence(_)
                         | tidb_ast::DdlStmt::DropSequence(_)
                         | tidb_ast::DdlStmt::AlterSequence(_)
                 ) =>
             {
-                // A sequence lives in the session's own catalog
+                // ALTER INSTANCE changes process TLS state. A sequence lives
+                // in the session's own catalog
                 // (`run_create_sequence_in`/`run_drop_sequence_in`): its
                 // allocators are that catalog's Arc handles, and the builtins
                 // resolve through the statement's catalog snapshot. No

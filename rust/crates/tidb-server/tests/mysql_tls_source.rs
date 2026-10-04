@@ -202,3 +202,47 @@ fn temporary_directory(label: &str) -> PathBuf {
     std::fs::create_dir_all(&directory).expect("create temporary directory");
     directory
 }
+
+/// Go util.LoadTLSCertificates.GetCertificate reloads files per handshake,
+/// and TestReloadTLS requires an invalid replacement to retain usable material.
+#[test]
+fn tls_owner_file_replacement_reloads_and_invalid_material_retains_previous_pair() {
+    let directory = temporary_directory("tls-file-reload");
+    let (cert, key) = write_self_signed_pem(&directory);
+    let tls = MysqlServerTls::from_pem_files(&cert, &key).unwrap();
+    let original = std::fs::read(&cert).unwrap();
+    write_self_signed_pem(&directory);
+    assert_ne!(std::fs::read(&cert).unwrap(), original);
+    // The new client trusts only the replacement. A static resolver fails.
+    for corrupt in [false, true] {
+        let mut client = client_session(&cert);
+        let replacement = std::fs::read(&cert).unwrap();
+        if corrupt {
+            std::fs::write(&cert, "invalid replacement").unwrap();
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let material = tls.clone();
+        let server = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut stream = ClientStream::plain(socket);
+            stream.upgrade_to_tls(&material).unwrap();
+            stream.write_all(&[42]).unwrap();
+            stream.flush().unwrap();
+        });
+        let mut socket = TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let mut stream = rustls::Stream::new(&mut client, &mut socket);
+        let mut byte = [0];
+        stream.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [42]);
+        server.join().unwrap();
+        std::fs::write(&cert, replacement).unwrap();
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

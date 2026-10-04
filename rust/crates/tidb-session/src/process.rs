@@ -235,6 +235,13 @@ impl ProcessEntry {
     }
 }
 
+/// Go SessionManager's TLS configuration operation. The server retains the
+/// material/transport owner; SQL supplies only the reload policy.
+pub trait TlsManager: Send + Sync {
+    /// Reload certificates and publish the new configuration on success.
+    fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String>;
+}
+
 /// The server's live connection registry, shared by every connection thread.
 ///
 /// Cloning shares one registry, as every session of one TiDB instance sees
@@ -243,6 +250,7 @@ impl ProcessEntry {
 #[derive(Clone, Default)]
 pub struct ProcessRegistry {
     entries: Arc<Mutex<HashMap<u64, SharedProcessEntry>>>,
+    tls: Arc<Mutex<Option<Arc<dyn TlsManager>>>>,
 }
 
 impl std::fmt::Debug for ProcessRegistry {
@@ -254,6 +262,25 @@ impl std::fmt::Debug for ProcessRegistry {
 }
 
 impl ProcessRegistry {
+    /// Attach this server's shared TLS configuration owner.
+    pub fn set_tls_manager(&self, manager: Arc<dyn TlsManager>) {
+        *self
+            .tls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(manager);
+    }
+
+    /// Go ALTER INSTANCE uses the same manager as the connection accept path.
+    pub(crate) fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
+        let manager = self
+            .tls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "TLS reload requires a running server".to_owned())?;
+        manager.reload_tls(no_rollback_on_error)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, SharedProcessEntry>> {
         self.entries
             .lock()

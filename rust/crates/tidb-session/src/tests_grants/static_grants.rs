@@ -495,3 +495,78 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
         other => panic!("expected RevokeNoTableGrant, got {other:?}"),
     }
 }
+
+/// Go GrantExec.grantGlobalPriv and tlsOption2GlobalPriv apply REQUIRE at
+/// every scope, preserving policy when omitted and rolling back all grantees.
+#[test]
+fn tls_owner_grant_require_shares_account_policy_at_every_scope() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session.run("CREATE DATABASE tls_grant").unwrap();
+    session.run("CREATE TABLE tls_grant.t(a INT)").unwrap();
+    session.run("CREATE USER tls_grantee, tls_peer").unwrap();
+    for (scope, requirement, expected) in [
+        ("*.*", "SSL", r#"{"ssl_type":1}"#),
+        ("tls_grant.*", "X509", r#"{"ssl_type":2}"#),
+        (
+            "tls_grant.t",
+            "SUBJECT '/CN=client'",
+            r#"{"ssl_type":3,"x509_subject":"/CN=client"}"#,
+        ),
+    ] {
+        session
+            .run(&format!(
+                "GRANT SELECT ON {scope} TO tls_grantee REQUIRE {requirement}"
+            ))
+            .unwrap();
+        let policy = || {
+            registry
+                .global_priv_rows()
+                .into_iter()
+                .find(|row| row.user == "tls_grantee")
+                .unwrap()
+                .priv_json
+        };
+        assert_eq!(policy(), expected);
+        session
+            .run(&format!("GRANT USAGE ON {scope} TO tls_grantee"))
+            .unwrap();
+        assert_eq!(policy(), expected);
+        assert_eq!(
+            session
+                .run(&format!(
+                    "GRANT INSERT ON {scope} TO tls_grantee,tls_missing REQUIRE NONE"
+                ))
+                .unwrap_err()
+                .to_mysql_error()
+                .code,
+            1410
+        );
+        assert_eq!(policy(), expected);
+        assert_eq!(
+            session
+                .run(&format!(
+                    "GRANT INSERT ON {scope} TO tls_grantee,tls_peer REQUIRE CIPHER 'invalid'"
+                ))
+                .unwrap_err()
+                .to_mysql_error()
+                .code,
+            1105
+        );
+        assert_eq!(policy(), expected);
+    }
+    assert!(!registry.has_global_priv("tls_grantee", "%", privilege::GlobalPriv::Insert));
+    session
+        .run("GRANT USAGE ON *.* TO tls_grantee REQUIRE NONE")
+        .unwrap();
+    assert_eq!(
+        registry
+            .global_priv_rows()
+            .into_iter()
+            .find(|row| row.user == "tls_grantee")
+            .unwrap()
+            .priv_json,
+        "{}"
+    );
+}

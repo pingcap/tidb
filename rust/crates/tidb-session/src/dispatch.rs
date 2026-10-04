@@ -501,6 +501,21 @@ impl Session {
                     if_exists,
                     users,
                 } => Ok(Some(self.drop_user_stmt(*is_role, *if_exists, users)?)),
+                tidb_ast::DdlStmt::AlterInstance(alter) => {
+                    // Go planbuilder requires SUPER, not RELOAD or the
+                    // SYSTEM_VARIABLES_ADMIN dynamic privilege.
+                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Super) {
+                        return Err(DriverError::SpecificAccessDenied("SUPER".into()));
+                    }
+                    let process = self.process.as_ref().ok_or_else(|| {
+                        DriverError::unsupported("TLS reload requires a running server")
+                    })?;
+                    process
+                        .registry()
+                        .reload_tls(alter.no_rollback_on_error)
+                        .map_err(DriverError::unsupported)?;
+                    Ok(Some(StmtOutput::Affected(0)))
+                }
                 tidb_ast::DdlStmt::AlterUser(alter) => Ok(Some(self.alter_user_stmt(alter)?)),
                 tidb_ast::DdlStmt::RenameUser { pairs } => Ok(Some(self.rename_user_stmt(pairs)?)),
                 tidb_ast::DdlStmt::CreateRole {

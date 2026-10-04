@@ -1288,10 +1288,8 @@ impl Session {
         Ok(StmtOutput::Affected(0))
     }
 
-    /// `GRANT <static privs> ON <level> TO <user>... [WITH GRANT OPTION]` --
-    /// Go's `grant.go` GLOBAL/DATABASE/TABLE scopes. Roles, dynamic
-    /// privileges, and column lists are refused rather than silently
-    /// accepted or dropped.
+    /// Go's `grant.go` GLOBAL/DATABASE/TABLE privileges and shared REQUIRE
+    /// policy. Dynamic privileges are global; columns use the table owner.
     ///
     /// `WITH GRANT OPTION` is just `mysql.GrantPriv` ORed into the same
     /// scope's privilege mask, which is why it works identically at all
@@ -1312,11 +1310,15 @@ impl Session {
         } else {
             0
         };
-        if !grant.tls_options.is_empty() {
-            return Err(DriverError::unsupported(
-                "GRANT ... REQUIRE is not supported yet",
-            ));
-        }
+        // Go grantGlobalPriv shares CREATE/ALTER USER's policy producer.
+        // Privilege/target validation precedes policy validation and mutation.
+        // An omitted REQUIRE leaves the account's existing policy untouched.
+        let load_tls_policy = || {
+            (!grant.tls_options.is_empty())
+                .then(|| tls_policy_of(&grant.tls_options))
+                .transpose()
+        };
+        let tls_policy;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "GRANT requires a server front end with a privilege registry",
@@ -1353,6 +1355,7 @@ impl Session {
                 let mask = static_mask | if names_static { with_grant } else { 0 };
                 self.require_grant_privileges("", "", static_mask, &dynamic, true)?;
                 all_grantees_exist(&grant.users)?;
+                tls_policy = load_tls_policy()?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1380,6 +1383,7 @@ impl Session {
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
                 self.require_grant_privileges(&database, "", mask, &[], true)?;
                 all_grantees_exist(&grant.users)?;
+                tls_policy = load_tls_policy()?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1419,6 +1423,7 @@ impl Session {
                 // normalises the spelling to the table's own: `GRANT SELECT
                 // (A)` prints back as `SELECT(a)`.
                 let columns = self.resolve_grant_columns(&database, table, &columns)?;
+                tls_policy = load_tls_policy()?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1434,6 +1439,11 @@ impl Session {
                         registry.grant_column(user, host, &database, table, column, *column_mask);
                     }
                 }
+            }
+        }
+        if let Some(policy) = tls_policy {
+            for spec in &grant.users {
+                registry.set_tls_policy(&spec.user.user, &spec.user.host, &policy);
             }
         }
         Ok(StmtOutput::Affected(0))
@@ -1738,6 +1748,11 @@ impl Session {
             // (Go: `grantDynamicPriv`'s level check precedes its registry
             // check; `REVOKE`'s `checkDynamicPrivilegeUsage` runs even
             // earlier).
+            if !privilege.dynamic && privilege.name == "USAGE" {
+                // Go grantLevelPriv: no privilege bit, but REQUIRE still
+                // updates the account through grantGlobalPriv.
+                continue;
+            }
             if privilege.dynamic {
                 return Err(DriverError::IllegalPrivilegeLevel(privilege.name.clone()));
             }
@@ -1812,6 +1827,9 @@ impl Session {
                     ));
                 }
                 dynamic.push(privilege.name.to_ascii_uppercase());
+                continue;
+            }
+            if privilege.name == "USAGE" {
                 continue;
             }
             match privilege::GlobalPriv::from_grant_name(&privilege.name) {

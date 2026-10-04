@@ -35,7 +35,7 @@
 use std::fs;
 use std::io::{self, BufReader, IoSlice, Read, Write};
 use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -75,6 +75,7 @@ pub struct MysqlServerTls {
     key: Arc<PrivateKeyDer<'static>>,
     /// How the material was obtained, for the startup line.
     origin: &'static str,
+    verifies_client_certificates: bool,
 }
 
 impl std::fmt::Debug for MysqlServerTls {
@@ -90,27 +91,37 @@ impl MysqlServerTls {
     /// Loads a PEM certificate chain and private key, as Go's
     /// `tls.LoadX509KeyPair(cert, key)` does.
     pub fn from_pem_files(cert: &Path, key: &Path) -> Result<Self, MysqlTlsError> {
+        let paths = (cert.to_owned(), key.to_owned());
         let certs = read_certificates(cert)?;
         let key = read_private_key(key)?;
-        Self::from_material(certs, key, "configured --ssl-cert/--ssl-key")
+        let mut tls = Self::from_material(certs, key, "configured --ssl-cert/--ssl-key")?;
+        tls.watch_certificate_files(paths)?;
+        Ok(tls)
     }
 
     /// Generates an in-memory self-signed certificate, mirroring Go's
     /// `createTLSCertificates` fallback under `auto-tls`.
     ///
     /// Go writes the pair to `TempStoragePath`; this node keeps it in memory
-    /// because nothing else in this process re-reads it, and a file would be
-    /// one more private key on disk for a certificate that lives exactly as
-    /// long as the process.
+    /// under the shared reload/rotation owner. RSA-key-size and temporary
+    /// file publication remain separate Go parity obligations.
     pub fn self_signed() -> Result<Self, MysqlTlsError> {
-        let certified = rcgen::generate_simple_self_signed(vec![
-            "localhost".to_owned(),
-            "127.0.0.1".to_owned(),
-        ])
-        .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
-        let key = PrivateKeyDer::try_from(certified.signing_key.serialize_der())
+        let now = std::time::SystemTime::now();
+        let mut params =
+            rcgen::CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
+                .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
+        // Go CreateCertificates makes a 90-day certificate, renewed at 30 days.
+        params.not_before = now.into();
+        params.not_after = (now + Duration::from_secs(90 * 24 * 60 * 60)).into();
+        let pair = rcgen::KeyPair::generate()
             .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
-        let certificate = certified.cert.der().clone();
+        let certificate = params
+            .self_signed(&pair)
+            .map_err(|error| MysqlTlsError::Generation(error.to_string()))?
+            .der()
+            .clone();
+        let key = PrivateKeyDer::try_from(pair.serialize_der())
+            .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
         Self::from_material(vec![certificate], key, "auto-generated self-signed")
     }
 
@@ -129,6 +140,24 @@ impl MysqlServerTls {
         ca: Option<&Path>,
         min_version: &str,
     ) -> Result<Self, MysqlTlsError> {
+        Self::from_material_with_client_auth(
+            certs,
+            key,
+            origin,
+            ca,
+            min_version,
+            tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
+        )
+    }
+
+    fn from_material_with_client_auth(
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        origin: &'static str,
+        ca: Option<&Path>,
+        min_version: &str,
+        require_secure: bool,
+    ) -> Result<Self, MysqlTlsError> {
         if !matches!(min_version, "" | "TLSv1.2" | "TLSv1.3") {
             eprintln!("Invalid TLS version {min_version:?}, using TLSv1.2 minimum");
         }
@@ -141,25 +170,34 @@ impl MysqlServerTls {
         let builder = ServerConfig::builder_with_provider(Arc::clone(&provider))
             .with_protocol_versions(versions)
             .map_err(|error| MysqlTlsError::Material(error.to_string()))?;
+        let mut verifies_client_certificates = false;
+        let request_only = || {
+            Arc::new(RequestClientCert {
+                provider: Arc::clone(&provider),
+            })
+        };
         let builder = if let Some(ca) = ca {
             let file = fs::File::open(ca)
                 .map_err(|error| MysqlTlsError::Material(format!("{}: {error}", ca.display())))?;
             let mut roots = rustls::RootCertStore::empty();
             // Go AppendCertsFromPEM keeps valid certificates and ignores invalid
-            // blocks; an empty pool leaves client verification disabled.
+            // blocks; an empty pool retains the no-CA request policy.
             for cert in rustls_pemfile::certs(&mut BufReader::new(file)).flatten() {
                 let _ = roots.add(cert);
             }
             if roots.is_empty() {
-                builder.with_no_client_auth()
+                if require_secure {
+                    builder.with_client_cert_verifier(request_only())
+                } else {
+                    builder.with_no_client_auth()
+                }
             } else {
+                verifies_client_certificates = true;
                 let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
                     Arc::new(roots),
                     provider,
                 );
-                let verifier = if tidb_util::tls::REQUIRE_SECURE_TRANSPORT
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+                let verifier = if require_secure {
                     verifier
                 } else {
                     verifier.allow_unauthenticated()
@@ -170,6 +208,8 @@ impl MysqlServerTls {
                         .map_err(|error| MysqlTlsError::Material(error.to_string()))?,
                 )
             }
+        } else if require_secure {
+            builder.with_client_cert_verifier(request_only())
         } else {
             builder.with_no_client_auth()
         };
@@ -181,7 +221,24 @@ impl MysqlServerTls {
             certificates: certs,
             key: Arc::new(key),
             origin,
+            verifies_client_certificates,
         })
+    }
+
+    fn watch_certificate_files(&mut self, paths: (PathBuf, PathBuf)) -> Result<(), MysqlTlsError> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let key = rustls::sign::CertifiedKey::from_der(
+            self.certificates.clone(),
+            self.key.clone_key(),
+            &provider,
+        )
+        .map_err(|error| MysqlTlsError::Material(error.to_string()))?;
+        Arc::make_mut(&mut self.config).cert_resolver = Arc::new(PemResolver {
+            paths,
+            provider,
+            current: Mutex::new(Arc::new(key)),
+        });
+        Ok(())
     }
 
     /// Names how the material was obtained, for the node's startup line.
@@ -244,14 +301,277 @@ pub fn resolve_server_tls_with_policy(
     let Some(tls) = resolve_server_tls(cert, key, auto_tls)? else {
         return Ok(None);
     };
-    MysqlServerTls::from_material_with_policy(
+    let mut tls = MysqlServerTls::from_material_with_policy(
         tls.certificates,
         tls.key.clone_key(),
         tls.origin,
         ca,
         min_version,
-    )
-    .map(Some)
+    )?;
+    if let (Some(cert), Some(key)) = (cert, key) {
+        tls.watch_certificate_files((cert.to_owned(), key.to_owned()))?;
+    }
+    Ok(Some(tls))
+}
+
+/// Go GetCertificate reloads a key pair per handshake and retains the last
+/// valid pair when files disappear, mismatch or are temporarily malformed.
+#[derive(Debug)]
+struct PemResolver {
+    paths: (PathBuf, PathBuf),
+    provider: Arc<rustls::crypto::CryptoProvider>,
+    current: Mutex<Arc<rustls::sign::CertifiedKey>>,
+}
+
+impl rustls::server::ResolvesServerCert for PemResolver {
+    fn resolve(
+        &self,
+        _: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        let load = || {
+            rustls::sign::CertifiedKey::from_der(
+                read_certificates(&self.paths.0)?,
+                read_private_key(&self.paths.1)?,
+                &self.provider,
+            )
+            .map_err(|error| MysqlTlsError::Material(error.to_string()))
+        };
+        let next = load();
+        let mut current = self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match next {
+            Ok(key) => *current = Arc::new(key),
+            Err(error) => {
+                eprintln!("Could not reload server certificate, using the old one: {error}")
+            }
+        }
+        Some(Arc::clone(&current))
+    }
+}
+
+/// Go RequestClientCert parses certificates and verifies handshake signatures,
+/// but does not verify trust/expiry. This policy NEVER supplies account X509
+/// evidence: the accepted socket separately retains CA-verification provenance.
+#[derive(Debug)]
+struct RequestClientCert {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::server::danger::ClientCertVerifier for RequestClientCert {
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        for cert in std::iter::once(end_entity).chain(intermediates) {
+            let (remaining, _) =
+                x509_parser::parse_x509_certificate(cert.as_ref()).map_err(|_| {
+                    rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
+                })?;
+            if !remaining.is_empty() {
+                return Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::BadEncoding,
+                ));
+            }
+        }
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// One process configuration, shared by SQL reload and each new connection.
+pub(crate) struct MysqlTlsManager {
+    cert: Option<PathBuf>,
+    key: Option<PathBuf>,
+    ca: Option<PathBuf>,
+    auto_tls: bool,
+    min_version: String,
+    current: std::sync::RwLock<Option<MysqlServerTls>>,
+}
+
+impl MysqlTlsManager {
+    pub(crate) fn new(config: &crate::NodeConfig) -> Result<Arc<Self>, MysqlTlsError> {
+        let current = resolve_server_tls_with_policy(
+            config.ssl_cert.as_deref(),
+            config.ssl_key.as_deref(),
+            config.auto_tls,
+            config.ssl_ca.as_deref(),
+            &config.min_tls_version,
+        )?;
+        Ok(Arc::new(Self {
+            cert: config.ssl_cert.clone(),
+            key: config.ssl_key.clone(),
+            ca: config.ssl_ca.clone(),
+            auto_tls: config.auto_tls,
+            min_version: config.min_tls_version.clone(),
+            current: std::sync::RwLock::new(current),
+        }))
+    }
+
+    pub(crate) fn current(&self) -> Option<MysqlServerTls> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn variables(&self) -> Vec<(&'static str, String)> {
+        if self.current().is_none() {
+            return Vec::new();
+        }
+        vec![
+            (
+                "ssl_ca",
+                self.ca
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+            ),
+            (
+                "ssl_cert",
+                self.cert
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+            ),
+            (
+                "ssl_key",
+                self.key
+                    .as_ref()
+                    .map_or_else(String::new, |p| p.display().to_string()),
+            ),
+            ("have_ssl", "YES".into()),
+            ("have_openssl", "YES".into()),
+        ]
+    }
+
+    fn load(&self) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
+        resolve_server_tls_with_policy(
+            self.cert.as_deref(),
+            self.key.as_deref(),
+            self.auto_tls,
+            self.ca.as_deref(),
+            &self.min_version,
+        )
+    }
+
+    pub(crate) fn automatic(&self) -> bool {
+        self.auto_tls && (self.cert.is_none() || self.key.is_none())
+    }
+
+    fn rotate(&self) {
+        // Go's automatic rotation stores the loader result, including nil on
+        // failure. SQL reload has its separate rollback policy below.
+        let next = self.load().unwrap_or_else(|error| {
+            eprintln!("TLS Certificate rotation failed: {error}");
+            None
+        });
+        *self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
+}
+
+impl tidb_session::process::TlsManager for MysqlTlsManager {
+    fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
+        let next = match self.load() {
+            Ok(next) => next,
+            Err(error)
+                if !no_rollback_on_error
+                    || tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+                        .load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                return Err(error.to_string());
+            }
+            Err(error) => {
+                eprintln!("Reload TLS failed; NO ROLLBACK ON ERROR disables new TLS: {error}");
+                None
+            }
+        };
+        *self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+        Ok(())
+    }
+}
+
+/// Go renews auto-generated material every 30 days. The Rust process owner
+/// interrupts the wait and joins the worker on every shutdown/drop path.
+pub(crate) struct TlsRotation {
+    exit: std::sync::mpsc::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TlsRotation {
+    pub(crate) fn start(manager: Arc<MysqlTlsManager>) -> Option<Self> {
+        manager
+            .automatic()
+            .then(|| Self::with_interval(manager, Duration::from_secs(30 * 24 * 60 * 60)))
+    }
+
+    fn with_interval(manager: Arc<MysqlTlsManager>, interval: Duration) -> Self {
+        let (exit, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while matches!(
+                receive.recv_timeout(interval),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ) {
+                manager.rotate();
+            }
+        });
+        Self {
+            exit,
+            worker: Some(worker),
+        }
+    }
+}
+
+impl Drop for TlsRotation {
+    fn drop(&mut self) {
+        let _ = self.exit.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 fn read_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, MysqlTlsError> {
@@ -292,7 +612,7 @@ pub struct ClientStream {
 
 enum ClientStreamInner {
     Plain(TcpStream),
-    Tls(Box<StreamOwned<ServerConnection, TcpStream>>),
+    Tls(Box<StreamOwned<ServerConnection, TcpStream>>, bool),
     /// Momentary state while the socket is moved out for the upgrade.
     Upgrading,
 }
@@ -335,18 +655,21 @@ impl ClientStream {
     pub fn is_tls(&self) -> bool {
         matches!(
             &*self.inner.lock().expect("client stream lock"),
-            ClientStreamInner::Tls(_)
+            ClientStreamInner::Tls(..)
         )
     }
 
-    /// A completed handshake with peer certs under a configured verifier.
-    /// rustls exposes peers only after its verifier accepted their chain.
+    /// Only a configured CA verifier establishes trusted chain evidence.
+    /// Go RequestClientCert supplies parsed peers without VerifiedChains.
     pub fn has_verified_client_certificate(&self) -> bool {
         match &*self.inner.lock().expect("client stream lock") {
-            ClientStreamInner::Tls(stream) => stream
-                .conn
-                .peer_certificates()
-                .is_some_and(|chain| !chain.is_empty()),
+            ClientStreamInner::Tls(stream, true) => {
+                !stream.conn.is_handshaking()
+                    && stream
+                        .conn
+                        .peer_certificates()
+                        .is_some_and(|chain| !chain.is_empty())
+            }
             _ => false,
         }
     }
@@ -356,7 +679,7 @@ impl ClientStream {
     pub(crate) fn verified_tls_peer(&self) -> Option<tidb_session::privilege::TlsPeerIdentity> {
         use x509_parser::extensions::GeneralName;
         let guard = self.inner.lock().expect("client stream lock");
-        let ClientStreamInner::Tls(stream) = &*guard else {
+        let ClientStreamInner::Tls(stream, true) = &*guard else {
             return None;
         };
         if stream.conn.is_handshaking() {
@@ -434,7 +757,7 @@ impl ClientStream {
             }
         };
         let stream = tls.accept(socket)?;
-        *guard = ClientStreamInner::Tls(Box::new(stream));
+        *guard = ClientStreamInner::Tls(Box::new(stream), tls.verifies_client_certificates);
         Ok(())
     }
 
@@ -444,7 +767,7 @@ impl ClientStream {
     /// `Ssl_version` status variables (`server.go:1329`).
     pub fn negotiated_tls(&self) -> Option<(u16, u16)> {
         match &*self.inner.lock().expect("client stream lock") {
-            ClientStreamInner::Tls(stream) => {
+            ClientStreamInner::Tls(stream, _) => {
                 let cipher = stream
                     .conn
                     .negotiated_cipher_suite()
@@ -464,7 +787,7 @@ impl ClientStream {
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         match &*self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.set_read_timeout(timeout),
-            ClientStreamInner::Tls(stream) => stream.sock.set_read_timeout(timeout),
+            ClientStreamInner::Tls(stream, _) => stream.sock.set_read_timeout(timeout),
             ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
         }
     }
@@ -474,7 +797,7 @@ impl Read for ClientStream {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         match &mut *self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.read(buffer),
-            ClientStreamInner::Tls(stream) => stream.read(buffer),
+            ClientStreamInner::Tls(stream, _) => stream.read(buffer),
             ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
         }
     }
@@ -484,7 +807,7 @@ impl Write for ClientStream {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         match &mut *self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.write(buffer),
-            ClientStreamInner::Tls(stream) => stream.write(buffer),
+            ClientStreamInner::Tls(stream, _) => stream.write(buffer),
             ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
         }
     }
@@ -492,7 +815,7 @@ impl Write for ClientStream {
     fn write_vectored(&mut self, buffers: &[IoSlice<'_>]) -> io::Result<usize> {
         match &mut *self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.write_vectored(buffers),
-            ClientStreamInner::Tls(stream) => {
+            ClientStreamInner::Tls(stream, _) => {
                 // StreamOwned does not forward vectored writes. Borrow its
                 // existing connection/socket so TLS accepts both frame parts
                 // before completing I/O, without introducing another owner.
@@ -506,7 +829,7 @@ impl Write for ClientStream {
     fn flush(&mut self) -> io::Result<()> {
         match &mut *self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.flush(),
-            ClientStreamInner::Tls(stream) => stream.flush(),
+            ClientStreamInner::Tls(stream, _) => stream.flush(),
             ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
         }
     }
@@ -648,6 +971,77 @@ mod account_tls_batch_tests {
     use super::*;
 
     #[test]
+    fn tls_owner_sql_reload_uses_shared_process_and_preserves_failed_configuration() {
+        let ca = std::env::temp_dir().join(format!(
+            "tidb-reload-ca-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&ca, "").unwrap();
+        let mut config =
+            crate::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
+                .unwrap();
+        config.auto_tls = true;
+        config.ssl_ca = Some(ca.clone());
+        let manager = MysqlTlsManager::new(&config).unwrap();
+        let processes = tidb_session::process::ProcessRegistry::default();
+        processes.set_tls_manager(manager.clone());
+        let mut session = tidb_session::Session::new();
+        session.attach_process(
+            1,
+            processes.register(1, "root".into(), "localhost".into(), String::new(), None),
+        );
+        let original = manager.current().unwrap().certificates[0].clone();
+        session.run("ALTER INSTANCE RELOAD TLS").unwrap();
+        let reloaded = manager.current().unwrap().certificates[0].clone();
+        assert_ne!(original, reloaded);
+        fs::remove_file(&ca).unwrap();
+        assert!(session.run("ALTER INSTANCE RELOAD TLS").is_err());
+        assert_eq!(manager.current().unwrap().certificates[0], reloaded);
+        session.attach_privileges(tidb_session::privilege::PrivilegeRegistry::default());
+        session.set_user("limited@%".into(), "limited@localhost".into());
+        let error = session
+            .run("ALTER INSTANCE RELOAD TLS")
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1227);
+        assert!(error.message.contains("SUPER"));
+    }
+
+    #[test]
+    fn tls_owner_automatic_certificates_renew_and_worker_retires() {
+        let initial = MysqlServerTls::self_signed().unwrap();
+        let (_, cert) =
+            x509_parser::parse_x509_certificate(initial.certificates[0].as_ref()).unwrap();
+        assert_eq!(
+            cert.validity().not_after.timestamp() - cert.validity().not_before.timestamp(),
+            90 * 24 * 60 * 60
+        );
+        let old = initial.certificates[0].clone();
+        let manager = Arc::new(MysqlTlsManager {
+            cert: None,
+            key: None,
+            ca: None,
+            auto_tls: true,
+            min_version: String::new(),
+            current: std::sync::RwLock::new(Some(initial)),
+        });
+        let runner = TlsRotation::with_interval(manager.clone(), Duration::from_millis(10));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while manager.current().unwrap().certificates[0] == old {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "automatic renewal did not publish"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        drop(runner);
+        let retired = manager.current().unwrap().certificates[0].clone();
+        std::thread::sleep(Duration::from_millis(25));
+        assert_eq!(manager.current().unwrap().certificates[0], retired);
+    }
+
+    #[test]
     fn account_tls_batch_partial_pair_uses_go_auto_tls_fallback() {
         assert!(
             resolve_server_tls(Some(Path::new("unused.pem")), None, false)
@@ -696,16 +1090,27 @@ mod account_tls_batch_handshake_tests {
         minimum: &str,
         policy: Option<&str>,
     ) -> (bool, bool, bool) {
+        handshake_client_policy(client_kind, tls12_only, minimum, policy, true)
+    }
+
+    fn handshake_client_policy(
+        client_kind: u8,
+        tls12_only: bool,
+        minimum: &str,
+        policy: Option<&str>,
+        trust_clients: bool,
+    ) -> (bool, bool, bool) {
         let policy = policy.map(str::to_owned);
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
-        let tls = resolve_server_tls_with_policy(
-            Some(&dir.join("server.crt")),
-            Some(&dir.join("server.key")),
-            false,
-            Some(&dir.join("ca.crt")),
+        let ca = dir.join("ca.crt");
+        let tls = MysqlServerTls::from_material_with_client_auth(
+            read_certificates(&dir.join("server.crt")).unwrap(),
+            read_private_key(&dir.join("server.key")).unwrap(),
+            "test",
+            trust_clients.then_some(ca.as_path()),
             minimum,
+            !trust_clients,
         )
-        .unwrap()
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -720,6 +1125,21 @@ mod account_tls_batch_handshake_tests {
             let mut stream = ClientStream::plain(socket);
             if stream.upgrade_to_tls(&tls).is_err() {
                 return (false, false, false);
+            }
+            if !trust_clients {
+                let guard = stream.inner.lock().unwrap();
+                let ClientStreamInner::Tls(peer, _) = &*guard else {
+                    unreachable!()
+                };
+                assert_eq!(
+                    peer.conn
+                        .peer_certificates()
+                        .is_some_and(|certs| !certs.is_empty()),
+                    client_kind != 0,
+                    "RequestClientCert must actually request the peer certificate"
+                );
+                drop(guard);
+                assert!(stream.verified_tls_peer().is_none());
             }
             let verified = stream.has_verified_client_certificate();
             let registry = PrivilegeRegistry::default();
@@ -808,6 +1228,20 @@ mod account_tls_batch_handshake_tests {
         let result = worker.join().unwrap();
         assert_eq!(received, result.0);
         result
+    }
+
+    #[test]
+    fn tls_owner_request_without_ca_never_creates_verified_account_evidence() {
+        // Go util.LoadTLSCertificates RequestClientCert; privileges checks
+        // VerifiedChains, not merely PeerCertificates (TLS1.2 and TLS1.3).
+        for tls12 in [true, false] {
+            for client in [0, 1, 2] {
+                assert_eq!(
+                    handshake_client_policy(client, tls12, "", None, false),
+                    (true, false, false)
+                );
+            }
+        }
     }
 
     #[test]

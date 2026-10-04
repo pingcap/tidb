@@ -191,6 +191,17 @@
         "N03": "partial",
         "N04": "open",
         "N05": "open"
+      },
+      "latest_maintenance": {
+        "receipt": "tls-owner-batch-repair.md",
+        "preceding_receipt": "admission-policy-batch-repair.md",
+        "advanced_findings": [
+          "A02",
+          "A03",
+          "N03"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "Durable login-counter writes, complete privilege cache/platform owners, generated RSA/identity/temp-file policy, broader TLS certificate/platform/secure-startup acceptance and other config/wire/admin consumers remain."
       }
     },
     {
