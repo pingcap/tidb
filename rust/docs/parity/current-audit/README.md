@@ -1,5 +1,7 @@
 # Structural parity audit: current evidence
 
+[Unused-owner cleanup](dead-owner-cleanup-validation.json): four metadata prototypes, obsolete DistSQL errors and five standalone targets removed; 56 retained cases pass. Finding statuses are unchanged.
+
 The current register has **86 findings: 29 repaired and 57 unresolved (36 open, 21 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
 
 The [remaining empty-harness cleanup](empty-test-cleanup-validation.json) removes 347 empty functions across five crates, one unused marker and stale inventory prose. All 367 surviving functions in affected files remain verbatim; Go obligations stay unverified.

@@ -14,13 +14,7 @@
 
 #![allow(missing_docs)]
 
-// Keep this source-shaped leaf isolated until the crate root assigns its
-// public module/re-export.  A later integration change can re-export the same
-// types without changing the state machine or these source anchors.
-#[path = "../src/channel_iter.rs"]
-mod channel_iter;
-
-use channel_iter::{ChannelIter, ChannelIterError, ChannelIterUnsupported, ChannelRow};
+use tidb_distsql::{ChannelIter, ChannelIterError, ChannelRow};
 
 #[test]
 fn go_new_sel_resp_channel_iter_validates_channel_layout() {
@@ -84,31 +78,6 @@ fn channel_iter_close_is_idempotent_and_drops_owned_rows() {
     iter.close();
     assert!(iter.is_drained());
     assert_eq!(iter.next_row().unwrap(), None);
-}
-
-#[test]
-fn unsupported_response_boundaries_are_explicit() {
-    assert_eq!(
-        ChannelIterError::unsupported_raw_tipb_response(),
-        ChannelIterError::Unsupported(ChannelIterUnsupported::RawTipbResponse)
-    );
-    assert_eq!(
-        ChannelIterError::unsupported_chunk_decoding(),
-        ChannelIterError::Unsupported(ChannelIterUnsupported::ChunkDecoding)
-    );
-    assert_eq!(
-        ChannelIterError::unsupported_tikv_response_channel(),
-        ChannelIterError::Unsupported(ChannelIterUnsupported::TiKvResponseChannel)
-    );
-    assert!(ChannelIterError::unsupported_raw_tipb_response()
-        .to_string()
-        .contains("raw tipb response"));
-    assert!(ChannelIterError::unsupported_chunk_decoding()
-        .to_string()
-        .contains("chunk decoding"));
-    assert!(ChannelIterError::unsupported_tikv_response_channel()
-        .to_string()
-        .contains("TiKV response channel"));
 }
 
 #[test]

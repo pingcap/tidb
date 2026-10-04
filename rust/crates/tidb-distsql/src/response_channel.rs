@@ -94,15 +94,9 @@ impl fmt::Display for ResponseChannelState {
     }
 }
 
-/// Capabilities that remain owned by future response/transport layers.
+/// Operations incompatible with transport-owned responses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseChannelUnsupported {
-    /// Legacy marker for a caller that requests decoding without using the
-    /// typed `ResponseChannel<prost::bytes::Bytes>::into_select_iter` entry point.
-    RawTipbResponse,
-    /// Receiving from TiKV's transport-backed response channel is outside
-    /// this leaf.
-    TiKvResponseChannel,
     /// A select iterator already owns a pull-based query response and cannot
     /// be mutated through the deterministic channel adapter.
     TransportOwnedResponseMutation,
@@ -111,8 +105,6 @@ pub enum ResponseChannelUnsupported {
 impl fmt::Display for ResponseChannelUnsupported {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
-            Self::RawTipbResponse => "raw tipb response",
-            Self::TiKvResponseChannel => "TiKV response channel",
             Self::TransportOwnedResponseMutation => "transport-owned query response mutation",
         };
         f.write_str(name)
@@ -129,7 +121,7 @@ pub enum ResponseChannelError {
         /// Name of the attempted operation.
         operation: &'static str,
     },
-    /// The selected legacy or transport capability has no bound owner.
+    /// The operation is incompatible with the response owner.
     Unsupported(ResponseChannelUnsupported),
     /// Raw bytes were not a valid checked-in `tipb.SelectResponse`.
     Decode(String),
@@ -155,20 +147,6 @@ pub enum ResponseChannelError {
     Cancelled,
     /// The owned source is still open but has no response available yet.
     Pending,
-}
-
-impl ResponseChannelError {
-    /// Creates the legacy error for callers outside the typed raw-byte entry.
-    #[must_use]
-    pub const fn unsupported_raw_tipb_response() -> Self {
-        Self::Unsupported(ResponseChannelUnsupported::RawTipbResponse)
-    }
-
-    /// Creates the explicit TiKV response-channel boundary error.
-    #[must_use]
-    pub const fn unsupported_tikv_response_channel() -> Self {
-        Self::Unsupported(ResponseChannelUnsupported::TiKvResponseChannel)
-    }
 }
 
 impl fmt::Display for ResponseChannelError {
@@ -1286,19 +1264,6 @@ fn map_channel_error(error: ChannelIterError) -> ResponseChannelError {
 
 fn map_chunk_error(error: ChunkDecodeError) -> ResponseChannelError {
     ResponseChannelError::RowDecode(error.to_string())
-}
-
-/// Returns the legacy boundary error for callers outside the typed raw-byte
-/// select iterator entry point.
-#[must_use]
-pub const fn unsupported_raw_tipb_response() -> ResponseChannelError {
-    ResponseChannelError::unsupported_raw_tipb_response()
-}
-
-/// Returns the explicit boundary error for a TiKV response channel.
-#[must_use]
-pub const fn unsupported_tikv_response_channel() -> ResponseChannelError {
-    ResponseChannelError::unsupported_tikv_response_channel()
 }
 
 #[cfg(test)]

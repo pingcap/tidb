@@ -21,12 +21,6 @@
 //! already-decoded result streams.  It intentionally does not define packet,
 //! chunk, protobuf, or transport types.
 //!
-//! Those owners have since landed elsewhere -- `chunk_decode` and `transport`
-//! in this crate, the client in `tidb-txnkv` -- and the live read path routes
-//! around this leaf rather than through it.  [`UnsupportedCapability`] is
-//! therefore a record of what this iterator declined to invent, not a refusal
-//! anything can still raise.
-//!
 //! `None` is the Rust equivalent of Go's zero-valued `SelectResultRow` whose
 //! `IsEmpty()` method reports that the iterator is drained.  Returning an
 //! option removes the sentinel-row edge case while preserving the observable
@@ -63,40 +57,9 @@ impl<T> SelectResultRow<T> {
     }
 }
 
-/// Capabilities that remain outside this dependency-closed iterator leaf.
-///
-/// These names are deliberate boundaries.  A caller must provide the owner
-/// for raw partial responses, chunk decoding, TiKV transport, or sorted
-/// partition merging instead of silently receiving an invented implementation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UnsupportedCapability {
-    /// Go `SelectResult.NextRaw` and raw protobuf response bytes.
-    NextRaw,
-    /// Go `SelectResult.Next` and TiDB chunk decoding.
-    Chunk,
-    /// TiKV client/RPC response ownership.
-    TiKvTransport,
-    /// The heap merge used by Go `sortedSelectResults`.
-    SortedHeap,
-}
-
-impl fmt::Display for UnsupportedCapability {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::NextRaw => "NextRaw",
-            Self::Chunk => "chunk decoding",
-            Self::TiKvTransport => "TiKV transport",
-            Self::SortedHeap => "sorted result heap",
-        };
-        f.write_str(name)
-    }
-}
-
 /// Errors returned by an owned result iterator.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SelectResultError {
-    /// The requested operation belongs to a future owner.
-    Unsupported(UnsupportedCapability),
     /// An underlying result source failed while producing or closing rows.
     Source(String),
     /// The canonical query cancellation interrupted row production.
@@ -109,20 +72,11 @@ impl SelectResultError {
     pub fn source(message: impl Into<String>) -> Self {
         Self::Source(message.into())
     }
-
-    /// Creates an explicit capability-boundary error.
-    #[must_use]
-    pub const fn unsupported(capability: UnsupportedCapability) -> Self {
-        Self::Unsupported(capability)
-    }
 }
 
 impl fmt::Display for SelectResultError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported(capability) => {
-                write!(f, "unsupported DistSQL result capability: {capability}")
-            }
             Self::Source(message) => f.write_str(message),
             Self::Cancelled => f.write_str("query cancelled by caller"),
         }
@@ -259,28 +213,4 @@ where
     fn close(&mut self) -> Result<(), SelectResultError> {
         self.close()
     }
-}
-
-/// Returns the explicit boundary error for raw partial-result bytes.
-#[must_use]
-pub const fn unsupported_next_raw() -> SelectResultError {
-    SelectResultError::unsupported(UnsupportedCapability::NextRaw)
-}
-
-/// Returns the explicit boundary error for chunk decoding.
-#[must_use]
-pub const fn unsupported_chunk() -> SelectResultError {
-    SelectResultError::unsupported(UnsupportedCapability::Chunk)
-}
-
-/// Returns the explicit boundary error for TiKV transport.
-#[must_use]
-pub const fn unsupported_tikv_transport() -> SelectResultError {
-    SelectResultError::unsupported(UnsupportedCapability::TiKvTransport)
-}
-
-/// Returns the explicit boundary error for sorted partition merging.
-#[must_use]
-pub const fn unsupported_sorted_heap() -> SelectResultError {
-    SelectResultError::unsupported(UnsupportedCapability::SortedHeap)
 }

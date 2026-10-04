@@ -151,8 +151,8 @@ Do not close structural findings for harness cleanup.
 - [x] Verify all remaining non-comment code is byte-identical before formatting.
 - [x] Grouped surviving tests:80 passed; all removed identities absent. Root lint passed.
 - [x] Affected all-target checks passed; self-review and diff check passed.
-- [ ] Normal locked-build hook outcome recorded in the external final handoff.
-- [ ] Normal locked-build hook, local recovery and cloud draft; no push.
+- [x] Normal locked-build hook outcome recorded in the external final handoff.
+- [x] Normal locked-build hook, local recovery and cloud draft; no push.
 
 Run from rust/ with CARGO_BUILD_JOBS=1 and the cloud environment activated:
 
@@ -183,3 +183,53 @@ representative cases pass; other unchanged cases are not counted as executed.
 233 obsolete mapping rows in17 historical receipts are also retired, retaining
 parent line references. No finding status changes. Final check/hook and
 recovery outcomes are recorded in the external final handoff named above.
+
+## Continuation: unused metadata models and obsolete DistSQL boundaries
+
+
+Starting at 21bd6a04667b21b77f7216a3bbaa148811676e36, remove four unconsumed
+result_schema modules in tidb-exec and their private-copy test targets. All
+15 exported identifiers have callers only inside these models and tests in
+both repositories. Go pkg/executor/adapter.go recordSet.Fields consumes the
+planner schema and names through colNames2ResultFields; the live Rust
+result_response/result_metadata path stays intact. Consolidate the real
+result_field_resolver tests into the existing aggregate, eliminating a fifth
+standalone link without deleting those assertions.
+
+The same batch retires DistSQL error constructors that only their own tests
+call. Existing chunk_decode/query response owners already provide decoding
+and transport. Keep the live TransportOwnedResponseMutation guard, source
+errors, cancellation, ordering and close behavior. Test select/channel
+iterators through public library exports instead of compiling source copies.
+Remove only assertions of the obsolete constructor identities.
+
+Milestone one is the caller inventory and batch deletion. Milestone two is
+grouped retained metadata and DistSQL lifecycle tests, affected all-target
+checks, root make lint and normal hook-gated commit. No package acceptance or
+structural finding closure follows from removing these unused models.
+
+- [x] Verify callers and remove models, stale APIs and redundant test roots.
+- [x] Run grouped retained behavioral tests and affected all-target checks: 56 cases pass.
+- [ ] Self-review, root lint, normal build hook and local recovery; no push.
+
+From rust/ after sourcing /workspace/.cloud-setup/env.sh, run:
+
+    cargo test --locked -p tidb-distsql -p tidb-exec --test all --no-run
+    cargo check --locked -p tidb-distsql -p tidb-exec -p tidb-server --all-targets
+
+Run produced harnesses with metadata/iterator/response filters and
+--test-threads=1; record exact selections and outcomes in the compact
+dead-owner-cleanup-validation.json receipt. External logs and caller inventory
+live in /workspace/.cloud-setup/dead-owner-cleanup/. Recover individual files
+from the parent above without resetting concurrent changes. Decision: remove
+unused prototypes together, retain live Rust ownership guards even without
+a same-named Go test. Findings remain 29 repaired and 57 unresolved; full
+Go/Rust suites, live multi-node and performance are not claimed.
+
+Continuation outcome: 22 obsolete tests removed, five standalone targets
+retired and two private source copies replaced by library imports. All 17
+unchanged retained test bodies remain verbatim; the mixed placeholder test
+keeps its cancellation and row-mapping assertions. Grouped behavior tests,
+affected all-target checks, lint and diff review pass. Actual commit hook
+and recovery results are recorded in the external final-handoff.json;
+no finding status or upstream package acceptance changes.

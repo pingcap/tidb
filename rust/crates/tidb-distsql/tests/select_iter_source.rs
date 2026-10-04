@@ -14,21 +14,12 @@
 
 #![allow(missing_docs)]
 
-// The leaf is intentionally tested by path until the crate root assigns its
-// public module/re-export.  This keeps the workstream isolated: the source
-// and its source-shaped tests can land without racing another agent editing
-// `tidb-distsql/src/lib.rs`.
-#[path = "../src/select_iter.rs"]
-mod select_iter;
-
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use select_iter::{
-    unsupported_chunk, unsupported_next_raw, unsupported_sorted_heap, unsupported_tikv_transport,
+use tidb_distsql::{
     SelectResultError, SelectResultRow, SelectResultSource, SerialSelectResults,
-    UnsupportedCapability,
 };
 
 struct Source {
@@ -144,7 +135,7 @@ fn go_serial_select_results_close_calls_every_source_and_returns_last_error() {
 }
 
 #[test]
-fn unsupported_result_capabilities_are_explicit() {
+fn cancellation_error_and_row_mapping_preserve_contracts() {
     assert_eq!(
         SelectResultError::Cancelled.to_string(),
         "query cancelled by caller"
@@ -153,28 +144,4 @@ fn unsupported_result_capabilities_are_explicit() {
         SelectResultRow::new(4, "row").map(str::len),
         SelectResultRow::new(4, 3)
     );
-    assert_eq!(
-        unsupported_next_raw(),
-        SelectResultError::Unsupported(UnsupportedCapability::NextRaw)
-    );
-    assert_eq!(
-        unsupported_chunk(),
-        SelectResultError::Unsupported(UnsupportedCapability::Chunk)
-    );
-    assert_eq!(
-        unsupported_tikv_transport(),
-        SelectResultError::Unsupported(UnsupportedCapability::TiKvTransport)
-    );
-    assert_eq!(
-        unsupported_sorted_heap(),
-        SelectResultError::Unsupported(UnsupportedCapability::SortedHeap)
-    );
-    assert!(unsupported_next_raw().to_string().contains("NextRaw"));
-    assert!(unsupported_chunk().to_string().contains("chunk decoding"));
-    assert!(unsupported_tikv_transport()
-        .to_string()
-        .contains("TiKV transport"));
-    assert!(unsupported_sorted_heap()
-        .to_string()
-        .contains("sorted result heap"));
 }

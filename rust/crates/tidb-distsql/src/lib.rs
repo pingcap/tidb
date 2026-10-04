@@ -49,7 +49,7 @@ mod table_handle_ranges;
 mod transport;
 mod warning;
 
-pub use channel_iter::{ChannelIter, ChannelIterError, ChannelIterUnsupported, ChannelRow};
+pub use channel_iter::{ChannelIter, ChannelIterError, ChannelRow};
 pub use chblock::{decode_ch_block, RawChBlockChunk};
 pub use chunk_decode::{
     decode_chunk, decode_response_chunks, decode_select_response, ChunkDecodeError, RawChunk,
@@ -106,14 +106,11 @@ pub use request_builder::{
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
 pub use response_channel::{
-    unsupported_raw_tipb_response, unsupported_tikv_response_channel, ResponseChannel,
-    ResponseChannelError, ResponseChannelEvent, ResponseChannelState, ResponseChannelUnsupported,
-    ResponseRuntimeStats, SelectResponseIter,
+    ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState,
+    ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
 };
 pub use select_iter::{
-    unsupported_chunk, unsupported_next_raw, unsupported_sorted_heap, unsupported_tikv_transport,
     SelectResultError, SelectResultRow, SelectResultSource, SerialSelectResults,
-    UnsupportedCapability,
 };
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use stream_decode::{decode_stream_response, RawStreamResponse};

@@ -20,14 +20,6 @@
 //! already-owned rows.  It deliberately does not depend on tipb, TiDB's
 //! chunk decoder, or a TiKV response channel.
 //!
-//! The [`ChannelIterError::Unsupported`] values name those boundaries but no
-//! longer stand at one: `chunk_decode` in this crate now owns tipb
-//! `SelectResponse` and `Chunk` decoding, and `response_channel` decodes before
-//! it hands rows to this iterator.  Nothing constructs an `Unsupported` value,
-//! so a caller must not read these names as a refusal that will fire -- they
-//! are a record of what this leaf declined to invent, kept until the layering
-//! above it settles.
-
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
@@ -55,28 +47,6 @@ impl<T> ChannelRow<T> {
     }
 }
 
-/// Capabilities intentionally left to the future response/decoder owners.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChannelIterUnsupported {
-    /// Decoding a raw tipb `SelectResponse` is outside this leaf.
-    RawTipbResponse,
-    /// Decoding TiDB's default/chunk encodings is outside this leaf.
-    ChunkDecoding,
-    /// Receiving rows from a TiKV response channel is outside this leaf.
-    TiKvResponseChannel,
-}
-
-impl fmt::Display for ChannelIterUnsupported {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::RawTipbResponse => "raw tipb response",
-            Self::ChunkDecoding => "chunk decoding",
-            Self::TiKvResponseChannel => "TiKV response channel",
-        };
-        f.write_str(name)
-    }
-}
-
 /// Errors returned by a channel iterator.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelIterError {
@@ -87,9 +57,6 @@ pub enum ChannelIterError {
         /// Number of channels available (intermediate channels plus final).
         available_channels: usize,
     },
-    /// The caller crossed a boundary that this dependency-closed leaf does
-    /// not own.
-    Unsupported(ChannelIterUnsupported),
     /// An already-owned input failed while producing a row.
     Source(String),
 }
@@ -99,24 +66,6 @@ impl ChannelIterError {
     #[must_use]
     pub fn source(message: impl Into<String>) -> Self {
         Self::Source(message.into())
-    }
-
-    /// Creates the explicit raw tipb response boundary error.
-    #[must_use]
-    pub const fn unsupported_raw_tipb_response() -> Self {
-        Self::Unsupported(ChannelIterUnsupported::RawTipbResponse)
-    }
-
-    /// Creates the explicit chunk-decoding boundary error.
-    #[must_use]
-    pub const fn unsupported_chunk_decoding() -> Self {
-        Self::Unsupported(ChannelIterUnsupported::ChunkDecoding)
-    }
-
-    /// Creates the explicit TiKV response-channel boundary error.
-    #[must_use]
-    pub const fn unsupported_tikv_response_channel() -> Self {
-        Self::Unsupported(ChannelIterUnsupported::TiKvResponseChannel)
     }
 }
 
@@ -130,9 +79,6 @@ impl fmt::Display for ChannelIterError {
                 f,
                 "invalid channel {channel} for response with {available_channels} channels"
             ),
-            Self::Unsupported(capability) => {
-                write!(f, "unsupported DistSQL channel capability: {capability}")
-            }
             Self::Source(message) => f.write_str(message),
         }
     }

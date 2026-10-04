@@ -15,9 +15,8 @@
 //! Source-derived response-channel ordering, error, and close lifecycle tests.
 
 use tidb_distsql::{
-    unsupported_raw_tipb_response, unsupported_tikv_response_channel, ResponseChannel,
-    ResponseChannelError, ResponseChannelEvent, ResponseChannelState, ResponseChannelUnsupported,
-    Warning, WarningClass, WarningLevel,
+    ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState, Warning,
+    WarningClass, WarningLevel,
 };
 
 #[test]
@@ -96,22 +95,4 @@ fn explicit_close_is_idempotent_and_drops_pending_events() {
     assert!(channel.is_closed());
     assert_eq!(channel.state(), ResponseChannelState::Closed);
     assert_eq!(channel.next_event(), None);
-}
-
-#[test]
-fn raw_response_and_transport_boundaries_are_explicit() {
-    assert_eq!(
-        unsupported_raw_tipb_response(),
-        ResponseChannelError::Unsupported(ResponseChannelUnsupported::RawTipbResponse)
-    );
-    assert_eq!(
-        unsupported_tikv_response_channel(),
-        ResponseChannelError::Unsupported(ResponseChannelUnsupported::TiKvResponseChannel)
-    );
-    assert!(unsupported_raw_tipb_response()
-        .to_string()
-        .contains("raw tipb response"));
-    assert!(unsupported_tikv_response_channel()
-        .to_string()
-        .contains("TiKV response channel"));
 }

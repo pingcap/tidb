@@ -1,0 +1,178 @@
+{
+  "date": "2026-10-04",
+  "parent": "21bd6a04667b21b77f7216a3bbaa148811676e36",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remove unconsumed metadata prototypes and obsolete DistSQL placeholder APIs; retain live result metadata, decoding, query ownership and cancellation. No complete package acceptance or finding closure.",
+  "go_owner": "pkg/executor/adapter.go recordSet.Fields and colNames2ResultFields; pkg/distsql/select_result.go channel/serial result lifecycle.",
+  "caller_proof": {
+    "symbols": [
+      "CatalogColumn",
+      "CatalogTableSchema",
+      "CatalogSchemaError",
+      "resolve_catalog_select_fields",
+      "JoinOutputField",
+      "JoinOutputOrigin",
+      "JoinOutputChild",
+      "JoinOutputUnsupported",
+      "JoinOutputMetadata",
+      "JoinOutputSchemaError",
+      "derive_join_output_metadata",
+      "CatalogRelationSchemaError",
+      "resolve_catalog_relation_select_fields",
+      "JoinProjectionError",
+      "project_join_output_fields"
+    ],
+    "only_paths": [
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-exec/src/result_schema.rs",
+      "rust/crates/tidb-exec/src/result_schema_join_output.rs",
+      "rust/crates/tidb-exec/src/result_schema_multi.rs",
+      "rust/crates/tidb-exec/src/result_schema_projection.rs",
+      "rust/crates/tidb-exec/tests/result_schema_join_output_source.rs",
+      "rust/crates/tidb-exec/tests/result_schema_multi_source.rs",
+      "rust/crates/tidb-exec/tests/result_schema_projection_source.rs",
+      "rust/crates/tidb-exec/tests/result_schema_source.rs"
+    ],
+    "outside_references": []
+  },
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/result_schema.rs",
+      "sha256": "47cb99dcac1a09c66861f7e6ca4085ec012ae93b002360e705bec4188743e302",
+      "lines": 337,
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/result_schema_source.rs",
+      "sha256": "55556f15ea45719ed13de39bd3195d0f10d5b50a6b43e68efbe66f621ca21ddb",
+      "lines": 172,
+      "tests": [
+        "wildcard_and_qualified_columns_use_catalog_order_and_aliases",
+        "unqualified_column_matching_is_case_insensitive",
+        "schema_boundary_rejects_missing_columns_tables_joins_and_expressions",
+        "schema_boundary_rejects_unknown_qualifier_and_no_from",
+        "wildcard_expands_declaration_order"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/result_schema_join_output.rs",
+      "sha256": "365e0e2db6048fd48536a8764469c163374461b1a8a921706770ee29e9e27f41",
+      "lines": 390,
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/result_schema_join_output_source.rs",
+      "sha256": "33c10ff7d6acb9324d9d330e1b57568be2445d020a85770dc9954b435950ff14",
+      "lines": 342,
+      "tests": [
+        "inner_and_cross_output_keep_declared_child_order_and_nullability",
+        "left_join_marks_inner_side_nullable_but_keeps_execution_gaps_explicit",
+        "using_coalesces_common_fields_in_left_declaration_order",
+        "right_join_keeps_visible_order_but_mirrors_full_schema",
+        "right_using_and_natural_follow_outer_child_declaration_order",
+        "using_errors_are_explicit"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/result_schema_multi.rs",
+      "sha256": "d3f8231f6bed59798b6868fd2566cd076d59e341a91606e37d70b95788bd1b66",
+      "lines": 518,
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/result_schema_multi_source.rs",
+      "sha256": "827ae5d4ee13b07f8596aee69ab95e6a3a9e43d4c946b8d0c7874e087a0dcdd5",
+      "lines": 257,
+      "tests": [
+        "inner_left_and_comma_sources_preserve_relation_and_wildcard_order",
+        "qualified_and_unqualified_columns_preserve_aliases_and_reject_ambiguity",
+        "missing_sources_columns_and_qualifiers_are_explicit",
+        "derived_right_and_expression_shapes_are_not_guessed"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/result_schema_projection.rs",
+      "sha256": "3ec68e402bf8535294bd0ea4b62fc45984f5ffa54a8cb6a7d1faf211a359f01f",
+      "lines": 309,
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/result_schema_projection_source.rs",
+      "sha256": "732ec06d6213643643894c3d262b2dfe2edf4f5aa89acf6ce1e9806780e662fa",
+      "lines": 225,
+      "tests": [
+        "direct_columns_and_wildcards_preserve_join_order_and_apply_aliases",
+        "qualified_wildcards_share_the_row_owner_width_contract",
+        "left_projection_keeps_null_extended_right_type_metadata",
+        "using_projection_keeps_bare_star_coalesced_and_qualified_right_visible",
+        "projection_boundary_rejects_ambiguous_and_untyped_expressions"
+      ]
+    }
+  ],
+  "removed_standalone_targets": 5,
+  "removed_tests": 22,
+  "test_source_copies_removed": 2,
+  "retained_test_bodies_verbatim": 17,
+  "mixed_test": "Retained cancellation text and row mapping assertions; removed assertions for obsolete constructors.",
+  "preserved_guard": "ResponseChannelUnsupported::TransportOwnedResponseMutation and all three live producer rejection arms.",
+  "tests": [
+    {
+      "crate": "tidb-distsql",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-distsql/9d655839f5fdcbeb/out/all-9d655839f5fdcbeb",
+        "select_iter_source",
+        "channel_iter_source",
+        "response_channel_source",
+        "chunk_decode_source",
+        "stream_decode_source",
+        "query_runtime_source",
+        "mock_response_iteration_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 41 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/dead-owner-cleanup/tidb-distsql-tests.log"
+    },
+    {
+      "crate": "tidb-exec",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-exec/a2887d144c588a7f/out/all-a2887d144c588a7f",
+        "result_field_resolver_source",
+        "result_metadata_source",
+        "result_response_source",
+        "result_rows_count_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 15 passed; 0 failed; 0 ignored; 0 measured; 833 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/dead-owner-cleanup/tidb-exec-tests.log"
+    }
+  ],
+  "gates": {
+    "build_tests": "cargo test --locked -p tidb-distsql -p tidb-exec --test all --no-run: passed",
+    "all_targets": "cargo check --locked -p tidb-distsql -p tidb-exec -p tidb-server --all-targets: passed",
+    "lint": "make lint: passed",
+    "self_review": "Caller inventory, exact retained bodies, live ownership guard, Cargo target consolidation and git diff --check passed.",
+    "precommit": "Actual hooks/pre-commit locked server build is mandatory; final SHA-dependent outcome in external final-handoff.json."
+  },
+  "findings": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21,
+    "statuses_changed": false
+  },
+  "limits": [
+    "No full Go or Rust suites, live multi-node or performance measurements.",
+    "Original Go package test/fixture obligations remain unverified; deleted prototype tests do not discharge them.",
+    "No push or push dry run."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/dead-owner-cleanup",
+  "logs": {
+    "build-tests.log": "d4208a080142749bd167dd74d3af3350cc70e917a22cc5670574cd69b5647101",
+    "check.log": "e604a37aef753bca1e28d00b4369e0ed305d4cd7ae588e3458bf87a27d5e9503",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "body-proof.json": "fef1c65c264e32a56679301d27a544a71506ce90167ffd9314a68775f5408334"
+  }
+}

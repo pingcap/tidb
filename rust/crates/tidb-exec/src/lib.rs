@@ -189,10 +189,6 @@ mod result_metadata;
 mod result_response;
 /// `stmtctx.go`'s `GetResultRowsCount` over [`runtime_stats`].
 pub mod result_rows_count;
-mod result_schema;
-mod result_schema_join_output;
-mod result_schema_multi;
-mod result_schema_projection;
 pub mod retry_info;
 pub use tidb_executor::row_table_builder;
 pub mod runtime_stats;
@@ -271,15 +267,6 @@ pub use result_response::{
     derive_tableless_select_columns, derive_tableless_select_result, resolve_query_result_columns,
     AutomaticResultResponse, AutomaticResultResponseError,
 };
-pub use result_schema::{
-    resolve_catalog_select_fields, CatalogColumn, CatalogSchemaError, CatalogTableSchema,
-};
-pub use result_schema_join_output::{
-    derive_join_output_metadata, JoinOutputChild, JoinOutputField, JoinOutputMetadata,
-    JoinOutputOrigin, JoinOutputSchemaError, JoinOutputUnsupported,
-};
-pub use result_schema_multi::{resolve_catalog_relation_select_fields, CatalogRelationSchemaError};
-pub use result_schema_projection::{project_join_output_fields, JoinProjectionError};
 pub use statement_status::{
     PublishedStatementStatus, StatementKind, StatementStatus, StatementWarning, WarningLevel,
 };

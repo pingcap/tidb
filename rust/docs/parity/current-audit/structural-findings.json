@@ -810,8 +810,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "receipt": "empty-test-cleanup-validation.json",
-    "scope": "347 empty ignored functions and one unused marker removed across five crates; surviving behavioral code unchanged. No finding closed."
+    "receipt": "dead-owner-cleanup-validation.json",
+    "scope": "Four unused metadata models, 22 prototype/placeholder tests, five standalone targets and two source copies removed; live consumers preserved. No finding closed."
   },
   "test_cleanup_history": [
     {
@@ -871,6 +871,11 @@
       "date": "2026-10-04",
       "receipt": "empty-test-cleanup-validation.json",
       "scope": "347 empty ignored functions and one unused marker removed across five crates; surviving behavioral code unchanged. No finding closed."
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "dead-owner-cleanup-validation.json",
+      "scope": "Four unused metadata models, 22 prototype/placeholder tests, five standalone targets and two source copies removed; live consumers preserved. No finding closed."
     }
   ],
   "repair_history": [
