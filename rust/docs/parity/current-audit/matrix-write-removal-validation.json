@@ -1,0 +1,123 @@
+{
+  "date": "2026-10-04",
+  "start": "35fcc5d8538014d65fb40b3d662afb22557411a9",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_unchanged": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "concurrent_integration_preserved_unmerged": "91010d96bb3e32468bd56ea2b07d255248485489",
+  "removed": [
+    "INSERT/REPLACE direct matrix append and alternate allocator/constraint branches",
+    "UPDATE/DELETE direct matrix replacement/removal",
+    "UpdateRowId matrix/KV union; writers and joined maps use TableHandle directly",
+    "SourceTable.has_row_position and hidden planner column",
+    "PhysicalMemTable scan position producer and both DML consumers",
+    "Descending removal to preserve matrix positions",
+    "Catalog.has_mem_tables (no callers)",
+    "dml_select_plan_mut, datum_is_true, DmlExpression::build, correlated_path_indices (no callers)",
+    "Duplicate INSERT SELECT row clone and discarded provisional inserted counter"
+  ],
+  "retained": "Virtual-table/materialized read sources; real MemTableStorage byte storage; all meaningful ordinary SQL assertions. Two writable fixtures now use CREATE TABLE; only the matrix repetition is retired.",
+  "go_basis": [
+    "pkg/infoschema/tables.go infoschemaTable/VirtualTable AddRecord, UpdateRecord, RemoveRecord reject mutation",
+    "pkg/planner/core/logical_plan_builder.go buildMemTable carries declared columns, no invented snapshot positions",
+    "pkg/executor/update.go and delete.go use table handles; Rust final vectors and reconstructed handles remain partial"
+  ],
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib -- matrix_tables_are_read_only --test-threads=1",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/before.log",
+      "sha256": "4bcbfe8476baa98b4024f5e7e7160931aaa62b75b042904372c587060ef5e553",
+      "summaries": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1540 filtered out; finished in 0.14s"
+      ]
+    },
+    {
+      "command": "Preserved original executor test executable -- driver::tests:: --test-threads=1",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/before-driver.log",
+      "sha256": "da25f0a5dd7d200670c0225e0cd350e73dde7ff48be2ce81401ce2d52aadc903",
+      "summaries": [
+        "test result: FAILED. 207 passed; 9 failed; 0 ignored; 0 measured; 1325 filtered out; finished in 8.60s"
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-session --lib -- driver::tests:: tests_multi_table_dml tests_statement_rollback tests_prepared_statements tests_prepared_plan_cache tests_mem_quota --test-threads=1",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/after.log",
+      "sha256": "12e2280c5e42f91fcc5f17326d23e6ba0a89405df0879ea3030b2e6c863c4b3f",
+      "summaries": [
+        "test result: FAILED. 208 passed; 8 failed; 0 ignored; 0 measured; 1325 filtered out; finished in 12.28s"
+      ]
+    },
+    {
+      "command": "target/debug/build/tidb-session/3c6fe9b35dac844b/out/tidb_session-3c6fe9b35dac844b -- tests_multi_table_dml tests_statement_rollback tests_prepared_statements tests_prepared_plan_cache tests_mem_quota --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/session.log",
+      "sha256": "9add4339a2904456ac849063dd6959a8c49c84bfc75405cd21f73076a1ff9abc",
+      "summaries": [
+        "test result: ok. 156 passed; 0 failed; 0 ignored; 0 measured; 2028 filtered out; finished in 2.46s"
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/all-targets.log",
+      "sha256": "f8439bc07280f770322e368d05dd17199bbc7a3dedf2f0ba65b66e531d24f6c5",
+      "summaries": []
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/matrix-write-removal/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+      "summaries": []
+    }
+  ],
+  "baseline_failures_unchanged": [
+    "driver::tests::aggregates::global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader",
+    "driver::tests::column_defaults::named_and_nested_defaults_use_the_referenced_column",
+    "driver::tests::column_defaults::on_duplicate_defaults_cover_conflict_and_no_conflict",
+    "driver::tests::index_prefix_reads::index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls",
+    "driver::tests::index_prefix_reads::partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters",
+    "driver::tests::index_ranges::ordered_limit_adjusts_the_common_handle_scan_estimate",
+    "driver::tests::point_get::prepared_in_predicate_uses_filtered_stats_for_cache_admission",
+    "driver::tests::set_operations::single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize"
+  ],
+  "regression": "Six original matrix write forms all succeeded and changed rows; after removal all refuse with unchanged reads. Added positive INSERT SELECT/joined UPDATE/joined DELETE controls continue using matrix read inputs with a KV destination.",
+  "distinct_after_passed": 364,
+  "after_failed": 8,
+  "production_lines": {
+    "added": 98,
+    "removed": 288
+  },
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "ecd75b8fb419dd843bd4e7068ac75ce425ead69bf3de68e867632cd19a48e4d6",
+    "rust/crates/tidb-executor/src/driver/dml.rs": "d3e60f93714f4e88b0ce20b65f0bd9f50b89322e681a70ebf1c762507b79f3b9",
+    "rust/crates/tidb-executor/src/driver/dml/correlated.rs": "f722c027fea89287d0ba8235388278d1e7681f029046b6cbc163ec82f7bf4d3e",
+    "rust/crates/tidb-executor/src/driver/dml/delete_record.rs": "6e210726f015f297e915a2a48ba013148ffd2fb0a6755983852aa25be2789466",
+    "rust/crates/tidb-executor/src/driver/dml/update_record.rs": "7596a429e3d7cbd3debe9045ba7ffb3b2c5c7032191818f29400f6cea1bcbfd9",
+    "rust/crates/tidb-executor/src/driver/multi_dml.rs": "9ace02247ff20b512009c9fccf3bd3bbc5b9f94fc28d16489eaf5211539b97a7",
+    "rust/crates/tidb-executor/src/driver/physical_builder.rs": "3805d700a19f4e0ad78284bb0524f5c5b0476eea9bb7a2d7c7311fd366f87c43",
+    "rust/crates/tidb-executor/src/driver/subquery.rs": "2dd5e9cdcbd75bc702dcb1d3da7f1b9c63191ad8149132cdc6ffdf492af2f7ce",
+    "rust/crates/tidb-executor/src/driver/tests/dml.rs": "45a551f6b6525992afd2cad54687c957c316835f9a4858c49e340663d272549e",
+    "rust/crates/tidb-executor/src/driver/tests/table_round_trip.rs": "12efcc21754862829ee35dfd056bc82fcad495a19abacfff81f989eae63a1d96",
+    "rust/crates/tidb-planner/src/plan_builder/catalog.rs": "56fd46f86714a7f1eb9a86bd7284f499bf9fd76bc7ecb3e2cbbe2399ee9ec52d",
+    "rust/crates/tidb-planner/src/plan_builder/from.rs": "fd6ed6a1b5f2de41bd5f99bebbb37787081f4127e01172f3d1c9576b5c6fb4ca"
+  },
+  "validation_image": "Grouped behavior tests precede final deletion of four proven unreferenced helpers and stale comments. All-target checking and actual commit hook cover final source. No executable caller changes after grouped tests.",
+  "counts_unchanged": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "commit_and_wire_gate": "Actual hook result, final rebuilt-server wire controls, local SHA, recovery bundle and Cloud draft saved in external /workspace/.cloud-setup/matrix-write-removal/final-handoff.json after completion.",
+  "limits": [
+    "No complete Go package acceptance or fresh revalidation of other56 unresolved findings.",
+    "No complete virtual-table SQL privilege/error-ordering acceptance; table mutation is refused, public SQL ordering still follows incomplete planner/session owners.",
+    "No full Go suite, full Rust suite, live multi-node cluster or performance run.",
+    "Eight reproduced driver baseline failures retained; earlier parser14/expression3 failures are historical and not rerun here.",
+    "No push or dry run; fresh-task restoration of unpublished commits remains unverified."
+  ]
+}

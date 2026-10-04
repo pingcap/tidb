@@ -429,23 +429,6 @@ pub(crate) fn bind_subquery_columns_query(
     })
 }
 
-/// Resolves the outer-row indexes represented by correlated column paths.
-pub(crate) fn correlated_path_indices(
-    paths: &[Vec<String>],
-    outer_scope: &FromScope,
-) -> Result<Vec<usize>, DriverError> {
-    paths
-        .iter()
-        .map(|path| {
-            let resolver = ScopeResolver { scope: outer_scope };
-            let (index, _, _) = resolver
-                .resolve(path)
-                .ok_or(DriverError::unsupported("unresolved correlated column"))?;
-            Ok(index)
-        })
-        .collect()
-}
-
 /// Resolves the cache-key columns for a correlated subquery.
 pub(crate) fn correlated_column_indices(
     correlated: &CorrelatedSubquery,

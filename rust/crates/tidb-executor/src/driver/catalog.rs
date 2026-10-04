@@ -730,7 +730,7 @@ pub struct ViewDef {
 /// A catalog table's backing store.
 #[derive(Clone, Debug)]
 pub enum TableEntry {
-    /// A plain value matrix (the original mock backing).
+    /// Read-only materialized rows for virtual tables and query fixtures.
     Mem(MemTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
     ///
@@ -906,24 +906,6 @@ impl Catalog {
     #[must_use]
     pub(crate) const fn table_column_count_limit(&self) -> usize {
         self.table_column_count_limit
-    }
-
-    /// Whether this catalog contains any in-process matrix-backed tables.
-    ///
-    /// Cluster sessions keep row changes in their shared `MutationBuffer`,
-    /// and their `KvTable` entries therefore do not need the deep catalog
-    /// image that the in-process `MemTable` executor uses for statement
-    /// rollback.  The session layer uses this distinction to avoid cloning
-    /// the full schema on every prepared DML statement while retaining the
-    /// image-based rollback for the mock/in-memory backend.
-    #[must_use]
-    pub fn has_mem_tables(&self) -> bool {
-        self.databases.values().any(|database| {
-            database
-                .tables
-                .values()
-                .any(|entry| matches!(entry.as_ref(), TableEntry::Mem(_)))
-        })
     }
 
     /// Whether every table in this catalog is backed by a session-owned
@@ -1603,7 +1585,6 @@ impl Catalog {
                     TableEntry::Mem(table) => {
                         let mut source_table = SourceTable {
                             is_memory_table: true,
-                            has_row_position: true,
                             table_id: synthetic_table_id,
                             table_name: entry_name.clone(),
                             db_name: database.name.clone(),

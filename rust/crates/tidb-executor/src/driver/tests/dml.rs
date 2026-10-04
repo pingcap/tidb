@@ -613,194 +613,237 @@ fn limit_zero_dml_still_validates_the_statement() {
 }
 
 #[test]
+fn matrix_tables_are_read_only() {
+    // Go virtual tables reject record mutation. A materialized read source
+    // must never become a second writable storage engine.
+    let ctx = crate::StmtContext::for_query();
+    let mut outcomes = Vec::new();
+    type Write = fn(&str, &mut Catalog, &crate::StmtContext) -> Result<u64, DriverError>;
+    for (sql, write) in [
+        ("INSERT INTO t VALUES (4, 40)", run_insert_on as Write),
+        ("REPLACE INTO t VALUES (4, 40)", run_insert_on),
+        ("UPDATE t SET b = 99", run_update_on),
+        ("DELETE FROM t", run_delete_on),
+        (
+            "UPDATE t AS x JOIN t AS y ON x.a = y.a SET x.b = 99",
+            run_update_on,
+        ),
+        (
+            "DELETE x FROM t AS x JOIN t AS y ON x.a = y.a",
+            run_delete_on,
+        ),
+    ] {
+        let mut catalog = test_catalog();
+        let before = run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap();
+        let result = write(sql, &mut catalog, &ctx);
+        let after = run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap();
+        outcomes.push((sql, result.is_err(), before == after));
+    }
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, rejected, unchanged)| *rejected && *unchanged),
+        "{outcomes:?}"
+    );
+
+    // Read-only materializations remain valid sources for ordinary writes.
+    let mut catalog = test_catalog();
+    crate::run_create_table_on(
+        "CREATE TABLE w (a BIGINT PRIMARY KEY, b BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    assert_eq!(
+        run_insert_on("INSERT INTO w SELECT * FROM t", &mut catalog, &ctx).unwrap(),
+        3
+    );
+    assert_eq!(
+        run_update_on(
+            "UPDATE w JOIN t ON w.a = t.a SET w.b = t.b + 1",
+            &mut catalog,
+            &ctx
+        )
+        .unwrap(),
+        3
+    );
+    assert_eq!(
+        run_delete_on(
+            "DELETE w FROM w JOIN t ON w.a = t.a WHERE t.a = 1",
+            &mut catalog,
+            &ctx
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on("SELECT * FROM w ORDER BY a", &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(2), Datum::Int(21)],
+            vec![Datum::Int(3), Datum::Int(11)]
+        ]
+    );
+}
+
+#[test]
 fn update_and_delete_rows() {
-    for kv in [false, true] {
-        let mut catalog = Catalog::default();
-        if kv {
-            crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog)
-                .unwrap();
-        } else {
-            catalog.register(
-                "w",
-                MemTable {
-                    columns: vec![
-                        ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                        ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                    ],
-                    rows: vec![],
-                },
-            );
-        }
-        run_insert_on(
-            "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
-            &mut catalog,
-            &crate::StmtContext::for_query(),
-        )
-        .unwrap();
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
 
-        // WHERE-selected update, counting only changed rows.
-        assert_eq!(
-            run_update_on(
-                "UPDATE w SET b = b + 1 WHERE a >= 2",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            2,
-            "kv={kv}"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a, b FROM w",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            vec![
-                vec![Datum::Int(1), Datum::Int(10)],
-                vec![Datum::Int(2), Datum::Int(21)],
-                vec![Datum::Int(3), Datum::Int(31)],
-            ],
-            "kv={kv}"
-        );
-
-        // A no-op update matches rows but changes none: MySQL reports 0.
-        assert_eq!(
-            run_update_on(
-                "UPDATE w SET b = b WHERE a = 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            0,
-            "kv={kv}"
-        );
-
-        // Every assignment reads the row as the statement found it, so
-        // `b` takes the ORIGINAL `a` (1), not the just-assigned 7.
-        assert_eq!(
-            run_update_on(
-                "UPDATE w SET a = 7, b = a WHERE a = 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            1,
-            "kv={kv}"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a, b FROM w WHERE a = 7",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(7), Datum::Int(1)]],
-            "kv={kv}"
-        );
-
-        // A WHERE-less UPDATE touches every row.
-        assert_eq!(
-            run_update_on(
-                "UPDATE w SET b = 0",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            3,
-            "kv={kv}"
-        );
-
-        // DELETE removes the selected rows and reports their count.
-        assert_eq!(
-            run_delete_on(
-                "DELETE FROM w WHERE a >= 3",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            2,
-            "kv={kv}"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a FROM w",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(2)]],
-            "kv={kv}"
-        );
-
-        // A WHERE-less DELETE empties the table, and re-inserting works
-        // after it (the store is genuinely empty, not just filtered).
-        assert_eq!(
-            run_delete_on(
-                "DELETE FROM w",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            1,
-            "kv={kv}"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a FROM w",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            Vec::<Vec<Datum>>::new(),
-            "kv={kv}"
-        );
-        run_insert_on(
-            "INSERT INTO w VALUES (9, 9)",
-            &mut catalog,
-            &crate::StmtContext::for_query(),
-        )
-        .unwrap();
-        assert_eq!(
-            run_select_on(
-                "SELECT a FROM w",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(9)]],
-            "kv={kv}"
-        );
-
-        // ORDER BY, LIMIT, and IGNORE are supported now (see the session's
-        // `insert_select_and_ordered_dml`); an unknown SET column still fails
-        // closed. With no duplicate-key conflict, Go applies UPDATE IGNORE as
-        // an ordinary update.
-        assert!(run_update_on(
-            "UPDATE w SET zzz = 1",
+    // WHERE-selected update, counting only changed rows.
+    assert_eq!(
+        run_update_on(
+            "UPDATE w SET b = b + 1 WHERE a >= 2",
             &mut catalog,
             &crate::StmtContext::for_query()
         )
-        .is_err());
-        assert_eq!(
-            run_update_on(
-                "UPDATE IGNORE w SET a = 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            1,
-            "kv={kv}"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a, b FROM w",
-                &catalog,
-                &crate::StmtContext::for_query()
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(1), Datum::Int(9)]],
-            "kv={kv}"
-        );
-    }
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM w",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(10)],
+            vec![Datum::Int(2), Datum::Int(21)],
+            vec![Datum::Int(3), Datum::Int(31)],
+        ]
+    );
+
+    // A no-op update matches rows but changes none: MySQL reports 0.
+    assert_eq!(
+        run_update_on(
+            "UPDATE w SET b = b WHERE a = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        0
+    );
+
+    // Every assignment reads the row as the statement found it, so
+    // `b` takes the ORIGINAL `a` (1), not the just-assigned 7.
+    assert_eq!(
+        run_update_on(
+            "UPDATE w SET a = 7, b = a WHERE a = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM w WHERE a = 7",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(7), Datum::Int(1)]]
+    );
+
+    // A WHERE-less UPDATE touches every row.
+    assert_eq!(
+        run_update_on(
+            "UPDATE w SET b = 0",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        3
+    );
+
+    // DELETE removes the selected rows and reports their count.
+    assert_eq!(
+        run_delete_on(
+            "DELETE FROM w WHERE a >= 3",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM w",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+
+    // A WHERE-less DELETE empties the table, and re-inserting works
+    // after it (the store is genuinely empty, not just filtered).
+    assert_eq!(
+        run_delete_on(
+            "DELETE FROM w",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM w",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    run_insert_on(
+        "INSERT INTO w VALUES (9, 9)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a FROM w",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(9)]]
+    );
+
+    // ORDER BY, LIMIT, and IGNORE are supported now (see the session's
+    // `insert_select_and_ordered_dml`); an unknown SET column still fails
+    // closed. With no duplicate-key conflict, Go applies UPDATE IGNORE as
+    // an ordinary update.
+    assert!(run_update_on(
+        "UPDATE w SET zzz = 1",
+        &mut catalog,
+        &crate::StmtContext::for_query()
+    )
+    .is_err());
+    assert_eq!(
+        run_update_on(
+            "UPDATE IGNORE w SET a = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM w",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1), Datum::Int(9)]]
+    );
 }

@@ -1561,7 +1561,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             None => self.handle_helper.push_empty(),
         }
 
-        let mut columns: Vec<MemTableColumn> = table
+        let columns: Vec<MemTableColumn> = table
             .columns
             .iter()
             .map(|source_column| MemTableColumn {
@@ -1569,25 +1569,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 name: source_column.name.clone(),
             })
             .collect();
-        if table.has_row_position && self.in_update_or_delete_stmt {
-            // The matrix adapter has no stored handle. Its physical scan emits
-            // the snapshot position before filtering/reordering, allowing the
-            // ordinary DML child to carry identity through joins and Apply.
-            let mut field_type = FieldType::new(FieldTypeCode::LongLong);
-            field_type.set_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
-            let mut position = Column::new(self.column_ids.alloc(), field_type);
-            position.id = super::EXTRA_HANDLE_ID;
-            position.is_hidden = true;
-            schema_columns.push(position);
-            names.push(FieldName {
-                hidden: true,
-                ..FieldName::default()
-            });
-            columns.push(MemTableColumn {
-                id: super::EXTRA_HANDLE_ID,
-                name: String::new(),
-            });
-        }
         let mut mem_table = LogicalMemTable::new(
             self.base(LogicalMemTable::TYPE),
             db_name,

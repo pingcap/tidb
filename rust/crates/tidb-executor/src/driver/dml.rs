@@ -29,7 +29,7 @@ pub(crate) mod update_record;
 
 use delete_record::DeleteRecords;
 use tidb_planner::physical::FkTriggerNode;
-use update_record::{UpdateRecords, UpdateRowId};
+use update_record::UpdateRecords;
 
 use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 
@@ -42,14 +42,12 @@ pub(crate) use defaults::{
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
 /// `catalog`, returning the number of inserted rows.
 ///
-/// The write half of the in-memory gateway. It supports the normal insert
+/// The shared table writer supports the normal insert
 /// forms, including `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`, `SET`
 /// syntax, query sources, and `PARTITION (...)` destination validation.
 /// A `RETURNING` clause is parsed and silently ignored: Go's hand-written
 /// parser stores it on the AST but the planner and executor never read it, so
-/// the write runs normally and answers with a plain OK packet. Columns not
-/// listed in an explicit column list are filled with NULL (column defaults
-/// wait on ColumnInfo default-value wiring).
+/// the write runs normally and answers with a plain OK packet.
 pub fn run_insert_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -259,6 +257,18 @@ fn physical_dml_plan_with_cache_mode(
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
+    for spec in fk_specs {
+        if matches!(
+            catalog.get_in(&spec.database, &spec.table),
+            Some(TableEntry::Mem(_))
+        ) {
+            return Err(DriverError::Mysql(MysqlError::new(
+                tidb_error::tidb::errcode::ErrUnsupportedOp,
+                "operation not supported",
+            )));
+        }
+    }
+
     let plan_ids = tidb_planner::plan_base::PlanIdAllocator::new();
     let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
     let mut update_expressions = Vec::new();
@@ -437,24 +447,6 @@ pub(crate) fn fk_spec_for_delete(
     })
 }
 
-pub(super) fn dml_select_plan_mut<'a>(
-    plan: &'a mut tidb_planner::physical::PhysicalPlan,
-    operator: &str,
-) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
-    let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
-        return Err(DriverError::unsupported(
-            "DML execution received a non-DML physical root",
-        ));
-    };
-    if !operator.is_empty() && !root.go_operator.eq_ignore_ascii_case(operator) {
-        return Err(DriverError::unsupported(format!(
-            "{operator} execution received a {} physical root",
-            root.go_operator
-        )));
-    }
-    Ok(root.select_plan.as_deref_mut())
-}
-
 struct InsertTargetLayout {
     database: String,
     table_name: String,
@@ -498,6 +490,12 @@ fn resolve_insert_target(
     if table.is_sequence() {
         return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
     }
+    let TableEntry::Kv(kv) = table else {
+        return Err(DriverError::Mysql(MysqlError::new(
+            tidb_error::tidb::errcode::ErrUnsupportedOp,
+            "operation not supported",
+        )));
+    };
     let mut column_list = table.column_list();
     let stored_width = column_list.len();
     let named_columns: Vec<String> = if insert.set_syntax {
@@ -546,17 +544,11 @@ fn resolve_insert_target(
     } else {
         (0..column_list.len()).collect()
     };
-    let mut generated_targets: Vec<bool> = match table {
-        TableEntry::Kv(kv) => kv
-            .visible_columns()
-            .iter()
-            .map(|column| column.generated.is_some())
-            .collect(),
-        TableEntry::Mem(_) => vec![false; stored_width],
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("read-only targets were refused above")
-        }
-    };
+    let mut generated_targets: Vec<bool> = kv
+        .visible_columns()
+        .iter()
+        .map(|column| column.generated.is_some())
+        .collect();
     let mut column_meta = column_metadata(table);
     // The pseudo-column carries the same shape as a stored one so every
     // per-target lookup below stays indexed the same way. It is never
@@ -672,9 +664,12 @@ fn run_insert_with_physical(
         generated_targets,
         column_meta,
     } = target_layout;
-    let table = catalog
+    let TableEntry::Kv(kv) = catalog
         .get_mut_in(&database, &table_name)
-        .ok_or(DriverError::unsupported("table not found in catalog"))?;
+        .ok_or(DriverError::unsupported("table not found in catalog"))?
+    else {
+        unreachable!("the INSERT target was validated before reading its source")
+    };
 
     // Go's planner wraps a partitioned INSERT target in
     // `partitionTableWithGivenSets`: names are resolved once, then every
@@ -683,9 +678,6 @@ fn run_insert_with_physical(
     let insert_partition_ids = if insert.partitions.is_empty() {
         None
     } else {
-        let TableEntry::Kv(kv) = &*table else {
-            return Err(DriverError::PartitionClauseOnNonpartitioned);
-        };
         let Some(spec) = kv.partition() else {
             return Err(DriverError::PartitionClauseOnNonpartitioned);
         };
@@ -698,20 +690,8 @@ fn run_insert_with_physical(
         )
     };
 
-    let auto_increment_offset = match table {
-        TableEntry::Kv(kv) => kv.auto_increment_offset(),
-        TableEntry::Mem(_) => None,
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("INSERT through a read-only relation is refused above")
-        }
-    };
-    let auto_random_offset = match table {
-        TableEntry::Kv(kv) => kv.auto_random().map(|spec| spec.offset),
-        TableEntry::Mem(_) => None,
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("INSERT through a read-only relation is refused above")
-        }
-    };
+    let auto_increment_offset = kv.auto_increment_offset();
+    let auto_random_offset = kv.auto_random().map(|spec| spec.offset);
     // One marker per staged row: after casting, a supplied zero under
     // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values still
     // take an id. Keeping the supplied-ness beside the row distinguishes the
@@ -720,16 +700,12 @@ fn run_insert_with_physical(
     let mut auto_random_rows: Vec<(usize, bool)> = Vec::new();
     let mut first_allocated: Option<u64> = None;
 
-    let mut inserted = 0u64;
     // A source query supplies already-evaluated values; a VALUES list
     // supplies expressions. Both fill the same target offsets.
     if insert.source.is_none() {
         ctx.notify_before_executor_first_run();
     }
-    let value_rows: Vec<Vec<Datum>> = match &source_rows {
-        Some(rows) => rows.clone(),
-        None => Vec::new(),
-    };
+    let value_rows = source_rows.as_deref().unwrap_or_default();
     let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
     // Go `ResetContextOfStmt`'s `ast.InsertStmt` arm:
     //   ErrGroupBadNull  = error when !IgnoreErr && (strict || len(stmt.Lists) == 1)
@@ -1011,7 +987,7 @@ fn run_insert_with_physical(
         // constraint warnings (1048), so `INSERT IGNORE INTO t VALUES (NULL,
         // 'abc')` warns 1406-for-b and only then 1048-for-a (oracle-captured
         // order).
-        if let TableEntry::Kv(kv) = &*table {
+        {
             for (offset, value) in row.iter_mut().enumerate() {
                 // The row is one wider than the table when the statement
                 // wrote `_tidb_rowid`. Go gives that slot a synthetic
@@ -1053,7 +1029,7 @@ fn run_insert_with_physical(
                 )?;
             }
         }
-        if let TableEntry::Kv(kv) = &*table {
+        {
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
             // same values the write will store.
@@ -1068,7 +1044,6 @@ fn run_insert_with_physical(
             )?;
         }
         new_rows.push(row);
-        inserted += 1;
     }
     // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
     // sits immediately before `base.exec(ctx, rows)`:
@@ -1079,16 +1054,7 @@ fn run_insert_with_physical(
         .write_accountant(mem_quota::label::INSERT)
         .account_rows(&new_rows)
         .map_err(DriverError::from)?;
-    // A matrix table has neither an allocator nor constraints, so it is
-    // finished here; everything below is the byte-backed write path.
-    if let TableEntry::Mem(mem) = table {
-        mem.rows.extend(new_rows);
-        return Ok((inserted, first_allocated));
-    }
     {
-        let TableEntry::Kv(kv) = table else {
-            unreachable!("INSERT through a view is refused above")
-        };
         let kv = std::sync::Arc::make_mut(kv);
         if let Some(auto_offset) = auto_random_offset {
             for (index, supplied) in &auto_random_rows {
@@ -1257,7 +1223,7 @@ fn run_insert_with_physical(
         } else {
             false
         };
-    inserted = 0;
+    let mut inserted = 0;
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
     let mut inserted_rows = Vec::new();
@@ -1312,7 +1278,7 @@ fn run_insert_with_physical(
                         catalog,
                         &database,
                         &table_name,
-                        &UpdateRowId::Kv(handle.clone()),
+                        &handle,
                         existing.as_deref().expect("conflicting row exists"),
                         insert.ignore,
                         ctx,
@@ -1755,7 +1721,7 @@ fn apply_on_duplicate(
         catalog,
         database,
         target_table_name,
-        &UpdateRowId::Kv(handle.clone()),
+        handle,
         &existing,
         &mut updated,
         prepared.selected_partitions.as_deref(),
@@ -3121,10 +3087,7 @@ fn run_update_with_physical(
         field_types: physical_field_types,
     } = source_rows;
     for row in rows {
-        let handle = match &row.id {
-            UpdateRowId::Kv(handle) => extra_handle_value(handle),
-            UpdateRowId::Mem(_) => None,
-        };
+        let handle = extra_handle_value(&row.id);
         let new_row = row_evaluator.compute(
             &row.stored,
             handle,
@@ -3430,7 +3393,7 @@ fn run_delete_with_physical(
     let physical = physical_source
         .as_deref_mut()
         .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
-    let mut rows = execute_physical_write_rows(
+    let rows = execute_physical_write_rows(
         physical,
         catalog,
         &database,
@@ -3440,11 +3403,6 @@ fn run_delete_with_physical(
         mem_quota::label::DELETE,
     )?
     .rows;
-    // Memory-table identities are snapshot positions. Removing from the back
-    // preserves each remaining identity, independently of read-plan ordering.
-    if matches!(catalog.get_in(&database, &name), Some(TableEntry::Mem(_))) {
-        rows.sort_by(|left, right| right.id.cmp(&left.id));
-    }
     let mut records = DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
     for row in rows {
@@ -3474,7 +3432,7 @@ fn run_delete_with_physical(
 /// `HandleSourceExec` performs for a `SELECT`'s `Point_Get`, and it answers
 /// `None` for a key no record carries -- Go's point get that finds nothing.
 struct PhysicalWriteRow {
-    id: UpdateRowId,
+    id: TableHandle,
     stored: Vec<Datum>,
     output: Vec<Datum>,
 }
@@ -3509,21 +3467,15 @@ fn execute_physical_write_rows(
             "{database}.{name}"
         )))
     })?;
-    let stored_width = match table {
-        TableEntry::Kv(kv) => kv.columns().len(),
-        _ => table.column_list().len(),
+    let TableEntry::Kv(table) = table else {
+        return Err(DriverError::Mysql(MysqlError::new(
+            tidb_error::tidb::errcode::ErrUnsupportedOp,
+            "operation not supported",
+        )));
     };
-    let has_extra_handle = match table {
-        TableEntry::Kv(table) => {
-            table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty()
-        }
-        TableEntry::Mem(_) => true,
-        _ => {
-            return Err(DriverError::unsupported(
-                "a physical write child is not a writable table",
-            ))
-        }
-    };
+    let stored_width = table.columns().len();
+    let has_extra_handle =
+        table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
     let expected_width = stored_width + usize::from(has_extra_handle);
     let accountant = ctx.statement_memory().write_accountant(memory_label);
     let mut rows = Vec::new();
@@ -3539,56 +3491,35 @@ fn execute_physical_write_rows(
                     row.len()
                 )));
             }
-            let id = match table {
-                TableEntry::Kv(table) => {
-                    UpdateRowId::Kv(if let Some(offset) = table.pk_handle_offset() {
-                        match row.get(offset) {
-                            Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                            Some(Datum::UInt(value)) => {
-                                crate::kv_table::TableHandle::Int(*value as i64)
-                            }
-                            _ => {
-                                return Err(DriverError::unsupported(
-                                    "a physical write child returned an invalid integer handle",
-                                ));
-                            }
-                        }
-                    } else if !table.common_handle_offsets().is_empty() {
-                        let values = table
-                            .common_handle_offsets()
-                            .iter()
-                            .map(|offset| row[*offset].clone())
-                            .collect::<Vec<_>>();
-                        table
-                            .common_handle_of_values(&values, &ctx.session_zone())
-                            .map_err(kv_write_error)?
-                    } else {
-                        match row.get(stored_width) {
-                            Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                            Some(Datum::UInt(value)) => {
-                                crate::kv_table::TableHandle::Int(*value as i64)
-                            }
-                            _ => {
-                                return Err(DriverError::unsupported(
-                                    "a physical write child returned no _tidb_rowid handle",
-                                ));
-                            }
-                        }
-                    })
-                }
-                TableEntry::Mem(_) => match row.get(stored_width) {
-                    Some(Datum::UInt(index)) => {
-                        UpdateRowId::Mem(usize::try_from(*index).map_err(|_| {
-                            DriverError::unsupported("invalid memory-table row position")
-                        })?)
-                    }
+            let id = if let Some(offset) = table.pk_handle_offset() {
+                match row.get(offset) {
+                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
                     _ => {
                         return Err(DriverError::unsupported(
-                            "a physical write child returned no memory-table row position",
-                        ))
+                            "a physical write child returned an invalid integer handle",
+                        ));
                     }
-                },
-                _ => unreachable!(),
+                }
+            } else if !table.common_handle_offsets().is_empty() {
+                let values = table
+                    .common_handle_offsets()
+                    .iter()
+                    .map(|offset| row[*offset].clone())
+                    .collect::<Vec<_>>();
+                table
+                    .common_handle_of_values(&values, &ctx.session_zone())
+                    .map_err(kv_write_error)?
+            } else {
+                match row.get(stored_width) {
+                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+                    _ => {
+                        return Err(DriverError::unsupported(
+                            "a physical write child returned no _tidb_rowid handle",
+                        ));
+                    }
+                }
             };
             let stored = row[..stored_width].to_vec();
             // Both representations stay live until the write phase.
@@ -3631,17 +3562,6 @@ pub(crate) fn row_chunk(
         chunk.append_datum(i, &Datum::Null);
     }
     Ok(chunk)
-}
-
-/// Go's `WHERE` truth test: NULL and zero are false.
-pub(crate) fn datum_is_true(value: &Datum) -> bool {
-    match value {
-        Datum::Null => false,
-        Datum::Int(v) => *v != 0,
-        Datum::UInt(v) => *v != 0,
-        Datum::Real(v) => *v != 0.0,
-        other => !matches!(other, Datum::Null),
-    }
 }
 
 /// Whether a write statement WRITES the name `_tidb_rowid`.

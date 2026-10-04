@@ -21,8 +21,7 @@
 //! from `TblColPosInfo.HandleCols`, a handle column the planner adds to the
 //! join's schema per target table. The shared physical child carries those
 //! identities through every read operator. At the write boundary [`SourceRow`]
-//! separates them from values. The matrix adapter supplies its snapshot
-//! position as an internal handle.
+//! separates them from values. Read-only virtual inputs contribute no handle.
 //!
 //! The rules below were captured from a real TiDB session (`mockstore`
 //! `session.Execute`, reading affected rows off `StmtCtx`), not inferred:
@@ -92,15 +91,9 @@
 
 use std::collections::BTreeMap;
 
+use super::dml::update_record::UpdateRecords;
 use super::*;
 use crate::kv_table::TableHandle;
-
-/// The identity of a base-table row, so a joined row can be written back to
-/// the row it came from. This is Go's `HandleCols`-derived `kv.Handle` for a
-/// stored table, and the row's position for a matrix-backed one (which has
-/// no handles; the position is stable because every write of one statement
-/// is applied to a snapshot taken before the first of them).
-use super::dml::update_record::{UpdateRecords, UpdateRowId as RowId};
 
 /// Where a `FROM` source's rows live, and therefore whether a write may name
 /// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
@@ -154,7 +147,7 @@ impl SourceTable {
 
 /// A joined row: one row identity per participating table (`None` where an
 /// outer join NULL-padded that side), then the concatenated column values.
-type SourceRow = (Vec<Option<RowId>>, Vec<Datum>);
+type SourceRow = (Vec<Option<TableHandle>>, Vec<Datum>);
 
 /// Metadata for the joined values a multi-table write reads.
 struct MultiLayout {
@@ -448,7 +441,7 @@ fn merge_source_layout(
 /// write that reached it CHANGED the row. A repeat visit is skipped only
 /// when the first one changed something -- a no-op first visit leaves the
 /// row eligible, which is Go's `changed && skipMultipleChangesOnSameRow`.
-type UpdateOnce = BTreeMap<(usize, RowId), bool>;
+type UpdateOnce = BTreeMap<(usize, TableHandle), bool>;
 
 /// Runs a multi-table `UPDATE`, returning MySQL's affected-row count.
 pub(crate) fn run_multi_update(
@@ -523,7 +516,7 @@ pub(crate) fn run_multi_update(
             })
         })
         .collect();
-    let mut merged: BTreeMap<((String, String), RowId), Vec<Datum>> = BTreeMap::new();
+    let mut merged: BTreeMap<((String, String), TableHandle), Vec<Datum>> = BTreeMap::new();
     let accountant = ctx
         .statement_memory()
         .write_accountant(crate::mem_quota::label::UPDATE);
@@ -801,7 +794,7 @@ pub(crate) fn run_multi_delete(
     // several join paths -- or named twice in the target list -- is removed
     // once, and two aliases of one table are still one table here (unlike
     // UPDATE, whose key is the target position).
-    let mut doomed: BTreeMap<(String, String, RowId), (usize, usize)> = BTreeMap::new();
+    let mut doomed: BTreeMap<(String, String, TableHandle), (usize, usize)> = BTreeMap::new();
     for (row_index, (ids, _)) in rows.iter().enumerate() {
         for &slot in &target_slots {
             let Some(id) = &ids[slot] else { continue };
@@ -818,8 +811,7 @@ pub(crate) fn run_multi_delete(
 
     let mut records = super::dml::delete_record::DeleteRecords::new(fk_triggers);
     let mut deleted = 0;
-    // Snapshot positions require descending removals for a memory table.
-    for ((database, name, id), location) in doomed.into_iter().rev() {
+    for ((database, name, id), location) in doomed {
         let table = &source.tables[location.1];
         let old = &rows[location.0].1[table.offset..table.end()];
         deleted +=
@@ -1012,7 +1004,6 @@ fn planned_source_rows(
     struct Slot<'a> {
         width: usize,
         kv: Option<&'a crate::kv_table::KvTable>,
-        row_position: bool,
         stored: usize,
     }
     let mut slots = Vec::with_capacity(source.tables.len());
@@ -1025,14 +1016,12 @@ fn planned_source_rows(
             Some(TableEntry::Kv(kv)) => Some(&**kv),
             _ => None,
         };
-        let row_position = matches!(entry, Some(TableEntry::Mem(_)));
         let extra = kv.is_some_and(|kv| {
             kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty()
         });
         slots.push(Slot {
-            width: table.columns.len() + usize::from(extra || row_position),
+            width: table.columns.len() + usize::from(extra),
             kv,
-            row_position,
             stored: table.columns.len(),
         });
     }
@@ -1059,15 +1048,6 @@ fn planned_source_rows(
                 let part = &row[start..start + slot.width];
                 start += slot.width;
                 let id = match slot.kv {
-                    None if slot.row_position => match &part[slot.stored] {
-                        Datum::Null => None,
-                        Datum::UInt(position) => {
-                            Some(RowId::Mem(usize::try_from(*position).map_err(|_| {
-                                DriverError::unsupported("DML row position exceeds address space")
-                            })?))
-                        }
-                        _ => return Err(DriverError::unsupported("invalid DML row position")),
-                    },
                     None => None,
                     Some(kv) => {
                         let handle = if let Some(offset) = kv.pk_handle_offset() {
@@ -1100,7 +1080,7 @@ fn planned_source_rows(
                                 _ => None,
                             }
                         };
-                        handle.map(RowId::Kv)
+                        handle
                     }
                 };
                 ids.push(id);

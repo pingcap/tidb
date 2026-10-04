@@ -16,7 +16,7 @@
 //! onRemoveRowForFK. Ordinary checks see all statement writes; IGNORE checks
 //! one candidate before writing it. Statement staging owns rollback.
 
-use super::{kv_read_error, UpdateRowId};
+use super::{kv_read_error, TableHandle};
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::foreign_key::{self, ParentChange};
 use crate::StmtContext;
@@ -41,7 +41,7 @@ impl<'a> DeleteRecords<'a> {
         catalog: &mut Catalog,
         database: &str,
         name: &str,
-        id: &UpdateRowId,
+        id: &TableHandle,
         old: &[Datum],
         ignore: bool,
         ctx: &StmtContext,
@@ -64,11 +64,9 @@ impl<'a> DeleteRecords<'a> {
                 return Err(error);
             }
         }
-        match (catalog.get_mut_in(database, name), id) {
-            (Some(TableEntry::Mem(mem)), UpdateRowId::Mem(index)) => {
-                mem.rows.remove(*index);
-            }
-            (Some(TableEntry::Kv(kv)), UpdateRowId::Kv(handle)) => {
+        match catalog.get_mut_in(database, name) {
+            Some(TableEntry::Kv(kv)) => {
+                let handle = id;
                 let kv = std::sync::Arc::make_mut(kv);
                 if old.len() == kv.columns().len() {
                     kv.delete_row_with_old_context(handle, old, ctx)

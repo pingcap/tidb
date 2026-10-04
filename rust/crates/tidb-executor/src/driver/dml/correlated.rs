@@ -23,16 +23,6 @@ pub(super) struct DmlExpression {
 }
 
 impl DmlExpression {
-    pub(super) fn build(
-        expr: &tidb_ast::Expr,
-        scope: FromScope,
-        catalog: &Catalog,
-        current_db: &str,
-        ctx: &crate::StmtContext,
-    ) -> Result<Self, DriverError> {
-        Self::build_with_prepared_defaults(expr, scope, catalog, current_db, ctx, &[])
-    }
-
     pub(super) fn build_with_prepared_defaults(
         expr: &tidb_ast::Expr,
         mut scope: FromScope,

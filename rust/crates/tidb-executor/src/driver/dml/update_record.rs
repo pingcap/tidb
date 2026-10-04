@@ -19,12 +19,6 @@
 
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum UpdateRowId {
-    Kv(crate::kv_table::TableHandle),
-    Mem(usize),
-}
-
 pub(crate) struct UpdateRecords<'a> {
     triggers: &'a [tidb_planner::physical::FkTriggerNode],
     tables: Vec<UpdateTable>,
@@ -81,7 +75,7 @@ impl<'a> UpdateRecords<'a> {
         catalog: &mut Catalog,
         database: &str,
         name: &str,
-        id: &UpdateRowId,
+        id: &TableHandle,
         old: &[Datum],
         new: &mut Vec<Datum>,
         partitions: Option<&[i64]>,
@@ -95,10 +89,8 @@ impl<'a> UpdateRecords<'a> {
             )))
         })?;
         if old == new {
-            if let (TableEntry::Kv(kv), UpdateRowId::Kv(handle), Some(keys)) =
-                (entry, id, ctx.selected_lock_keys())
-            {
-                keys.insert(kv.row_lock_key(handle, old, ctx).map_err(kv_write_error)?);
+            if let (TableEntry::Kv(kv), Some(keys)) = (entry, ctx.selected_lock_keys()) {
+                keys.insert(kv.row_lock_key(id, old, ctx).map_err(kv_write_error)?);
             }
             return Ok(UpdateOutcome::Unchanged);
         }
@@ -166,8 +158,9 @@ impl<'a> UpdateRecords<'a> {
         let entry = catalog
             .get_mut_in(database, name)
             .expect("the update target still exists");
-        let result = match (entry, id) {
-            (TableEntry::Kv(kv), UpdateRowId::Kv(handle)) => {
+        let result = match entry {
+            TableEntry::Kv(kv) => {
+                let handle = id;
                 let kv = std::sync::Arc::make_mut(kv);
                 // The table layer currently relies on statement rollback for
                 // index-write failures. An ignored duplicate must not dirty
@@ -197,10 +190,6 @@ impl<'a> UpdateRecords<'a> {
                     ctx,
                 )
                 .map_err(kv_write_error)
-            }
-            (TableEntry::Mem(mem), UpdateRowId::Mem(index)) => {
-                mem.rows[*index] = new.clone();
-                Ok(())
             }
             _ => {
                 return Err(DriverError::unsupported(

@@ -104,7 +104,14 @@ fn count_star_field_keeps_its_written_label() {
 
 #[test]
 fn insert_then_select_round_trip() {
-    let mut catalog = test_catalog();
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
     // Full-row insert.
     assert_eq!(
         run_insert_on(
