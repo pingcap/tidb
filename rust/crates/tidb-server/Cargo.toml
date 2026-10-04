@@ -26,6 +26,7 @@ rcgen.workspace = true
 rustix.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
+x509-parser = { version = "=0.18.1", default-features = false }
 sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true

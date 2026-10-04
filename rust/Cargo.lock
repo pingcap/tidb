@@ -4047,6 +4047,7 @@ dependencies = [
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
  "toml",
+ "x509-parser",
 ]
 
 [[package]]

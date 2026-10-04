@@ -151,6 +151,7 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
 
 #[test]
 fn persisted_secure_transport_is_effective_immediately_in_skip_grant_mode() {
+    let _restore_transport = RestoreRequireSecureTransport::snapshot();
     let store = ConfiguredUserStore::empty_for_skip_grant_table();
     store
         .global_vars()
@@ -628,8 +629,8 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
         }
     }
 
-    // A hashing plugin this tier cannot verify is fail-closed for a real
-    // password, but an empty stored string with an empty response is Go's
+    // A malformed stored hashing credential is denied, while an empty
+    // stored string with an empty response is Go's
     // passwordless success (its password arms are guarded by
     // `len(pwd) > 0 || len(authentication) > 0`).
     let sha2 = "$A$005$THISISACOMBINATIONOFINVALIDSALTANDPASSWORDTHATMUSTNEVERBRBEUSED";
@@ -642,4 +643,191 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     assert!(store
         .authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &[])
         .is_ok());
+}
+
+#[test]
+fn admission_policy_batch_secondary_native_password_is_verified() {
+    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    registry.create_user(
+        "rotation",
+        "%",
+        &tidb_session::privilege::encode_password("new"),
+    );
+    registry.merge_user_attributes(
+        "rotation",
+        "%",
+        serde_json::json!({"additional_password": ABC_HASH}),
+        false,
+    );
+    let users = ConfiguredUserStore::from_accounts(registry);
+    assert!(users
+        .authenticate_native(
+            "rotation",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            &scramble(b"abc", &SOURCE_SALT)
+        )
+        .is_ok());
+}
+
+#[test]
+fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
+    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    let primary = tidb_session::privilege::encode_password_for_plugin(
+        "caching_sha2_password",
+        &tidb_session::privilege::PluginCredential::By("new"),
+    )
+    .unwrap();
+    let secondary = tidb_session::privilege::encode_password_for_plugin(
+        "caching_sha2_password",
+        &tidb_session::privilege::PluginCredential::By("old"),
+    )
+    .unwrap();
+    registry.create_user_with_plugin("rotation", "%", &primary, "caching_sha2_password");
+    registry.merge_user_attributes(
+        "rotation",
+        "%",
+        serde_json::json!({"additional_password": secondary}),
+        false,
+    );
+    let users = ConfiguredUserStore::from_accounts(registry);
+    assert!(users
+        .authenticate(
+            "rotation",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            b"old",
+            TransportKind::DirectTls
+        )
+        .is_ok());
+}
+
+#[test]
+fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
+    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    registry.create_user(
+        "rotation",
+        "%",
+        &tidb_session::privilege::encode_password("new"),
+    );
+    registry.merge_user_attributes(
+        "rotation",
+        "%",
+        serde_json::json!({"additional_password":ABC_HASH}),
+        false,
+    );
+    registry.set_password_locking_options("rotation", "%", Some(3), Some(1));
+    let users = ConfiguredUserStore::from_accounts(registry.clone());
+    let login = |password: &[u8]| {
+        users.authenticate_native(
+            "rotation",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            &scramble(password, &SOURCE_SALT),
+        )
+    };
+    assert!(login(b"wrong").is_err());
+    assert_eq!(
+        registry
+            .password_locking("rotation", "%")
+            .unwrap()
+            .failed_login_count,
+        1
+    );
+    assert!(login(b"abc").is_ok());
+    assert_eq!(
+        registry
+            .password_locking("rotation", "%")
+            .unwrap()
+            .failed_login_count,
+        0
+    );
+    assert!(login(b"new").is_ok());
+    registry.set_auth_string("rotation", "%", "*invalid");
+    assert!(login(b"abc").is_err());
+    assert_eq!(
+        registry
+            .password_locking("rotation", "%")
+            .unwrap()
+            .failed_login_count,
+        0
+    );
+    registry.set_auth_string("rotation", "%", &format!("*{}", "Z".repeat(40)));
+    assert!(login(b"abc").is_err());
+    registry.set_auth_string("rotation", "%", "");
+    assert!(users
+        .authenticate_native("rotation", "127.0.0.1", &SOURCE_SALT, &[])
+        .is_ok());
+    assert!(login(b"abc").is_ok());
+    registry.merge_user_attributes("rotation", "%", serde_json::json!({}), true);
+    assert!(login(b"abc").is_err());
+}
+
+#[test]
+fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
+    use tidb_session::privilege::{encode_password_for_plugin, PluginCredential};
+    let registry = tidb_session::privilege::PrivilegeRegistry::default();
+    let primary =
+        encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("new")).unwrap();
+    let secondary =
+        encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("old")).unwrap();
+    registry.create_user_with_plugin("sm3", "%", &primary, "tidb_sm3_password");
+    registry.merge_user_attributes(
+        "sm3",
+        "%",
+        serde_json::json!({"additional_password":secondary}),
+        false,
+    );
+    let users = ConfiguredUserStore::from_accounts(registry.clone());
+    assert!(users
+        .authenticate(
+            "sm3",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            b"old",
+            TransportKind::DirectTls
+        )
+        .is_ok());
+    registry.set_auth_string("sm3", "%", &"Z".repeat(70));
+    assert!(users
+        .authenticate(
+            "sm3",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            b"old",
+            TransportKind::DirectTls
+        )
+        .is_ok());
+    registry.set_auth_string("sm3", "%", "malformed-length");
+    assert!(users
+        .authenticate(
+            "sm3",
+            "127.0.0.1",
+            &SOURCE_SALT,
+            b"old",
+            TransportKind::DirectTls
+        )
+        .is_err());
+    for plugin in [
+        "auth_socket",
+        "tidb_auth_token",
+        "authentication_ldap_simple",
+        "authentication_ldap_sasl",
+    ] {
+        registry.create_user_with_plugin(plugin, "%", "", plugin);
+        registry.merge_user_attributes(
+            plugin,
+            "%",
+            serde_json::json!({"additional_password":ABC_HASH}),
+            false,
+        );
+        assert!(users
+            .authenticate_native(
+                plugin,
+                "127.0.0.1",
+                &SOURCE_SALT,
+                &scramble(b"abc", &SOURCE_SALT)
+            )
+            .is_err());
+    }
 }

@@ -74,6 +74,10 @@ mod password_history;
 mod password_lock;
 mod privs;
 mod registry_ops;
+mod tls_policy;
+use tls_policy::match_uri_with_wildcard;
+pub(crate) use tls_policy::parse_policy_sans;
+pub use tls_policy::{certificate_uri, TlsPeerIdentity};
 
 pub use export::*;
 pub use password::*;

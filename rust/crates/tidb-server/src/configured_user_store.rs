@@ -64,15 +64,27 @@ pub struct AuthenticatedIdentity {
 /// this value before any auth-plugin exchange, then hands the same decision
 /// back to the account verifier so the live global policy is read exactly
 /// once, in Go's order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TransportAdmission {
     secure_for_account_policy: bool,
     verified_client_certificate: bool,
+    tls_peer: Option<tidb_session::privilege::TlsPeerIdentity>,
 }
 
 impl TransportAdmission {
     pub(crate) fn with_verified_client_certificate(mut self, verified: bool) -> Self {
         self.verified_client_certificate = self.secure_for_account_policy && verified;
+        self
+    }
+    pub(crate) fn with_tls_peer(
+        mut self,
+        peer: Option<tidb_session::privilege::TlsPeerIdentity>,
+    ) -> Self {
+        self.tls_peer = if self.verified_client_certificate {
+            peer
+        } else {
+            None
+        };
         self
     }
 }
@@ -481,6 +493,7 @@ impl ConfiguredUserStore {
                 TransportKind::DirectTls | TransportKind::GatewayTls
             ),
             verified_client_certificate: false,
+            tls_peer: None,
         })
     }
 
@@ -548,62 +561,73 @@ impl ConfiguredUserStore {
         // row before the password is compared, and reports the generic
         // access-denied on failure.
         if identity.as_ref().is_some_and(|identity| {
-            !self.accounts.admits_account_tls(
+            !self.accounts.admits_account_tls_peer(
                 identity.username(),
                 identity.host(),
                 is_tls,
                 admission.verified_client_certificate,
+                admission.tls_peer.as_ref(),
             )
         }) {
             return Err(AuthenticationFailure::AccessDenied);
         }
-        let stored = identity.as_ref().and_then(|identity| {
+        let credentials = identity.as_ref().and_then(|identity| {
             self.accounts
-                .auth_string(identity.username(), identity.host())
+                .login_credentials(identity.username(), identity.host())
         });
-        // Go's verifier is selected by the ACCOUNT's `mysql.user.plugin`,
-        // not by the plugin the wire front end happens to speak: an
-        // `auth_socket`/`tidb_auth_token`/LDAP account carries an EMPTY
-        // `authentication_string` (captured), so verifying it the native way
-        // would turn every one of them into a passwordless account.
-        let verification = identity
-            .as_ref()
-            .and_then(|identity| self.accounts.plugin(identity.username(), identity.host()))
-            .map_or(LoginPluginVerification::NativeHash, |plugin| {
-                login_plugin_verification(&plugin)
-            });
-
-        // Three outcomes, not two: no such account, an account with no
-        // password, and an account with a stored hash.
-        let verified = match stored.as_deref() {
+        // Go validates the primary's shape before either password. A malformed
+        // native hash cannot be rescued by a retained secondary password.
+        let verified = match credentials.as_ref() {
             None => verify_candidate(None, salt, response),
-            Some(encoded) => match verification {
-                LoginPluginVerification::NativeHash => {
+            Some((primary, plugin, secondary)) => {
+                let verification = login_plugin_verification(plugin);
+                let valid_primary = primary.is_empty()
+                    || match verification {
+                        LoginPluginVerification::NativeHash => {
+                            primary.len() == (tidb_mysql::consts::PWDHashLen as usize + 1)
+                                && tidb_parser::auth::decode_password(primary).is_ok()
+                        }
+                        LoginPluginVerification::HashingPlugin(_) => {
+                            primary.len()
+                                == if plugin == tidb_mysql::consts::AuthTiDBSM3Password {
+                                    tidb_mysql::consts::SM3PWDHashLen as usize
+                                } else {
+                                    tidb_mysql::consts::SHAPWDHashLen as usize
+                                }
+                        }
+                        _ => true,
+                    };
+                if !valid_primary {
+                    return Err(AuthenticationFailure::AccessDenied);
+                }
+                let check = |encoded: &str| {
                     if encoded.is_empty() {
-                        response.is_empty()
-                    } else {
-                        verify_candidate(
-                            NativePasswordHash::parse(encoded).ok().as_ref(),
-                            salt,
-                            response,
-                        )
+                        return false;
+                    }
+                    match verification {
+                        LoginPluginVerification::NativeHash => {
+                            tidb_parser::auth::decode_password(encoded).is_ok_and(|hash| {
+                                tidb_parser::auth::check_scrambled_password(salt, &hash, response)
+                            })
+                        }
+                        LoginPluginVerification::HashingPlugin(plugin) => {
+                            check_hashing_password(encoded, response, plugin)
+                        }
+                        _ => false,
+                    }
+                };
+                match verification {
+                    LoginPluginVerification::Deny => false,
+                    LoginPluginVerification::PasswordlessOnly => {
+                        primary.is_empty() && response.is_empty()
+                    }
+                    _ => {
+                        (primary.is_empty() && response.is_empty())
+                            || check(primary)
+                            || secondary.as_deref().is_some_and(check)
                     }
                 }
-                // `response` here is the CLEARTEXT the caching-sha2 /
-                // sm3 full-authentication exchange collected, not a
-                // scramble. Go enters its password arms only through
-                // `len(pwd) > 0 || len(authentication) > 0`, so an empty
-                // stored string AND an empty response is the passwordless
-                // success that never reaches the hash at all.
-                LoginPluginVerification::HashingPlugin(plugin) => {
-                    (encoded.is_empty() && response.is_empty())
-                        || check_hashing_password(encoded, response, plugin)
-                }
-                LoginPluginVerification::PasswordlessOnly => {
-                    encoded.is_empty() && response.is_empty()
-                }
-                LoginPluginVerification::Deny => false,
-            },
+            }
         };
         let Some(identity) = identity else {
             // No such account: the verifier ran against a dummy hash above

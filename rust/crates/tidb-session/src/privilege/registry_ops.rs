@@ -299,7 +299,33 @@ impl PrivilegeRegistry {
         plugin: &str,
         ssl_type: SslType,
     ) -> bool {
-        self.create_account(user, host, auth_string, plugin, false, Some(ssl_type))
+        self.create_account(
+            user,
+            host,
+            auth_string,
+            plugin,
+            false,
+            Some(ssl_json(ssl_type)),
+        )
+    }
+
+    /// Publishes the complete validated REQUIRE image before exposing the account.
+    pub fn create_user_with_plugin_and_tls_policy(
+        &self,
+        user: &str,
+        host: &str,
+        auth_string: &str,
+        plugin: &str,
+        json: &str,
+    ) -> bool {
+        self.create_account(
+            user,
+            host,
+            auth_string,
+            plugin,
+            false,
+            Some(json.to_owned()),
+        )
     }
 
     /// `CREATE ROLE`, which is `CREATE USER` writing the same `mysql.user`
@@ -325,15 +351,15 @@ impl PrivilegeRegistry {
         auth_string: &str,
         plugin: &str,
         is_role: bool,
-        ssl_type: Option<SslType>,
+        tls_json: Option<String>,
     ) -> bool {
         let key = (user.to_owned(), host.to_owned());
         let mut guard = self.lock();
         if guard.contains_key(&key) {
             return false;
         }
-        if let Some(ssl_type) = ssl_type {
-            self.store_ssl_type(user, host, ssl_type);
+        if let Some(json) = tls_json {
+            self.store_tls_policy(user, host, json);
         }
         let created_at = self.clock.now_unix();
         guard.insert(
@@ -379,6 +405,30 @@ impl PrivilegeRegistry {
         self.lock()
             .get(&(user.to_owned(), host.to_owned()))
             .map(|record| record.auth_string.clone())
+    }
+
+    /// One coherent credential image, including Go's retained secondary password.
+    /// Reads the existing user row; no independent authentication cache is introduced.
+    pub fn login_credentials(
+        &self,
+        user: &str,
+        host: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map(|record| {
+                let secondary = record
+                    .user_attributes
+                    .as_deref()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                    .and_then(|value| {
+                        value
+                            .get("additional_password")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    });
+                (record.auth_string.clone(), record.plugin.clone(), secondary)
+            })
     }
 
     /// The account's configured authentication plugin, or `None` when no
@@ -1429,6 +1479,18 @@ impl PrivilegeRegistry {
         is_tls: bool,
         verified_client: bool,
     ) -> bool {
+        self.admits_account_tls_peer(user, host, is_tls, verified_client, None)
+    }
+
+    /// Compares specified properties only with evidence from a verified socket.
+    pub fn admits_account_tls_peer(
+        &self,
+        user: &str,
+        host: &str,
+        is_tls: bool,
+        verified_client: bool,
+        peer: Option<&TlsPeerIdentity>,
+    ) -> bool {
         let rows = self.global_priv.lock().unwrap();
         let Some(row) = rows
             .iter()
@@ -1437,8 +1499,94 @@ impl PrivilegeRegistry {
         else {
             return true;
         };
-        global_ssl_type(&row.priv_json)
-            .is_some_and(|policy| policy.admits_verified(is_tls, verified_client))
+        let Some(policy) = global_ssl_type(&row.priv_json) else {
+            return false;
+        };
+        if policy != SslType::Specified {
+            return policy.admits_verified(is_tls, verified_client);
+        }
+        if !is_tls || !verified_client {
+            return false;
+        }
+        let Some(peer) = peer else {
+            return false;
+        };
+        let Ok(fields) = serde_json::from_str::<GlobalPrivJsonFields>(&row.priv_json) else {
+            return false;
+        };
+        let value = |key| {
+            fields
+                .0
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+        };
+        for (key, given) in [
+            ("ssl_cipher", peer.cipher.as_str()),
+            ("x509_issuer", peer.issuer.as_str()),
+            ("x509_subject", peer.subject.as_str()),
+        ] {
+            let required = value(key);
+            if !required.is_empty() && required != given {
+                return false;
+            }
+        }
+        let san = value("san");
+        if san.is_empty() {
+            return true;
+        }
+        let Ok(required) = parse_policy_sans(san) else {
+            return false;
+        };
+        required.iter().all(|(kind, alternatives)| {
+            peer.sans.get(kind).is_some_and(|given| {
+                alternatives.iter().any(|required| {
+                    given.iter().any(|given| {
+                        if kind == "URI" {
+                            match_uri_with_wildcard(required, given)
+                        } else {
+                            required == given
+                        }
+                    })
+                })
+            })
+        })
+    }
+
+    /// SHOW CREATE USER reads every property from the shared global_priv image.
+    pub fn tls_require_clause(&self, user: &str, host: &str) -> String {
+        let rows = self.global_priv.lock().unwrap();
+        let Some(row) = rows.iter().find(|row| row.user == user && row.host == host) else {
+            return "NONE".into();
+        };
+        let policy = global_ssl_type(&row.priv_json).unwrap_or(SslType::None);
+        if policy != SslType::Specified {
+            return policy.show_create_user_clause().into();
+        }
+        let Ok(fields) = serde_json::from_str::<GlobalPrivJsonFields>(&row.priv_json) else {
+            return "NONE".into();
+        };
+        let mut clauses = Vec::new();
+        for (key, clause) in [
+            ("ssl_cipher", "CIPHER"),
+            ("x509_issuer", "ISSUER"),
+            ("x509_subject", "SUBJECT"),
+            ("san", "SAN"),
+        ] {
+            if let Some(value) = fields
+                .0
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                clauses.push(format!("{clause} '{value}'"));
+            }
+        }
+        if clauses.is_empty() {
+            "NONE".into()
+        } else {
+            clauses.join(" ")
+        }
     }
 
     /// REQUIRE replaces Priv as in Go; unrelated account updates retain it.
@@ -1452,17 +1600,18 @@ impl PrivilegeRegistry {
 
     // The caller holds the user lock through publication/retirement.
     fn store_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
-        let value = match ssl_type {
-            SslType::None => 0,
-            SslType::Any => 1,
-            SslType::X509 => 2,
-            SslType::Specified => 3,
-        };
-        let json = if value == 0 {
-            "{}".into()
-        } else {
-            format!("{{\"ssl_type\":{value}}}")
-        };
+        self.store_tls_policy(user, host, ssl_json(ssl_type));
+    }
+
+    /// REQUIRE replaces the entire raw policy while holding the account owner.
+    pub fn set_tls_policy(&self, user: &str, host: &str, json: &str) {
+        let accounts = self.lock();
+        if accounts.contains_key(&(user.to_owned(), host.to_owned())) {
+            self.store_tls_policy(user, host, json.to_owned());
+        }
+    }
+
+    fn store_tls_policy(&self, user: &str, host: &str, json: String) {
         let mut rows = self.global_priv.lock().unwrap();
         if let Some(row) = rows
             .iter_mut()
@@ -2108,12 +2257,7 @@ fn global_ssl_type(json: &str) -> Option<SslType> {
         .and_then(serde_json::Value::as_str)
         .filter(|san| !san.is_empty())
     {
-        for item in san.split(',') {
-            let (kind, _) = item.split_once(':')?;
-            if !matches!(kind.trim().to_uppercase().as_str(), "URI" | "DNS" | "IP") {
-                return None;
-            }
-        }
+        parse_policy_sans(san).ok()?;
     }
     match object.get("ssl_type").map_or(Some(0), |value| {
         if value.is_null() {
@@ -2179,5 +2323,19 @@ impl<'de> serde::Deserialize<'de> for GlobalPrivJsonFields {
             }
         }
         deserializer.deserialize_any(Fields)
+    }
+}
+
+fn ssl_json(policy: SslType) -> String {
+    let value = match policy {
+        SslType::None => 0,
+        SslType::Any => 1,
+        SslType::X509 => 2,
+        SslType::Specified => 3,
+    };
+    if value == 0 {
+        "{}".into()
+    } else {
+        format!("{{\"ssl_type\":{value}}}")
     }
 }

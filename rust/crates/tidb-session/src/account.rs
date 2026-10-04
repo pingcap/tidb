@@ -210,43 +210,118 @@ fn role_identity(spec: &tidb_ast::RoleSpec) -> privilege::Account {
     (spec.role.clone(), host)
 }
 
-/// Go `executor/grant.go`'s `tlsOption2GlobalPriv` (around line 431): the
-/// `ssl_type` a `REQUIRE` clause list resolves to. Go folds a LIST, with the
-/// LAST option of each kind winning, and starts from `SslTypeNotSpecified`
-/// -- which stores and admits identically to `NONE`.
-///
-/// NONE, SSL and X509 use the shared durable policy. Specified certificate
-/// properties and token issuer remain explicitly unsupported until their
-/// complete admission owners exist.
-pub(crate) fn ssl_type_of(
-    tls_options: &[tidb_ast::AlterUserTlsOption],
-) -> Result<privilege::SslType, DriverError> {
-    let mut ssl_type = privilege::SslType::None;
-    for option in tls_options {
-        ssl_type = match option {
-            tidb_ast::AlterUserTlsOption::None => privilege::SslType::None,
-            tidb_ast::AlterUserTlsOption::Ssl => privilege::SslType::Any,
-            tidb_ast::AlterUserTlsOption::X509 => privilege::SslType::X509,
-            other => {
-                let clause = match other {
-                    tidb_ast::AlterUserTlsOption::Cipher(_) => "CIPHER",
-                    tidb_ast::AlterUserTlsOption::Issuer(_) => "ISSUER",
-                    tidb_ast::AlterUserTlsOption::Subject(_) => "SUBJECT",
-                    tidb_ast::AlterUserTlsOption::San(_) => "SAN",
-                    tidb_ast::AlterUserTlsOption::TokenIssuer(_) => "TOKEN_ISSUER",
-                    tidb_ast::AlterUserTlsOption::None
-                    | tidb_ast::AlterUserTlsOption::Ssl
-                    | tidb_ast::AlterUserTlsOption::X509 => {
-                        unreachable!("handled above")
-                    }
-                };
-                return Err(DriverError::unsupported(format!(
-                    "REQUIRE {clause} needs a verified client certificate, whose specified-property policy is not implemented; REQUIRE NONE, SSL and X509 are supported"
-                )));
+/// Go executor/grant.go's tlsOption2GlobalPriv: reject duplicate or invalid
+/// clauses before publishing the complete REQUIRE image. An omitted clause
+/// produces the empty NONE policy; specified properties retain their text.
+pub(crate) fn tls_policy_of(
+    options: &[tidb_ast::AlterUserTlsOption],
+) -> Result<String, DriverError> {
+    use tidb_ast::AlterUserTlsOption as T;
+    let invalid = |message: String| DriverError::Exec(tidb_executor::ExecError::internal(message));
+    let mut fields = serde_json::Map::new();
+    let mut seen = std::collections::HashSet::new();
+    for option in options {
+        let (kind, key, value) = match option {
+            T::None => ("NONE", None, None),
+            T::Ssl => ("SSL", None, None),
+            T::X509 => ("X509", None, None),
+            T::Cipher(v) => ("CIPHER", Some("ssl_cipher"), Some(v)),
+            T::Issuer(v) => ("ISSUER", Some("x509_issuer"), Some(v)),
+            T::Subject(v) => ("SUBJECT", Some("x509_subject"), Some(v)),
+            T::San(v) => ("SAN", Some("san"), Some(v)),
+            T::TokenIssuer(_) => {
+                return Err(DriverError::unsupported(
+                    "REQUIRE TOKEN_ISSUER needs token authentication",
+                ))
             }
         };
+        if !seen.insert(kind) {
+            return Err(invalid(format!("Duplicate require {kind} clause")));
+        }
+        let policy = match option {
+            T::None => 0,
+            T::Ssl => 1,
+            T::X509 => 2,
+            _ => 3,
+        };
+        if policy == 0 {
+            fields.remove("ssl_type");
+        } else {
+            fields.insert("ssl_type".into(), policy.into());
+        }
+        if let (Some(key), Some(value)) = (key, value) {
+            match option {
+                T::Cipher(_)
+                    if !value.is_empty()
+                        && !tidb_util::tls::SUPPORT_CIPHER.contains(value.as_str()) =>
+                {
+                    return Err(invalid(format!("Unsupported cipher suite: {value}")))
+                }
+                T::Issuer(_) | T::Subject(_) => {
+                    for entry in value.split('/').filter(|s| !s.is_empty()) {
+                        let parts: Vec<_> = entry.split('=').collect();
+                        if parts.len() != 2 {
+                            return Err(invalid(format!("invalid X509_NAME input: {value}")));
+                        }
+                        if !matches!(
+                            parts[0],
+                            "C" | "O"
+                                | "OU"
+                                | "CN"
+                                | "SERIALNUMBER"
+                                | "L"
+                                | "ST"
+                                | "STREET"
+                                | "POSTALCODE"
+                                | "emailAddress"
+                        ) {
+                            return Err(invalid(format!(
+                                "Unsupport check '{}' in current version TiDB",
+                                parts[0]
+                            )));
+                        }
+                    }
+                }
+                T::San(_) => {
+                    privilege::parse_policy_sans(value).map_err(invalid)?;
+                }
+
+                _ => {}
+            }
+            if !value.is_empty() {
+                fields.insert(key.into(), value.clone().into());
+            }
+        }
     }
-    Ok(ssl_type)
+    // Priv is LONGTEXT, so Go's struct field order and encoding/json string
+    // escaping are observable through SELECT Priv as well as reload.
+    #[derive(serde::Serialize)]
+    struct OrderedPolicy<'a> {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ssl_type: Option<&'a serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ssl_cipher: Option<&'a serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        x509_issuer: Option<&'a serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        x509_subject: Option<&'a serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        san: Option<&'a serde_json::Value>,
+    }
+    let policy = OrderedPolicy {
+        ssl_type: fields.get("ssl_type"),
+        ssl_cipher: fields.get("ssl_cipher"),
+        x509_issuer: fields.get("x509_issuer"),
+        x509_subject: fields.get("x509_subject"),
+        san: fields.get("san"),
+    };
+    Ok(serde_json::to_string(&policy)
+        .map_err(|error| invalid(error.to_string()))?
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029"))
 }
 
 impl Session {
@@ -518,7 +593,7 @@ impl Session {
                 "CREATE USER options beyond the account list are not supported yet",
             ));
         }
-        let ssl_type = ssl_type_of(tls_options)?;
+        let tls_policy = tls_policy_of(tls_options)?;
         // Go `executeCreateUser`'s `userAttributes`: a COMMENT clause is
         // wrapped as `{"metadata": {"comment": "<text>"}}`, an ATTRIBUTE
         // clause embeds the caller's JSON as `{"metadata": <json>}`, and a
@@ -598,8 +673,13 @@ impl Session {
                 Self::resolve_auth_string_and_plugin(spec.auth.as_ref(), &default_plugin)?;
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
-            if registry.create_user_with_plugin_and_tls(user, host, &auth_string, &plugin, ssl_type)
-            {
+            if registry.create_user_with_plugin_and_tls_policy(
+                user,
+                host,
+                &auth_string,
+                &plugin,
+                &tls_policy,
+            ) {
                 registry.merge_user_attributes(
                     user,
                     host,

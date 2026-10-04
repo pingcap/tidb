@@ -23,7 +23,7 @@
 //! (`CREATE`/`DROP`/`RENAME USER`, grants, roles) stay in `account.rs` and
 //! the credential statements live here.
 
-use crate::account::{ssl_type_of, PasswordOrLockOptions};
+use crate::account::{tls_policy_of, PasswordOrLockOptions};
 use crate::show::string_column_output;
 use crate::*;
 use tidb_util::stringutil::go_to_lower;
@@ -48,7 +48,7 @@ impl Session {
         // no-ops here.
         let _ = (&alter.resource_options, &alter.resource_group);
         let options = PasswordOrLockOptions::load(&alter.password_options)?;
-        let ssl_type = ssl_type_of(&alter.tls_options)?;
+        let tls_policy = tls_policy_of(&alter.tls_options)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "ALTER USER requires a server front end with a privilege registry",
@@ -381,7 +381,7 @@ impl Session {
             // `{"ssl_type":1}` becomes `{}`) while a password-only ALTER
             // keeps it.
             if !alter.tls_options.is_empty() {
-                registry.set_ssl_type(&user, &host, ssl_type);
+                registry.set_tls_policy(&user, &host, &tls_policy);
             }
             if !mirror_fields.is_empty() && self.user_table_present() {
                 let sql = format!(
@@ -522,7 +522,7 @@ impl Session {
         // Go's `fetchShowCreateUser` reads the `mysql.global_priv` PRIV
         // JSON's `ssl_type` for this clause (captured: `REQUIRE SSL` for an
         // account created with it, `REQUIRE NONE` for one without).
-        let require_clause = registry.ssl_type(&user, &host).show_create_user_clause();
+        let require_clause = registry.tls_require_clause(&user, &host);
         let (history, reuse_days) = registry.password_reuse_policy(&user, &host);
         let history = history.map_or_else(|| "DEFAULT".to_owned(), |n| n.to_string());
         let reuse_days = reuse_days.map_or_else(|| "DEFAULT".to_owned(), |n| format!("{n} DAY"));

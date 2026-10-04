@@ -1,5 +1,7 @@
 # Structural execution batches for the remaining findings
 
+Latest B05 maintenance: [admission-policy batch](admission-policy-batch-repair.md) repairs retained-password and specified certificate consumers together. Counts stay 57 unresolved; remaining durable login-counter/GRANT/cache and certificate reload/rotation/no-CA/platform owners stay explicit. Other 55 IDs retain earlier evidence.
+
 The current register has **57 unresolved findings: 39 open and 18 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.

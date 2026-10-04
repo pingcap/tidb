@@ -1,0 +1,14 @@
+# Public test certificate, reusing tidb-pd-client/testdata/tls/client.key.
+# Generate from rust/ (CSR is disposable):
+# openssl req -new -key crates/tidb-pd-client/testdata/tls/client.key -config crates/tidb-server/testdata/tls/admission-client-san.cnf -out /tmp/admission-client.csr
+# openssl x509 -req -in /tmp/admission-client.csr -CA crates/tidb-pd-client/testdata/tls/ca.crt -CAkey crates/tidb-pd-client/testdata/tls/ca.key -set_serial 0x41444d495353494f4e -days 3650 -extfile crates/tidb-server/testdata/tls/admission-client-san.cnf -extensions client -out crates/tidb-server/testdata/tls/admission-client-san.crt
+[req]
+prompt = no
+distinguished_name = name
+[name]
+CN = tidb-test-client
+[client]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = clientAuth
+subjectAltName = DNS:client.example,IP:127.0.0.1,IP:::ffff:192.0.2.1,URI:spiffe://domain/ns/default/sa/client

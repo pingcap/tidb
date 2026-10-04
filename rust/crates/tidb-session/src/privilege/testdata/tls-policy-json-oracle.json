@@ -1,0 +1,14 @@
+[
+  {
+    "clause": "CIPHER 'TLS_AES_256_GCM_SHA384' AND ISSUER '/CN=\u003c\u003e\u0026' AND SUBJECT '/CN=a\u2028b\u2029c' AND SAN 'DNS:client'",
+    "expected": "{\"ssl_type\":3,\"ssl_cipher\":\"TLS_AES_256_GCM_SHA384\",\"x509_issuer\":\"/CN=\\u003c\\u003e\\u0026\",\"x509_subject\":\"/CN=a\\u2028b\\u2029c\",\"san\":\"DNS:client\"}"
+  },
+  {
+    "clause": "CIPHER 'TLS_AES_256_GCM_SHA384'",
+    "expected": "{\"ssl_type\":3,\"ssl_cipher\":\"TLS_AES_256_GCM_SHA384\"}"
+  },
+  {
+    "clause": "CIPHER '' AND ISSUER '' AND SUBJECT ''",
+    "expected": "{\"ssl_type\":3}"
+  }
+]

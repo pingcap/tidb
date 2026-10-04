@@ -459,9 +459,9 @@ fn show_create_user_current_user_resolves_the_session_identity() {
 /// SHOW CREATE USER 'plain'@'%'  ... AS '' REQUIRE NONE PASSWORD EXPIRE ...
 /// ```
 ///
-/// X509 is persisted; specified certificate properties remain refused.
+/// Every supported REQUIRE property is persisted and shown from global_priv.
 #[test]
-fn require_ssl_and_x509_are_stored_and_shown_and_specified_forms_are_refused() {
+fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'ssl'@'%' REQUIRE SSL").unwrap();
     session.run("CREATE USER 'plain'@'%'").unwrap();
@@ -485,17 +485,46 @@ fn require_ssl_and_x509_are_stored_and_shown_and_specified_forms_are_refused() {
 
     session.run("CREATE USER 'x509'@'%' REQUIRE X509").unwrap();
     assert!(shown(&mut session, "x509").contains(" REQUIRE X509 "));
-    for sql in [
-        "CREATE USER 'c2'@'%' REQUIRE SUBJECT '/CN=x'",
-        "CREATE USER 'c3'@'%' REQUIRE ISSUER '/CN=x'",
+    for (account, clause) in [
+        ("c2", "SUBJECT '/CN=x'"),
+        ("c3", "ISSUER '/CN=x'"),
+        ("c4", "CIPHER 'TLS_AES_256_GCM_SHA384'"),
+        ("c5", "SAN 'URI:spiffe://domain/ns/*,DNS:client'"),
     ] {
-        let refusal = session.run(sql).expect_err(sql).to_mysql_error().message;
-        assert!(
-            refusal.contains("verified client certificate"),
-            "{sql} must be refused by naming why: {refusal}"
-        );
+        session
+            .run(&format!("CREATE USER '{account}'@'%' REQUIRE {clause}"))
+            .unwrap();
+        assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
+        session
+            .run(&format!(
+                "ALTER USER '{account}'@'%' IDENTIFIED BY 'rotated'"
+            ))
+            .unwrap();
+        assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
+        session
+            .run(&format!("ALTER USER '{account}'@'%' REQUIRE NONE"))
+            .unwrap();
+        assert!(shown(&mut session, account).contains(" REQUIRE NONE "));
     }
-    // The refusal is a refusal, not a silent partial write.
-    assert!(session.run("SHOW CREATE USER 'c2'@'%'").is_err());
-    assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
+    session.run("ALTER USER 'plain'@'%' REQUIRE SUBJECT '/CN=x' AND ISSUER '/CN=ca' AND CIPHER 'TLS_AES_256_GCM_SHA384' AND SAN 'DNS:x'").unwrap();
+    assert!(shown(&mut session, "plain").contains(
+        " REQUIRE CIPHER 'TLS_AES_256_GCM_SHA384' ISSUER '/CN=ca' SUBJECT '/CN=x' SAN 'DNS:x' "
+    ));
+    for clause in [
+        "SUBJECT '/UNKNOWN=x'",
+        "ISSUER '/CN=x=y'",
+        "CIPHER 'bogus'",
+        "SAN 'EMAIL:x'",
+        "SAN 'missing-colon'",
+        "SUBJECT '/CN=a' AND SUBJECT '/CN=b'",
+        "TOKEN_ISSUER 'issuer'",
+    ] {
+        assert!(
+            session
+                .run(&format!("CREATE USER 'invalid'@'%' REQUIRE {clause}"))
+                .is_err(),
+            "{clause}"
+        );
+        assert!(session.run("SHOW CREATE USER 'invalid'@'%'").is_err());
+    }
 }

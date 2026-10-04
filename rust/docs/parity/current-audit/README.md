@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [admission-policy batch](admission-policy-batch-repair.md) maintains **A02/A03 together**: retained passwords and CIPHER/ISSUER/SUBJECT/SAN use shared account storage and verified socket evidence, with CREATE/ALTER/SHOW and durable writeback. Seven runtime baseline failures, **126 distinct passing Rust cases** and 52 Go URI plus three Go JSON oracle cases validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; A02/A03 stay partial for the named wider owners. Other 55 IDs retain earlier evidence rather than fresh behavioral reproduction. No complete package acceptance or push.
+
+Earlier checkpoints below are historical.
+
 The [account TLS batch](account-tls-policy-batch-repair.md) advances **A02/A03/N03 together**: durable global_priv, verified TLS/X509 admission and shared CA/protocol startup. Five runtime baseline failures, **114 distinct passing Rust cases** and 12 Go JSON controls validate the connected maintenance. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain. A03 moves from open to partial; the other 54 IDs retain previous evidence. No complete package acceptance or push.
 
 Earlier checkpoints below are historical.

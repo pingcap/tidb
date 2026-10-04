@@ -695,7 +695,7 @@ fn account_tls_batch_durable_global_priv_roundtrip_update_rename_and_delete() {
         LoadedGlobalPriv {
             user: "root".into(),
             host: "%".into(),
-            priv_json: r#"{"ssl_type":2,"other":{"preserved":true}}"#.into(),
+            priv_json: r#"{"ssl_type":3,"ssl_cipher":"TLS_AES_256_GCM_SHA384","x509_issuer":"/CN=ca","x509_subject":"/CN=client","san":"DNS:client,URI:spiffe://domain/ns/*","other":{"preserved":true}}"#.into(),
         },
         LoadedGlobalPriv {
             user: "orphan".into(),

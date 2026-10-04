@@ -324,5 +324,6 @@
         "X02": "open"
       }
     }
-  ]
+  ],
+  "latest_evidence": "admission-policy-batch-validation.json"
 }

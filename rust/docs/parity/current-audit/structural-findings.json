@@ -28,19 +28,19 @@
       "id": "A02",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "**P1; partially repaired:** empty accounts, expiry, nullable reuse policy, password history and complete raw user attributes now survive load, registry publication and account writeback. Failed-login limits/counts and original lock epochs are preserved, including unrelated metadata and secondary credentials. Raw mysql.global_priv now survives loading, registry reload/export and typed writeback, including unknown and orphan policies. NONE/SSL/X509 mutations, rename and drop share that owner. Specified TLS enforcement, durable wire-login counter updates and secondary-password authentication consumers and broader cache invalidation remain incomplete. No complete privilege package or live mixed-node security acceptance is claimed.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs`; `cluster_account_write.rs`; `rust/crates/tidb-server/src/cluster_privileges.rs`; `rust/crates/tidb-session/src/privilege.rs` and `privilege/registry_ops.rs`",
+      "finding": "**P1; partially repaired:** empty accounts, expiry, nullable reuse policy, password history and complete raw user attributes survive load, publication and writeback. Failed-login limits/counts, original lock epochs, metadata and secondary credentials are preserved. Raw mysql.global_priv survives loading, registry reload/export and typed writeback, including unknown/orphan policies. CREATE/ALTER REQUIRE CIPHER/ISSUER/SUBJECT/SAN now share this durable image and verified socket admission; NONE/SSL/X509, SHOW, rename and drop share that owner. Retained native/caching_sha2/sm3 passwords now use one coherent user-row snapshot and the same plugin verifier, with Go primary-validity and passwordless guards and one lockout completion. Durable wire-login counter writes, GRANT REQUIRE and broader privilege cache/platform obligations remain incomplete. No complete privilege package or live mixed-node security acceptance is claimed.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/cluster_privilege_load.rs`; `cluster_account_write.rs`; `rust/crates/tidb-server/src/cluster_privileges.rs`; `configured_user_store.rs`; `rust/crates/tidb-session/src/privilege.rs`; `privilege/registry_ops.rs`; `privilege/tls_policy.rs`; `account.rs`; `account_password.rs`",
       "go_owner": "`pkg/privilege/privileges/cache.go::LoadAll`, `decodeUserTableRow`, `decodeGlobalPrivTableRow`, and `privileges.go::ConnectionVerification`/`checkSSL`. Carry the complete policy image through read, publication and writeback; preserve expiry/lock epochs. Policy loss is source-confirmed; no live mixed-node authentication exploit was run.",
-      "review_basis": "Cloud account TLS batch from 399de17d8b against refreshed Go master 93a01d31f6 and native 19a56cc. Five runtime baseline failures; durable storage round-trip, JSON policy, canonical account host and real certificate controls validate connected maintenance. A02 retains specified TLS, durable login updates, secondary credentials and wider cache/platform gaps. See account-tls-policy-batch-validation.json."
+      "review_basis": "Cloud connected admission-policy batch from 03065ea1ace against fresh Go master 93a01d31f6 and unchanged native 19a56cc. Seven runtime baseline failures, 126 distinct Rust cases and 52 Go URI plus three Go JSON oracle cases validate retained credentials, specified policy, actual verified certificate/SAN/cipher handoff, SQL mutation/display and durable writeback. The persisted-secure-transport test now restores its process global after exposing three later-test failures. Wider named owners remain partial. See admission-policy-batch-validation.json."
     },
     {
       "id": "A03",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "**P2; partially repaired:** inbound shared ssl-ca/tls-version settings now configure optional verified client certificates (mandatory under secure transport with a valid CA), TLS1.2/TLS1.3 minimums and Go partial cert/key auto-TLS fallback. Actual socket certificate evidence reaches account authentication; durable REQUIRE X509 is accepted and enforced, while Unix sockets do not satisfy REQUIRE SSL. Specified CIPHER/ISSUER/SUBJECT/SAN policy remains refused or denied, certificate reload/automatic rotation and no-CA request-client-certificate parity remain incomplete. Full TLS package/mixed-node acceptance is unverified.",
-      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs`; `mysql_connection.rs`; `configured_user_store.rs`; `node_config.rs`; `sql_node.rs`; `rust/crates/tidb-session/src/privilege/registry_ops.rs`; `privilege/privs.rs`; `account.rs`",
+      "finding": "**P2; partially repaired:** shared ssl-ca/tls-version settings configure inbound verified client certificates, TLS minimums and Go partial-key auto-TLS fallback. Actual verified socket evidence now includes negotiated cipher, issuer/subject in ASN.1 order and URI/DNS/IP SANs. Shared global_priv admission enforces CIPHER/ISSUER/SUBJECT/SAN, including certificate presence for cipher-only/empty specified policies, OR alternatives within each SAN type and AND across types. URI wildcards preserve nonpath fields and match one nonempty whole path segment; 52 Go oracle cases cover matching and certificate URI formatting. Certificate reload/automatic rotation, no-CA RequestClientCert, complete certificate/platform parsing and full TLS package/mixed-node acceptance remain incomplete or unverified.",
+      "rust_evidence": "`rust/crates/tidb-server/src/mysql_tls.rs`; `mysql_connection.rs`; `configured_user_store.rs`; `rust/crates/tidb-session/src/privilege/registry_ops.rs`; `privilege/tls_policy.rs`; `account.rs`; `account_password.rs`",
       "go_owner": "`pkg/util/misc.go::LoadTLSCertificates` loads CA/client verification, minimum TLS version and reloadable certificates; `pkg/privilege/privileges/privileges.go::checkSSL` checks verified chains/cipher/issuer/subject/SAN. Preserve that state through the TLS/account boundary. This is separate from A02 losing stored policies.",
-      "review_basis": "Cloud connected account TLS batch from 399de17d8b. Five runtime baseline failures; real trusted/absent/untrusted client handshakes and protocol controls, SQL X509 policy and durable global_priv round-trip pass. Go encoding/json oracle confirms scalar field semantics. Wider named owners remain partial; see account-tls-policy-batch-validation.json."
+      "review_basis": "Cloud admission-policy batch from 03065ea1ace. Trusted issuer/subject/cipher policies failed before repair; real trusted/absent/untrusted clients, SAN type/alternative/wildcard controls, mapped IPv6 SANs, SQL REQUIRE validation and durable writeback pass afterward. 126 distinct Rust cases plus 52 fresh Go URI oracle cases, all-target checking, formatting, make lint and explicit locked build pass. Certificate reload/rotation, no-CA requesting, complete packages and mixed-node security remain partial; see admission-policy-batch-validation.json."
     },
     {
       "id": "A04",
@@ -793,22 +793,20 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "399de17d8b4f9f9f3594917747939de36b8f0a6c",
+    "integration_start": "03065ea1ace65f55cd0e68a0055a3817e62257b5",
     "incoming_integration": "e52af04b8c965c7bae2b35e91445c78261885dc0",
     "findings": [
       "A02",
-      "A03",
-      "N03"
+      "A03"
     ],
     "statuses": {
       "A02": "partial",
-      "A03": "partial",
-      "N03": "partial"
+      "A03": "partial"
     },
-    "receipt": "account-tls-policy-batch-repair.md",
-    "validation": "account-tls-policy-batch-validation.json",
-    "scope": "Connected durable account policy, inbound TLS verification and startup maintenance; no complete Go package acceptance.",
-    "source_identity": "Source and receipts share one normal hook-gated local commit; source hashes identify validation."
+    "receipt": "admission-policy-batch-repair.md",
+    "validation": "admission-policy-batch-validation.json",
+    "scope": "Connected retained credential and specified verified-certificate admission maintenance; no complete Go package acceptance.",
+    "source_identity": "Sources and receipt share a normal hook-gated local commit; hashes below identify validated source. Actual commit/recovery/draft outcomes are SHA-dependent external receipts."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -908,6 +906,25 @@
       "validation": "shared-mpp-lifecycle-validation.json",
       "scope": "Connected existing-owner MPP/process fleet/bootstrap security maintenance; no complete Go package acceptance.",
       "source_identity": "Source, incoming integration and receipts share one normal hook-gated local merge commit; source hashes identify validation."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "399de17d8b4f9f9f3594917747939de36b8f0a6c",
+      "incoming_integration": "e52af04b8c965c7bae2b35e91445c78261885dc0",
+      "findings": [
+        "A02",
+        "A03",
+        "N03"
+      ],
+      "statuses": {
+        "A02": "partial",
+        "A03": "partial",
+        "N03": "partial"
+      },
+      "receipt": "account-tls-policy-batch-repair.md",
+      "validation": "account-tls-policy-batch-validation.json",
+      "scope": "Connected durable account policy, inbound TLS verification and startup maintenance; no complete Go package acceptance.",
+      "source_identity": "Source and receipts share one normal hook-gated local commit; source hashes identify validation."
     }
   ],
   "execution_batches": {

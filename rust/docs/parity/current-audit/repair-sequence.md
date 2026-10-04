@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **57 unresolved (40 open, seventeen partial)**; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **57 unresolved (39 open, eighteen partial)**; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
 
 ## Current structural execution queue
 
@@ -12,12 +12,11 @@ Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON f
 
 Original planning started at TiDB integration `4285385fad20855487ec1d8ff113290d48f949a5`, freshly fetched Go master `93a01d31f6da205ae4bf376825293903a6899fdb`, and native client-rust `6f663b396552eec6d1bfad76b65f813e317884a4`. The normative pins come from that Go master's go.mod: client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, PD client `v0.0.0-20260805103528-afa43111d149`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, TiPB `v0.0.0-20260908093239-fed7bc47c39d`, etcd API `v3.5.15`, and Ristretto `v0.1.1`.
 
-Current reconciliation: [review after removals](post-removal-structural-review.md)
+Historical reconciliation: [review after removals](post-removal-structural-review.md)
 at integration `68d6de685a5e58c559a861ec7b85d10bc8a2aa60`, unchanged Go master and
-native master `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`. All 77 IDs below remain
+native master `6163ecfc587b248dcbf0e30c1c9d905b4bc5a665`. At that checkpoint all 77 IDs below remained
 open/partial. The old repartition, IMPORT and cluster-fixture implementations
-are retired; their complete Go owners remain acceptance obligations. Use this
-current review for live-versus-historical behavior and repair priorities.
+are retired; their complete Go owners remain acceptance obligations. Use the current register and remaining-batches map for present status and repair priorities.
 
 
 The inventories currently enumerate 856 TiDB, 41 client-go, 41 kvproto, 24 PD-client and seven etcd-API package directories, plus 83 Rust crates. All 969 directories remain in the coverage process, including packages without a listed finding. Other external modules need the same inventory before acceptance. There is no claim that 77 is every possible semantic defect. The separate fresh-master range-count-variable delta belongs in the affected whole-package scopes even though it is not a new structural ID.

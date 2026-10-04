@@ -297,6 +297,30 @@ enum ClientStreamInner {
     Upgrading,
 }
 
+// Go crypto/x509 accepts Latin-1 T61 and UCS-2 BMP names as well as UTF-8.
+fn x509_name_value(attr: &x509_parser::x509::AttributeTypeAndValue<'_>) -> Option<String> {
+    let value = attr.as_slice();
+    match attr.attr_value().tag().0 {
+        20 => Some(value.iter().map(|b| char::from(*b)).collect()),
+        30 => {
+            if value.len() % 2 != 0 {
+                return None;
+            }
+            let value = value.strip_suffix(&[0, 0]).unwrap_or(value);
+            let mut result = String::new();
+            for pair in value.chunks_exact(2) {
+                let point = u16::from_be_bytes([pair[0], pair[1]]);
+                if matches!(point, 0xfffe | 0xffff | 0xfdd0..=0xfdef | 0xd800..=0xdfff) {
+                    return None;
+                }
+                result.push(char::from_u32(u32::from(point))?);
+            }
+            Some(result)
+        }
+        _ => attr.as_str().ok().map(str::to_owned),
+    }
+}
+
 impl ClientStream {
     /// Wraps an accepted plaintext socket.
     #[must_use]
@@ -325,6 +349,77 @@ impl ClientStream {
                 .is_some_and(|chain| !chain.is_empty()),
             _ => false,
         }
+    }
+
+    /// Leaf properties are usable only after the configured verifier accepted
+    /// the handshake. Certificate parsing never substitutes for chain verification.
+    pub(crate) fn verified_tls_peer(&self) -> Option<tidb_session::privilege::TlsPeerIdentity> {
+        use x509_parser::extensions::GeneralName;
+        let guard = self.inner.lock().expect("client stream lock");
+        let ClientStreamInner::Tls(stream) = &*guard else {
+            return None;
+        };
+        if stream.conn.is_handshaking() {
+            return None;
+        }
+        let cert = stream.conn.peer_certificates()?.first()?;
+        let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+        let name = |name: &x509_parser::x509::X509Name<'_>| {
+            let mut result = String::new();
+            for attr in name.iter_attributes() {
+                let key = match attr.attr_type().to_id_string().as_str() {
+                    "2.5.4.6" => "C",
+                    "2.5.4.10" => "O",
+                    "2.5.4.11" => "OU",
+                    "2.5.4.3" => "CN",
+                    "2.5.4.5" => "SERIALNUMBER",
+                    "2.5.4.7" => "L",
+                    "2.5.4.8" => "ST",
+                    "2.5.4.9" => "STREET",
+                    "2.5.4.17" => "POSTALCODE",
+                    "1.2.840.113549.1.9.1" => "emailAddress",
+                    _ => continue,
+                };
+                let value = x509_name_value(attr)?;
+                result.push('/');
+                result.push_str(key);
+                result.push('=');
+                result.push_str(&value);
+            }
+            Some(result)
+        };
+        let mut sans = std::collections::BTreeMap::<String, Vec<String>>::new();
+        if let Some(extension) = cert.subject_alternative_name().ok()? {
+            for value in &extension.value.general_names {
+                let (kind, value) = match value {
+                    GeneralName::URI(value) => {
+                        ("URI", tidb_session::privilege::certificate_uri(value)?)
+                    }
+                    GeneralName::DNSName(value) => ("DNS", (*value).to_owned()),
+                    GeneralName::IPAddress(value) if value.len() == 4 => (
+                        "IP",
+                        std::net::Ipv4Addr::from(<[u8; 4]>::try_from(*value).ok()?).to_string(),
+                    ),
+                    GeneralName::IPAddress(value) if value.len() == 16 => ("IP", {
+                        let address = std::net::Ipv6Addr::from(<[u8; 16]>::try_from(*value).ok()?);
+                        address
+                            .to_ipv4_mapped()
+                            .map_or_else(|| address.to_string(), |ip| ip.to_string())
+                    }),
+                    _ => continue,
+                };
+                sans.entry(kind.into()).or_default().push(value);
+            }
+        }
+        Some(tidb_session::privilege::TlsPeerIdentity {
+            cipher: tidb_util::tls::cipher_suite_name(u16::from(
+                stream.conn.negotiated_cipher_suite()?.suite(),
+            ))
+            .into(),
+            issuer: name(cert.issuer())?,
+            subject: name(cert.subject())?,
+            sans,
+        })
     }
 
     /// Performs Go's `upgradeToTLS`: the same socket becomes a TLS server
@@ -592,6 +687,16 @@ mod account_tls_batch_handshake_tests {
 
     // Real TLS plus the exact transport-to-account handoff used by wire auth.
     fn handshake(client_kind: u8, tls12_only: bool, minimum: &str) -> (bool, bool, bool) {
+        handshake_policy(client_kind, tls12_only, minimum, None)
+    }
+
+    fn handshake_policy(
+        client_kind: u8,
+        tls12_only: bool,
+        minimum: &str,
+        policy: Option<&str>,
+    ) -> (bool, bool, bool) {
+        let policy = policy.map(str::to_owned);
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
         let tls = resolve_server_tls_with_policy(
             Some(&dir.join("server.crt")),
@@ -619,11 +724,21 @@ mod account_tls_batch_handshake_tests {
             let verified = stream.has_verified_client_certificate();
             let registry = PrivilegeRegistry::default();
             registry.set_ssl_type("root", "%", SslType::X509);
+            if let Some(policy) = policy {
+                registry.load_global_priv(vec![
+                    tidb_exec::cluster_privilege_load::LoadedGlobalPriv {
+                        user: "root".into(),
+                        host: "%".into(),
+                        priv_json: policy,
+                    },
+                ]);
+            }
             let users = ConfiguredUserStore::from_accounts(registry);
             let admission = users
                 .admit_transport(TransportKind::DirectTls)
                 .unwrap()
-                .with_verified_client_certificate(verified);
+                .with_verified_client_certificate(verified)
+                .with_tls_peer(stream.verified_tls_peer());
             let authenticated = users
                 .authenticate_admitted("root", "127.0.0.1", &[0; 20], &[], admission)
                 .is_ok();
@@ -651,6 +766,16 @@ mod account_tls_batch_handshake_tests {
             1 => builder
                 .with_client_auth_cert(
                     read_certificates(&dir.join("client.crt")).unwrap(),
+                    read_private_key(&dir.join("client.key")).unwrap(),
+                )
+                .unwrap(),
+            3 => builder
+                .with_client_auth_cert(
+                    read_certificates(
+                        &Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("testdata/tls/admission-client-san.crt"),
+                    )
+                    .unwrap(),
                     read_private_key(&dir.join("client.key")).unwrap(),
                 )
                 .unwrap(),
@@ -683,6 +808,115 @@ mod account_tls_batch_handshake_tests {
         let result = worker.join().unwrap();
         assert_eq!(received, result.0);
         result
+    }
+
+    #[test]
+    fn admission_policy_batch_san_alternatives_types_and_verified_origin() {
+        let matching = r#"{"ssl_type":3,"san":"DNS:wrong,DNS:client.example,IP:127.0.0.1,URI:spiffe://domain/ns/*/sa/client"}"#;
+        assert_eq!(
+            handshake_policy(3, false, "TLSv1.3", Some(matching)),
+            (true, true, true)
+        );
+        for policy in [
+            r#"{"ssl_type":3,"san":"DNS:CLIENT.EXAMPLE"}"#,
+            r#"{"ssl_type":3,"san":"IP:192.0.2.2"}"#,
+            r#"{"ssl_type":3,"san":"URI:spiffe://domain/ns/def*/sa/client"}"#,
+            r#"{"ssl_type":3,"san":"URI:spiffe://*/ns/default/sa/client"}"#,
+            r#"{"ssl_type":3,"san":"DNS:client.example,IP:192.0.2.2"}"#,
+        ] {
+            assert_eq!(
+                handshake_policy(3, false, "TLSv1.3", Some(policy)),
+                (true, true, false),
+                "{policy}"
+            );
+        }
+        assert_eq!(
+            handshake_policy(
+                3,
+                false,
+                "TLSv1.3",
+                Some(r#"{"ssl_type":3,"san":"IP:192.0.2.1"}"#)
+            ),
+            (true, true, true)
+        );
+        assert_eq!(
+            handshake_policy(1, false, "TLSv1.3", Some(matching)),
+            (true, true, false)
+        );
+        assert_eq!(
+            handshake_policy(0, false, "TLSv1.3", Some(matching)),
+            (true, false, false)
+        );
+        assert_eq!(
+            handshake_policy(2, false, "TLSv1.3", Some(matching)),
+            (false, false, false)
+        );
+    }
+
+    #[test]
+    fn admission_policy_batch_specified_mismatches_and_cipher_requires_certificate() {
+        for policy in [
+            r#"{"ssl_type":3,"x509_issuer":"/CN=wrong"}"#,
+            r#"{"ssl_type":3,"x509_subject":"/CN=wrong"}"#,
+            r#"{"ssl_type":3,"ssl_cipher":"TLS_AES_128_GCM_SHA256"}"#,
+        ] {
+            assert_eq!(
+                handshake_policy(1, false, "TLSv1.3", Some(policy)),
+                (true, true, false)
+            );
+        }
+        let cipher = r#"{"ssl_type":3,"ssl_cipher":"TLS_AES_256_GCM_SHA384"}"#;
+        assert_eq!(
+            handshake_policy(0, false, "TLSv1.3", Some(cipher)),
+            (true, false, false)
+        );
+        assert_eq!(
+            handshake_policy(1, false, "TLSv1.3", Some(r#"{"ssl_type":3}"#)),
+            (true, true, true)
+        );
+        assert_eq!(
+            handshake_policy(0, false, "TLSv1.3", Some(r#"{"ssl_type":3}"#)),
+            (true, false, false)
+        );
+    }
+
+    #[test]
+    fn admission_policy_batch_matching_issuer_succeeds() {
+        assert_eq!(
+            handshake_policy(
+                1,
+                false,
+                "TLSv1.3",
+                Some(r#"{"ssl_type":3,"x509_issuer":"/CN=tidb-test-ca"}"#)
+            ),
+            (true, true, true)
+        );
+    }
+
+    #[test]
+    fn admission_policy_batch_matching_subject_succeeds() {
+        assert_eq!(
+            handshake_policy(
+                1,
+                false,
+                "TLSv1.3",
+                Some(r#"{"ssl_type":3,"x509_subject":"/CN=tidb-test-client"}"#)
+            ),
+            (true, true, true)
+        );
+    }
+
+    #[test]
+    fn admission_policy_batch_matching_cipher_succeeds() {
+        assert_eq!(
+            handshake_policy(
+                1,
+                false,
+                "TLSv1.3",
+                Some(r#"{"ssl_type":3,"ssl_cipher":"TLS_AES_256_GCM_SHA384"}"#)
+            ),
+            (true, true, true)
+        );
     }
 
     #[test]
