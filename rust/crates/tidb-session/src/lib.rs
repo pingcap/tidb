@@ -476,6 +476,7 @@ pub struct Session {
     /// memory arbitration key; `None` when arbitration is off.
     statement_normalized_sql: Option<String>,
     statement_observation: Option<observation::StatementObservation>,
+    pending_observation_parse: Option<(String, Duration)>,
     routed_statement_observation_depth: u32,
     previous_summary_statement: Option<(String, String)>,
     statement_stats: Arc<tidb_util::topsql_stmtstats::StatementStats>,
@@ -870,6 +871,7 @@ impl Session {
             current_sql_digest_key: String::new(),
             statement_normalized_sql: None,
             statement_observation: None,
+            pending_observation_parse: None,
             routed_statement_observation_depth: 0,
             previous_summary_statement: None,
             statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
@@ -1016,6 +1018,9 @@ impl Session {
     /// must precede the fused Rust session runner to carry the locked value.
     #[doc(hidden)]
     pub fn notify_before_executor_first_run(&self) {
+        if let Some(observer) = self.statement_phase_observer() {
+            observer(tidb_executor::StatementPhase::ExecutorReady);
+        }
         if self
             .executor_first_run_breakpoint
             .swap(true, std::sync::atomic::Ordering::AcqRel)

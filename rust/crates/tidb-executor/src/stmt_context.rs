@@ -252,6 +252,15 @@ pub struct ProcessPlanInfo {
     pub stats_info: std::collections::HashMap<String, u64>,
 }
 
+/// Boundaries shared by statement summaries and execution counters.
+#[derive(Clone, Copy)]
+pub enum StatementPhase {
+    /// Physical planning is complete; executor construction has not begun.
+    PlanReady,
+    /// Executor construction succeeded; Open is about to run.
+    ExecutorReady,
+}
+
 struct StatementRangeFallback {
     tracker: Arc<tidb_util::context::PlanCacheTracker>,
     handler: tidb_util::context::RangeFallbackHandler,
@@ -778,6 +787,7 @@ pub struct StmtContextData {
     /// plan detail in `show process` to gain performance benefits") while
     /// keeping `TableIDs`/`IndexNames`/stats.
     publish_brief_binary_plan: bool,
+    statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -1513,6 +1523,16 @@ context_configuration! {
         self
     }
 
+    /// Attaches the statement owner's phase boundaries to every context clone.
+    #[must_use]
+    pub fn with_statement_phase_observer(
+        mut self,
+        observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
+    ) -> Self {
+        self.statement_phase_observer = observer;
+        self
+    }
+
     /// Installs the two published blacklists. See
     /// [`crate::pushdown_blacklist`].
     #[must_use]
@@ -1993,6 +2013,7 @@ impl StmtContext {
             planned_apply: session.planned_apply,
             process_plan_info: None,
             publish_brief_binary_plan: true,
+            statement_phase_observer: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -3068,6 +3089,11 @@ impl StmtContext {
     /// Go `ExecStmt.Exec` immediately after `buildExecutor` and before
     /// `openExecutor`. Rebuilt pessimistic executors share the latch.
     pub(crate) fn notify_before_executor_first_run(&self) {
+        // A cluster pre-lock may have consumed the breakpoint latch already;
+        // statement counters have their own once-only lifecycle.
+        if let Some(observer) = &self.statement_phase_observer {
+            observer(StatementPhase::ExecutorReady);
+        }
         if self.before_executor_first_run.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -3098,6 +3124,9 @@ impl StmtContext {
     ) {
         if self.process_plan_info.is_none() {
             return;
+        }
+        if let Some(observer) = &self.statement_phase_observer {
+            observer(StatementPhase::PlanReady);
         }
         self.publish_process_plan_info(crate::explain::process_plan_info_with_brief(
             self,

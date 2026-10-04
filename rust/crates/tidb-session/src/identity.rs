@@ -327,7 +327,7 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
-        if self.privilege_context().is_none() {
+        if self.privilege_context().is_none() && self.statement_observation.is_none() {
             return Ok(());
         }
         let requests = self.collect_table_privileges(stmt, false)?;
@@ -386,6 +386,7 @@ impl Session {
         &self,
         requests: &[crate::table_privilege::TablePrivilegeRequest],
     ) -> Result<(), DriverError> {
+        self.observe_privilege_tables(requests);
         let Some((_, user, host)) = self.privilege_context() else {
             return Ok(());
         };

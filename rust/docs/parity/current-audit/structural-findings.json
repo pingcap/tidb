@@ -476,10 +476,10 @@
       "id": "O18",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "**P2; partially repaired:** real authenticated SQL now submits completed statement records through the existing SummaryStmt gate, including streaming Close, prepared original SQL and one outer routed/durable completion including text and binary prepared DML storage verdicts. The full 127-column current/history schema selects v1 memory or v2 memory plus disk with user/PROCESS filtering. Checked persistent initialization falls back to v1 on failure; process shutdown closes workers and flushes the sink. Plan digests/encoded plans, complete table and phase/RPC/RU/CPU/network metadata, restricted/explain context, complete evicted/cluster retrieval and complete package obligations remain unaccepted; empty measurements do not establish parity.",
-      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `record_set.rs`; `dispatch.rs::statement_summary_table_rows`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `cluster_session_node/mod.rs::observe_routed_write`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs`; `rust/crates/tidb-executor/src/driver/infoschema_statement_summary.rs`",
+      "finding": "**P2; partially repaired:** real authenticated SQL now submits completed statement records through the existing SummaryStmt gate, including streaming Close, prepared original SQL and one outer routed/durable completion including text and binary prepared DML storage verdicts. The full 127-column current/history schema selects v1 memory or v2 memory plus disk with user/PROCESS filtering. Checked persistent initialization falls back to v1 on failure; process shutdown closes workers and flushes the sink. Plan digests/encoded plans, complete table and phase/RPC/RU/CPU/network metadata, restricted/explain context, complete evicted/cluster retrieval and complete package obligations remain unaccepted; empty measurements do not establish parity. The statement-attribution batch additionally repairs physical compile-failure counter admission, existing visit-table publication and measured text/physical compile phases; complete profiling, visit ownership and unmeasured administrative/external phases remain partial.",
+      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `record_set.rs`; `dispatch.rs::statement_summary_table_rows`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `cluster_session_node/mod.rs::observe_routed_write`; `rust/crates/tidb-stmtsummary/src/v2/stmtsummary.rs`; `rust/crates/tidb-executor/src/driver/infoschema_statement_summary.rs`; `rust/crates/tidb-session/src/observation.rs::statement_phase_observer`; `identity.rs::check_table_privilege_requests`; `tidb-executor/src/stmt_context.rs::StatementPhase`; statement-attribution-batch-repair.md",
       "go_owner": "`pkg/executor/adapter.go::SummaryStmt`, `pkg/util/stmtsummary/v2::Add`, `cmd/tidb-server/main.go::setupStmtSummary`/`closeStmtSummary`, `pkg/executor/stmtsummary.go::buildStmtSummaryRetriever`: connect statement completion, summary-mode dispatch, reader and sink lifetime together. Keep the existing v1/v2 stores.",
-      "review_basis": "Statement observation batch starting b81b7abe40 against freshly fetched Go master 93a01d31f6 and unchanged native 19a56cc. Real-session and old-server wire regressions reproduce disconnected summary retrieval/publication before repair. Live producer/readers replace the synthetic cumulative fixture. See statement-observation-batch-repair.md and its validation JSON; remaining detailed measurements and whole-package obligations are explicit. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json."
+      "review_basis": "Statement observation batch starting b81b7abe40 against freshly fetched Go master 93a01d31f6 and unchanged native 19a56cc. Real-session and old-server wire regressions reproduce disconnected summary retrieval/publication before repair. Live producer/readers replace the synthetic cumulative fixture. See statement-observation-batch-repair.md and its validation JSON; remaining detailed measurements and whole-package obligations are explicit. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json. Rechecked from 77759b60ee against unchanged fetched Go master; three fail-before/pass-after cases, 51 distinct Rust cases and twelve live wire checks validate the named producer repairs. No whole-package acceptance."
     },
     {
       "id": "O19",
@@ -755,10 +755,10 @@
       "id": "O11",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** each SQL Session registers the existing StatementStats owner, publishes live SQL execution count/duration and marks its counter finished on close; the process starts and joins the existing shared aggregator for both stores. A registered collector receives real completed SQL and retires the closed session. Complete SQL/plan registration, exact compile/execution attribution, profiling, KV/RU/network attribution, generated TiPB transport, sinks and reporter lifecycle remain missing or unverified. This is a live counter/aggregation producer, not a completed TopSQL profiling/reporting pipeline.",
-      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `lib.rs` Session construction/Drop; `rust/crates/tidb-util/src/topsql_stmtstats/{stmtstats,aggregator}.rs`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `tidb-util/src/topsql_reporter/mod.rs` remains explicitly incomplete",
+      "finding": "**P2; partially repaired:** each SQL Session registers the existing StatementStats owner, publishes live SQL execution count/duration and marks its counter finished on close; the process starts and joins the existing shared aggregator for both stores. A registered collector receives real completed SQL and retires the closed session. Complete SQL/plan registration, exact compile/execution attribution, profiling, KV/RU/network attribution, generated TiPB transport, sinks and reporter lifecycle remain missing or unverified. This is a live counter/aggregation producer, not a completed TopSQL profiling/reporting pipeline. The statement-attribution batch additionally repairs physical compile-failure counter admission, existing visit-table publication and measured text/physical compile phases; complete profiling, visit ownership and unmeasured administrative/external phases remain partial.",
+      "rust_evidence": "`rust/crates/tidb-session/src/observation.rs`; `lib.rs` Session construction/Drop; `rust/crates/tidb-util/src/topsql_stmtstats/{stmtstats,aggregator}.rs`; `rust/crates/tidb-server/src/lib.rs::start_statement_observation`; `tidb-util/src/topsql_reporter/mod.rs` remains explicitly incomplete; `rust/crates/tidb-session/src/observation.rs::statement_phase_observer`; `identity.rs::check_table_privilege_requests`; `tidb-executor/src/stmt_context.rs::StatementPhase`; statement-attribution-batch-repair.md",
       "go_owner": "`pkg/util/topsql/topsql.go::SetupTopProfiling`, `RegisterSQL`/`RegisterPlan`, reporter/collector packages and execution hooks. Wire the complete lifetime and generated TiPB boundary. A registered metric or resource-group tag is not a running reporting pipeline.",
-      "review_basis": "Statement observation batch starting b81b7abe40 against Go master 93a01d31f6 and native 19a56cc. The real-session collector regression fails before repair and passes with execution count/duration, Session close and aggregator retirement. Process lifetime now composes setup/close rather than metrics alone. Complete profiling/reporting still requires the recorded Go package and generated boundary. See statement-observation-batch-repair.md. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json."
+      "review_basis": "Statement observation batch starting b81b7abe40 against Go master 93a01d31f6 and native 19a56cc. The real-session collector regression fails before repair and passes with execution count/duration, Session close and aggregator retirement. Process lifetime now composes setup/close rather than metrics alone. Complete profiling/reporting still requires the recorded Go package and generated boundary. See statement-observation-batch-repair.md. Final batch source a7bb8c3e07: 306 distinct passing Rust cases and three live server modes; see statement-observation-batch-validation.json. Rechecked from 77759b60ee against unchanged fetched Go master; three fail-before/pass-after cases, 51 distinct Rust cases and twelve live wire checks validate the named producer repairs. No whole-package acceptance."
     },
     {
       "id": "O12",
@@ -790,21 +790,16 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "ids": [
-      "C02",
-      "E04",
-      "N03"
+    "date": "2026-10-04",
+    "integration_start": "77759b60eea08dd3b287768c188fcf119fadf3fc",
+    "findings": [
+      "O11",
+      "O18"
     ],
-    "statuses": {
-      "C02": "repaired",
-      "E04": "partial",
-      "N03": "partial"
-    },
-    "scope": "Shared instance cache and parallel Apply existing-owner maintenance. E04 CTE/shuffle/full matrices remain partial; no complete package acceptance or push.",
-    "integration_start": "ed4fe8e91f580d9b533595be5c2ccac05ff114a6",
-    "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "cache-apply-batch-repair.md",
-    "source_commit": "571fdb93c503dbae2e26a048a26bba3ff140dc36"
+    "statuses_unchanged": true,
+    "receipt": "statement-attribution-batch-repair.md",
+    "validation": "statement-attribution-batch-validation.json",
+    "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -831,6 +826,25 @@
       "receipt": "placeholder-test-removal.md",
       "obligation_ledger": "placeholder-test-obligations.json",
       "source_commit": "e20b110a9d2df0b531aae231f6b931088c3e2c5d"
+    }
+  ],
+  "repair_history": [
+    {
+      "ids": [
+        "C02",
+        "E04",
+        "N03"
+      ],
+      "statuses": {
+        "C02": "repaired",
+        "E04": "partial",
+        "N03": "partial"
+      },
+      "scope": "Shared instance cache and parallel Apply existing-owner maintenance. E04 CTE/shuffle/full matrices remain partial; no complete package acceptance or push.",
+      "integration_start": "ed4fe8e91f580d9b533595be5c2ccac05ff114a6",
+      "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+      "receipt": "cache-apply-batch-repair.md",
+      "source_commit": "571fdb93c503dbae2e26a048a26bba3ff140dc36"
     }
   ]
 }

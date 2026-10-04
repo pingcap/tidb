@@ -1,5 +1,9 @@
 # Audit and remove Go/Rust structural mismatches
 
+## Statement attribution continuation (2026-10-04)
+
+The [plan](statement-attribution-batch-execplan.md) and [receipt](parity/current-audit/statement-attribution-batch-repair.md) maintain O11/O18 together: physical compile failures do not count as executions; actual parse/physical compilation and deduplicated existing visits reach summaries through shared statement phases. Fifty-one Rust cases and twelve real MySQL/unistore checks pass, with lint/check/locked build. O11/O18 remain partial for complete profiling, visits/phases and transport. Counts remain 29 repaired,57 unresolved(40 open,17 partial). No push.
+
 ## Exhaustive pure-placeholder cleanup checkpoint (2026-10-04)
 
 The [batch plan](planner-empty-module-removal-execplan.md) and [receipt](parity/current-audit/planner-empty-module-removal.md) remove the remaining 64 strictly pure modules containing 612 ignored empty tests. All 72 retained test files are byte-identical; all 612 current Go identities and 674 relocated candidate rows are archived. The exact harness change is 1251 to 639; 355 meaningful Rust tests, lint, all-target checking and locked build pass. Counts remain 29 repaired and 57 unresolved (40 open, 17 partial). Complete upstream obligations remain unverified. No push.

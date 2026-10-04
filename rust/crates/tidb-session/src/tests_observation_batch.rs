@@ -358,3 +358,209 @@ fn observation_batch_durable_named_execute_keeps_retained_sql() {
     let (_, rows) = tests_support::query_text(&mut session, &format!("SELECT PREPARED,AVG_AFFECTED_ROWS FROM information_schema.STATEMENTS_SUMMARY WHERE DIGEST='{digest}'"));
     assert_eq!(rows, [["1", "1"]]);
 }
+
+#[test]
+fn observation_batch_failed_physical_planning_is_not_an_execution() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    enable_top_sql();
+    let mut session = Session::new();
+    let sql = "SELECT * FROM observation_missing_compile_table";
+    let (_, digest) = normalize_statement_digest(sql);
+    assert!(session.run(sql).is_err());
+    let data = session.statement_stats.take();
+    disable_top_sql();
+    assert!(
+        !data
+            .iter()
+            .any(|(key, item)| key.sql_digest.as_bytes() == digest.as_bytes()
+                && item.exec_count != 0),
+        "failed compilation counted as execution: {data:?}"
+    );
+}
+
+#[test]
+fn observation_batch_tables_and_phase_times_follow_real_statement() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_attribution_table (id INT)")
+        .unwrap();
+    let sql = "SELECT a.id FROM observation_attribution_table a JOIN observation_attribution_table b ON a.id=b.id";
+    session.run(sql).unwrap();
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    let (tables, parse, compile) = (
+        record.table_names.clone(),
+        record.cumulative.sum_parse_latency,
+        record.cumulative.sum_compile_latency,
+    );
+    drop(record);
+    assert_eq!(tables, "test.observation_attribution_table");
+    assert!(parse > std::time::Duration::ZERO);
+    assert!(compile > std::time::Duration::ZERO);
+}
+
+#[test]
+fn observation_batch_real_query_records_parse_and_compile_phases() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let sql = "SELECT 901 AS observation_phase_clock";
+    session.run(sql).unwrap();
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    let (parse, compile) = (
+        record.cumulative.sum_parse_latency,
+        record.cumulative.sum_compile_latency,
+    );
+    drop(record);
+    assert!(parse > std::time::Duration::ZERO);
+    assert!(compile > std::time::Duration::ZERO);
+}
+
+#[test]
+fn observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    enable_top_sql();
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_prepared_table (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO observation_prepared_table VALUES (1)")
+        .unwrap();
+    let sql = "SELECT id FROM observation_prepared_table WHERE id=?";
+    let prepared = session.prepare_ast(sql).unwrap();
+    session.statement_stats.take();
+    for _ in 0..2 {
+        session
+            .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
+            .unwrap();
+    }
+    let cached = session.found_in_plan_cache;
+    let data = session.statement_stats.take();
+    disable_top_sql();
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .unwrap()
+        .1;
+    assert!(cached, "second execution must exercise retained plan path");
+    assert_eq!(item.exec_count, 2);
+    assert_eq!(item.duration_count, 2);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    let (tables, compile) = (
+        record.table_names.clone(),
+        record.cumulative.sum_compile_latency,
+    );
+    drop(record);
+    assert_eq!(tables, "test.observation_prepared_table");
+    assert!(compile > std::time::Duration::ZERO);
+}
+
+#[test]
+fn observation_batch_frontend_parse_is_transferred_and_not_reused() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let sql = "SELECT 902 AS observation_frontend_parse";
+    let stmt = session.parse_at_statement_boundary(sql).unwrap();
+    let opened = session.open_record_set_parsed(stmt, sql).unwrap();
+    let crate::StatementExecution::Rows(mut result) = opened.attach(&mut session) else {
+        panic!("rows expected");
+    };
+    result.close().unwrap();
+    drop(result);
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    let parse = record.cumulative.sum_parse_latency;
+    drop(record);
+    assert!(parse > std::time::Duration::ZERO);
+    assert!(session.pending_observation_parse.is_none());
+    let prepared = session
+        .prepare_ast("SELECT ? AS observation_no_parse")
+        .unwrap();
+    session
+        .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
+        .unwrap();
+    let (_, digest) = normalize_statement_digest("SELECT ? AS observation_no_parse");
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    let parse = record.cumulative.sum_parse_latency;
+    drop(record);
+    assert_eq!(parse, std::time::Duration::ZERO);
+}
+
+#[test]
+fn observation_batch_prelock_breakpoint_does_not_suppress_execution_counter() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    enable_top_sql();
+    let mut session = Session::new();
+    // Cluster pre-lock runs before the fused Session executor and consumes
+    // the breakpoint; SQL observation must retain its independent boundary.
+    session.begin_external_executor_breakpoint_scope(true);
+    session.notify_before_executor_first_run();
+    let sql = "SELECT 903 AS observation_prelock_count";
+    session.run(sql).unwrap();
+    session.end_external_executor_breakpoint_scope();
+    let data = session.statement_stats.take();
+    disable_top_sql();
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data.iter().find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes()).unwrap().1;
+    assert_eq!(item.exec_count, 1);
+    assert_eq!(item.duration_count, 1);
+}
+
+#[test]
+fn observation_batch_routed_prelock_failure_counts_one_execution() {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    enable_top_sql();
+    let mut session = Session::new();
+    let sql = "UPDATE observation_prelock_failure SET id=1";
+    let stmt = session.parse_statement(sql).unwrap();
+    session.begin_routed_statement_observation(sql, &stmt);
+    session.notify_before_executor_first_run();
+    session.notify_before_executor_first_run();
+    session.finish_routed_statement_observation(false, 0);
+    session.finish_routed_statement_observation(false, 0);
+    let data = session.statement_stats.take();
+    disable_top_sql();
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data.iter().find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes()).unwrap().1;
+    assert_eq!(item.exec_count, 1);
+    assert_eq!(item.duration_count, 1);
+}

@@ -280,6 +280,8 @@ impl Session {
         self.prepared_params = None;
         self.statement_boundary_open = true;
         let previous = std::mem::take(&mut self.warnings);
+        self.pending_observation_parse = None;
+        let parse_started = std::time::Instant::now();
         let (stmt, parse_warnings) =
             match tidb_parser::parse_with_sql_mode_and_warnings(sql, self.scanner_sql_mode()) {
                 Ok(output) => (output.statement, output.warnings),
@@ -297,6 +299,7 @@ impl Session {
                     return Err(mapped);
                 }
             };
+        self.record_observation_parse(sql, parse_started.elapsed());
         self.observe_statement_node(&stmt, false);
         self.install_statement_warning_state(&stmt, previous);
         // go's recoverable parser diagnostics land as warning rows AFTER the

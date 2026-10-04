@@ -14,7 +14,7 @@
 
 //! Statement completion publication uses the same owner for materialized and
 //! streaming results; readers never fabricate execution records.
-//! Plan digest, phase/RPC/network/RU/CPU measurements are not connected yet;
+//! Plan digest and RPC/network/RU/CPU measurements are not connected yet;
 //! their empty values do not certify those execution-detail contracts.
 use crate::*;
 use tidb_stmtsummary::statement_summary::{
@@ -31,6 +31,20 @@ pub(crate) struct StatementObservation {
     label: String,
     prepared: bool,
     routed: bool,
+    phases: Arc<Mutex<StatementPhases>>,
+}
+
+#[derive(Default)]
+struct StatementPhases {
+    parse: Duration,
+    parse_before_start: Duration,
+    compile_started: Option<std::time::Instant>,
+    compile: Duration,
+    compile_finished: bool,
+    compile_measured: bool,
+    execution_started: bool,
+    stats_started: bool,
+    tables: Vec<tidb_stmtsummary::statement_summary::TableEntry>,
 }
 
 struct LazyStatement {
@@ -56,6 +70,115 @@ impl StmtExecLazyInfo for LazyStatement {
 }
 
 impl Session {
+    pub(crate) fn record_observation_parse(&mut self, sql: &str, duration: Duration) {
+        if let Some(observation) = self.statement_observation.as_ref().filter(|o| o.sql == sql) {
+            // run() opened the clock before parsing; do not add it twice.
+            observation
+                .phases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .parse = duration;
+        } else {
+            // The wire frontend parsed before opening ExecuteStmt.
+            self.pending_observation_parse = Some((sql.to_owned(), duration));
+        }
+    }
+
+    pub(crate) fn start_observation_compile(&self) {
+        if let Some(observation) = &self.statement_observation {
+            let mut phases = observation
+                .phases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Named EXECUTE re-enters compilation; retain the outer start.
+            phases
+                .compile_started
+                .get_or_insert_with(std::time::Instant::now);
+        }
+    }
+
+    pub(crate) fn observed_compile_duration(&self) -> Option<Duration> {
+        let observation = self.statement_observation.as_ref()?;
+        let phases = observation
+            .phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        phases.compile_measured.then_some(phases.compile)
+    }
+
+    pub(crate) fn observe_privilege_tables(
+        &self,
+        requests: &[crate::table_privilege::TablePrivilegeRequest],
+    ) {
+        let Some(observation) = &self.statement_observation else {
+            return;
+        };
+        let mut tables = Vec::new();
+        for request in requests {
+            if request.database.is_empty() && request.table.is_empty() {
+                continue;
+            }
+            let entry = tidb_stmtsummary::statement_summary::TableEntry {
+                db: request.database.clone(),
+                table: request.table.clone(),
+            };
+            if !tables.contains(&entry) {
+                tables.push(entry);
+            }
+        }
+        observation
+            .phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .tables = tables;
+    }
+
+    pub(crate) fn statement_phase_observer(
+        &self,
+    ) -> Option<Arc<dyn Fn(tidb_executor::StatementPhase) + Send + Sync>> {
+        let observation = self.statement_observation.as_ref()?;
+        let phases = Arc::clone(&observation.phases);
+        let stats = Arc::clone(&self.statement_stats);
+        let digest = observation.digest.clone();
+        let statement_started = observation.started;
+        Some(Arc::new(move |phase| {
+            let mut phases = phases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match phase {
+                tidb_executor::StatementPhase::PlanReady => {
+                    if phases.compile_finished {
+                        return;
+                    }
+                    phases.compile_finished = true;
+                    phases.compile_measured = true;
+                    phases.compile = match phases.compile_started {
+                        Some(started) => started.elapsed(),
+                        // Retained prepared plans bypass the compile wrapper.
+                        None => statement_started
+                            .elapsed()
+                            .saturating_sub(phases.parse.saturating_sub(phases.parse_before_start)),
+                    };
+                    return;
+                }
+                tidb_executor::StatementPhase::ExecutorReady => {
+                    if phases.execution_started {
+                        return;
+                    }
+                    phases.execution_started = true;
+                    // External pre-lock and EXPLAIN paths may execute before
+                    // a physical plan-ready notification. Do not fabricate a
+                    // compile duration from work that has already executed.
+                    phases.compile_finished = true;
+                }
+            }
+            if !phases.stats_started && tidb_util::topsql_state::top_sql_enabled() {
+                stats.on_execution_begin(digest.as_bytes(), &[], None);
+                phases.stats_started = true;
+            }
+        }))
+    }
+
     pub(crate) fn current_statement_observation_identity(
         &self,
         sql: &str,
@@ -71,6 +194,11 @@ impl Session {
             return;
         }
         let (normalized, digest) = normalize_statement_digest(sql);
+        let parse = self
+            .pending_observation_parse
+            .take()
+            .filter(|(parsed_sql, _)| parsed_sql == sql)
+            .map_or(Duration::ZERO, |(_, duration)| duration);
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             normalized,
@@ -80,6 +208,11 @@ impl Session {
             label: String::new(),
             prepared: false,
             routed: false,
+            phases: Arc::new(Mutex::new(StatementPhases {
+                parse,
+                parse_before_start: parse,
+                ..StatementPhases::default()
+            })),
         });
     }
 
@@ -119,10 +252,16 @@ impl Session {
         if let Some(observation) = &mut self.statement_observation {
             if observation.label.is_empty()
                 && stmt.label() != "Execute"
+                && !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_))
                 && tidb_util::topsql_state::top_sql_enabled()
             {
                 self.statement_stats
                     .on_execution_begin(observation.digest.as_bytes(), &[], None);
+                observation
+                    .phases
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .stats_started = true;
             }
             observation.label = stmt.label().to_owned();
             observation.prepared |= prepared;
@@ -190,8 +329,13 @@ impl Session {
         if observation.label.is_empty() {
             return;
         }
-        let elapsed = observation.started.elapsed();
-        if tidb_util::topsql_state::top_sql_enabled() {
+        let phases = observation
+            .phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Go GetTotalCostDuration includes parsing before ExecuteStmt.
+        let elapsed = observation.started.elapsed() + phases.parse_before_start;
+        if phases.stats_started && tidb_util::topsql_state::top_sql_enabled() {
             self.statement_stats.on_execution_finished(
                 observation.digest.as_bytes(),
                 &[],
@@ -256,6 +400,7 @@ impl Session {
             .clone();
         let mut ctx = StmtSummaryStmtCtx::default();
         ctx.stmt_type = observation.label;
+        ctx.tables = phases.tables.clone();
         ctx.index_names = if observation.routed {
             Vec::new()
         } else {
@@ -280,8 +425,8 @@ impl Session {
             plan_digest: String::new(),
             user,
             total_latency: elapsed,
-            parse_latency: std::time::Duration::ZERO,
-            compile_latency: std::time::Duration::ZERO,
+            parse_latency: phases.parse,
+            compile_latency: phases.compile,
             stmt_ctx: Arc::new(ctx),
             cop_tasks: None,
             exec_detail: Default::default(),

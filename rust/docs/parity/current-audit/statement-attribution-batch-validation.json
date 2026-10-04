@@ -1,0 +1,226 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "77759b60eea08dd3b287768c188fcf119fadf3fc",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim.",
+  "finding_statuses": {
+    "O11": "partial",
+    "O18": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17
+  },
+  "checks": [
+    {
+      "command": "cargo test --manifest-path rust/Cargo.toml --locked -p tidb-session --lib -- observation_batch table_privilege record_set --test-threads=1",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/session-final.log",
+      "sha256": "55d67ed0fdc68339dc5fe1ae5a85f28d2528d9b58acdcec6fd145d69333098eb",
+      "passing_cases": 23
+    },
+    {
+      "command": "rust/target/debug/build/tidb-session/86397f834a3904b5/out/tidb_session-86397f834a3904b5 --test-threads=1 tests_grants::table_scope tests_grants::enforcement",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/privileges-final.log",
+      "sha256": "4a62395ed1909e6728dbe344045108fe409236febb5941f8225d59eec111f4c9",
+      "passing_cases": 27
+    },
+    {
+      "command": "rust/target/debug/build/tidb-executor/7f27baddf77d5c79/out/tidb_executor-7f27baddf77d5c79 --test-threads=1 brief_binary_plan",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/executor-verified.log",
+      "sha256": "61e5c78b9842bcbf0bb7e78effa1e954812db8a6ccf978716508eef7b67e9ddc",
+      "passing_cases": 1
+    },
+    {
+      "command": "cargo check --manifest-path rust/Cargo.toml --locked --all-targets -p tidb-session -p tidb-executor -p tidb-server",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/all-targets.log",
+      "sha256": "75fe3b5558375f6859e281a4a0b852cecb93d4abfaba4c6b4fe6c86d7b091717"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo build --manifest-path rust/Cargo.toml --locked -p tidb-server",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/server-build-retry.log",
+      "sha256": "7bba918ac21e1f7325788c852e0a8f121ca1be009f6ade5c1ebb1506c6fa74f5"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/statement-attribution/wire.py",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/statement-attribution/wire-final.log",
+      "sha256": "b5c4c5ff2c9ab3eba583d3eea53670ebd551b0ee1a205545be9782aa482d7715"
+    }
+  ],
+  "regressions": {
+    "distinct_fail_before_pass_after": 3,
+    "before_exit_code": 101,
+    "before_log": "/workspace/.cloud-setup/statement-attribution/before.log",
+    "before_sha256": "92ff1274e54db6f8c68befdfd854024905e8d8778b5fff071eaf998025bffe4d",
+    "cases": [
+      "observation_batch_failed_physical_planning_is_not_an_execution",
+      "observation_batch_tables_and_phase_times_follow_real_statement",
+      "observation_batch_real_query_records_parse_and_compile_phases"
+    ],
+    "excluded": [
+      "Three follow-on lock-poison failures",
+      "Intermediate compile errors",
+      "Initial zero-test executor filter",
+      "Duplicate passing runs",
+      "Initial wire startup option and stale empty-string expectation"
+    ]
+  },
+  "test_accounting": {
+    "distinct_rust_cases": 51,
+    "passing_executions": 51,
+    "ignored": 0,
+    "new_cases": 7,
+    "python_lint_cases_separate": 5
+  },
+  "wire": {
+    "status": "passed",
+    "checks": 12,
+    "server_exit": 0,
+    "log": "/workspace/.cloud-setup/statement-attribution/wire-final.log",
+    "sha256": "b5c4c5ff2c9ab3eba583d3eea53670ebd551b0ee1a205545be9782aa482d7715",
+    "command": [
+      "/workspace/tidb/rust/target/debug/tidb-server",
+      "--store",
+      "unistore",
+      "--path",
+      "/workspace/.cloud-setup/statement-attribution/unistore",
+      "--auth-file",
+      "/workspace/.cloud-setup/statement-attribution/test-users.tsv",
+      "--host",
+      "127.0.0.1",
+      "-P",
+      "4467",
+      "--report-status=false"
+    ]
+  },
+  "build_recovery": {
+    "initial_exit_code": 101,
+    "initial_failure": "Disk full (100%); linker bus error",
+    "initial_log": "/workspace/.cloud-setup/statement-attribution/server-build.log",
+    "retry_exit_code": 0,
+    "actions": [
+      "Remove specifically recorded old/failed ELF build outputs; preserve current Rust test executables, libraries, source and recovery evidence",
+      "go clean -cache: only regenerable Go compilation cache"
+    ]
+  },
+  "go_sources": [
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    },
+    {
+      "path": "pkg/session/session.go",
+      "sha256": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3"
+    },
+    {
+      "path": "pkg/sessionctx/variable/session.go",
+      "sha256": "bf69a13a39f9353aebd777836cb48a97fd75e6f965b581683fc5e422746607c9"
+    },
+    {
+      "path": "pkg/planner/core/planbuilder.go",
+      "sha256": "dfe3898638fab653ee37716c5c5e1528c475d1ec73d4b325efde5c61e7507e17"
+    },
+    {
+      "path": "pkg/planner/core/point_get_plan.go",
+      "sha256": "8d45b854f607f7de9a8ab74d0b0db5972f59c1121d4fa4ac1f840209090d02cc"
+    },
+    {
+      "path": "pkg/util/stmtsummary/statement_summary.go",
+      "sha256": "304dc07df74443931ac12ac2b4f2ebbac1adf8dfd9f99ac6c1ca65cc92b75145"
+    },
+    {
+      "path": "pkg/util/stmtsummary/reader.go",
+      "sha256": "20962da24eff9f22ba22f1d793d7cd3b13e5af523586fb43e54e34b85bf8c95b"
+    },
+    {
+      "path": "pkg/util/stmtsummary/v2/record.go",
+      "sha256": "de33582358ed6cc514d71684de04f05945887243d553092d6f0cc0671bedc4cc"
+    },
+    {
+      "path": "pkg/util/topsql/stmtstats/stmtstats.go",
+      "sha256": "b9ae4fb441b288704471e6db63556eb374ef8319794013d356681c53bb7e655e"
+    }
+  ],
+  "validated_rust_snapshot": [
+    {
+      "path": "rust/crates/tidb-executor/src/lib.rs",
+      "sha256": "4da616c33c848fb380815551918cfa74dbd42e3aab9bf2f4bc17b68e75b3dd65"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stmt_context.rs",
+      "sha256": "e2f9e0ca59f6d6e2ad08d137c623285cdc4226d6eff9d5fd5c17ebfc4af10c81"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/dispatch.rs",
+      "sha256": "3633f0ef742cea791782e0fce064d1cd5ec66fa77064f7287c8adb7bd97189e6"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/identity.rs",
+      "sha256": "5ed12e32b455ef5f2f7179dc120e544438df039baddd7a3f223932895e7b9043"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "6dbab0303e9ccb246b3e8c37f7aba450460aeac720aa747498da0a3e07ecd6c3"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/observation.rs",
+      "sha256": "16d06833fed07294c0cd5ca2a7eccc4ede9bb14f2c05d495a697fb75465f0b0e"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/stmt_ctx.rs",
+      "sha256": "063162570f5442e850f8c113f6f1721acc4e262cb29030c26ba59cc06af50482"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_observation_batch.rs",
+      "sha256": "0ef4d74d289a4e191ff4b81c9245edd46d30c5c0b232967a67309e2009e4bf57"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/warnings.rs",
+      "sha256": "07d71c66ff24b56e30411cc5a7c5326418e1ad6bd4f6b8ecba731a85246c3be2"
+    }
+  ],
+  "self_review": "Diff and exact tested-source hashes reviewed; git diff --check passed. No useful assertions removed; new assertions release shared locks. Native/dependencies/Go unchanged.",
+  "remaining": [
+    "O11 complete SQL/plan registration, plan digests, profiling, KV/RU/network attribution, generated transport/reporting and runtime enable/fast-plan policy remain unaccepted. Administrative execution/compile admission is still fused.",
+    "O18 complete planner visit ownership (A01), views/remaining statement metadata, administrative/EXPLAIN/external pre-lock compile phases, plan digest/encoded plan, RPC/RU/CPU/network attribution and full cluster/evicted retrieval remain unaccepted.",
+    "Other 55 unresolved findings retain prior evidence; they were not freshly behaviorally revalidated by this batch.",
+    "No complete Go package acceptance, full upstream fixtures/platform/generated obligations, live multi-node TiKV or performance validation."
+  ],
+  "publication": {
+    "push": "not attempted; user said do not push",
+    "destinations": [
+      "pingcap/tidb hparser-integration",
+      "ngaut/client-rust master"
+    ],
+    "native_changed": false
+  }
+}

@@ -1519,7 +1519,12 @@ impl Session {
             return Ok(None);
         };
 
-        crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
+        crate::metrics::observe_compile_duration(
+            self.observed_compile_duration()
+                .unwrap_or_else(|| started.elapsed())
+                .as_secs_f64(),
+            false,
+        );
         self.found_in_plan_cache = cache_hit;
         let mut query = PendingQuery::new(record_set, stmt_ctx);
         if !self.in_transaction() {
@@ -1922,10 +1927,16 @@ impl Session {
         // before the observation. This door is where preprocess, privilege,
         // and planning happen, so it is the compile boundary.
         let started = std::time::Instant::now();
+        self.start_observation_compile();
         let result =
             self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
         if result.is_ok() {
-            crate::metrics::observe_compile_duration(started.elapsed().as_secs_f64(), false);
+            crate::metrics::observe_compile_duration(
+                self.observed_compile_duration()
+                    .unwrap_or_else(|| started.elapsed())
+                    .as_secs_f64(),
+                false,
+            );
         }
         result
     }
