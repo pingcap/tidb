@@ -2,6 +2,8 @@
 
 The current register has **86 findings: 29 repaired and 57 unresolved (36 open, 21 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
 
+The [session cleanup](session-cleanup-validation.json) removes unused server models, empty session tests and duplicate source compilation; [original obligations](session-cleanup-obligations.json) remain unverified. Finding counts are unchanged.
+
 The [authentication durability batch](auth-durability-batch-validation.json) advances A02/A03/N03 together: durable pessimistic login tracking, shared policy and internal-session ownership, canonical generated RSA/identity/temp-file TLS, and removal of duplicated test-source compilation. All three remain partial. See the [living plan](../../auth-durability-batch-execplan.md).
 
 The [metadata policy batch](metadata-policy-batch-validation.json) replaces stale sequence schema/rows, composes shared SEM visibility, and repairs local cluster instance identity. I01/I02 remain partial; I03 fanout remains open. See the [living plan](../../metadata-policy-batch-execplan.md).

@@ -1,5 +1,8 @@
 # Audit and remove Go/Rust structural mismatches
 
+Current cleanup: [session cleanup plan](session-cleanup-execplan.md) removes four unused server models, empty harnesses and duplicate source compilation. No finding is closed and no push is authorized.
+
+
 Current metadata batch: [living plan](metadata-policy-batch-execplan.md), [validation](parity/current-audit/metadata-policy-batch-validation.json). Replace the empty sequence reader and stale schema, share SEM visibility, and use local status identity for process rows. I01 becomes partial; I02 stays partial and I03 fanout remains open. 86 tracked:29 repaired,57 unresolved(36 open,21 partial). Other54 IDs retain earlier evidence. No whole-package acceptance or push. Earlier checkpoints retain their original counts.
 
 Current topology batch: [living plan](cluster-topology-execplan.md), [validation](parity/current-audit/cluster-topology-validation.json). I02/O13/N03 now share live component discovery, Domain AZ policy and canonical labels. I02/O13 move from open to partial; N03 stays partial. 86 tracked:29 repaired,57 unresolved(37 open,20 partial). Other54 unresolved IDs retain prior evidence. Complete packages, live mixed-cluster behavior and performance remain unaccepted. No push. Earlier checkpoints retain their original counts.

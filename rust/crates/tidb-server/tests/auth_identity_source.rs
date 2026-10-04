@@ -12,13 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
 #![allow(missing_docs)]
 
-#[path = "../src/auth_identity.rs"]
-mod auth_identity;
-
-use auth_identity::{
+use tidb_server::{
     AuthPluginHandoff, AuthPluginHandoffError, IdentityCatalog, IdentityLookupPolicy,
     IdentityLookupRequest, IdentityLookupResult, MatchedIdentity, PrivilegeRowAdmission,
     DEFAULT_AUTH_PLUGIN,

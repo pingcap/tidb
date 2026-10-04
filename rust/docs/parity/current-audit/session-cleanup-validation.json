@@ -1,0 +1,128 @@
+{
+  "date": "2026-10-04",
+  "parent": "8f8ba0562056682dcc2e4f76a42d0cac939b4625",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Remove unconsumed server scaffolds, empty session harness entries, duplicated test-source compilation and stale references. Fix the stale native-auth lifecycle fixture uncovered by retained behavioral validation. No package acceptance or finding closure.",
+  "removed": {
+    "production_modules": [
+      "auth_session",
+      "auth_token",
+      "bootstrap",
+      "listener"
+    ],
+    "dead_model_tests": 18,
+    "empty_session_functions": 250,
+    "empty_session_modules": 11,
+    "duplicate_transport_tests": 1,
+    "standalone_cargo_targets": 1,
+    "private_source_copies_replaced_with_library_imports": 3,
+    "candidate_rows_relocated_to_git_history": 352
+  },
+  "obligations": "session-cleanup-obligations.json",
+  "source_review": {
+    "file_hashes_verified": 22,
+    "meaningful_bodies_byte_identical": [
+      "part1::test_old_password_upgrade",
+      "part2::test_new_cursor",
+      "part2::test_get_cursor",
+      "part2::test_range_cursor",
+      "part2::test_cursor_handle_close",
+      "part2::test_cursor_tracker_concurrent_create_delete",
+      "part5::test_result_field",
+      "part5::test_result_type",
+      "part5::test_field_text",
+      "part5::test_sql_mode_op",
+      "part5::test_prepare_zero",
+      "part5::test_primary_key_auto_increment",
+      "part5::test_parse_with_params",
+      "part5::test_local_temporary_table_update",
+      "part5::test_local_temporary_table_delete",
+      "part5::test_parse_error_warn",
+      "part5::test_autocommit"
+    ],
+    "finding_statuses": {
+      "partial": 21,
+      "repaired": 29,
+      "open": 36
+    },
+    "go_declaration_refs": 250,
+    "missing_historical_refs": 8
+  },
+  "session_harness": {
+    "before": 2192,
+    "after": 1993,
+    "removed": 199,
+    "source_only_removed": 51,
+    "all_other_test_identities_preserved": true
+  },
+  "server_harness": {
+    "before": 220,
+    "after": 205,
+    "removed": 15,
+    "standalone_tests_removed": 4,
+    "all_other_test_identities_preserved": true,
+    "binary": "/workspace/tidb/rust/target/debug/build/tidb-server/be3ca1ffc065fa6b/out/all-be3ca1ffc065fa6b",
+    "selected_passes": 40
+  },
+  "rust_cases_passed": 46,
+  "validation": [
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- tests_session_part1_source tests_session_part2_source --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/session-cleanup/session-tests.log",
+      "sha256": "094c6ceac9fc87ee3bcf50c49f599e5b2989b37e6809f329faeec1d1a2e040c5"
+    },
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-server --test all -- auth_identity_source native_password_source secure_transport_source configured_user_store_source sql_node_lifecycle_source mysql_native_auth_lifecycle_source --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/session-cleanup/server-tests-fixed.log",
+      "sha256": "977f382574691dd6a2452d104dd768c228a58d6762fb8749464037f06783596c"
+    },
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session -p tidb-server --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/session-cleanup/all-targets-final.log",
+      "sha256": "4c960fb2d4853e86efc47393568419eefa2bcbcbeeab7a56a09b7f95c10ddafc"
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/session-cleanup/lint-final.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "fixture_repair": {
+    "before": "Original native-auth lifecycle fixture panics on handshake SET NAMES, expecting SELECT. Its RecordingFactory retains a socket clone, so the client blocks after the worker panic. Isolated execution reproduces the assertion and times out (exit124); initial grouped run stopped (Cargo exit101).",
+    "after": "Same three native-auth tests pass. Fixture asserts initialization before SELECT; 5-second client read/write timeouts bound worker-failure hangs. Existing authentication/query/ping/quit, plugin-switch and rejection assertions retained.",
+    "go_basis": "pkg/server/driver_tidb.go TiDBDriver.OpenCtx initializes the connection collation before commands; real Rust mysql_connection.rs already does this."
+  },
+  "unchanged_findings": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21
+  },
+  "gates": {
+    "commit": "Actual hooks/pre-commit must run cd rust && cargo build --locked -p tidb-server; completed hook, commit, recovery bundle and draft results recorded in /workspace/.cloud-setup/session-cleanup/final-handoff.json.",
+    "push": "No push or dry run authorized or attempted."
+  },
+  "limits": [
+    "Original Go tests, fixtures and generated/platform obligations remain unverified; no complete package accepted.",
+    "No full Go/Rust suite, live multi-node or measured performance sweep.",
+    "Existing behavioral failures elsewhere were not deleted or reclassified.",
+    "Unpublished commit restoration in a fresh task remains unverified."
+  ],
+  "failure_evidence": [
+    {
+      "log": "/workspace/.cloud-setup/session-cleanup/server-tests.log",
+      "sha256": "624fcd406e5fda605026fbaa691b5cdec393293afc7824df4ba83013f63391b6"
+    },
+    {
+      "log": "/workspace/.cloud-setup/session-cleanup/native-isolated.log",
+      "sha256": "7054f3aa17d4e1ef4de9af95ddf25224ab6338b0b5cf367a4b8af791a1edb65e"
+    }
+  ],
+  "self_review": "Exact harness differences and file hashes verified; all other identities and 17 retained mixed-session bodies preserved. Go source, dependencies, native client and runtime execution paths untouched. git diff --check passes."
+}

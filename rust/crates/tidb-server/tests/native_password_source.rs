@@ -12,16 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code, missing_docs)]
+#![allow(missing_docs)]
 
-#[path = "../src/native_password.rs"]
-mod native_password;
-
-use native_password::{
+use sha1::{Digest, Sha1};
+use tidb_server::{
     generate_handshake_salt, verify_candidate, NativePasswordHash, NativePasswordHashError,
     HANDSHAKE_SALT_LEN,
 };
-use sha1::{Digest, Sha1};
 
 const ABC_STAGE_TWO: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 const SOURCE_SALT: [u8; 20] = [

@@ -469,8 +469,8 @@
       "id": "O17",
       "status": "open",
       "group": "Domain and process services",
-      "finding": "**P2; source-confirmed:** telemetry configuration and startup-admission helpers have no production feature-counter/window collection and periodic telemetry-log reporting lifecycle.",
-      "rust_evidence": "`rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::telemetry_enabled`; server boot and Rust production inventory; `telemetry.md` receipt",
+      "finding": "**P2; source-confirmed:** telemetry configuration has no production feature-counter/window collection and periodic telemetry-log reporting lifecycle.",
+      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs`; unused bootstrap admission model removed (session-cleanup-validation.json); `telemetry.md` receipt",
       "go_owner": "`pkg/telemetry` and `pkg/domain/domain.go::TelemetryLoop`: preserve source opt-in gates, restricted-session collection, initial report, window rotation, log output and shutdown. Go currently logs the report; this finding does not call for an external telemetry uploader.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Telemetry settings/admission remain without a production counter/window collector and periodic log reporter. Go's present contract does not require an external uploader. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -560,7 +560,7 @@
       "status": "open",
       "group": "TiFlash and MPP",
       "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01\u2013F03.",
-      "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-server/src/bootstrap.rs::BootstrapFeatureGates::watch_disaggregated_tiflash`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
+      "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
       "go_owner": "`pkg/util/tiflashcompute`, startup topology initialization and `pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHash`: integrate configured topology discovery, fixed-pool cache, recovery and dispatch selection with the complete MPP owner. Do not add unsupported Go provider modes.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Disaggregated settings still have no composed compute topology/cache/dispatch consumer; the live scan selects ordinary PD stores. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -810,16 +810,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "integration_start": "880246825ccaea2c945b963a7d1d49a500d6cf1a",
-    "receipt": "obsolete-tooling-removal-validation.json",
-    "retired_gate_tests": 1,
-    "retired_probe_modules": 1,
-    "relocated_behavior_assertions": "Exact default-OR tree shape moves into existing pipes_as_concat_sql_mode_matches_go; original meaningful obligation retained.",
-    "retired_binary_targets": [
-      "select-one-profile"
-    ],
-    "finding_statuses_changed": false,
-    "scope": "Remove obsolete source-size policy, duplicated profiling/parser scaffolding and stale status reports; no Go package acceptance."
+    "receipt": "session-cleanup-validation.json",
+    "scope": "Remove four unused server models, 250 empty session functions, duplicated source compilation and stale references. No finding status or Go acceptance changes."
   },
   "test_cleanup_history": [
     {
@@ -869,6 +861,11 @@
       "finding_statuses_changed": false,
       "receipt": "dml-trigger-owner-batch-repair.md",
       "inventory": "dml-trigger-owner-batch-validation.json"
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "session-cleanup-validation.json",
+      "scope": "Remove four unused server models, 250 empty session functions, duplicated source compilation and stale references. No finding status or Go acceptance changes."
     }
   ],
   "repair_history": [

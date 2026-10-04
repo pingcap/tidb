@@ -14,12 +14,7 @@
 
 #![allow(missing_docs)]
 
-#[path = "../src/secure_transport.rs"]
-mod secure_transport;
-
-use secure_transport::{
-    SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
-};
+use tidb_server::{SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind};
 
 #[test]
 fn disabled_policy_allows_plain_tcp() {
@@ -55,20 +50,4 @@ fn enabled_policy_preserves_unix_and_tls_exemptions() {
             "{transport:?} should satisfy the secure-transport policy"
         );
     }
-}
-
-#[test]
-fn policy_does_not_claim_tls_or_authentication() {
-    // The type contains only the source admission fact. DirectTls and
-    // GatewayTls are supplied by a later transport owner; this test keeps the
-    // boundary from growing a fake handshake or password-verification path.
-    let policy = SecureTransportPolicy::new(true);
-    assert_eq!(
-        policy.admit(TransportKind::DirectTls),
-        Ok(TransportDecision::Allowed)
-    );
-    assert_eq!(
-        policy.admit(TransportKind::GatewayTls),
-        Ok(TransportDecision::Allowed)
-    );
 }

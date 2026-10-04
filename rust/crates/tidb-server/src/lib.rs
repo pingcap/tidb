@@ -12,41 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped connection dispatch for the standalone Rust SQL node.
+//! MySQL connection dispatch and SQL node lifecycle.
 //!
-//! This is the first server-layer consumer of `tidb-protocol`'s command
-//! decoder and `tidb-exec`'s shared session. Dispatched today, each with a
-//! real arm in [`mysql_connection`]: `COM_QUERY`, `COM_PING`, `COM_QUIT`,
-//! `COM_INIT_DB` (which really selects a schema), and the binary
-//! prepared-statement family `COM_STMT_PREPARE`/`EXECUTE`/`CLOSE`/`RESET`/
-//! `COM_STMT_FETCH`. A prepare claims transaction control first -- `BEGIN`,
-//! `COMMIT`, `ROLLBACK` and the savepoint statements are applied through
-//! `control_transaction` at EXECUTE, exactly as the text arm applies them, so
-//! a prepared `BEGIN` opens the connection's transaction rather than being
-//! run as an ordinary statement -- and otherwise falls through three tiers,
-//! point read, then write, then general. It is no longer the single
-//! signed-BIGINT point-read path this paragraph used to describe. Also owned:
-//! the bounded
-//! table-less automatic result-metadata path, source-shaped handshake
-//! primitives, negotiated compressed command I/O, and TCP listener lifecycle.
+//! [`mysql_connection`] decodes protocol commands and dispatches queries,
+//! transaction control and prepared statements through the shared session.
+//! [`SqlNode`] owns the listener and connection lifecycle. Authentication
+//! passes through [`ConfiguredUserStore`] and the shared privilege registry.
 //!
-//! Inbound TLS on the MySQL port is now served, not refused: with server
-//! certificate material present (`--ssl-cert`/`--ssl-key`, or the self-signed
-//! pair `--auto-tls` generates) the node advertises `CLIENT_SSL`, upgrades the
-//! socket in place on an `SSLRequest`, and reads the real
-//! `HandshakeResponse41` off the encrypted stream. Without material the bit
-//! stays clear, because advertising it without performing the upgrade hangs
-//! every client that asks.
-//!
-//! STILL EXPLICIT BOUNDARIES, refused rather than faked: client-certificate
-//! specified certificate-property authentication (ISSUER/SUBJECT/SAN), `COM_FIELD_LIST`,
-//! `COM_SET_OPTION`, `COM_RESET_CONNECTION`, and every unknown command.
-//!
-//! This paragraph claimed "database selection" and "general prepared
-//! statements" were boundaries after both had landed. It is the third module
-//! doc in this tree found asserting behaviour that was no longer true, so:
-//! when a unit changes what this crate accepts, correct this list in the
-//! same commit.
+//! [`resolve_server_tls`] uses canonical node configuration for configured
+//! certificates or generated auto-TLS material. The connection advertises
+//! `CLIENT_SSL` only when material is available, upgrades an `SSLRequest`,
+//! then reads the handshake response from the encrypted stream.
 
 // Tests of process-global sysvar hooks must not share those hooks with other
 // simulated nodes. Run the original test body in its own harness process;
@@ -78,9 +54,6 @@ mod aggregate_result_set;
 mod auth_exchange;
 mod auth_identity;
 mod auth_plugin_registry;
-mod auth_session;
-mod auth_token;
-mod bootstrap;
 pub mod bootstrap_publish;
 pub mod cluster_account_seam;
 pub mod cluster_analyze_seam;
@@ -100,7 +73,6 @@ mod global_config_sync;
 pub mod handshake;
 mod handshake_response;
 pub mod http_status;
-mod listener;
 pub mod main_flags;
 mod mysql_connection;
 mod mysql_tls;
@@ -136,19 +108,6 @@ pub use auth_plugin_registry::{
     AuthPluginAdmission, AuthPluginDescriptor, AuthPluginRegistry, AuthPluginRegistryError,
     ClientPluginSelection, ClientPluginSelectionRequest, DEFAULT_AUTH_PLUGINS,
 };
-pub use auth_session::{
-    AuthChallenge, AuthRejectionReason, AuthSessionAttempt, AuthSessionError, AuthSessionState,
-    AUTH_SOCKET_PLUGIN,
-};
-pub use auth_token::{
-    AuthTokenAttempt, AuthTokenCheck, AuthTokenCheckAction, AuthTokenCheckError,
-    AuthTokenJwksState, AuthTokenRetryState, JwtCompactShape, AUTH_TOKEN_INVALID_JWT,
-    AUTH_TOKEN_NO_VALID_JWKS, AUTH_TOKEN_RETRY_EXHAUSTED,
-};
-pub use bootstrap::{
-    decide_start_mode, start_mode, BootstrapDecisionError, BootstrapFeatureGates, BootstrapMode,
-    BootstrapPhase, BOOTSTRAP_PHASE_ORDER, NOT_BOOTSTRAPPED,
-};
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 use cluster_session_node::run_cluster_session_node_with_spill;
 pub use cluster_session_node::{
@@ -167,7 +126,6 @@ pub use handshake::{
     HandshakeResponseHeader, InitialHandshake, DEFAULT_CONNECT_ATTRS_SIZE,
 };
 pub use handshake_response::{HandshakeResponse41, WireString};
-pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
     serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,
     ConnectionExit, ConnectionReport, MysqlConnectionError,

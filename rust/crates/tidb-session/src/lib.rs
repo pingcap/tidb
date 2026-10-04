@@ -2622,25 +2622,9 @@ mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
 #[cfg(test)]
-mod tests_domain_affinity_manager_source;
-#[cfg(test)]
-mod tests_domain_crossks_source;
-#[cfg(test)]
-mod tests_domain_db_session_pool_source;
-#[cfg(test)]
-mod tests_domain_domain_source;
-#[cfg(test)]
 mod tests_domain_domain_utils_source;
 #[cfg(test)]
-mod tests_domain_domainctx_source;
-#[cfg(test)]
-mod tests_domain_extract_source;
-#[cfg(test)]
-mod tests_domain_infosync_source;
-#[cfg(test)]
 mod tests_domain_plan_replayer_handle_source;
-#[cfg(test)]
-mod tests_domain_plan_replayer_slow_log_source;
 #[cfg(test)]
 mod tests_domain_plan_replayer_source;
 #[cfg(test)]
@@ -2736,8 +2720,6 @@ mod tests_savepoint;
 #[cfg(test)]
 mod tests_sem_v2;
 mod tests_sequence;
-#[cfg(test)]
-mod tests_session_bootstrap_common_source;
 #[cfg(test)]
 mod tests_session_embedding_source;
 #[cfg(test)]

@@ -100,10 +100,6 @@ tidb-parser = { path = "../tidb-parser" }
 name = "all"
 path = "tests/all.rs"
 
-[[test]]
-name = "auth_session_source"
-path = "tests/auth_session_source.rs"
-
 [features]
 # Production TiKV ships jemalloc, and this node statement path is
 # allocation-heavy: the default build therefore runs on tikv-jemallocator

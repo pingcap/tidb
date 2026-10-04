@@ -126,10 +126,21 @@ impl ResultSetSource for Rows {
     }
 }
 
-struct Session;
+#[derive(Default)]
+struct Session {
+    initialized: bool,
+}
 
 impl QuerySession for Session {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        if !self.initialized {
+            // Go TiDBDriver.OpenCtx applies handshake collation before commands.
+            assert_eq!(sql, "SET NAMES 'utf8mb4' COLLATE 'utf8mb4_bin'");
+            self.initialized = true;
+            return Ok(QueryResult::new(Box::new(
+                tidb_server::MaterializedResultSetSource::new(Vec::new(), Vec::new()),
+            )));
+        }
         assert_eq!(sql, "select id from campaign21.rows");
         Ok(QueryResult::new(Box::new(Rows {
             rows: [vec![Datum::Int(42)]].into(),
@@ -147,7 +158,7 @@ impl QuerySessionFactory for RecordingFactory {
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         self.contexts.lock().unwrap().push(context);
-        Ok(Session)
+        Ok(Session::default())
     }
 }
 
@@ -177,6 +188,14 @@ fn native_nonroot_auth_query_ping_quit_publishes_canonical_session_identity() {
     });
 
     let mut client = TcpStream::connect(address).unwrap();
+    // Recorded SessionContexts retain a socket clone after a worker panic.
+    // Bound client I/O so a fixture assertion cannot hang the entire harness.
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     reader.set_sequence(0);
     let salt = handshake_salt(&reader.read_packet().unwrap());
@@ -248,6 +267,14 @@ fn nonnative_client_plugin_runs_real_auth_switch_packet_sequence() {
     });
 
     let mut client = TcpStream::connect(address).unwrap();
+    // Recorded SessionContexts retain a socket clone after a worker panic.
+    // Bound client I/O so a fixture assertion cannot hang the entire harness.
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     reader.set_sequence(0);
     let salt = handshake_salt(&reader.read_packet().unwrap());
@@ -296,6 +323,14 @@ fn rejected_packet(user: &str, password: Option<&[u8]>) -> Vec<u8> {
     });
 
     let mut client = TcpStream::connect(address).unwrap();
+    // Recorded SessionContexts retain a socket clone after a worker panic.
+    // Bound client I/O so a fixture assertion cannot hang the entire harness.
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    client
+        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     reader.set_sequence(0);
     let salt = handshake_salt(&reader.read_packet().unwrap());

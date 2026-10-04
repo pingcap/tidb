@@ -12,14 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-backed carriers for manifest batch `b148`, `pkg/session.part5`.
-//!
-//! This is the deterministic items 181--240 of the upstream `pkg/session`
-//! test inventory. The pure parser/result-metadata checks and the focused
-//! local-temporary-table DML checks run against the current Rust session. The
-//! other declarations remain explicit ignored carriers where the Go test owns
-//! a storage, Domain, failpoint, bootstrap, protocol, or internal transaction
-//! seam that this crate does not expose.
+//! Behavioral session tests retained from the original Go test inventory.
+//! Empty harness entries moved to session-cleanup-obligations.json in
+//! rust/docs/parity/current-audit; their Go obligations remain unverified.
 
 #![cfg(test)]
 
@@ -241,11 +236,6 @@ fn test_parse_error_warn() {
     assert_eq!(parsed.warnings.len(), 1);
     assert!(tidb_parser::parse("SELECT").is_err());
 }
-
-/// `pkg/session/test/tidb_test.go:44::TestKeysNeedLock`.
-#[test]
-#[ignore = "go-parity-gap: TiDB tablecodec key classification and transaction lock flags are not transcreated"]
-fn test_keys_need_lock() {}
 
 /// `pkg/session/test/txn/txn_test.go:40::TestAutocommit`.
 #[test]
