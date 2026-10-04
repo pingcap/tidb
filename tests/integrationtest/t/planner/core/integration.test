@@ -2345,3 +2345,18 @@ select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
 drop table if exists t;
 create table t (col timestamp);
 explain format='plan_tree' select cast(col as char) from t group by cast(col as char);
+
+# TestIssue9968
+drop table if exists t;
+create table t (a int primary key, b varchar(10), c varchar(10), d varchar(300));
+insert into t values (1, 'x', 'y', 'z'), (2, 'x', null, 'z'), (3, null, null, null);
+explain format='brief' select a, group_concat(b) from t group by a;
+explain format='brief' select a, group_concat(distinct b, c order by c separator ';') from t group by a;
+select a, group_concat(b) from t group by a order by a;
+select a, group_concat(distinct b, c order by c separator ';') from t group by a order by a;
+select a, group_concat(b, '-', c) from t group by a order by a;
+explain format='brief' select a, group_concat(d) from t group by a;
+set @@session.group_concat_max_len = 4;
+explain format='brief' select a, group_concat(b) from t group by a;
+select a, group_concat(b, c) from t group by a order by a;
+set @@session.group_concat_max_len = default;

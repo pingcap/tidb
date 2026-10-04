@@ -4255,3 +4255,50 @@ Projection	root		cast(planner__core__integration.t.col, var_string(19))->Column
   └─TableReader	root		data:HashAgg
     └─HashAgg	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int primary key, b varchar(10), c varchar(10), d varchar(300));
+insert into t values (1, 'x', 'y', 'z'), (2, 'x', null, 'z'), (3, null, null, null);
+explain format='brief' select a, group_concat(b) from t group by a;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__integration.t.a, cast(concat(planner__core__integration.t.b), var_string(16777216))->Column#6
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select a, group_concat(distinct b, c order by c separator ';') from t group by a;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__integration.t.a, cast(concat(planner__core__integration.t.b, planner__core__integration.t.c), var_string(16777216))->Column#6
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select a, group_concat(b) from t group by a order by a;
+a	group_concat(b)
+1	x
+2	x
+3	NULL
+select a, group_concat(distinct b, c order by c separator ';') from t group by a order by a;
+a	group_concat(distinct b, c order by c separator ';')
+1	xy
+2	NULL
+3	NULL
+select a, group_concat(b, '-', c) from t group by a order by a;
+a	group_concat(b, '-', c)
+1	x-y
+2	NULL
+3	NULL
+explain format='brief' select a, group_concat(d) from t group by a;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__integration.t.a, Column#6
+└─StreamAgg	8000.00	root		group by:planner__core__integration.t.a, funcs:group_concat(planner__core__integration.t.d separator ",")->Column#6, funcs:firstrow(planner__core__integration.t.a)->planner__core__integration.t.a
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+set @@session.group_concat_max_len = 4;
+explain format='brief' select a, group_concat(b) from t group by a;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__integration.t.a, Column#6
+└─StreamAgg	8000.00	root		group by:planner__core__integration.t.a, funcs:group_concat(planner__core__integration.t.b separator ",")->Column#6, funcs:firstrow(planner__core__integration.t.a)->planner__core__integration.t.a
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+select a, group_concat(b, c) from t group by a order by a;
+a	group_concat(b, c)
+1	xy
+2	NULL
+3	NULL
+set @@session.group_concat_max_len = default;
