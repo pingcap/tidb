@@ -788,6 +788,13 @@ impl Syncer for EtcdSyncer {
                     let _ = notify_tx.send(());
                     true
                 });
+                // The job-version mirror normally stays current through its
+                // range-then-watch loop.  During startup, however, the first
+                // DDL can publish acknowledgements while that watch is being
+                // established.  Reconcile from the authoritative prefix
+                // before installing the predicate so an already-published
+                // ack cannot be stranded behind the first one-second retry.
+                self.reconcile_job_schema_versions();
                 let item = self.job_schema_ver_match_or_set(job_id, match_fn);
                 let notify_rx = SharedRecv::new(notify_rx);
                 let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -1820,12 +1827,39 @@ mod tests {
         // The PUT happened after the watch's previous snapshot, but before
         // the replacement watch was usable. The reconciliation must recover
         // it from the authoritative prefix and re-run the pending predicate.
-        etcd.put_raw(
-            &format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/7/node-a"),
-            "2",
-        );
+        etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/7/node-a"), "2");
         syncer.reconcile_job_schema_versions();
         assert!(notify.load(AtomicOrdering::Acquire));
+    }
+
+    #[test]
+    fn wait_version_synced_reconciles_before_installing_predicate() {
+        let _guard = globals_test_lock();
+        tidb_vardef::set_enable_mdl(true);
+        let etcd = FakeEtcd::default();
+        etcd.set_server_infos(&[("node-a", "tidb-a", 4000, 1)]);
+        let syncer = new_syncer(&etcd);
+        // Simulate the startup race: the follower has already published its
+        // ack, but the owner's background mirror has not observed the watch
+        // event yet.
+        etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/8/node-a"), "7");
+
+        let started = std::time::Instant::now();
+        let result = syncer
+            .wait_version_synced(&Context::background(), 8, 7, false)
+            .expect("the authoritative ack should satisfy the first wait");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "the first wait should use the authoritative ack immediately"
+        );
+        assert_eq!(
+            result,
+            SyncSummary {
+                server_count: 1,
+                assumed_server_count: 0,
+            }
+        );
+        tidb_vardef::set_enable_mdl(false);
     }
 
     // ---- Go TestCalculateUpdatedMap ----
