@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "6d625b5223f5d7a94865f55ea7298e91982a54f9",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Pure-placeholder harness maintenance only; no production source or finding status changes; no complete Go package acceptance.",
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-planner --test all -- --list",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/before-list.log",
+      "sha256": "e69ef919c1a93ea13b93ceb34ec97f367b2caf061c12d454204e7437a15c1467",
+      "listed_entries": 1251
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test all -- --list",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/after-list.log",
+      "sha256": "3da30366874a17505bcf80057056230c50cc812c434f6e176dfd3e42e521e8da",
+      "listed_entries": 639
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test all -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/retained-integration-tests.log",
+      "sha256": "d7e04e833747af88dbd73e1e5baa91d77a1d107cd7be8d55ec8862143b77339e",
+      "passing_cases": 277
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --lib plan_cache_ -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/cache-tests.log",
+      "sha256": "50663908c67d6636231e97ed22c1fc63adca0b778b5e2e1f6d6d681f14d1c194",
+      "passing_cases": 19
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --lib physical::tests -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/physical-tests.log",
+      "sha256": "dfa5d0c1d3de064a8388d3e6a668ad9fe17440a224169eb0abfe85b9b61aa76f",
+      "passing_cases": 61
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/all-targets-check.log",
+      "sha256": "840d92cdad740c40c793775bd31402ead935ab84545ce55859a6de13c9deacd9"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/server-build.log",
+      "sha256": "2dfd451c2d65c61e4f815502e0dd8afbe03753614bad4302f81c83a52a489e6f"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/planner-empty-module-removal/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "removal_verification": {
+    "removed_modules": 64,
+    "removed_empty_tests": 612,
+    "before": 1251,
+    "after": 639,
+    "all_other_harness_names_preserved": true,
+    "retained_test_files_byte_identical": 72,
+    "remaining_strict_pure_placeholder_modules": 0,
+    "current_go_identities_verified": 612,
+    "source_identities_ambiguous_or_unmatched": 0,
+    "full_historical_source_hashes_verified": true,
+    "candidate_rows_relocated": 674,
+    "active_assertions_removed": 0,
+    "aggregate_tests_passed": 277,
+    "aggregate_tests_ignored": 362
+  },
+  "passing_test_cases": 357,
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17
+  },
+  "self_review": "Strict source proof, exact harness difference, all 72 retained test files byte-identical, current Go declarations and complete historical hashes verified. Diff reviewed; whitespace gate required before commit.",
+  "unverified": [
+    "Full upstream fixture/failpoint/generated/platform obligations",
+    "Live multi-node TiKV",
+    "Performance",
+    "Whole-package acceptance"
+  ],
+  "SQL_evidence": "No production change; preceding wire evidence retained without rerun.",
+  "push": {
+    "authorized": false,
+    "attempted": false
+  }
+}

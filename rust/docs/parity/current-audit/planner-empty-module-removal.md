@@ -1,0 +1,13 @@
+# Remaining pure-placeholder planner modules
+
+This batch removes **612 ignored empty functions across 64 modules** after exhaustive strict source inspection. Each deleted module contains only comments and ignored empty functions. All **72 retained planner test files are byte-identical** to parent `6d625b5223f5d7a94865f55ea7298e91982a54f9`. No production source, useful assertion, Go test, benchmark, dependency or native client changes.
+
+Freshly fetched Go master remains `93a01d31f6da205ae4bf376825293903a6899fdb`; native master remains `19a56ccda1e128218cd33c69709038219aced9bc`. Integration remains hparser-integration with exact pingcap/tidb origin. All work is in Codex Cloud; no push is authorized or attempted.
+
+The [obligation ledger](planner-empty-module-obligations.json) archives every byte of all 64 historical files and all 612 contracts, ignore reasons and unambiguous current Go declaration identities, with hashes. Benchmark header mappings and bootstrap package paths are retained. Historical comments are seed evidence, not current assertions that implementations are absent. **674 candidate-index rows** pointing into deleted files moved into that ledger. Historical receipts remain frozen; generator, platform, fixture and benchmark obligations remain unverified.
+
+The exact aggregate set difference is the ledger's 612 names: **1251 entries become 639**, with no other additions or removals. **No strictly pure-placeholder planner module remains**. Mixed modules retain 362 ignored entries; their gaps are not discharged. The aggregate passes **277 tests**, cache tests pass **19**, and physical tests pass **61**: **357 distinct passing cases**. Planner all-target checking, make lint and the locked server build pass. See [validation](planner-empty-module-removal-validation.json) for exact commands and hashes.
+
+Production behavior and finding statuses are unchanged: **86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)**. This is harness maintenance, not 612 repaired findings or complete package acceptance. Full upstream fixtures/failpoints, live multi-node TiKV and performance are unverified. Prior SQL evidence is retained without an unrelated rerun. Serial Apply and CTE/shuffle safety guards remain pending complete replacement ownership.
+
+The [living plan](../../planner-empty-module-removal-execplan.md) documents reproducible steps. Normal local commits must pass the actual precommit locked server-build hook. Recovery and draft readback are recorded in Cloud `planner-empty-module-removal/final-handoff.json`; fresh-task restoration remains unverified. Nothing is pushed.

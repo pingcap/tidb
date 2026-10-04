@@ -1,5 +1,9 @@
 # Audit and remove Go/Rust structural mismatches
 
+## Exhaustive pure-placeholder cleanup checkpoint (2026-10-04)
+
+The [batch plan](planner-empty-module-removal-execplan.md) and [receipt](parity/current-audit/planner-empty-module-removal.md) remove the remaining 64 strictly pure modules containing 612 ignored empty tests. All 72 retained test files are byte-identical; all 612 current Go identities and 674 relocated candidate rows are archived. The exact harness change is 1251 to 639; 357 meaningful Rust tests, lint, all-target checking and locked build pass. Counts remain 29 repaired and 57 unresolved (40 open, 17 partial). Complete upstream obligations remain unverified. No push.
+
 ## Empty planner test cleanup checkpoint (2026-10-04)
 
 The [cleanup plan](placeholder-test-removal-execplan.md) removes 55 ignored empty tests across five planner modules and two assertion-free LRU probe loops. The [receipt](parity/current-audit/placeholder-test-removal.md) and [unverified obligation ledger](parity/current-audit/placeholder-test-obligations.json) retain all current Go identities/historical contracts and 81 relocated candidate-index rows. Exact harness set difference preserves every other entry. Production owners, Go obligations and counts are unchanged: 29 repaired and 57 unresolved (40 open, 17 partial). No push.
