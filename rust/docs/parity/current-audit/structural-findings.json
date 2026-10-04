@@ -809,8 +809,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "receipt": "test-harness-retirement-validation.json#canonical_variance_continuation",
-    "scope": "Four variance facades, their state/finalizer adapters, nine redundant adapter tests and three shell snippet self-tests removed. Existing live suite owns coverage; ordinary reset preserved. 14 retained aggregate cases pass. Finding statuses unchanged."
+    "receipt": "test-harness-retirement-validation.json#window_leaf_continuation",
+    "scope": "Six unused window source modules and four model-test files retired (15 old cases). Useful vectors migrate to one grouped live executor test; all 14 live window tests pass. Memory accounting and all finding statuses remain unaccepted/unchanged."
   },
   "test_cleanup_history": [
     {
@@ -890,6 +890,11 @@
       "date": "2026-10-04",
       "receipt": "test-harness-retirement-validation.json",
       "scope": "Six link targets retired; 57 behavioral cases consolidated. Three source/doc-only assertions and two canned DDL scripts removed. Six stale catalog totals corrected. 74 selected cases pass; original standalone planner fixtures retain one pass and three reproduced failures. No finding closed."
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "test-harness-retirement-validation.json#canonical_variance_continuation",
+      "scope": "Four variance facades, their state/finalizer adapters, nine redundant adapter tests and three shell snippet self-tests removed. Existing live suite owns coverage; ordinary reset preserved. 14 retained aggregate cases pass. Finding statuses unchanged."
     }
   ],
   "repair_history": [

@@ -68,3 +68,29 @@ Milestones are caller/coverage migration and removal, followed by one combined l
 The initial edit moved nine cases beside the private finalizer, and that intermediate unit run passed. A broader comparison with the existing live variance suite showed those cases duplicated its Go obligations. Delete the intermediate migration and validate the retained integration owner instead. The final receipt must distinguish this intermediate nine-pass result from final retained coverage. Canonical production implementation stays byte-identical before the removed compatibility suffix. No extra binary retirement or measured speedup is claimed in this continuation.
 
 Final outcome: four facade source files, one compatibility state and three finalizer APIs, nine duplicate tests and three shell snippet checks are removed. The six existing variance cases and eight core aggregate cases pass. No finding is closed; 86 tracked, 29 repaired and 57 unresolved remain. No measured speedup, full suite, live-cluster acceptance or push is claimed.
+
+## Retire unused window models
+
+
+Start at 1d8a6f02e13db9a8e89e27535bc4ca5b07e946d2. Remove tidb-exec's cume_dist, ntile, lead_lag, window_value_int, window and window/ranking_runtime modules after confirming all consumers are the four leaf-test suites. The live owner is tidb-executor/src/window.rs, whose per-function comparison timing follows Go; the private geometry's claim to be the live runtime is stale. Preserve CUME_DIST peer/empty vectors, NTILE bucket vectors, LEAD/LAG offsets/defaults/wrap and integer value/NULL selection by grouping them into the existing window_executor_source suite against the actual chunk executor. Retire memory assertions about unused model layouts; complete Go memory/accounting obligations remain unverified.
+
+### Progress
+
+
+- [x] Remove six unused source modules, their four test files and stale crate documentation; migrate 43 meaningful vectors into one live-suite case.
+- [x] All 14 window tests pass (43 migrated vectors, eight executions each); all-target checking, lint, formatting and self-review pass. Final normal-hook, bundle and draft outcomes are in /workspace/.cloud-setup/window-leaf-cleanup/final-handoff.json.
+
+### Plan, validation and recovery
+
+
+Go source/reference: pkg/executor/aggfuncs/func_{cume_dist,ntile,lead_lag,value}.go and their tests at master 93a01d31f6da205ae4bf376825293903a6899fdb. First migrate vectors with existing ChunkedSource and WindowExec; exercise ordinary/pipelined modes, chunk boundaries and reopen. Delete the unreferenced models and declarations together. From rust/ run cargo test --locked -p tidb-executor --test all -- window_executor_source --test-threads=1 and cargo check --locked -p tidb-exec -p tidb-executor --all-targets. Then make lint, formatting/diff review, and a normal commit running cd rust && cargo build --locked -p tidb-server. Source /workspace/.cloud-setup/env.sh; use one build job. Logs, deletion hashes and final handoff belong in /workspace/.cloud-setup/window-leaf-cleanup. Git preserves deleted files. Do not push or change native sources. This removes unused APIs, not a live SQL implementation; no full package, finding closure or measured speedup is claimed.
+
+### Surprises & Discoveries / Decision Log
+
+
+The old ranking geometry describes a shared WindowPartitionRuntime that no longer exists there. The actual executor owns independent ranking cursors and Go comparison timing. Remove the stale copy rather than connecting it to the live path. Memory tests comparing an unused model's size to itself cannot establish Go memory parity; keep that obligation open. Date: 2026-10-04.
+
+### Outcomes & Retrospective
+
+
+Six source modules and four model suites are removed. Live production window code and all 13 existing cases are byte-identical; one grouped live case carries the useful vectors. Initial helper compilation required a constructor closure because WindowFunction is not Clone/Debug; production types stay unchanged. No known failing regression is removed, no finding is closed, and no full-suite or performance claim is made.

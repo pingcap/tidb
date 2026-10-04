@@ -1160,3 +1160,191 @@ fn ranking_comparisons_follow_result_evaluation_order() {
         }
     }
 }
+
+#[test]
+fn go_window_leaf_vectors_use_the_live_chunk_executor() {
+    // Go aggfuncs TestWindowFunctions/TestLeadLag and func_value.go. Keep
+    // source vectors at the production owner, not in a second state machine.
+    fn check(input: &[Option<i64>], function: impl Fn() -> WindowFunction, expected: &[Datum]) {
+        for chunk_size in [1, 2] {
+            for pipelined in [false, true] {
+                let function = function();
+                let mut output_type = long();
+                let order = if matches!(function, WindowFunction::CumeDist) {
+                    output_type = FieldType::new(FieldTypeCode::Double);
+                    vec![column(0)]
+                } else {
+                    if matches!(function, WindowFunction::Ntile(_)) {
+                        output_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+                    }
+                    vec![]
+                };
+                let child = ChunkedSource {
+                    inner: MemTableSourceExec::new(
+                        ExecutorMeta::new(schema(1), 1, chunk_size, chunk_size),
+                        input
+                            .iter()
+                            .map(|v| vec![v.map_or(Datum::Null, Datum::Int)])
+                            .collect(),
+                    ),
+                    calls: 0,
+                    input: None,
+                    chunk_size,
+                    fail_after: None,
+                };
+                let mut output_schema = schema(2);
+                output_schema.columns[1].ret_type = Some(output_type.clone());
+                let base = WindowExec::new(
+                    ExecutorMeta::new(output_schema, 2, chunk_size, chunk_size),
+                    vec![WindowFuncSpec {
+                        func: function,
+                        output_type,
+                    }],
+                    vec![],
+                    order,
+                    None,
+                    Box::new(child),
+                    NoColumns,
+                    1,
+                );
+                let mut executor: Box<dyn Executor> = if pipelined {
+                    Box::new(tidb_executor::window::PipelinedWindowExec::new(base))
+                } else {
+                    Box::new(base)
+                };
+                for _ in 0..2 {
+                    executor.open().unwrap();
+                    let mut output = executor.new_chunk();
+                    let mut actual = Vec::new();
+                    loop {
+                        executor.next(&mut output).unwrap();
+                        if output.num_rows() == 0 {
+                            break;
+                        }
+                        for i in 0..output.num_rows() {
+                            actual.push(
+                                output
+                                    .get_row(i)
+                                    .get_datum(1, &executor.ret_field_types()[1]),
+                            );
+                        }
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "chunk={chunk_size}, pipelined={pipelined}, input={input:?}"
+                    );
+                    executor.close().unwrap();
+                }
+            }
+        }
+    }
+
+    for (keys, expected) in [
+        (vec![], vec![]),
+        (vec![1], vec![1.0]),
+        (vec![1, 1], vec![1.0, 1.0]),
+        (vec![1, 2, 3, 4], vec![0.25, 0.5, 0.75, 1.0]),
+        (vec![1, 1, 2, 3], vec![0.5, 0.5, 0.75, 1.0]),
+        (vec![4, 4, 7], vec![2.0 / 3.0, 2.0 / 3.0, 1.0]),
+    ] {
+        check(
+            &keys.into_iter().map(Some).collect::<Vec<_>>(),
+            || WindowFunction::CumeDist,
+            &expected.into_iter().map(Datum::Real).collect::<Vec<_>>(),
+        );
+    }
+    for (buckets, expected) in [
+        (0, vec![None, None, None]),
+        (3, vec![Some(1), Some(1), Some(2), Some(3)]),
+        (5, vec![Some(1), Some(2), Some(3)]),
+        (
+            3,
+            vec![
+                Some(1),
+                Some(1),
+                Some(1),
+                Some(1),
+                Some(2),
+                Some(2),
+                Some(2),
+                Some(2),
+                Some(3),
+                Some(3),
+                Some(3),
+            ],
+        ),
+    ] {
+        check(
+            &vec![Some(1); expected.len()],
+            || WindowFunction::Ntile(Some(buckets)),
+            &expected
+                .into_iter()
+                .map(|v| v.map_or(Datum::Null, Datum::UInt))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    // The explicit index vectors include Go's uint64 LEAD addition wrap.
+    for (lead, offset, targets) in [
+        (false, 0, [Some(0), Some(1), Some(2)]),
+        (false, 1, [None, Some(0), Some(1)]),
+        (false, 2, [None, None, Some(0)]),
+        (false, 3, [None, None, None]),
+        (false, 1_000_000, [None, None, None]),
+        (true, 0, [Some(0), Some(1), Some(2)]),
+        (true, 1, [Some(1), Some(2), None]),
+        (true, 2, [Some(2), None, None]),
+        (true, 3, [None, None, None]),
+        (true, 1_000_000, [None, None, None]),
+        (true, u64::MAX, [None, Some(0), Some(1)]),
+        (true, u64::MAX - 1, [None, None, Some(0)]),
+    ] {
+        let input = [7, 3, 11];
+        for current_row_default in [false, true] {
+            let expected: Vec<_> = targets
+                .iter()
+                .enumerate()
+                .map(|(i, target)| {
+                    target.map(|n| Datum::Int(input[n])).unwrap_or_else(|| {
+                        if current_row_default {
+                            Datum::Int(input[i])
+                        } else {
+                            Datum::Null
+                        }
+                    })
+                })
+                .collect();
+            check(
+                &input.map(Some),
+                || WindowFunction::Relative {
+                    arg: column(0),
+                    offset,
+                    default: current_row_default.then(|| column(0)),
+                    lead,
+                },
+                &expected,
+            );
+        }
+    }
+    for (input, nth, last, expected) in [
+        (vec![], Some(1), false, None),
+        (vec![None, Some(2), Some(9)], Some(1), false, None),
+        (vec![Some(7)], Some(1), false, Some(7)),
+        (vec![Some(1), Some(2)], None, true, Some(2)),
+        (vec![Some(1), Some(2), None], None, true, None),
+        (vec![Some(10), Some(20), Some(30)], Some(2), false, Some(20)),
+        (vec![Some(10), None], Some(2), false, None),
+        (vec![Some(1), Some(2), Some(3)], Some(5), false, None),
+        (vec![Some(1), Some(2)], Some(0), false, None),
+    ] {
+        check(
+            &input,
+            || WindowFunction::Value {
+                arg: column(0),
+                nth,
+                last,
+            },
+            &vec![expected.map_or(Datum::Null, Datum::Int); input.len()],
+        );
+    }
+}

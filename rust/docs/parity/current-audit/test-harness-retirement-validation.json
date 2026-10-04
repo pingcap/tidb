@@ -249,5 +249,135 @@
       "No full Rust/Go suites or live multi-node checks; existing planner/DDL failures remain enabled and were not rerun.",
       "No push/dry run; fresh-task restore and publication remain unverified."
     ]
+  },
+  "window_leaf_continuation": {
+    "parent": "1d8a6f02e13db9a8e89e27535bc4ca5b07e946d2",
+    "go_reference": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "removed": [
+      {
+        "path": "rust/crates/tidb-exec/src/cume_dist.rs",
+        "sha256": "521e61c10fbb44cb1e0d91ad29ff69747495afba206d6f51e31c6eca2336f6cc",
+        "lines": 78,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/ntile.rs",
+        "sha256": "231d5e8eb59a5c03456110813e58f8b7d956193a3542ad4605a14a1a9b848c8b",
+        "lines": 104,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/lead_lag.rs",
+        "sha256": "0416bacaa711cf4828b74ea8a618e56b7b6a72596cd73f4f61ca62bc15f27b43",
+        "lines": 180,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/window_value_int.rs",
+        "sha256": "5d810d53b9695e065ae3f5671040bcebc7b66ae261e413466b66e310847262a8",
+        "lines": 195,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/window.rs",
+        "sha256": "a4c1dcc8e8dd8c9310a08d8b462131a2ddef380596cae52634717a0b00d85b9a",
+        "lines": 23,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/window/ranking_runtime.rs",
+        "sha256": "b1aeade67a54d61b1253831bd169da47affc8ec7c5743ea6f96a5a2c239b639a",
+        "lines": 88,
+        "tests": []
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/cume_dist_source.rs",
+        "sha256": "a417b1b4558d779e4b7442d5c09ca2fd48895fb91b146114908a8fb85ac50295",
+        "lines": 60,
+        "tests": [
+          "cume_dist_window_vectors_match_source",
+          "cume_dist_partial_state_size_and_empty_boundary_match_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/ntile_source.rs",
+        "sha256": "0e3def52780bbf3721a17778688b21d30a18e557680259c822885a71adaee89d",
+        "lines": 91,
+        "tests": [
+          "ntile_partial_state_and_null_divisor_match_source",
+          "ntile_group_vectors_match_source_algorithm",
+          "ntile_batch_update_and_reset_match_source_state"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/lead_lag_source.rs",
+        "sha256": "01188750e7d7fd4d4969544694b2d244fd5f03add588f8c4760e6321b4e9c751",
+        "lines": 241,
+        "tests": [
+          "lead_lag_partial_state_and_rust_handle_memory_gap_are_explicit",
+          "lead_lag_cursor_preserves_executor_physical_row_handles",
+          "lag_vectors_match_source_test_lead_lag",
+          "lead_vectors_match_source_test_lead_lag",
+          "lead_lag_default_argument_is_evaluated_at_current_row",
+          "lead_lag_batches_and_reset_match_source_state"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/window_value_int_source.rs",
+        "sha256": "eaec3360b70f59b6ddf35b58b10d43b53c0077dc8a228224f6e905917142e241",
+        "lines": 94,
+        "tests": [
+          "first_value_captures_first_row_once_including_null",
+          "last_value_overwrites_with_last_row_in_each_batch",
+          "nth_value_counts_rows_across_batches_and_handles_unreached_or_zero",
+          "window_value_partial_state_sizes_are_stable"
+        ]
+      }
+    ],
+    "coverage_migration": {
+      "old_leaf_tests": 15,
+      "new_grouped_live_test": 1,
+      "retained_original_live_tests": 13,
+      "vector_cases": 43,
+      "executions_per_vector": 8,
+      "owner": "tidb-executor/tests/window_executor_source.rs::go_window_leaf_vectors_use_the_live_chunk_executor",
+      "contracts": [
+        "CUME_DIST empty/single/peer/unique/mixed vectors",
+        "NTILE zero divisor and quotient/remainder distributions",
+        "LEAD/LAG offsets 0,1,2,3,1000000; physical row values; NULL/current-row defaults; uint64 wrapping",
+        "FIRST/LAST/NTH value selection including NULL, empty, unreached and zero positions",
+        "chunk sizes 1/2, ordinary/pipelined execution and reopen"
+      ],
+      "retired_only": "Sizes, logical handle accounting and private cursors of unused model types. Complete Go memory/accounting obligations remain unverified."
+    },
+    "live_implementation": "byte-identical",
+    "existing_live_tests": "all 13 byte-identical",
+    "passed": 14,
+    "failed": 0,
+    "ignored": 0,
+    "initial_compile": "Test helper incorrectly assumed WindowFunction Clone/Debug; corrected to a constructor closure. No production trait changes. An unactivated rustfmt shell also failed before writing tracked source; retried with env.sh.",
+    "commands": [
+      "cd rust && cargo test --locked -p tidb-executor --test all -- window_executor_source --test-threads=1",
+      "cd rust && cargo check --locked -p tidb-exec -p tidb-executor --all-targets",
+      "make lint",
+      "rustfmt --check --edition 2021 /workspace/.cloud-setup/window-leaf-cleanup/migrated-vectors.rs",
+      "git diff --check"
+    ],
+    "all_targets": "passed",
+    "lint": "passed",
+    "mandatory_hook": "Normal commit must run cd rust && cargo build --locked -p tidb-server; see external final-handoff.json",
+    "logs": "/workspace/.cloud-setup/window-leaf-cleanup",
+    "log_sha256": {
+      "tests.log": "d5e575ba370a3ce7dfbe3d6f4cc02b812ecd72b7032fef679ef2098769908d86",
+      "all-targets.log": "6a845cf3c1edbbfe3d93b9357d203c6b567df32993391a4541eb019d9749ba88",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "initial-compile.log": "16603ce2de5dac5a070b72649c85b5aeaa331b69941d8e30665a04819a43b8e9"
+    },
+    "limitations": [
+      "No full Go/Rust suite, live TiKV, benchmark gain or complete package/finding acceptance.",
+      "Known planner/DDL failures remain enabled; not rerun here.",
+      "Unused public workspace APIs removed after caller inventory; third-party external consumers not tested.",
+      "No push/dry run; publication and fresh-task restoration unverified."
+    ]
   }
 }

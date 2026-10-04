@@ -39,15 +39,14 @@
 //! * [`aggregate`]'s per-kind partial states (`aggregate::runtime`) and tuple
 //!   DISTINCT identity (`aggregate::aggregate_distinct`), used by
 //!   `tidb-server`'s `aggregate_result_set` and `distinct_result_set`.
-//! * `window::ranking_runtime`'s peer geometry, used by this crate's own
-//!   source-shaped ranking states ([`cume_dist`], [`ntile`], [`lead_lag`]).
 //!
 //! ## Module layout
 //!
 //! Split by concern so unrelated features can be extended without touching the
 //! same file. The cluster subsystems are named by their `cluster_*` and
 //! `real_tikv_*` prefixes; the result-metadata contracts by `result_*`; the
-//! aggregate and window partial states by their Go function names. This file
+//! aggregate partial states by their Go function names. Window functions live
+//! in `tidb-executor::window`. This file
 //! keeps only the crate-level vocabulary the rest builds on (`Row`,
 //! `ResultSet`, `Outcome`, `ExecError`) and the re-export surface.
 
@@ -96,7 +95,6 @@ pub mod configured_ordered_query;
 pub mod configured_topn;
 pub mod cop_scan;
 pub mod cte_first_error;
-pub mod cume_dist;
 pub mod dag_request;
 pub mod foreign_key_build;
 pub mod ddl_history_table;
@@ -144,7 +142,6 @@ pub mod keydecoder;
 pub mod label_delivery;
 pub mod lack_handles;
 pub mod lazy_txn_state;
-pub mod lead_lag;
 pub mod mdl_info_load;
 pub mod metrics_reader;
 pub mod minmax_deque;
@@ -156,7 +153,6 @@ pub mod next_io_acc;
 pub mod nextgen_readonly_vars;
 pub mod nontransactional;
 pub mod noop_read_only;
-pub mod ntile;
 pub mod option_values;
 pub mod order;
 pub mod ordered_apply_buffer;
@@ -242,8 +238,6 @@ pub mod upgrade_versions;
 pub use tidb_executor::used_stats;
 pub mod warning_publication;
 pub mod wide_scan_selection;
-mod window;
-pub mod window_value_int;
 
 pub use error::ExecError;
 pub use error_context::{

@@ -46,6 +46,15 @@ cleanup-path safety, MySQL authentication and protobuf sync tests remain.
 Use the pinned toolchain and existing profile/cache. Heavy Cloud links use one
 build job; do not force an unrelated release build just to run a focused check.
 
+Window behavior is owned by `tidb-executor::window`. The unused integer-only
+window models and peer geometry in `tidb-exec` are retired, together with
+checks of their private state layout. Their useful vectors run in the existing
+live suite:
+
+```bash
+cargo test --locked -p tidb-executor --test all -- window_executor_source --test-threads=1
+```
+
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
 
