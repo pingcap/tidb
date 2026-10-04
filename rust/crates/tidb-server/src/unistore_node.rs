@@ -407,9 +407,7 @@ pub(crate) fn run_unistore_cluster_session(
             tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
             crate::http_status::StatusRoutes {
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
-                // The SAME bytes the startup log prints, so the log and the
-                // endpoint cannot disagree about what this node is running.
-                settings_json: Some(config.startup_config_json()),
+                settings: Some(factory.status_settings()),
             },
         ) {
             Ok(server) => {

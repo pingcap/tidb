@@ -1,5 +1,7 @@
 # Audit and remove Go/Rust structural mismatches
 
+The [runtime settings batch](parity/current-audit/runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence. See [living plan](runtime-settings-execplan.md). No push.
+
 The [cluster configuration batch](parity/current-audit/cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence. See the [living plan](cluster-topology-execplan.md). No push.
 
 Current cleanup: [session cleanup plan](session-cleanup-execplan.md) removes four unused server models, empty harnesses and duplicate source compilation. No finding is closed and no push is authorized.

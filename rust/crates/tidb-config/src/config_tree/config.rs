@@ -475,11 +475,20 @@ pub fn init_by_ld_flags(_edition: &str, check_before_drop_ld_flag: &str) {
     }
 }
 
-/// Go `UpdateGlobal`.
+/// Go `UpdateGlobal`: serialize read/modify/publication. The callback must not
+/// reenter global configuration access.
 pub fn update_global(update: impl FnOnce(&mut Config)) {
-    let mut config = (*get_global_config()).clone();
+    let mut global = global_config()
+        .write()
+        .expect("global config lock poisoned");
+    let mut config = (**global).clone();
     update(&mut config);
-    store_global_config(config);
+    let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
+        .expect("ignore-invalid preparation cannot fail");
+    let tikv_config = config.get_tikv_config();
+    *global = Arc::new(config);
+    super::errmsg::replace_prepared_extensions(&extensions);
+    tikvcfg::store_global_config(tikv_config);
 }
 
 /// Go `GetTxnScopeFromConfig`.
@@ -1710,5 +1719,38 @@ metric-label = "keyspace_meta_label_a"
         assert!(!c.performance.cross_join);
         assert_eq!(c.host, "0.0.0.0"); // default retained
         c.valid().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod update_concurrency_tests {
+    use super::*;
+    #[test]
+    fn runtime_settings_updates_preserve_unrelated_concurrent_changes() {
+        let restore = restore_func();
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    update_global(|config| {
+                        // Widen the old clone-before-lock lost-update window.
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        config
+                            .labels
+                            .insert(format!("concurrent-setting-{index}"), index.to_string());
+                    });
+                });
+            }
+        });
+        let config = get_global_config();
+        restore();
+        for index in 0..8 {
+            assert_eq!(
+                config.labels.get(&format!("concurrent-setting-{index}")),
+                Some(&index.to_string())
+            );
+        }
     }
 }

@@ -1231,6 +1231,12 @@ impl GlobalSysvars {
             self.publish_resource_control_setting(&key);
         }
         self.publish_stmt_summary_setting(&key, &stored_value);
+        if self.publishes_runtime_settings && key == "tidb_check_mb4_value_in_utf8" {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.instance.check_mb4_value_in_utf8 =
+                    tidb_config::config_tree::marshal::AtomicBool::new(stored_value == "ON");
+            });
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();

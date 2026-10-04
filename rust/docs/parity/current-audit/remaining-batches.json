@@ -6,8 +6,8 @@
     "tracked": 86,
     "unresolved": 57,
     "repaired": 29,
-    "open": 36,
-    "partial": 21
+    "open": 35,
+    "partial": 22
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
@@ -190,18 +190,16 @@
         "N01": "open",
         "N03": "partial",
         "N04": "open",
-        "N05": "open"
+        "N05": "partial"
       },
       "latest_maintenance": {
-        "receipt": "tls-owner-batch-repair.md",
-        "preceding_receipt": "admission-policy-batch-repair.md",
+        "receipt": "runtime-settings-batch-validation.json",
         "advanced_findings": [
-          "A02",
-          "A03",
+          "N05",
           "N03"
         ],
         "complete_package_acceptance": false,
-        "remaining": "Durable login-counter writes, complete privilege cache/platform owners, generated RSA/identity/temp-file policy, broader TLS certificate/platform/secure-startup acceptance and other config/wire/admin consumers remain."
+        "remaining": "Transaction-summary recorder controls, broader administrative/HTTP/TLS/shutdown owners and native/config defaults remain. I01 shares live configuration consumption in B09."
       }
     },
     {
@@ -357,18 +355,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "3923a01d3edba6a4220bfef97297c032f6ca8224",
+    "integration_start": "93059cf47d60b423712ffbc9988b130bfe79f80f",
     "findings": [
-      "I01",
-      "I02",
-      "N03"
+      "N05",
+      "N03",
+      "I01"
     ],
     "statuses": {
-      "I01": "partial",
-      "I02": "partial",
-      "N03": "partial"
+      "N05": "partial",
+      "N03": "partial",
+      "I01": "partial"
     },
-    "receipt": "cluster-config-batch-validation.json",
-    "scope": "Live cluster configuration and shared SHOW owner, bounded address resolution, and internal HTTP timeout/security consumers. No complete package acceptance."
+    "receipt": "runtime-settings-batch-validation.json",
+    "scope": "Shared HTTP runtime settings, durable SQL GLOBAL changes, live configuration readers and serialized publication. Complete packages remain unaccepted."
   }
 }

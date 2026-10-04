@@ -1,10 +1,12 @@
 # Structural execution batches for the remaining findings
 
+The [runtime settings batch](runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence.
+
 The [cluster configuration batch](cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence.
 
 The [metadata policy batch](metadata-policy-batch-validation.json) connects I01 live sequence metadata and I02 shared cluster redaction, and corrects I03 local instance ownership. I01/I02 remain partial; I03 remote fanout remains open. Other54 unresolved IDs retain earlier evidence.
 
-The current register has **57 unresolved findings: 36 open and 21 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
+The current register has **57 unresolved findings: 35 open and 22 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 

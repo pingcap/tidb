@@ -1,0 +1,190 @@
+{
+  "date": "2026-10-04",
+  "parent": "93059cf47d60b423712ffbc9988b130bfe79f80f",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "findings": {
+    "N05": "partial",
+    "N03": "partial",
+    "I01": "partial"
+  },
+  "controls": [
+    "log_level",
+    "tidb_general_log",
+    "tidb_enable_async_commit",
+    "tidb_enable_1pc",
+    "ddl_slow_threshold",
+    "check_mb4_value_in_utf8",
+    "deadlock_history_capacity",
+    "deadlock_history_collect_retryable",
+    "tidb_enable_mutation_checker"
+  ],
+  "removed": [
+    "Captured StatusRoutes settings_json and both startup consumers",
+    "Blanket POST refusal and its obsolete refusal-only test"
+  ],
+  "before": {
+    "wire": {
+      "failed": 12,
+      "passed": 1,
+      "receipt": "/workspace/.cloud-setup/runtime-settings-batch/before-wire.json",
+      "binary_sha256": "bc1563c1ec2b6266d7d8f5ea83071ac38ea491a86e29b0411353b0c35b8696b5"
+    },
+    "concurrency": {
+      "failed": 1,
+      "log": "/workspace/.cloud-setup/runtime-settings-batch/config-before.log"
+    }
+  },
+  "tests": {
+    "distinct_passed": 63,
+    "test_names": [
+      "config::config_tree::config::tests::adjust_starter_config_matches_tls_environment_contract",
+      "config::config_tree::config::tests::default_config_valid",
+      "config::config_tree::config::tests::error_message_extension_config_global_copy",
+      "config::config_tree::config::tests::global_helpers_match_source",
+      "config::config_tree::config::tests::index_limit",
+      "config::config_tree::config::tests::max_index_length",
+      "config::config_tree::config::tests::plugin_audit_log",
+      "config::config_tree::config::tests::security_valid",
+      "config::config_tree::config::tests::skip_grant_table_validation_has_both_effective_uid_outcomes",
+      "config::config_tree::config::tests::stats_load_limit",
+      "config::config_tree::config::tests::table_column_count_limit",
+      "config::config_tree::config::tests::test_auto_scaler_config",
+      "config::config_tree::config::tests::test_clone_conf",
+      "config::config_tree::config::tests::test_encode_def_temp_storage_dir",
+      "config::config_tree::config::tests::test_error_message_extension_invalid_regexp",
+      "config::config_tree::config::tests::test_external_workload_valid",
+      "config::config_tree::config::tests::test_get_global_keyspace_name",
+      "config::config_tree::config::tests::test_get_global_tikv_worker_url",
+      "config::config_tree::config::tests::test_get_tikv_config_keeps_zero_ru_v2_ru_scale",
+      "config::config_tree::config::tests::test_get_tikv_config_uses_the_runtime_committer_concurrency",
+      "config::config_tree::config::tests::test_keyspace_name",
+      "config::config_tree::config::tests::test_keyspace_observability",
+      "config::config_tree::config::tests::test_keyspace_observability_invalid_deploy_mode",
+      "config::config_tree::config::tests::test_log_config",
+      "config::config_tree::config::tests::test_modify_through_ld_flags",
+      "config::config_tree::config::tests::toml_partial_load",
+      "config::config_tree::config::tests::txn_local_latches_validation_is_part_of_config_valid",
+      "config::config_tree::config::tests::txn_total_size_limit",
+      "config::config_tree::config::tests::update_temp_storage_path_matches_source",
+      "config::config_tree::config::update_concurrency_tests::runtime_settings_updates_preserve_unrelated_concurrent_changes",
+      "server::cluster_session_node::boot::status_tests::cluster_status_respects_disabled_flag_and_bind_failure",
+      "server::cluster_session_node::boot::status_tests::cluster_status_serves_health_settings_and_metrics",
+      "server::cluster_session_node::tests::unistore_cop::session_activation_controls_the_native_commit_protocol",
+      "server::cluster_session_node::tests::unistore_cop::shared_session_activation_inherits_globals_and_obeys_set",
+      "server::http_request::tests::status_framing_reads_fragmented_and_chunked_forms",
+      "server::http_settings::tests::runtime_settings_parse_form_uses_body_then_query_and_first_value",
+      "server::http_settings::tests::runtime_settings_share_owners_and_preserve_go_field_order",
+      "server::http_status::schema_route_tests::a_missing_schema_name_reports_gos_error",
+      "server::http_status::schema_route_tests::an_empty_database_answers_an_empty_array",
+      "server::http_status::schema_route_tests::neighbouring_paths_are_not_schema_routes",
+      "server::http_status::schema_route_tests::the_schema_form_values_answer_gos_shapes",
+      "server::http_status::schema_route_tests::the_schema_routes_answer_gos_three_shapes",
+      "server::http_status::tests::status_answers_gos_shape_and_other_paths_answer_404",
+      "server::mysql_tls::tiflash_cluster_http_tests::tiflash_batch_cluster_http_rejects_an_untrusted_peer",
+      "server::mysql_tls::tiflash_cluster_http_tests::tiflash_batch_cluster_http_uses_configured_ca_and_https",
+      "session::tests_domain_serverinfo_syncer_source::assumed_server_info_syncer_current_keyspace_arm",
+      "session::tests_domain_serverinfo_syncer_source::closest_adaptive_balances_zones_and_updates_existing_sessions",
+      "session::tests_domain_serverinfo_syncer_source::cluster_config_checks_config_privilege_before_discovery",
+      "session::tests_domain_serverinfo_syncer_source::cluster_config_contradictory_types_skip_retrieval",
+      "session::tests_domain_serverinfo_syncer_source::cluster_config_live_http_filters_roles_warnings_and_prepared_reads",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_cluster_info_propagates_discovery_errors",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_composes_retrievers_and_retains_warnings_on_failure",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_config_refuses_captured_runtime_rows",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_contains_only_discovered_nodes",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_instance_uses_local_status_identity_without_discovery",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_sem_redacts_each_projection_and_observes_live_roles",
+      "session::tests_domain_serverinfo_syncer_source::cluster_metadata_servers_info_propagates_discovery_errors",
+      "session::tests_domain_serverinfo_syncer_source::startup_cleans_the_stale_server_info_at_this_address",
+      "session::tests_domain_serverinfo_syncer_source::topology_repairs_itself_after_key_loss",
+      "session::vars::tests::a_new_session_inherits_the_global_but_a_live_session_does_not",
+      "session::vars::tests::instance_scope_routes_and_metadata_match_go",
+      "session::vars::tests::replacing_a_cluster_global_image_preserves_instance_only_values",
+      "session::vars::tests::set_global_writes_the_shared_table_not_this_sessions_own_copy"
+    ],
+    "runs": [
+      {
+        "crate": "tidb-config",
+        "command": [
+          "target/debug/build/tidb-config/4132ea859754f58a/out/tidb_config-4132ea859754f58a",
+          "config_tree::config::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "summary": [
+          "ok. 30 passed; 0 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.05s"
+        ]
+      },
+      {
+        "crate": "tidb-server",
+        "command": [
+          "target/debug/build/tidb-server/3bb59ef83e75f686/out/tidb_server-3bb59ef83e75f686",
+          "http_settings",
+          "http_request",
+          "http_status",
+          "cluster_status",
+          "session_activation_controls_the_native_commit_protocol",
+          "shared_session_activation_inherits_globals_and_obeys_set",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "summary": [
+          "ok. 13 passed; 0 failed; 0 ignored; 0 measured; 521 filtered out; finished in 4.87s"
+        ]
+      },
+      {
+        "crate": "tidb-session",
+        "command": [
+          "target/debug/build/tidb-session/e2361f3885bd66ec/out/tidb_session-e2361f3885bd66ec",
+          "tests_domain_serverinfo_syncer_source",
+          "vars::tests::instance_scope_routes",
+          "vars::tests::replacing_a_cluster_global_image",
+          "vars::tests::set_global_writes",
+          "vars::tests::a_new_session_inherits",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "summary": [
+          "ok. 18 passed; 0 failed; 3 ignored; 0 measured; 1975 filtered out; finished in 0.91s"
+        ]
+      }
+    ],
+    "final_server": "server-final-tests.log:11 pass;9 repeat,2 additional HTTPS-policy cases",
+    "ignored": "Two pre-existing parity obligations; one ignored SEM helper runs via its parent, not counted separately."
+  },
+  "checks": {
+    "all_targets": "passed: cargo check --locked -p tidb-server -p tidb-session -p tidb-config --all-targets",
+    "lint": "passed: make lint",
+    "actual_locked_hook_and_after_wire": "External final-handoff.json records outcomes after the normal commit gate."
+  },
+  "limits": [
+    "N05/N03/I01 remain partial; other54 unresolved IDs not freshly revalidated",
+    "No complete Go package/generated/platform/test/fixture acceptance or full Go suite run",
+    "Transaction-summary recorder settings remain explicitly unsupported",
+    "No full HTTP/TLS/shutdown, distributed or performance acceptance; exhaustive malformed/non-UTF8 forms unverified",
+    "No push or push dry run; fresh-task restoration unverified"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 35,
+    "partial": 22
+  },
+  "external_evidence": "/workspace/.cloud-setup/runtime-settings-batch",
+  "log_sha256": {
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "config-before.log": "37bb77e1cf9386e817eab606bc2fb9217d3d87a1e2a5e8e9b3e91948067c9c36",
+    "tidb-session-tests.log": "3195d487c6f8d074f2b8f5e8df3eafda2caf5b43021c952774dfed219b334895",
+    "before-server.log": "3d316687c4578e7cf9b07f16a35d8bd92306ea3711acd90e5906215183b77a24",
+    "tidb-config-tests.log": "3dbf494985d5dda42788567529fdf35205ce311282d70f36d46b86a13d022fbb",
+    "before-wire.log": "ed37aa1e3b81e66f2c1db0ecbd07d63edf98963c195369d5d99beccd035166c2",
+    "server-final-tests.log": "3eb3bf660e2e53939f0fe4c36d1562ace549f5d49fb47085fd4fc132d573561e",
+    "tests-build.log": "f09fcfe6800e47e0f0edfdb6e1619ea828e27e0f1be14e0f5948b5cb1e4f70c7",
+    "fetch.log": "795351e2a1c6eebfbc180faf010b3a7c0295ee1722d8f86ce007f02a4da472ee",
+    "tidb-server-tests.log": "d6a5f2966ec3707f673104418631ee4fc6e40ea5fa8f1cf7cb6297ec0e54d551",
+    "config-initial-after.log": "08da2f561c2b7534f54b7bf0c88218ba96ed7d7e3f2d6fb8ab2a7155bd12bc10",
+    "check.log": "57dc432fe7b100b484681c22f3807e8c4f652245dcaee90bf638358629d1ad98",
+    "tests-build-final.log": "bed8b7102cb2c267f5afbd499d1d3ef9520a187c962b947d1f543b31cfbfe6c5"
+  }
+}

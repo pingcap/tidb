@@ -73,6 +73,8 @@ mod global_config_sync;
 pub mod handshake;
 mod handshake_response;
 pub mod http_status;
+pub mod http_settings;
+mod http_request;
 pub mod main_flags;
 mod mysql_connection;
 mod mysql_tls;

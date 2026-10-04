@@ -78,9 +78,8 @@ pub fn start_status_listener(
 pub struct StatusRoutes {
     /// Go's `/schema` family, read from the live catalog.
     pub schema: Option<SchemaSource>,
-    /// Go's `GET /settings`: this node's effective configuration, as the
-    /// startup log prints it.
-    pub settings_json: Option<Vec<u8>>,
+    /// Live configuration and the node's shared runtime settings owners.
+    pub settings: Option<crate::http_settings::Settings>,
 }
 
 /// [`start_status_listener`] also answering the routes in `routes`.
@@ -97,10 +96,7 @@ pub fn start_status_listener_with_routes(
     // exports the full registered family set regardless of which node
     // binary path bound it. Idempotent: repeat calls are no-ops.
     crate::server_metrics::init();
-    let StatusRoutes {
-        schema,
-        settings_json,
-    } = routes;
+    let StatusRoutes { schema, settings } = routes;
     let listener = TcpListener::bind((host, port))?;
     let local_addr = listener.local_addr()?;
     std::thread::Builder::new()
@@ -112,17 +108,20 @@ pub fn start_status_listener_with_routes(
                 let version = version.clone();
                 let git_hash = git_hash.clone();
                 let schema = schema.clone();
-                let settings_json = settings_json.clone();
+                let settings = settings.clone();
                 // One short-lived thread per request keeps the accept loop
                 // from stalling on a slow client without an executor.
                 let _ = std::thread::Builder::new()
                     .name("tidb-status-conn".to_owned())
                     .spawn(move || {
-                        let mut buffer = [0_u8; 4096];
-                        let Ok(read) = stream.read(&mut buffer) else {
-                            return;
+                        let request = match crate::http_request::read_request(&mut stream) {
+                            Ok(request) => request,
+                            Err(error) => {
+                                let response = format!("HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}", error.len());
+                                let _ = stream.write_all(response.as_bytes());
+                                return;
+                            }
                         };
-                        let request = String::from_utf8_lossy(&buffer[..read]);
                         let path = request
                             .lines()
                             .next()
@@ -185,7 +184,7 @@ pub fn start_status_listener_with_routes(
                                 body.len(),
                             )
                         } else if let Some(answer) =
-                            settings_response(path, &request, settings_json.as_deref())
+                            settings_response(path, &request, settings.as_ref())
                         {
                             match answer {
                                 Ok(body) => format!(
@@ -194,7 +193,7 @@ pub fn start_status_listener_with_routes(
                                     body.len(),
                                 ),
                                 Err(message) => format!(
-                                    "HTTP/1.1 405 Method Not Allowed\r\n\
+                                    "HTTP/1.1 400 Bad Request\r\n\
                                      Content-Type: text/plain\r\nContent-Length: {}\r\n\
                                      Connection: close\r\n\r\n{message}",
                                     message.len(),
@@ -279,6 +278,50 @@ mod tests {
     }
 }
 
+/// Go SettingsHandler reads live configuration and applies form fields in source order.
+fn settings_response(
+    path: &str,
+    request: &str,
+    settings: Option<&crate::http_settings::Settings>,
+) -> Option<Result<String, String>> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if !matches!(route, "/settings" | "/config") {
+        return None;
+    }
+    let settings = settings?;
+    let method = request.split_whitespace().next().unwrap_or_default();
+    if route == "/config" || method != "POST" {
+        return Some(settings.read());
+    }
+    let (headers, body) = request.split_once("\r\n\r\n").unwrap_or((request, ""));
+    let is_form = headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .any(|(key, value)| {
+            key.eq_ignore_ascii_case("Content-Type")
+                && value.trim().split(';').next().is_some_and(|kind| {
+                    kind.eq_ignore_ascii_case("application/x-www-form-urlencoded")
+                })
+        });
+    Some(
+        crate::http_settings::parse_form(query, if is_form { body } else { "" }).and_then(|form| {
+            settings.apply(&form)?;
+            Ok(String::new())
+        }),
+    )
+}
+
+/// Go getTableByIDStr searches all schemas by globally unique table ID.
+fn find_table_by_id(
+    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+    id: i64,
+) -> Option<&tidb_model::TableInfo> {
+    catalog
+        .databases
+        .iter()
+        .find_map(|database| database.tables.iter().find(|table| table.id == id))
+}
+
 /// Go `SchemaHandler.ServeHTTP` (`tikvhandler/tikv_handler.go`): the three
 /// `/schema` routes and the three form values they read, answered from the
 /// node's current catalog.
@@ -290,49 +333,6 @@ mod tests {
 /// The bodies are the SAME `DBInfo`/`TableInfo` JSON the catalog stores, so
 /// what this serves and what a peer reads back cannot drift: both go through
 /// `tidb_meta::value`'s serializers.
-/// Go `getTableByIDStr`: a table id is unique cluster-wide, so the search
-/// crosses databases.
-/// Go `SettingsHandler.ServeHTTP`: `GET` writes the global configuration.
-///
-/// `None` means this is not the settings route. Go's `POST` mutates about a
-/// dozen knobs live; this node fixes its configuration at boot, so a POST is
-/// refused by name rather than accepted and silently ignored -- a client that
-/// sets a knob and reads it back unchanged is worse served than one told no.
-///
-/// The body is the SAME projection the startup log prints, so the log and
-/// this endpoint cannot disagree about what the node is running. It carries
-/// only the knobs this node HAS, which is fewer than Go's config; the key
-/// spellings are Go's.
-fn settings_response(
-    path: &str,
-    request: &str,
-    settings_json: Option<&[u8]>,
-) -> Option<Result<String, String>> {
-    // Go /config returns GetGlobalConfig; Dashboard reads its security flags
-    // before checking SHOW GRANTS. Both GET routes expose this node's config.
-    if !matches!(path.split('?').next(), Some("/settings" | "/config")) {
-        return None;
-    }
-    let method = request.split_whitespace().next().unwrap_or_default();
-    if method != "GET" {
-        return Some(Err(
-            "settings are fixed at startup on this node; POST /settings is not supported"
-                .to_owned(),
-        ));
-    }
-    settings_json.map(|body| Ok(String::from_utf8_lossy(body).into_owned()))
-}
-
-fn find_table_by_id(
-    catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
-    id: i64,
-) -> Option<&tidb_model::TableInfo> {
-    catalog
-        .databases
-        .iter()
-        .find_map(|database| database.tables.iter().find(|table| table.id == id))
-}
-
 fn schema_response(
     path: &str,
     source: &dyn Fn() -> tidb_exec::cluster_catalog::ClusterCatalog,
@@ -534,43 +534,6 @@ mod schema_route_tests {
             name: tidb_ast::CiString::new(name),
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::TableInfo::default()
-        }
-    }
-
-    /// Go `SettingsHandler`: GET writes the configuration, and this node
-    /// refuses the POST half by name rather than accepting a mutation it
-    /// cannot perform.
-    #[test]
-    fn the_settings_route_serves_get_and_refuses_post() {
-        let body = br#"{"host":"127.0.0.1","port":4000}"#;
-
-        let served = settings_response("/settings", "GET /settings HTTP/1.1", Some(body))
-            .expect("a settings route")
-            .expect("serves");
-        assert_eq!(served, r#"{"host":"127.0.0.1","port":4000}"#);
-
-        // Go reads form values off the query string; the route still matches.
-        assert!(
-            settings_response("/settings?x=1", "GET /settings?x=1 HTTP/1.1", Some(body))
-                .expect("a settings route")
-                .is_ok()
-        );
-
-        // A mutation is refused, and says why rather than reporting success.
-        let refused = settings_response("/settings", "POST /settings HTTP/1.1", Some(body))
-            .expect("a settings route")
-            .expect_err("refused");
-        assert!(refused.contains("fixed at startup"), "{refused}");
-
-        // A node with no configuration projection has no route to serve.
-        assert!(settings_response("/settings", "GET /settings HTTP/1.1", None).is_none());
-
-        // Neighbouring paths are not this route.
-        for path in ["/settings_extra", "/status", "/schema"] {
-            assert!(
-                settings_response(path, "GET / HTTP/1.1", Some(body)).is_none(),
-                "{path} was answered as the settings route"
-            );
         }
     }
 
