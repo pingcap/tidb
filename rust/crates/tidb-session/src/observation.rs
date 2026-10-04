@@ -43,20 +43,20 @@ struct StatementPhases {
     compile_finished: bool,
     compile_measured: bool,
     execution_started: bool,
-    stats_started: bool,
     tables: Vec<tidb_stmtsummary::statement_summary::TableEntry>,
 }
 
 struct LazyStatement {
     sql: String,
     binary_plan: String,
+    encoded_plan: String,
 }
 impl StmtExecLazyInfo for LazyStatement {
     fn original_sql(&self) -> String {
         self.sql.clone()
     }
     fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
-        Ok((String::new(), String::new()))
+        Ok((self.encoded_plan.clone(), String::new()))
     }
     fn binary_plan(&self) -> String {
         self.binary_plan.clone()
@@ -139,6 +139,7 @@ impl Session {
         let observation = self.statement_observation.as_ref()?;
         let phases = Arc::clone(&observation.phases);
         let stats = Arc::clone(&self.statement_stats);
+        let plan = Arc::clone(&self.process_plan_info);
         let digest = observation.digest.clone();
         let statement_started = observation.started;
         Some(Arc::new(move |phase| {
@@ -172,9 +173,14 @@ impl Session {
                     phases.compile_finished = true;
                 }
             }
-            if !phases.stats_started && tidb_util::topsql_state::top_sql_enabled() {
+            // Go admits non-fast executions even while profiling is disabled,
+            // so enabling it during execution can still observe their begin.
+            let fast = plan
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_fast_plan;
+            if !fast || tidb_util::topsql_state::top_sql_enabled() {
                 stats.on_execution_begin(digest.as_bytes(), &[], None);
-                phases.stats_started = true;
             }
         }))
     }
@@ -253,15 +259,27 @@ impl Session {
             if observation.label.is_empty()
                 && stmt.label() != "Execute"
                 && !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_))
-                && tidb_util::topsql_state::top_sql_enabled()
             {
-                self.statement_stats
-                    .on_execution_begin(observation.digest.as_bytes(), &[], None);
+                // SET is the administrative fast plan in Go's IsFastPlan.
+                let fast = matches!(stmt, Stmt::Session(session_stmt) if matches!(
+                    &**session_stmt,
+                    tidb_ast::SessionStmt::Set(_)
+                        | tidb_ast::SessionStmt::SetUserVar(_)
+                        | tidb_ast::SessionStmt::SetCharset { .. }
+                        | tidb_ast::SessionStmt::SetMixed(_)
+                ));
+                if !fast || tidb_util::topsql_state::top_sql_enabled() {
+                    self.statement_stats.on_execution_begin(
+                        observation.digest.as_bytes(),
+                        &[],
+                        None,
+                    );
+                }
                 observation
                     .phases
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .stats_started = true;
+                    .execution_started = true;
             }
             observation.label = stmt.label().to_owned();
             observation.prepared |= prepared;
@@ -335,7 +353,7 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Go GetTotalCostDuration includes parsing before ExecuteStmt.
         let elapsed = observation.started.elapsed() + phases.parse_before_start;
-        if phases.stats_started && tidb_util::topsql_state::top_sql_enabled() {
+        if phases.execution_started && tidb_util::topsql_state::top_sql_enabled() {
             self.statement_stats.on_execution_finished(
                 observation.digest.as_bytes(),
                 &[],
@@ -455,10 +473,20 @@ impl Session {
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {
                 sql: observation.sql,
-                binary_plan: if observation.routed {
+                encoded_plan: if observation.routed {
                     String::new()
                 } else {
-                    plan.brief_binary_plan
+                    plan.encoded_plan
+                },
+                binary_plan: if !observation.routed
+                    && self
+                        .vars
+                        .get_global("tidb_generate_binary_plan")
+                        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+                {
+                    plan.summary_binary_plan
+                } else {
+                    String::new()
                 },
             }),
         });

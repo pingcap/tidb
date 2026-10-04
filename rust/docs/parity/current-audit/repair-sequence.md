@@ -275,3 +275,7 @@ E03, T01 and N03 advance together while remaining partial. Physical read/quota/c
 ## Statement observation checkpoint, 2026-10-03
 
 O18/O11/N03 share the completed SQL producer and process lifecycle in [the observation batch](statement-observation-batch-repair.md). Missing producer/startup claims are replaced by partial acceptance with concrete telemetry/profiling obligations. The original workstream allocation remains historical; no complete Go package is accepted by these leaf integrations. User no-push remains binding.
+
+## Observed-plan batch, 2026-10-04
+
+O11/O18/N03 advance together through shared plan samples, binary prepared/Global-switch policy, runtime TopSQL admission and SET labels. See [receipt](observation-plan-batch-validation.json) and [living plan](../../observation-plan-batch-execplan.md). Counts remain 86 tracked, 29 repaired and 57 unresolved (35 open, 22 partial). These three roots remain partial; the other 54 unresolved roots were not freshly revalidated. No pushes.

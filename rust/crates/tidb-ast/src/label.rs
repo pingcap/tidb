@@ -87,7 +87,11 @@ impl SessionStmt {
     fn label(&self) -> &'static str {
         match self {
             Self::Use(_) => "Use",
-            Self::Set(_) | Self::SetPassword(_) => "Set",
+            Self::Set(_)
+            | Self::SetUserVar(_)
+            | Self::SetCharset { .. }
+            | Self::SetMixed(_)
+            | Self::SetPassword(_) => "Set",
             Self::Prepare { .. } => "Prepare",
             Self::Execute { .. } => "Execute",
             Self::Deallocate(_) => "Deallocate",

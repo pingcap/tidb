@@ -2161,7 +2161,7 @@ pub fn brief_binary_plan(
     physical: &PhysicalPlan,
     catalog: &Catalog,
 ) -> String {
-    let mut full = physical_explain_roots(
+    let full = physical_explain_roots(
         None,
         statement_context,
         statement_context,
@@ -2172,6 +2172,15 @@ pub fn brief_binary_plan(
         false,
         &[],
     );
+    binary_plan_from_roots(statement_context, physical, catalog, full)
+}
+
+fn binary_plan_from_roots(
+    statement_context: &crate::StmtContext,
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    mut full: Vec<ExplainOperator>,
+) -> String {
     let mut brief = physical_explain_roots(
         None,
         statement_context,
@@ -2387,6 +2396,50 @@ fn collect_stats_info(
     }
 }
 
+// Go EncodeFlatPlan's build-side-first tree, using the existing codec rather
+// than serializing display rows. Access objects belong to ExplainInfo in this
+// format; the binary format keeps them in its typed field.
+fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &mut String) {
+    let task = match &operator.task {
+        ExplainTask::Root => tidb_util::plancodec::encode_task_type(true, 0),
+        ExplainTask::Cop { store, .. } => tidb_util::plancodec::encode_task_type(
+            false,
+            match store.as_str() {
+                "tiflash" => 1,
+                "tidb" => 2,
+                _ => 0,
+            },
+        ),
+    };
+    let mut info = operator
+        .access_object
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    if !operator.operator_info.is_empty() {
+        if !info.is_empty() {
+            info.push_str(", ");
+        }
+        info.push_str(&operator.operator_info);
+    }
+    tidb_util::plancodec::encode_plan_node(
+        depth,
+        &format!("{}{}", operator.id, operator.label),
+        &operator.operator,
+        operator.estimated_rows.unwrap_or_default(),
+        &task,
+        &info,
+        "",
+        "",
+        "",
+        "",
+        output,
+    );
+    for child in &operator.children {
+        encode_observed_operator(child, depth + 1, output);
+    }
+}
+
 /// The plan-derived fields Go publishes while the ordinary executor is
 /// constructed.
 #[must_use]
@@ -2398,9 +2451,9 @@ pub fn process_plan_info(
     process_plan_info_with_brief(statement_context, physical, catalog, true)
 }
 
-/// [`process_plan_info`] with the brief binary plan rendered only when
-/// `with_brief` is set; the table, index, and statistics fields are always
-/// collected, as Go's `StmtCtx.TableIDs`/`IndexNames` are.
+/// [`process_plan_info`] with the brief binary plan published only when
+/// `with_brief` is set. Summary plans and table/index/statistics metadata remain
+/// independent of binary prepared process-list visibility.
 #[must_use]
 pub fn process_plan_info_with_brief(
     statement_context: &crate::StmtContext,
@@ -2408,12 +2461,47 @@ pub fn process_plan_info_with_brief(
     catalog: &Catalog,
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
+    // Render the ordinary tree once for both codecs. Prepared execution may
+    // suppress process-list publication but still supplies summary samples.
+    let full = physical_explain_roots(
+        None,
+        statement_context,
+        statement_context,
+        false,
+        physical,
+        catalog,
+        None,
+        false,
+        &[],
+    );
+    let mut encoded = String::new();
+    for root in &full {
+        encode_observed_operator(root, 0, &mut encoded);
+    }
+    let encoded_plan = if encoded.is_empty() {
+        String::new()
+    } else {
+        tidb_util::plancodec::compress(encoded.as_bytes())
+    };
+    let binary = binary_plan_from_roots(statement_context, physical, catalog, full);
+    let fast_candidate = match physical {
+        PhysicalPlan::Projection(projection) => {
+            projection.base.children().first().unwrap_or(physical)
+        }
+        _ => physical,
+    };
     let mut info = crate::ProcessPlanInfo {
         brief_binary_plan: if with_brief {
-            brief_binary_plan(statement_context, physical, catalog)
+            binary.clone()
         } else {
             String::new()
         },
+        encoded_plan,
+        summary_binary_plan: binary,
+        is_fast_plan: matches!(
+            fast_candidate,
+            PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
+        ),
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(

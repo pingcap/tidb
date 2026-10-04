@@ -540,7 +540,11 @@ fn observation_batch_prelock_breakpoint_does_not_suppress_execution_counter() {
     let data = session.statement_stats.take();
     disable_top_sql();
     let (_, digest) = normalize_statement_digest(sql);
-    let item = data.iter().find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes()).unwrap().1;
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .unwrap()
+        .1;
     assert_eq!(item.exec_count, 1);
     assert_eq!(item.duration_count, 1);
 }
@@ -560,7 +564,281 @@ fn observation_batch_routed_prelock_failure_counts_one_execution() {
     let data = session.statement_stats.take();
     disable_top_sql();
     let (_, digest) = normalize_statement_digest(sql);
-    let item = data.iter().find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes()).unwrap().1;
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .unwrap()
+        .1;
     assert_eq!(item.exec_count, 1);
     assert_eq!(item.duration_count, 1);
+}
+
+fn observation_plan_samples(sql: &str) -> (String, String) {
+    let (_, digest) = normalize_statement_digest(sql);
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|record| record.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    (
+        record.cumulative.sample_plan.clone(),
+        record.cumulative.sample_binary_plan.clone(),
+    )
+}
+
+#[test]
+fn observation_plan_batch_encoded_plan_reaches_summary() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_encoded (id INT)")
+        .unwrap();
+    let sql = "SELECT id FROM observation_encoded WHERE id > 71";
+    session.run(sql).unwrap();
+    let (plan, _) = observation_plan_samples(sql);
+    let decoded = String::from_utf8(tidb_util::plancodec::decode_plan(plan).unwrap()).unwrap();
+    assert!(
+        decoded.contains("observation_encoded"),
+        "missing encoded plan: {decoded}"
+    );
+    assert!(
+        decoded.contains("Selection"),
+        "missing physical operator: {decoded}"
+    );
+}
+
+#[test]
+fn observation_plan_batch_binary_switch_is_live_across_sessions() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let globals = session.vars.global_sysvars();
+    let mut setter = Session::new();
+    setter.vars.seed_from_globals(globals).unwrap();
+    setter
+        .vars
+        .set_global("tidb_generate_binary_plan", "OFF".into())
+        .unwrap();
+    let sql = "SELECT 810 AS observation_binary_disabled";
+    session.run(sql).unwrap();
+    let (_, disabled) = observation_plan_samples(sql);
+    setter
+        .vars
+        .set_global("tidb_generate_binary_plan", "ON".into())
+        .unwrap();
+    let sql = "SELECT 811 AS observation_binary_enabled";
+    session.run(sql).unwrap();
+    let (_, enabled) = observation_plan_samples(sql);
+    assert!(
+        disabled.is_empty(),
+        "GLOBAL OFF must suppress the sample binary plan"
+    );
+    assert!(
+        !enabled.is_empty(),
+        "existing sessions must observe GLOBAL ON"
+    );
+}
+
+#[test]
+fn observation_plan_batch_binary_prepared_keeps_summary_plan() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_binary_prepared (id INT PRIMARY KEY)")
+        .unwrap();
+    let sql = "SELECT id FROM observation_binary_prepared WHERE id=?";
+    let prepared = session.prepare_ast(sql).unwrap();
+    session.set_binary_prepared_execution(true);
+    session
+        .run_prepared_with_result_authority(&prepared, &[Datum::Int(72)])
+        .unwrap();
+    let (encoded, binary) = observation_plan_samples(sql);
+    assert!(
+        !encoded.is_empty(),
+        "prepared summary lost its encoded plan"
+    );
+    assert!(tidb_util::plancodec::decode_binary_plan(binary)
+        .unwrap()
+        .contains("observation_binary_prepared"));
+    assert!(
+        session
+            .process_plan_info
+            .lock()
+            .unwrap()
+            .brief_binary_plan
+            .is_empty(),
+        "binary EXECUTE process-list policy must be preserved"
+    );
+}
+
+fn observation_plan_toggle(sql: &str, begin_enabled: bool, end_enabled: bool) -> StatementStatsMap {
+    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    disable_top_sql();
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE observation_toggle (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO observation_toggle VALUES (1)")
+        .unwrap();
+    session.statement_stats.take();
+    if begin_enabled {
+        enable_top_sql();
+    }
+    let stmt = session.parse_statement(sql).unwrap();
+    let StatementExecution::Rows(mut result) =
+        session.execute_record_set_parsed(stmt, sql).unwrap()
+    else {
+        panic!("expected rows")
+    };
+    if end_enabled {
+        enable_top_sql();
+    } else {
+        disable_top_sql();
+    }
+    result.close().unwrap();
+    drop(result);
+    disable_top_sql();
+    session.statement_stats.take()
+}
+
+#[test]
+fn observation_plan_batch_topsql_enable_during_scan_keeps_begin() {
+    let sql = "SELECT id FROM observation_toggle";
+    let data = observation_plan_toggle(sql, false, true);
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .expect("execution was lost when enabled after begin")
+        .1;
+    assert_eq!((item.exec_count, item.duration_count), (1, 1));
+}
+
+#[test]
+fn observation_plan_batch_topsql_enable_during_fast_plan_keeps_finish() {
+    let sql = "SELECT 812 AS observation_fast_toggle";
+    let data = observation_plan_toggle(sql, false, true);
+    let (_, digest) = normalize_statement_digest(sql);
+    let item = data
+        .iter()
+        .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+        .expect("fast execution finish lost across toggle")
+        .1;
+    assert_eq!((item.exec_count, item.duration_count), (0, 1));
+}
+
+#[test]
+fn observation_plan_batch_topsql_disabled_and_disable_mid_execution() {
+    for (sql, begin_enabled, end_enabled, expected) in [
+        (
+            "SELECT id FROM observation_toggle",
+            false,
+            false,
+            Some((1, 0)),
+        ),
+        (
+            "SELECT id FROM observation_toggle WHERE id=1",
+            false,
+            false,
+            None,
+        ),
+        (
+            "SELECT 813 AS observation_fast_disabled",
+            false,
+            false,
+            None,
+        ),
+        (
+            "SELECT id FROM observation_toggle",
+            true,
+            false,
+            Some((1, 0)),
+        ),
+    ] {
+        let data = observation_plan_toggle(sql, begin_enabled, end_enabled);
+        let (_, digest) = normalize_statement_digest(sql);
+        let actual = data
+            .iter()
+            .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes())
+            .map(|(_, item)| (item.exec_count, item.duration_count));
+        assert_eq!(
+            actual, expected,
+            "{sql}, begin={begin_enabled}, end={end_enabled}"
+        );
+    }
+}
+
+#[test]
+fn observation_plan_batch_join_cte_and_dml_keep_tree_ownership() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session
+        .run("CREATE TABLE observation_tree (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO observation_tree VALUES (1,2)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT a.id FROM observation_tree a JOIN observation_tree b ON a.v=b.v",
+            "(Build)",
+        ),
+        (
+            "WITH c AS (SELECT id FROM observation_tree) SELECT * FROM c",
+            "observation_tree",
+        ),
+        ("UPDATE observation_tree SET v=3 WHERE id=1", "Update"),
+        ("DELETE FROM observation_tree WHERE id=1", "Delete"),
+        ("INSERT INTO observation_tree SELECT 4,5", "Insert"),
+    ] {
+        session.run(sql).unwrap();
+        let (encoded, binary) = observation_plan_samples(sql);
+        let text = String::from_utf8(tidb_util::plancodec::decode_plan(encoded).unwrap()).unwrap();
+        assert!(text.contains(expected), "{sql}: {text}");
+        assert!(
+            !text.contains("UnknownPlanID"),
+            "unrecognized physical operator: {text}"
+        );
+        assert!(!tidb_util::plancodec::decode_binary_plan(binary)
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
+fn observation_plan_batch_disabled_set_skips_begin_but_dml_does_not() {
+    tidb_util::topsql_state::disable_top_sql();
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE observation_fast_dml (id INT PRIMARY KEY)")
+        .unwrap();
+    session.statement_stats.take();
+    for (sql, expected) in [
+        ("SET @observation_fast=1", 0),
+        ("SET sql_mode=''", 0),
+        ("SET NAMES utf8mb4", 0),
+        ("SET NAMES utf8mb4, autocommit=1", 0),
+        ("INSERT INTO observation_fast_dml VALUES (1)", 1),
+        ("UPDATE observation_fast_dml SET id=2 WHERE id=1", 1),
+        ("DELETE FROM observation_fast_dml WHERE id=2", 1),
+    ] {
+        if sql.starts_with("SET") {
+            assert_eq!(session.parse_statement(sql).unwrap().label(), "Set");
+        }
+        session.run(sql).unwrap();
+        let data = session.statement_stats.take();
+        let (_, digest) = normalize_statement_digest(sql);
+        let item = data
+            .iter()
+            .find(|(key, _)| key.sql_digest.as_bytes() == digest.as_bytes());
+        assert_eq!(
+            item.map_or(0, |(_, item)| item.exec_count),
+            expected,
+            "{sql}: {data:?}"
+        );
+        assert!(data.values().all(|item| item.duration_count == 0));
+    }
 }

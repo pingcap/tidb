@@ -1,0 +1,250 @@
+{
+  "date": "2026-10-04",
+  "parent": "229bda1c3ba0bbe7b17a1056ac4eb66ebc5c34a0",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "remote_integration_preserved_unmerged": "39cf68700fac483512b22ce68e5d900ab6d866ea",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "findings": {
+    "O11": "partial",
+    "O18": "partial",
+    "N03": "partial"
+  },
+  "repairs": [
+    "Encoded textual plan samples reuse the existing physical EXPLAIN tree and plancodec, including join labels and DML roots.",
+    "Binary prepared statement summaries retain plan samples independently of process-list BriefBinaryPlan suppression.",
+    "Statement summaries consume live shared GLOBAL tidb_generate_binary_plan across existing sessions.",
+    "TopSQL non-fast begin admission and independently enabled finish follow Go runtime-toggle semantics; fast PointGet/TableDual/SET admission is preserved.",
+    "User-variable, charset and mixed SET statements share Go Set labels. Typed AST admission keeps SET PASSWORD outside the fast-plan class."
+  ],
+  "removed": [
+    "Empty encoded-plan producer result",
+    "Duplicate stats_started latch that suppressed legitimate completion across enable windows",
+    "Summary dependence on binary prepared process-list visibility"
+  ],
+  "before": {
+    "rust_failed": 6,
+    "rust_passed": 0,
+    "wire_failed": 7,
+    "wire_passed": 6,
+    "additional_label_failure": "Source trace after initial repairs shows SET @observation_fast=1 label other; expanded real-session regression failed."
+  },
+  "tests": {
+    "distinct_passed": 93,
+    "failed": 0,
+    "ignored": 0,
+    "test_names": [
+      "tests_explain::binary_prepared_execution_keeps_plan_detail_out_of_the_process_list",
+      "tests_observation_batch::observation_batch_completed_sql_reaches_summary_reader",
+      "tests_observation_batch::observation_batch_completed_sql_reaches_topsql_aggregator",
+      "tests_observation_batch::observation_batch_disabled_summary_clears_commit_predecessor",
+      "tests_observation_batch::observation_batch_dml_scratch_success_waits_for_durable_failure",
+      "tests_observation_batch::observation_batch_durable_named_execute_keeps_retained_sql",
+      "tests_observation_batch::observation_batch_failed_physical_planning_is_not_an_execution",
+      "tests_observation_batch::observation_batch_frontend_parse_is_transferred_and_not_reused",
+      "tests_observation_batch::observation_batch_internal_sql_is_not_reported_as_a_user",
+      "tests_observation_batch::observation_batch_persistent_instance_getters_read_live_config",
+      "tests_observation_batch::observation_batch_persistent_sql_reads_memory_and_disk_and_flushes",
+      "tests_observation_batch::observation_batch_prelock_breakpoint_does_not_suppress_execution_counter",
+      "tests_observation_batch::observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call",
+      "tests_observation_batch::observation_batch_prepared_execution_records_original_sql",
+      "tests_observation_batch::observation_batch_reader_filters_statements_by_authenticated_user",
+      "tests_observation_batch::observation_batch_real_query_records_parse_and_compile_phases",
+      "tests_observation_batch::observation_batch_routed_completion_waits_for_durable_outcome",
+      "tests_observation_batch::observation_batch_routed_prelock_failure_counts_one_execution",
+      "tests_observation_batch::observation_batch_sql_execute_uses_retained_statement_digest",
+      "tests_observation_batch::observation_batch_streaming_result_publishes_once_at_close",
+      "tests_observation_batch::observation_batch_tables_and_phase_times_follow_real_statement",
+      "tests_observation_batch::observation_plan_batch_binary_prepared_keeps_summary_plan",
+      "tests_observation_batch::observation_plan_batch_binary_switch_is_live_across_sessions",
+      "tests_observation_batch::observation_plan_batch_disabled_set_skips_begin_but_dml_does_not",
+      "tests_observation_batch::observation_plan_batch_encoded_plan_reaches_summary",
+      "tests_observation_batch::observation_plan_batch_join_cte_and_dml_keep_tree_ownership",
+      "tests_observation_batch::observation_plan_batch_topsql_disabled_and_disable_mid_execution",
+      "tests_observation_batch::observation_plan_batch_topsql_enable_during_fast_plan_keeps_finish",
+      "tests_observation_batch::observation_plan_batch_topsql_enable_during_scan_keeps_begin",
+      "tests_prepared_plan_cache::a_blacklist_reload_invalidates",
+      "tests_prepared_plan_cache::a_correlated_apply_plan_never_hits",
+      "tests_prepared_plan_cache::a_matched_binding_is_part_of_the_prepared_plan_cache_key",
+      "tests_prepared_plan_cache::a_parameterized_limit_never_hits_when_its_cache_switch_is_off",
+      "tests_prepared_plan_cache::a_prepared_binding_is_published_when_the_plan_cache_is_disabled",
+      "tests_prepared_plan_cache::a_user_variable_statement_never_hits",
+      "tests_prepared_plan_cache::binary_prepared_result_authority_path_reuses_select_plan",
+      "tests_prepared_plan_cache::cached_dml_binding_refuses_a_pinned_historical_read",
+      "tests_prepared_plan_cache::ddl_between_executes_invalidates",
+      "tests_prepared_plan_cache::disabling_the_cache_disables_retained_point_execution",
+      "tests_prepared_plan_cache::disabling_the_cache_disables_retained_range_execution",
+      "tests_prepared_plan_cache::expression_and_aggregate_parameters_rebuild_on_cache_hits",
+      "tests_prepared_plan_cache::forced_range_fallback_dml_warning_reaches_sql",
+      "tests_prepared_plan_cache::forced_range_fallback_warning_reaches_sql",
+      "tests_prepared_plan_cache::forced_range_planning_warning_precedes_dml_execution_warning",
+      "tests_prepared_plan_cache::fulltext_without_a_source_index_never_manufactures_a_like_cache_plan",
+      "tests_prepared_plan_cache::held_prepared_execution_reuses_published_digest",
+      "tests_prepared_plan_cache::hint_only_strategy_requires_use_plan_cache",
+      "tests_prepared_plan_cache::ignore_plan_cache_hint_never_hits",
+      "tests_prepared_plan_cache::instance_cache_bindings_do_not_invalidate_another_sessions_open_execution",
+      "tests_prepared_plan_cache::instance_cache_dml_and_non_prepared_consumers_share_the_same_owner",
+      "tests_prepared_plan_cache::instance_cache_refuses_session_local_temporary_tables_like_go",
+      "tests_prepared_plan_cache::instance_plan_cache_global_limits_use_typed_byte_getters",
+      "tests_prepared_plan_cache::instance_plan_cache_shares_read_only_plans_across_sessions",
+      "tests_prepared_plan_cache::integer_handle_range_quota_preserves_filters_and_rejects_cache",
+      "tests_prepared_plan_cache::logical_column_range_quota_warns_without_an_index",
+      "tests_prepared_plan_cache::logical_range_quota_reaches_join_and_cte_statistics",
+      "tests_prepared_plan_cache::logical_range_quota_rejects_unindexed_prepared_cache",
+      "tests_prepared_plan_cache::nonclustered_point_plan_requires_complete_visible_unique_key",
+      "tests_prepared_plan_cache::nonclustered_primary_retains_prepared_point_plan",
+      "tests_prepared_plan_cache::parallel_apply_session_switch_reaches_execution_workers",
+      "tests_prepared_plan_cache::parameter_type_compatibility_matches_go",
+      "tests_prepared_plan_cache::parameterized_limit_values_are_distinct_cache_entries",
+      "tests_prepared_plan_cache::physical_index_range_quota_preserves_rows_and_warns",
+      "tests_prepared_plan_cache::physical_index_range_quota_rejects_prepared_cache",
+      "tests_prepared_plan_cache::plan_cache_max_plan_size_is_checked_after_physical_planning",
+      "tests_prepared_plan_cache::point_plan_is_published_before_executor_construction",
+      "tests_prepared_plan_cache::prepared_delete_rebuilds_and_executes_its_cached_physical_source",
+      "tests_prepared_plan_cache::prepared_dml_lock_environment_tracks_explicit_transaction_mode",
+      "tests_prepared_plan_cache::prepared_insert_select_rebuilds_and_executes_its_cached_select_plan",
+      "tests_prepared_plan_cache::prepared_set_operation_reuses_the_general_physical_plan_cache",
+      "tests_prepared_plan_cache::prepared_update_rebuilds_and_executes_its_cached_physical_source",
+      "tests_prepared_plan_cache::range_quota_fallback_is_visible_to_sql_and_prepared_cache",
+      "tests_prepared_plan_cache::range_quota_max_min_respects_filtered_index_paths",
+      "tests_prepared_plan_cache::rejected_range_dml_retains_planning_warnings_without_caching",
+      "tests_prepared_plan_cache::session_plan_cache_close_deletes_only_the_current_environment_bucket",
+      "tests_prepared_plan_cache::session_plan_cache_counts_parameter_variants_as_entries",
+      "tests_prepared_plan_cache::session_plan_cache_eviction_does_not_destroy_an_open_execution",
+      "tests_prepared_plan_cache::session_plan_cache_flush_and_close_initialize_the_configured_capacity",
+      "tests_prepared_plan_cache::session_plan_cache_flush_discards_physical_entries_but_keeps_prepared_statements",
+      "tests_prepared_plan_cache::session_plan_cache_flush_preserves_gos_disabled_and_global_policy",
+      "tests_prepared_plan_cache::session_plan_cache_non_prepared_dml_uses_the_same_budget",
+      "tests_prepared_plan_cache::session_plan_cache_recency_is_shared_and_capacity_is_captured_once",
+      "tests_prepared_plan_cache::session_plan_cache_session_and_instance_flush_have_distinct_lifetimes",
+      "tests_prepared_plan_cache::session_plan_cache_shares_prepared_and_non_prepared_capacity",
+      "tests_prepared_plan_cache::session_plan_cache_shares_prepared_select_and_dml_capacity",
+      "tests_prepared_plan_cache::session_plan_cache_sql_and_binary_close_share_gos_retention_policy",
+      "tests_prepared_plan_cache::static_list_columns_quota_preserves_recursive_predicates",
+      "tests_prepared_plan_cache::static_partition_pruning_respects_range_quota",
+      "tests_prepared_plan_cache::static_partition_quota_covers_partition_kinds",
+      "tests_prepared_plan_cache::static_partition_quota_rejects_prepared_cache_and_keeps_rows",
+      "tests_prepared_plan_cache::table_dual_is_uncached_and_a_parameterized_join_is_cached",
+      "tests_prepared_plan_cache::the_second_execute_of_a_cacheable_statement_reports_a_hit",
+      "tests_prepared_plan_cache::unchanged_session_reuses_the_prepared_plan_cache_environment"
+    ],
+    "commands": [
+      "cd rust && cargo test --locked -p tidb-session --lib observation -- --test-threads=1",
+      "cd rust && target/debug/build/tidb-session/0c25b5a3accc68aa/out/tidb_session-0c25b5a3accc68aa tests_prepared_plan_cache binary_prepared_execution_keeps_plan_detail_out_of_the_process_list --test-threads=1"
+    ]
+  },
+  "wire": {
+    "passed": 13,
+    "failed": 0,
+    "binary_sha256": "386d420b6a50bb547e067ebed8a3d4487b938bcfa4084d9207bc8c5f8106b3ad",
+    "server_exit": 0,
+    "checks": [
+      "ordinary result",
+      "ordinary encoded physical plan",
+      "ordinary binary plan",
+      "DML plan root",
+      "named prepared encoded plan",
+      "named cache sample",
+      "binary prepared result 0",
+      "binary prepared result 1",
+      "binary prepared encoded sample",
+      "binary prepared binary sample",
+      "live GLOBAL OFF",
+      "OFF retains text plan",
+      "live GLOBAL ON"
+    ]
+  },
+  "checks": {
+    "all_targets": "passed: cargo check --locked -p tidb-ast -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "lint": "passed: make lint",
+    "server_build": "passed: cargo build --locked -p tidb-server",
+    "self_review": "passed; diff --check and shared producer/caller review",
+    "commit_gate": "Actual hooks/pre-commit enforces cd rust && cargo build --locked -p tidb-server; final log and commit recorded in Cloud final-handoff.json"
+  },
+  "intermediate_attempts": [
+    "Initial expanded binary-prepared fixture omitted set_binary_prepared_execution(true); corrected. Real binary-wire before/after independently verifies that path.",
+    "Temporary trace isolated the existing SET label mismatch; all instrumentation removed.",
+    "Typed AST matching initially emitted four E0308 diagnostics because SessionStmt is inside NodeBox; corrected dereference.",
+    "Expanded mixed charset/user-variable SET fixture hit an existing parser refusal. Final supported mixed-SET coverage uses SET NAMES utf8mb4, autocommit=1; mixed user-variable parsing remains unaccepted.",
+    "Standalone formatting attempt omitted env.sh and failed before executor edits; rerun with activated toolchain succeeded."
+  ],
+  "scope_limits": [
+    "No normalized plan-digest or hint synthesis; complete runtime/scalar-subquery plan metadata remains unaccepted.",
+    "Physical plan capture remains eager; no Go lazy-sampling cost or performance claim.",
+    "TopRU profiling producers, SQL/plan registration, transport/sinks and complete administrative compile/execution boundaries remain unaccepted.",
+    "Full Go package/platform/generated/test/fixture acceptance, full Go suites and live multi-node TiKV were not run.",
+    "Other 54 unresolved roots retain carried evidence; known DDL failures remain enabled and were not rerun."
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 35,
+    "partial": 22
+  },
+  "logs": {
+    "before.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/before.log",
+      "sha256": "5611b9e7c5f53c639bb66c43f375957abc5478ef1099e2c24a9b11e7c7e8427d"
+    },
+    "before-wire.json": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/before-wire.json",
+      "sha256": "634ef7466111bc78c8b0e67aa242f57bd5d96349a0c9d8da3df0a4881124f60c"
+    },
+    "accepted-tests.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/accepted-tests.log",
+      "sha256": "f3884885c7d0da7b11c9b95da90a0d2cf6c69c05be39e611a349b1b2b1f25c59"
+    },
+    "prepared-tests.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/prepared-tests.log",
+      "sha256": "b34218c530ee6593706482fa0dcfb65ee6e19d90968b534c1cfd625b33b42beb"
+    },
+    "all-targets.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/all-targets.log",
+      "sha256": "166c6c759b17b5f03d21ce90c3e4f70aeecef89f9f2dff7e3cc1b5eefaf2e4d5"
+    },
+    "server-build.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/server-build.log",
+      "sha256": "7417e3c48a579349897e6f877cb38a2be1512032c35568dd11e365bff9d816a8"
+    },
+    "after-wire.json": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/after-wire.json",
+      "sha256": "b24b6c62ed94b28fd07693fe3829d19110e88ac3327c93f2a7ebe848672013af"
+    },
+    "lint.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    "set-trace.log": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/set-trace.log",
+      "sha256": "34523eb85446fe09168447a898f5a823d5014d86b72fe139f051c12eb1c778c7"
+    },
+    "pruned.json": {
+      "path": "/workspace/.cloud-setup/observation-plan-batch/pruned.json",
+      "sha256": "efb8d6ba915e87794183b8946853c6eba109a45b70431005c85a4bfba2ff981d"
+    }
+  },
+  "upstream_artifacts": [
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    },
+    {
+      "path": "pkg/planner/core/encode.go",
+      "sha256": "7ab1144049c66ce975a85fcca9e533d6a7473891841a954b0d26a052d5826c48"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_table_scan.go",
+      "sha256": "c66a900cd9d45bf98ddbd86d8c9c13b74be04dba32ef082294bb9eb31aae7a87"
+    },
+    {
+      "path": "pkg/parser/ast/ast.go",
+      "sha256": "d93b9e0ba031498809cfda745b71ae260ff78f402f0b88a66538061eef6a5f30"
+    }
+  ],
+  "publication": {
+    "push": false,
+    "push_dry_run": false,
+    "fresh_task_restoration": "unverified",
+    "draft_and_bundle": "See /workspace/.cloud-setup/observation-plan-batch/final-handoff.json after the local commit"
+  }
+}

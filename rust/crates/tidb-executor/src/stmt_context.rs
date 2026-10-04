@@ -244,6 +244,12 @@ pub trait GlobalSysvarAccessor: Send + Sync {
 pub struct ProcessPlanInfo {
     /// Go `ProcessInfo.BriefBinaryPlan`.
     pub brief_binary_plan: String,
+    /// Go `StmtCtx.GetEncodedPlan`, independent of process-list visibility.
+    pub encoded_plan: String,
+    /// Binary statement-summary sample, including binary prepared execution.
+    pub summary_binary_plan: String,
+    /// Go executor `IsFastPlan` (one optional projection over PointGet/TableDual).
+    pub is_fast_plan: bool,
     /// Go `StmtCtx.TableIDs`.
     pub table_ids: Vec<i64>,
     /// Go `StmtCtx.IndexNames`.

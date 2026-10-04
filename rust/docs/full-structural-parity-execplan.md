@@ -2630,3 +2630,7 @@ The [shared MPP lifecycle batch](parity/current-audit/shared-mpp-lifecycle-repai
 
 
 The [authentication durability plan](auth-durability-batch-execplan.md) advances A02/A03/N03 through shared login policy, pooled pessimistic SQL persistence and post-commit lock publication, plus canonical generated TLS material and renewal. Seven corrected real-server checks fail before repair;164 grouped Rust cases and18 MySQL/unistore assertions pass after repair. The duplicated configured-account source harness and in-memory-only TLS resolution paths are removed after caller migration. Counts remain86 tracked,29 repaired,57 unresolved(36 open,21 partial); parent package and mixed-node/platform obligations remain. [Exact validation](parity/current-audit/auth-durability-batch-validation.json) preserves failures and boundaries. No push.
+
+## Observed-plan maintenance checkpoint, 2026-10-04
+
+The [observed-plan batch](observation-plan-batch-execplan.md) advances existing O11/O18/N03 owners together: shared textual/binary plan samples, prepared process-list separation, live GLOBAL binary-plan policy, runtime TopSQL/fast-plan admission and Go SET labels. Full package, normalized digest/hint/runtime/scalar-subquery capture, TopRU and profiling transport acceptance remain open. Counts remain 86 tracked, 29 repaired, 57 unresolved (35 open, 22 partial); other 54 unresolved roots are carried evidence. Preserve remote schema-ack changes at 39cf68700fac483512b22ce68e5d900ab6d866ea without overwriting local work. No push.

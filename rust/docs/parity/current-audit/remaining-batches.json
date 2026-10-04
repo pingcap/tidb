@@ -200,6 +200,14 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "Transaction-summary recorder controls, broader administrative/HTTP/TLS/shutdown owners and native/config defaults remain. I01 shares live configuration consumption in B09."
+      },
+      "observation_plan_checkpoint": {
+        "date": "2026-10-04",
+        "findings": [
+          "N03"
+        ],
+        "receipt": "observation-plan-batch-validation.json",
+        "acceptance": "partial maintenance of existing owners; complete packages remain unaccepted"
       }
     },
     {
@@ -329,6 +337,15 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "CLUSTER_LOG bounds, other dynamic providers, full extractor semantics, remote fanout and complete package/mixed-cluster obligations remain. B05 N03 shares this HTTP/configuration consumer change."
+      },
+      "observation_plan_checkpoint": {
+        "date": "2026-10-04",
+        "findings": [
+          "O11",
+          "O18"
+        ],
+        "receipt": "observation-plan-batch-validation.json",
+        "acceptance": "partial maintenance of existing owners; complete packages remain unaccepted"
       }
     },
     {
@@ -355,18 +372,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "93059cf47d60b423712ffbc9988b130bfe79f80f",
+    "integration_start": "229bda1c3ba0bbe7b17a1056ac4eb66ebc5c34a0",
     "findings": [
-      "N05",
-      "N03",
-      "I01"
+      "O11",
+      "O18",
+      "N03"
     ],
     "statuses": {
-      "N05": "partial",
-      "N03": "partial",
-      "I01": "partial"
+      "O11": "partial",
+      "O18": "partial",
+      "N03": "partial"
     },
-    "receipt": "runtime-settings-batch-validation.json",
-    "scope": "Shared HTTP runtime settings, durable SQL GLOBAL changes, live configuration readers and serialized publication. Complete packages remain unaccepted."
+    "receipt": "observation-plan-batch-validation.json",
+    "scope": "Shared physical-plan samples, live binary-plan GLOBAL policy, runtime TopSQL/fast-plan admission and SET labels. Maintenance of existing owners; complete packages remain unaccepted."
   }
 }
