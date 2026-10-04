@@ -50,11 +50,6 @@ use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 
-/// A schema watch can be observed before the corresponding MDL row is
-/// visible to a fresh snapshot. Retry empty reads so a node cannot miss the
-/// only notification for a DDL job and block the owner forever.
-const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
-
 /// The tables live local work still reads at older schema versions.
 ///
 /// Go's shape, ported from `RemoveLockDDLJobs`
@@ -375,12 +370,7 @@ fn run_ack_loop<C, L, P>(
 {
     // Go's `jobCache`: (job id -> version already acknowledged).
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
-    // The version whose mdl rows were last read, and whether any read job
-    // is still owed its ack (a pin held it back, or a PUT failed).
-    let mut scanned_version: Option<i64> = None;
     let mut reported_loaded_version: Option<(bool, i64)> = None;
-    let mut owed = false;
-    let mut next_mdl_scan = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
         // the etcd session that registered this node is gone, so the owner
@@ -417,31 +407,18 @@ fn run_ack_loop<C, L, P>(
             }
         }
 
-        // Go MDLCheckLoop does not report per-job versions when MDL is off.
-        // The non-MDL syncer would write an old job's version over the newer
-        // loaded self-version above. The table is otherwise re-read only
-        // when the loaded version moved or an acknowledgement is still owed.
-        if mdl_enabled
-            && (scanned_version != Some(loaded) || owed || Instant::now() >= next_mdl_scan)
-        {
+        // Go's MDLCheckLoop refreshes mysql.tidb_mdl_info on every tick.  Do
+        // the same here: the row can become visible after a catalog watch,
+        // and caching an empty result (or a result from the old MDL mode)
+        // can permanently strand the owner's schema check.
+        if mdl_enabled {
             match load_mdl_jobs(opener, timeout, &catalog.load()) {
                 Ok(jobs) => {
-                    scanned_version = Some(loaded);
-                    next_mdl_scan = if jobs.is_empty() {
-                        Instant::now() + EMPTY_MDL_RETRY
-                    } else {
-                        Instant::now() + Duration::from_secs(3600)
-                    };
                     // The owner deletes a finished job's row; forgetting its
                     // cache entry with it keeps the cache from growing for
                     // the process's life.
                     acked.retain(|job_id, _| jobs.iter().any(|job| job.job_id == *job_id));
                     let due = acks_due(loaded, pins, &jobs, &acked);
-                    owed = jobs.iter().any(|job| {
-                        acked
-                            .get(&job.job_id)
-                            .is_none_or(|&sent| sent < job.version)
-                    });
                     for job in due {
                         match syncer.update_self_version(syncer_context, job.job_id, job.version) {
                             Ok(()) => {
@@ -453,7 +430,6 @@ fn run_ack_loop<C, L, P>(
                             }
                             Err(error) => {
                                 emit_warning("schema_sync_ack_put_failed", &error);
-                                owed = true;
                             }
                         }
                     }
