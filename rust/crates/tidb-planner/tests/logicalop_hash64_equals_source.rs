@@ -12,37 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of
-//! `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go`
-//! (`pkg/planner.part12` items 708-720 on `origin/master`), which pins every
-//! logical operator's GENERATED `Hash64`/`Equals` identity
-//! (`pkg/planner/core/operator/logicalop/hash64_equals_generated.go`).
-//!
-//! Per-operator Rust surfaces: each Go assertion sequence ("build two equal
-//! operators; mutate ONE field group at a time; hash/equality must flip and
-//! flip back") is replayed against the matching normalized identity type this
-//! crate ships for that operator (`logical_top_n::LogicalTopNIdentity`,
-//! `logical_table_dual::LogicalTableDualIdentity`, ...) whose field order was
-//! transcribed from the same generated Go bodies. Two identities always hash
-//! through `tidb_planner::hash_equaler`'s FNV-1a primitive, so "hashes differ"
-//! pins exactly one thing: the mutated field GROUP is covered by the operator's
-//! generated hash — never an absolute digest.
-//!
-//! Deviations are per-test documented:
-//! * Go columns are `&expression.Column{ID: n, Index: 0}` with a zero-valued
-//!   `UniqueID`; the Rust adapters take `(id, unique_id, index)`.
-//! * Go distinguishes nil vs empty slices via `base.NilFlag`/`NotNilFlag`
-//!   markers; Rust's `Option<Vec<_>>` preserves both states where the tests
-//!   need them (`LogicalSortIdentity`) and `Vec::new()` stands in for nil where
-//!   the source field is a plain `Vec`
-//!   (`logical::projection::LogicalProjection.exprs`, `conditions`).
-//! * The two no-attribute operators (`LogicalSequence`,
-//!   `LogicalMaxOneRow`) hash their embedded BaseLogicalPlan ID, which in Go is
-//!   allocated from the SESSION-global counter — so two fresh `Init` calls
-//!   yield DIFFERENT ids and therefore different hashes
-//!   (`hash64_equals_test.go:246-264`, `:510-528`). The Rust identities take
-//!   the id explicitly; the tests hand them distinct values for "two Inits"
-//!   and align them afterwards, mirroring `SetID(m1.ID())`.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_planner::logical::projection::LogicalProjection;
 use tidb_planner::logical::{schema_producer, BaseLogicalPlan};
@@ -263,22 +235,6 @@ fn sequence_hash64_equals_pins_the_unique_plan_id() {
     assert!(m1.equals(m2));
 }
 
-/// GAP PORT of
-/// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:266
-/// TestLogicalSelectionHash64Equals`.
-///
-/// Go asserts: equal condition lists ([col1]) hash/compare equal; empty list
-/// and nil both break hash+equality against [col1] (:278-303), and so does a
-/// different column (:304-309). The exercised surface,
-/// `LogicalSelection.Hash64/Equals` (`hash64_equals_generated.go:682-713`),
-/// has NO Rust counterpart yet: `logical::selection::LogicalSelection` carries
-/// `conditions: Vec<Expression>` but implements neither generated hashing nor
-/// Equals, and no `SelectionIdentity` adapter exists. Adding one would be new
-/// production code, out of test-port scope.
-#[test]
-#[ignore = "go-parity-gap: LogicalSelection has no generated Hash64/Equals implementation or identity adapter in the Rust crate"]
-fn selection_hash64_equals_tracks_condition_lists() {}
-
 /// GO PORT of
 /// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:308
 /// TestLogicalProjectionHash64Equals`.
@@ -365,22 +321,6 @@ fn union_all_hash64_equals_tracks_producer_schema() {
     assert_ne!(u1.hash64(), u2.hash64());
     assert!(!u1.equals(&u2));
 }
-
-/// GAP PORT of the SECOND HALF of
-/// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:368
-/// TestLogicalUnionAllHash64Equals` (file lines 408-476).
-///
-/// Go additionally proves `LogicalPartitionUnionAll` is its OWN identity: two
-/// partition unions over `[col1]` hash equal (:420-430) and `[col2]` breaks
-/// them (:431-436), with the distinct `TypePartitionUnion` tag layered over the
-/// embedded UnionAll (`hash64_equals_generated.go:609-616`). No Rust surface
-/// models that tag difference — the top-level
-/// `logical_union_all::LogicalUnionAllIdentity` hard-codes `"Union"` and the
-/// full `logical::union_all::LogicalPartitionUnionAll` operator implements no
-/// Hash64/Equals.
-#[test]
-#[ignore = "go-parity-gap: LogicalPartitionUnionAll's TypePartitionUnion identity (tag over embedded UnionAll) is unported"]
-fn partition_union_all_hash64_uses_its_own_plan_tag() {}
 
 /// GO PORT of
 /// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:416

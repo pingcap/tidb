@@ -12,30 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go-parity tests ported from `pkg/sessionctx/variable` (batch b011, part 2).
-//!
-//! Source of truth: `origin/master` snapshot of
-//! `pkg/sessionctx/variable/sysvar_test.go` (tests 51-71 of `sysvar_test.go`:
-//! `TestTiDBEnableResourceControl` .. `TestSkipInitIsUsed`),
-//! `pkg/sessionctx/variable/tests/main_test.go`,
-//! `pkg/sessionctx/variable/tests/session_test.go`,
-//! `pkg/sessionctx/variable/tests/slowlog/main_test.go`,
-//! `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go`, and the first 9
-//! tests of `pkg/sessionctx/variable/tests/variable_test.go`
-//! (`TestSysVar` .. `TestDurationValidation`). This is tests 61-120 of the
-//! package's canonical ordering (alphabetical path, line number); part 1
-//! (tests 1-60) lives in [`super::tests_sysvar_port`] and part 3 (tests
-//! 121-150) in [`super::tests_vardef_port`].
-//!
-//! The owning crate only ports the `vardef` constants layer (name constants,
-//! `Def*` defaults, mode enums) and the pure
-//! `GlobalSystemVariableInitialValue` policy. Tests whose subject is the
-//! `SysVar` registry, `SessionVars`, validation/clamping, the mock global
-//! accessor, the session executor, or `sessionctx/slowlogrule` are kept as
-//! `#[ignore]`d stubs annotated with a `go-parity-gap` reason so the
-//! inventory stays visible; they must be enabled when the owning code lands.
-//! Constant-level assertions that ARE expressible here are written as real
-//! (partial-port) tests.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use super::defaults::{
     DEF_AUTO_ANALYZE_RATIO, DEF_ENABLE_WINDOW_FUNCTION, DEF_OPT_SELECTIVITY_FACTOR,
@@ -450,256 +429,22 @@ fn synonyms_skip_isolation_level_check_default_off() {
     assert_eq!(super::defaults::DEF_TIDB_TXN_MODE, "pessimistic");
 }
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestScope`.
-// skipped-reason: SysVar struct + ScopeFlag/HasXxxScope helpers live in tidb-exec (sysvar_scope), outside this crate's gate scope
-#[test]
-#[ignore]
-fn scope_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSkipInitIsUsed`.
-// go-parity-gap: iterates the full SysVar registry (GetSysVars) incl. private skipInit field; registry not ported to this crate
-#[test]
-#[ignore]
-fn skip_init_is_used_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/tests/main_test.go
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/tests/main_test.go::TestMain`.
-// skipped-reason: goleak test-harness entry point for the integration-style `tests` package; no Rust counterpart needed
-#[test]
-#[ignore]
-fn tests_package_main_test_harness() {}
 
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/tests/session_test.go
 // ---------------------------------------------------------------------------
 
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSetSystemVariable`.
-// go-parity-gap: SessionVars.SetSystemVar validation (scope/type checks incl. global-only TiDBEnableStmtSummary) not ported to this crate
-#[test]
-#[ignore]
-fn set_system_variable_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSession`.
-// go-parity-gap: mock.Session context + stmtctx row counters/reset need executor/stmtctx crates, outside gate scope
-#[test]
-#[ignore]
-fn session_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestIsolationRead`.
-// go-parity-gap: session-level isolation-read enforcement via testkit SQL execution; not portable to this leaf crate
-#[test]
-#[ignore]
-fn isolation_read_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestTableDeltaClone`.
-// go-parity-gap: session transaction table-delta map cloning lives in session/executor state; not portable to this leaf crate
-#[test]
-#[ignore]
-fn table_delta_clone_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestTransactionContextSavepoint`.
-// go-parity-gap: savepoint semantics over kv.Transaction + session txn context; not portable to this leaf crate
-#[test]
-#[ignore]
-fn transaction_context_savepoint_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestNonPreparedPlanCacheStmt`.
-// go-parity-gap: non-prepared plan-cache statement eligibility lives in planner/executor; not portable to this leaf crate
-#[test]
-#[ignore]
-fn non_prepared_plan_cache_stmt_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestHookContext`.
-// go-parity-gap: sysvar hook context wiring (SetGlobalSysVarOnly + hook ctx) needs the SysVar registry layer
-#[test]
-#[ignore]
-fn hook_context_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestGetReuseChunk`.
-// go-parity-gap: executor chunk reuse API (executor.GetReuseChunk) not part of this crate
-#[test]
-#[ignore]
-fn get_reuse_chunk_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestUserVarConcurrently`.
-// go-parity-gap: concurrent user-variable access on a live session needs the session runtime; not portable to this leaf crate
-#[test]
-#[ignore]
-fn user_var_concurrently_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSetStatus`.
-// go-parity-gap: mysql status-flag mutation on SessionVars (SetStatus) needs parser/mysql + session runtime
-#[test]
-#[ignore]
-fn set_status_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestRowIDShardGenerator`.
-// go-parity-gap: RowIDShardGenerator on SessionVars (util.RowIDShardGenerator) not ported to this crate
-#[test]
-#[ignore]
-fn row_id_shard_generator_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestUserVars`.
-// go-parity-gap: user-defined-variable session state (vars.UserVars) not ported to this crate
-#[test]
-#[ignore]
-fn user_vars_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal`.
-// go-parity-gap: session+global sysvar interaction for tidb_opt_partial_ordered_index_for_top_n needs the SysVar registry + accessor
-#[test]
-#[ignore]
-fn tidb_opt_partial_ordered_index_for_top_n_session_and_global_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestTiDBOptPartialOrderedIndexForTopN`.
-// go-parity-gap: planner behavior gated by tidb_opt_partial_ordered_index_for_top_n verified via testkit SQL; not portable to this leaf crate
-#[test]
-#[ignore]
-fn tidb_opt_partial_ordered_index_for_top_n_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL`.
-// go-parity-gap: performance_schema session_connect_attrs accounting across sessions needs the server runtime
-#[test]
-#[ignore]
-fn performance_schema_session_connect_attrs_size_global_sql_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/session_test.go::TestSetTiDBCloudStorageURI`.
-// go-parity-gap: tidb_cloud_storage_uri validation/hook (cloudstorage URI parse) not ported to this crate
-#[test]
-#[ignore]
-fn set_tidb_cloud_storage_uri_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/tests/slowlog/main_test.go
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/main_test.go::TestMain`.
-// skipped-reason: goleak test-harness entry point for the slowlog package; no Rust counterpart needed
-#[test]
-#[ignore]
-fn slowlog_main_test_harness() {}
 
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/tests/slowlog/slow_log_test.go
 // ---------------------------------------------------------------------------
 
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestSlowLogFieldAccessor`.
-// go-parity-gap: sessionctx/slowlogrule field accessors over SessionVars/stmtctx runtime values not ported to this crate
-#[test]
-#[ignore]
-fn slow_log_field_accessor_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchSingleRuleSingleCondition`.
-// go-parity-gap: sessionctx/slowlogrule SlowLogRule matching engine not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_single_rule_single_condition_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchSpecialTypeConditions`.
-// go-parity-gap: sessionctx/slowlogrule typed-condition matching (uint/time fields) not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_special_type_conditions_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchSingleRuleMultipleConditions`.
-// go-parity-gap: sessionctx/slowlogrule multi-condition AND matching not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_single_rule_multiple_conditions_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchMultipleRulesOR`.
-// go-parity-gap: sessionctx/slowlogrule multi-rule OR matching not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_multiple_rules_or_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchDifferentTypesAfterParse`.
-// go-parity-gap: slowlogrule parsed-rule type dispatch not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_different_types_after_parse_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestMatchUintExecDetailFieldsAfterParse`.
-// go-parity-gap: slowlogrule uint exec-detail field matching after parse not ported into this workspace crate
-#[test]
-#[ignore]
-fn match_uint_exec_detail_fields_after_parse_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestParseSingleSlowLogField`.
-// go-parity-gap: slowlogrule single-field spec parsing not ported into this workspace crate
-#[test]
-#[ignore]
-fn parse_single_slow_log_field_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestParseSessionSlowLogRules`.
-// go-parity-gap: slowlogrule session-rules parsing (NewSessionSlowLogRules) not ported into this workspace crate
-#[test]
-#[ignore]
-fn parse_session_slow_log_rules_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/slowlog/slow_log_test.go::TestParseGlobalSlowLogRules`.
-// go-parity-gap: slowlogrule global-rules parsing not ported into this workspace crate
-#[test]
-#[ignore]
-fn parse_global_slow_log_rules_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/tests/variable_test.go (tests 1-9)
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestSysVar`.
-// go-parity-gap: constructs SysVar literals with ScopeFlag/TypeFlag/PossibleValues and walks the registry; SysVar struct not ported to this crate
-#[test]
-#[ignore]
-fn sys_var_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestIndexJoinBuildV2SysVarCompatibility`.
-// go-parity-gap: index-join v2 sysvar compatibility shim over the registry + planner usage not ported to this crate
-#[test]
-#[ignore]
-fn index_join_build_v2_sys_var_compatibility_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestError`.
-// go-parity-gap: ErrXXX error definitions/registration for the variable package live in the error layer, not ported here
-#[test]
-#[ignore]
-fn variable_test_error_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestRegistrationOfNewSysVar`.
-// go-parity-gap: asserts every config key has a registered SysVar; the registry does not exist in this rewrite
-#[test]
-#[ignore]
-fn registration_of_new_sys_var_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestIntValidation`.
-// go-parity-gap: SysVar int range validation + warning text (types.TinyIntValue etc.) not ported to this crate
-#[test]
-#[ignore]
-fn int_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestPerformanceSchemaSessionConnectAttrsSizeValidation`.
-// go-parity-gap: performance_schema sysvar validation hooks not ported to this crate
-#[test]
-#[ignore]
-fn performance_schema_session_connect_attrs_size_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestUintValidation`.
-// go-parity-gap: SysVar uint range validation + clamping not ported to this crate
-#[test]
-#[ignore]
-fn uint_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestEnumValidation`.
-// go-parity-gap: SysVar enum validation against PossibleValues not ported to this crate
-#[test]
-#[ignore]
-fn enum_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestDurationValidation`.
-// go-parity-gap: SysVar duration validation (time.ParseDuration paths) not ported to this crate
-#[test]
-#[ignore]
-fn duration_validation_unported() {}

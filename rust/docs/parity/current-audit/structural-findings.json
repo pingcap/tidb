@@ -810,8 +810,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "receipt": "session-cleanup-validation.json",
-    "scope": "Remove four unused server models, 250 empty session functions, duplicated source compilation and stale references. No finding status or Go acceptance changes."
+    "receipt": "empty-test-cleanup-validation.json",
+    "scope": "347 empty ignored functions and one unused marker removed across five crates; surviving behavioral code unchanged. No finding closed."
   },
   "test_cleanup_history": [
     {
@@ -866,6 +866,11 @@
       "date": "2026-10-04",
       "receipt": "session-cleanup-validation.json",
       "scope": "Remove four unused server models, 250 empty session functions, duplicated source compilation and stale references. No finding status or Go acceptance changes."
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "empty-test-cleanup-validation.json",
+      "scope": "347 empty ignored functions and one unused marker removed across five crates; surviving behavioral code unchanged. No finding closed."
     }
   ],
   "repair_history": [

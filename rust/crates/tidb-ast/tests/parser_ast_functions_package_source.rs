@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/parser/ast/functions_test.go` (origin/master).
-//!
-//! Go parses each case inside `select %s`, extracts the field expression,
-//! and restores it under default flags. This crate owns the AST state, so
-//! cases hand-build the typed expression Go's parser would produce
-//! (`STD*`/`VAR*` canonicalization, `TRIM`'s defaulted single-space
-//! `remstr`, `SUBSTRING .. FROM n FOR m` flattening, INTERVAL promotion,
-//! `CHARACTER` → `CHAR`, ...) and assert [`Expr::restore`] against the
-//! identical expectations.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     CastExpr, CastStyle, CastType, Expr, GetFormatSelector, OrderItem, TrimDirection,
@@ -653,18 +647,6 @@ fn aggregate_func_expr_restore() {
         assert_eq!(expr.restore(), want);
     }
 }
-
-// go-parity-gap: TestConvert and TestChar pin PARSER-side charset
-// validation (`[parser:1115] Unknown character set: ...`) plus the exact
-// value string stored on the extracted ValueExpr; those behaviors belong
-// to tidb-parser's grammar actions, not this AST crate.
-#[test]
-#[ignore = "go-parity-gap: CONVERT charset validation ([parser:1115]) lives in tidb-parser grammar"]
-fn convert_charset_validation() {}
-
-#[test]
-#[ignore = "go-parity-gap: CHAR charset validation ([parser:1115]) lives in tidb-parser grammar"]
-fn char_charset_validation() {}
 
 /// `pkg/parser/ast/functions_test.go::TestWindowFuncExprRestore`.
 #[test]

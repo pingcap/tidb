@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/parser/ast/procedure_test.go` (origin/master).
-//!
-//! The parse-driven presence tests stay behind explicit gaps; the visitor
-//! coverage and the full `TestProcedureRestore` table are transcreated over
-//! hand-built [`tidb_ast::CreateProcedureStmt`] trees whose restored text
-//! must equal the Go expectations byte-for-byte.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     AdminStmt, BinaryOp, ColumnType, ColumnTypeArg, CreateProcedureStmt, DdlStmt, Expr,
@@ -264,16 +261,6 @@ fn show_create_procedure() {
     ))));
     assert_eq!(drop.restore(), "DROP PROCEDURE `proc_2`");
 }
-
-/// `pkg/parser/ast/procedure_test.go::TestProcedureVisitor`.
-#[test]
-#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-fn procedure_visitor() {}
-
-/// `pkg/parser/ast/procedure_test.go::TestProcedure`.
-#[test]
-#[ignore = "go-parity-gap: TestProcedure only asserts parses succeed (tidb-parser grammar)"]
-fn procedure_parse_presence() {}
 
 /// `pkg/parser/ast/procedure_test.go::TestProcedureRestore`.
 ///

@@ -12,43 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Functional kernel port of `TestOptimizerCostFactorHints`
-//! (`pkg/planner/core/casetest/hint/hint_test.go:360`, `pkg/planner.part4`
-//! item 207 on `origin/master`).
-//!
-//! # What Go's test pins and what transfers here
-//!
-//! The Go test builds t(a int primary key, b int key(b)), inserts five rows
-//! (1..5)³-style triples and `analyze`s it (:367-369). Each of five scenarios
-//! then picks a plan shape whose dominant operator O ∈ {TableFullScan,
-//! TableReader, TableRangeScan, IndexScan, IndexReader}, pre-raises IRRELEVANT
-//! factors to 100 on the session (both compared statements see them), runs
-//! `explain format=verbose` baseline versus a statement wrapped in
-//! `/*+ SET_VAR(tidb_opt_O_cost_factor=2) */`, and requires baseline < hinted
-//! (:370-441). The behavior pinned is therefore: each named session variable
-//! enters the final plan cost exactly at its own operator, multiplicatively,
-//! so raising only that variable from its default strictly raises the total.
-//!
-//! The Rust owner of that placement is [`tidb_planner::plan_cost_ver2`]:
-//! `table_scan_cost` selects `factors.table_row_id_scan` /
-//! `table_range_scan` / `table_full_scan` off the same isChildOfINL +
-//! HasFullRangeScan switch as `getPlanCostVer24PhysicalTableScan`
-//! (pkg/planner/core/plan_cost_ver2.go:212-221), `index_scan_cost`
-//! multiplies `IndexScanCostFactor` (:144-145), and `reader_cost` divides by
-//! concurrency before multiplying the reader factor (:307-308 index reader,
-//! :346-347 table reader). Defaults are all 1.0 both sides
-//! (pkg/sessionctx/vardef/tidb_vars.go:1523-1530 vs
-//! `CostFactorVars::default()`).
-//!
-//! Each scenario below mirrors the SAME plan shape through those transcreated
-//! primitives with the SAME two variable states (session isolation + SET_VAR)
-//! and asserts the same inequality. Row counts/sizes are Go-shaped models of
-//! the analyzed fixture (five rows; three int columns ⇒ row size 24 via
-//! getAvgRowSize's per-type widths), which cancels in every comparison.
-//!
-//! NOT transferred — recorded as the trailing ignored port: the SET_VAR hint
-//! evaluation itself, explain-verbose rendering, and choosing the shape in a
-//! live optimizer loop.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_planner::cost_usage::CostVer2;
 use tidb_planner::plan_cost_ver2::{
@@ -271,13 +237,3 @@ fn set_var_raising_index_reader_factor_raises_covering_index_reader_total() {
         &pair.set_var(|vars| vars.index_reader = 2.0),
     );
 }
-
-/// GO PORT remainder of `hint_test.go:360 TestOptimizerCostFactorHints` that
-/// cannot transfer: the `/*+ SET_VAR(...) */` hint must be parsed out of the
-/// statement text, applied ONLY to that statement's session snapshot inside
-/// live planning, and observed through `explain format=verbose`'s printed
-/// total-cost column over the actual chosen physical tree; the fixture also
-/// runs DML + analyze through a store.
-#[test]
-#[ignore = "go-parity-gap: no SET_VAR hint-to-variable pipeline, verbose-explain renderer or live plan selection exists; the per-factor placement itself is pinned by the five running scenario ports above"]
-fn optimizer_cost_factor_hints_setvar_end_to_end() {}

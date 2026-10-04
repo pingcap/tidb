@@ -12,14 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/parser/ast/format_test.go` (origin/master).
-//!
-//! Go parses `select <input>` with charset/collation `utf8`/`utf8_bin`,
-//! extracts the field expression, and pins `ExprNode.Format`. This crate
-//! transcreated that contract as [`Expr::format`] (double-quoted strings,
-//! lowercase function names, spaces around every binary operator), so each
-//! row builds the corresponding typed expression and asserts the same
-//! output text.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     BinaryOp, BitLiteralValue, CastExpr, CastStyle, CastType, Expr, TrimDirection, UnaryOp,
@@ -476,11 +471,3 @@ fn interval(value: Expr, unit: &str) -> Expr {
         unit: unit.to_string(),
     }
 }
-
-// go-parity-gap: the Go table's three JSON-extraction Format rows require
-// JSON-path operands (`json_extract(a, ...)`, `a -> '$.a'`,
-// `a.b ->> '$.a'`); this crate models no JSON path domain yet, so those
-// rows cannot be constructed without approximation.
-#[test]
-#[ignore = "go-parity-gap: no JSON path model for json_extract / -> / ->> Format rows"]
-fn format_json_paths_unsupported() {}

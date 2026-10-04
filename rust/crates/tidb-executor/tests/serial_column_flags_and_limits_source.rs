@@ -12,20 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the ported slice of the small `pkg/ddl/tests/serial` tests:
-//! `TestIssue23872` (serial_test.go:64), `TestChangeMaxIndexLength` (:92),
-//! `TestTableLocksDisable` (:1044), `TestForbidUnsupportedCollations`
-//! (:1341), `TestCheckEnumLength` (:1396) and `TestGetReverseKey` (:1421).
-//!
-//! Each contract is re-derived from the Go source it exercises: the
-//! result-field flag word from `setNoDefaultValueFlag`
-//! (`pkg/ddl/add_column.go:1093`), the index-length gate from
-//! `config.MaxIndexLength` (`pkg/ddl/index_prefix.rs`'s Go counterpart,
-//! `checkIndexLength`), the collation gate from
-//! `charset.GetCollationByName` via the DDL, and the enum/set limit from
-//! `EnableEnumLengthLimit`. The two remaining tests with no Rust carrier
-//! (LOCK TABLES and `GetRangeEndKey`) stay as explicit `#[ignore]` gap tests;
-//! the configurable index and enum controls are modeled on `Catalog`.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{
     run_alter_table_in, run_create_table_on, run_select_meta_on, Catalog, StmtContext,
@@ -141,18 +130,6 @@ fn raising_max_index_length_admits_wider_indexed_columns() {
     );
 }
 
-/// Go `serial_test.go:1044-1063::TestTableLocksDisable`: with
-/// `enable-table-lock` off, `lock tables t1 write` and `unlock tables`
-/// answer `Warning 1235 "LOCK TABLES is not supported. To enable this
-/// experimental feature, set 'enable-table-lock' in the configuration
-/// file."` (and the UNLOCK spelling), the table meta keeps `Lock == nil`.
-// go-parity-gap: this tier has no LOCK TABLES statement carrier and no
-// `enable-table-lock` config.
-#[test]
-#[ignore]
-fn lock_tables_with_disabled_config_warns_1235_and_stores_no_lock() {
-}
-
 /// Go `serial_test.go:1341-1376::TestForbidUnsupportedCollations`: the
 /// unsupported-collation gate `charset.GetCollationByName` raises
 /// `[ddl:1273]Unsupported collation when new collation is enabled:
@@ -241,18 +218,4 @@ fn enum_set_member_length_limit_follows_the_config_switch() {
     .expect_err("Go refuses the member again after re-enabling the limit")
     .to_mysql_error();
     assert_eq!(error.code, 3505);
-}
-
-/// Go `serial_test.go:1421-1485::TestGetReverseKey`: over a split table with
-/// rows at MinInt64..MaxInt64, `ddl.GetRangeEndKey`
-/// (`pkg/ddl/reorg.go`, exported by `GetMaxRowID` at serial_test.go:60)
-/// returns the LARGEST row key below the requested range end for
-/// `[minInt64, minInt64+1]`, `[minInt64, 1<<61)`, `[1<<61, 2<<61)` and
-/// `[3<<61, maxInt64]` — the reverse-scan bound the backfill range
-/// calculator needs.
-// go-parity-gap: this tier has no carrier of `GetRangeEndKey` and no mock
-// cluster to split.
-#[test]
-#[ignore]
-fn get_range_end_key_returns_the_largest_row_key_under_the_range_end() {
 }

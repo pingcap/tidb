@@ -12,56 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports for `pkg/planner/core/tests/pointget` on `origin/master`
-//! (`pkg/planner.part19`, items 1136–1140 of all 1278 `Test*`/`Benchmark*`
-//! declarations under `pkg/planner/`; package `pointget`). Item 1136,
-//! `main_test.go:25 TestMain` (testsetup bootstrap + goleak filter list), is
-//! recorded as skipped-reason in the batch receipt — no behavior to assert —
-//! following crate precedent for bootstrap-only families.
-//!
-//! Family inventory from `point_get_plan_test.go`:
-//!
-//! * [`point_get_plan_cache_select_update_delete_hit_matrix`] /
-//!   [`point_get_plan_cache_for_next_gen_lock_suffix_variant`] pin the
-//!   prepared-plan-cache hit matrix over `metrics.PlanCacheCounter` while
-//!   PointGet plans serve select/update/delete through prepared statements on
-//!   `t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))`. Go
-//!   splits the behavior across kernel gates (`kerneltype.IsNextGen` skip at
-//!   :35, inverse at :156) that also change two golden rows: under next-gen
-//!   the Update/Delete children read `└─Point_Get root table:t handle:1, lock`
-//!   instead of `handle:1` (:196-197/:203-204 vs :141/:146).
-//! * [`point_get_id_fresh_statement_build_reallocates_ids_from_one`] runs for
-//!   real and pins what this crate owns of `point_get_plan_test.go:277
-//!   TestPointGetId` ("Test that the plan id will be reset before optimization
-//!   every time"). Go drives `session.Parse` → `core.Preprocess` →
-//!   `planner.Optimize` twice against the session-plan-id counter and asserts
-//!   `p.ID() == 1` both times; that works because every pass resets the
-//!   counter before building — `buildLogicalPlan`
-//!   (`pkg/planner/optimize.go:904`) `sctx.GetSessionVars().PlanID.Store(0)`
-//!   before `builder.Build`, and again inside `TryFastPlan`
-//!   (`pkg/planner/core/point_get_plan.go:97`) right before the fast-path
-//!   conversion that decides the whole query. This crate has no
-//!   session/optimizer driver yet: the counter itself is an explicit
-//!   [`PlanIdAllocator`](tidb_planner::plan_base::PlanIdAllocator)
-//!   (`plan_base.rs`: fresh allocator hands out `1`, monotonic afterwards),
-//!   which the builder consumes once per statement. The running test pins the
-//!   equivalent observable at that seam — two independent
-//!   `build_select("select c2 from t where c1 = 1")` passes over
-//!   `t (c1 int primary key, c2 int)` allocate identical id sets starting at
-//!   1, ids are unique inside one pass, and a SHARED allocator provably does
-//!   not restart (min(second) > max(first)), which is exactly the regression
-//!   the Go-side resets prevent.
-//! * [`point_get_id_full_pipeline_reset_site_documentary`] is the ignored
-//!   documentary twin for the tail that has no Rust owner yet: parse→
-//!   preprocess→Optimize over a live session, TryFastPlan admission, and the
-//!   returned PhysicalPointGet carrying `ID()==1`.
-//! * [`issue_20692_pessimistic_write_chain_blocks_conflicting_update`]
-//!   (Go :302) interleaves three pessimistic transactions so a row delete,
-//!   then an insert of the same PK, makes a third txn's conflicting UPDATE
-//!   block until both commit (`select * from t` → `10 20 30 40`).
-//! * [`issue_18042_max_execution_time_memory_quota_hints_reach_stmt_ctx`]
-//!   (Go :342) pins that `MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 MB)` land on
-//!   `StmtCtx.MaxExecutionTime == 100` and `StmtCtx.MemQuotaQuery == 1<<20`.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::FieldTypeCode;
@@ -227,41 +180,3 @@ fn point_get_id_fresh_statement_build_reallocates_ids_from_one() {
         "a shared allocator keeps allocating: root of pass two is id {second_root_shared}, not 1"
     );
 }
-
-/// Documentary twin for the pipeline part of Go TestPointGetId that has no
-/// Rust owner: session Parse + Preprocess + planner.Optimize ending in a
-/// PhysicalPointGet whose `ID()` equals 1 on every pass.
-#[test]
-#[ignore = "go-parity-gap: no session/Optimize/TryFastPlan driver exists, so the physical Point_Get plan carrying ID()==1 cannot be produced"]
-fn point_get_id_full_pipeline_reset_site_documentary() {}
-
-/// Go `point_get_plan_test.go:34 TestPointGetPlanCache` (classic-kernel gate
-/// at :35 skips it under next-gen): prepared-plan-cache hit matrix over
-/// `metrics.PlanCacheCounter` ("prepare" label) across select/update/delete
-/// point-get statements plus the bigint-unsigned negative-param arm
-/// (`@p1=-1` yields zero rows, `@p2=1` yields `1`, hit count stays at 2).
-#[test]
-#[ignore = "go-parity-gap: prepare/execute round-trips and metrics.PlanCacheCounter need the session+executor stack"]
-fn point_get_plan_cache_select_update_delete_hit_matrix() {}
-
-/// Go `point_get_plan_test.go:155 TestPointGetPlanCacheForNextGen` — next-gen
-/// gate twin of the previous family; only the Update/Delete explain rows grow
-/// a `, lock` suffix (:196-197, :203-204).
-#[test]
-#[ignore = "go-parity-gap: same session+executor boundary, plus Go's kerneltype.IsClassic gate has no Rust counterpart"]
-fn point_get_plan_cache_for_next_gen_lock_suffix_variant() {}
-
-/// Go `point_get_plan_test.go:302 TestIssue20692`: three pessimistic
-/// transactions; tk1 deletes `(1,1,1)`, tk2 inserts `(1,2,3,4)` (blocking on
-/// tk1), tk3's conflicting UPDATE on `(1,2,3)` must stay blocked while tk2
-/// holds the lock; final committed state is `10 20 30 40`.
-#[test]
-#[ignore = "go-parity-gap: cross-session pessimistic lock ordering needs transactional execution"]
-fn issue_20692_pessimistic_write_chain_blocks_conflicting_update() {}
-
-/// Go `point_get_plan_test.go:342 TestIssue18042`: `MAX_EXECUTION_TIME(100),
-/// MEMORY_QUOTA(1 MB)` hints leave `StmtCtx.MemQuotaQuery == 1<<20` and
-/// `StmtCtx.MaxExecutionTime == 100` on the session after the statement runs.
-#[test]
-#[ignore = "go-parity-gap: statement-hint application writes StmtCtx fields that no Rust surface carries yet"]
-fn issue_18042_max_execution_time_memory_quota_hints_reach_stmt_ctx() {}

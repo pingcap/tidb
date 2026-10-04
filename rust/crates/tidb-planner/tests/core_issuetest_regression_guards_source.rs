@@ -12,19 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port ledger for `pkg/planner/core/issuetest/` (`pkg/planner.part11`, Go
-//! items 641–646 on `origin/master`).
-//!
-//! Family contract: panic-regression guards and issue regressions driven
-//! through full mock-store sessions; `main_test.go` TestMain only loads the
-//! planner_issue golden book + goleak options (bootstrap, no Rust test — see
-//! receipt).
-//!
-//! One item has a live carrier here: the crate transcreates
-//! `rule_push_down_sequence.go` traversal as a dependency-closed structural
-//! adapter (`crate::push_down_sequence`), so item 644's childless-operator
-//! guard is a REAL port over that adapter. The rest are honest gap ports;
-//! nothing was approximated to simulate Go behavior.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 /// GO PORT of `pkg/planner/core/issuetest/panicrisk_tier2_test.go:60
 /// TestPushDownSequenceWithTableDual`.
@@ -140,37 +130,3 @@ fn push_down_sequence_attaches_above_childless_table_dual() {
     let optimized = solver.optimize(unary_over_join).0;
     assert_eq!(optimized, expected_unary_over_sequence_over_join);
 }
-
-/// GO PORT of `pkg/planner/core/issuetest/planner_issue_test.go:33
-/// TestPlannerIssueRegressions`.
-///
-/// Re-derived contract: ~950-line batch of issue regressions across access
-/// paths, decorrelation, type leakage, plan/cache stability and DML planning
-/// (:33-983), each block pinned by exact explain text or result rows —
-/// representative blocks: index-lookup-columns-mismatch (:51-81, IndexScan vs
-/// TableScan column lists diverge inside IndexLookUp on hash-partitioned t),
-/// remove-unnecessary-first-row (:83-107, distinct-cast aggregates drop
-/// redundant FirstRow), inl-join-inner-multi-pattern (:109-134),
-/// update-join-covering-index (:255+), rollup-having-exists-nil-expression
-/// (:527+), instance-plan-cache-with-prepare (:575+),
-/// issue-66399 outer-join-eliminate keeps parent join-condition columns
-/// (:806+), point-update negative-to-unsigned error codes (:826+),
-/// unionscan eliminates TableDual for null comparison (:886+), issue-67802
-/// mutable user-var join conditions (:920+), constant-left-nulleq partition
-/// pruning (:955+), issue-66706 decimal scale leak through SIGN view
-/// predicate (:969-982).
-#[test]
-#[ignore = "go-parity-gap: needs full optimize+execute stack; ~40 heterogeneous issue blocks"]
-fn planner_issue_regressions_batch() {}
-
-/// GO PORT of `pkg/planner/core/issuetest/planner_issue_test.go:985
-/// TestOnlyFullGroupCantFeelUnaryConstant`.
-///
-/// Re-derived contract: ONLY_FULL_GROUP_BY must NOT flag a column selected
-/// alongside min(a) when the WHERE contains a unary-minus constant
-//  comparison (`where a=-1` / `-1=a` both forms, :992-994): constant
-/// propagation folds equality with -1 so a becomes const-evaluable and the
-/// aggregate query stays legal, returning NULL rows on empty tables.
-#[test]
-#[ignore = "go-parity-gap: needs only-full-group-by validation + constant-folding interplay"]
-fn only_full_group_by_cannot_feel_unary_constant_in_where() {}

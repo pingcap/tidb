@@ -1,5 +1,8 @@
 # Remaining structural mismatches, maintained 2026-10-04
 
+Harness maintenance: [347 empty entries removed](empty-test-cleanup-validation.json), preserving all meaningful bodies and unverified Go obligations. Finding statuses are unchanged.
+
+
 **86 tracked: 29 repaired and 57 unresolved (36 open, 21 partial).** [Machine-readable dispositions](structural-findings.json) and the [ten owner batches](remaining-batches.md) are the scheduling authority. Counts describe findings, not accepted packages.
 
 Current [metadata policy batch](metadata-policy-batch-validation.json) maintains I01/I02 and corrects I03 local rendering together. I01 is partial; I02 remains partial and I03 fanout stays open. Go sequence metadata, shared SEM policy and local status identity are connected. Other54 unresolved IDs retain earlier evidence.

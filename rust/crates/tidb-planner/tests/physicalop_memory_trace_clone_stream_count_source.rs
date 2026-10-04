@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/planner.part14` ports of physical-operator METADATA invariants:
-//!
-//! * `physical_plan_test.go:677 TestPhysicalPlanMemoryTrace` — both the Sort
-//!   and completed `PhysicalProperty` halves run.
-//! * `plan_test.go:723 TestCloneFineGrainedShuffleStreamCount` — honest
-//!   `#[ignore]` gap port (the wired physical tree has no Window or MPP
-//!   stream-count state).
-//! * `physical_plan_test.go:843 TestExchangeSenderResolveIndices` — honest
-//!   `#[ignore]` gap port (index resolution unported).
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
@@ -67,30 +61,3 @@ fn physical_property_memory_usage_grows_with_mpp_partition_cols() {
     property.mpp_partition_cols.push(MppPartitionColumn::new(1, 0));
     assert!(property.memory_usage() > empty);
 }
-
-/// GO PORT of `pkg/planner/core/plan_test.go:723
-/// TestCloneFineGrainedShuffleStreamCount`.
-///
-/// Go clones both wired physical Window and Sort operators with stream counts
-/// zero and eight. Rust's wired [`tidb_planner::physical::PhysicalPlan`] has a
-/// Sort variant, but it has neither a Window variant nor Go's inherited
-/// `TiFlashFineGrainedShuffleStreamCount` field. Testing a separate scalar
-/// metadata shell would not exercise planner construction or cloning.
-#[test]
-#[ignore = "go-parity-gap: wired PhysicalPlan lacks Window and TiFlashFineGrainedShuffleStreamCount"]
-fn clone_fine_grained_shuffle_stream_count_preserved_on_window_and_sort() {}
-
-/// GO PARITY GAP port of `pkg/planner/core/physical_plan_test.go:843
-/// TestExchangeSenderResolveIndices`.
-///
-/// go-parity-gap: Go shares ONE `*property.MPPPartitionColumn` between two
-/// `PhysicalExchangeSender`s and, after
-/// `ResolveIndicesItselfWithSchema` against schemas of four and two columns
-/// (`pkg/planner/core/operator/physicalop/physical_exchange_sender.go:145`),
-/// requires the two senders' `HashCols[0].Col.Index` to DIFFER (3 vs 1).
-/// This crate's wired physical tree has no ExchangeSender variant or
-/// hash-column index resolution against a schema, so the aliasing observation
-/// cannot run.
-#[test]
-#[ignore = "go-parity-gap: PhysicalExchangeSender.ResolveIndicesItselfWithSchema (physical_exchange_sender.go:145) is unported"]
-fn exchange_sender_resolve_indices_splits_shared_partition_col_indices() {}

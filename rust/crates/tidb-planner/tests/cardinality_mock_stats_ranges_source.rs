@@ -14,22 +14,9 @@
 
 #![allow(missing_docs)]
 
-//! GO PORT of `pkg/planner/cardinality/selectivity_test.go` (items 8-57 of
-//! the pkg/planner.part1 slice), minus the cases that need no mock statistics
-//! at all and live in their own files.
-//!
-//! The running tests drive the row-count estimators transcreated from
-//! `pkg/planner/cardinality/row_count_column.go` / `row_count_index.go` /
-//! `selectivity.go`: [`tidb_planner::cardinality::row_count_estimator`]. They
-//! reconstruct the Go suite's own fixtures -- `mockStatsHistogram`
-//! (`selectivity_test.go:1380`, per-value buckets with cumulative counts),
-//! `mockStatsTable` (`:1392`, RealtimeCount fixture), `generateIntDatum`
-//! (`:1341`), and the golden request/response pairs recorded in
-//! `pkg/planner/cardinality/testdata/cardinality_suite_{in,out}.json`.
-//!
-//! What stays behind `#[ignore]` is called out per test below: everything
-//! needing a live store (ANALYZE-built histograms, stats-handle deltas, async
-//! load registries, EXPLAIN rendering, session variables, or failpoints).
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_datatype::{Collation, Datum};
 use tidb_planner::cardinality::row_count_estimator::{
@@ -530,31 +517,6 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
 // plan building). Bodies stay empty; every gap cites its Go source.
 // ---------------------------------------------------------------------------
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:70
-/// TestCollationColumnEstimate`.
-///
-/// utf8mb4_general_ci column holding aaa/bbb/AAA/BBB analyzed at stats v2,
-/// then `show stats_topn` and two EXPLAIN-form brief probes against
-/// cardinality_suite_out.json's first book (eq estimate 2.00 hitting the
-/// case-insensitive TopN pair, gt spanning it). Pins new-collation sort-key
-/// bounds flowing into point/range estimation. All three output fixtures are
-/// exercised by `tidb_session::topn_assisted_string_match` after SQL ANALYZE;
-/// Go's explicit `LoadNeededHistograms` lifecycle remains open.
-#[test]
-#[ignore = "SQL ANALYZE, TopN keys and EXPLAIN goldens are covered; explicit histogram reload remains open"]
-fn collation_column_estimate_matches_recorded_plans() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:455
-/// TestEstimationForUnknownValues`.
-///
-/// The live session lifecycle is covered by
-/// `tidb_session::tests_explain::unknown_value_estimates_follow_analyze_and_truncate_lifecycle`;
-/// direct composite-index range estimates use the production estimator in
-/// `tidb_executor::access_cost::index_async_load_queue_tests::unknown_values_in_composite_index_ranges_match_go`.
-#[test]
-#[ignore = "mapped to active session lifecycle and executor estimator regressions"]
-fn estimation_for_unknown_values_across_analyze_rounds() {}
-
 // Go `TestCanSkipIndexEstimation` (`selectivity_test.go:541`) is exercised
 // through the production statistics boundary at
 // `tidb_executor::access_cost::index_async_load_queue_tests::full_index_range_skips_evicted_histogram_load`.
@@ -606,27 +568,6 @@ fn estimation_for_unknown_values_after_modify_stays_bounded() {
     );
 }
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:757
-/// TestNewIndexWithoutStats`.
-///
-/// idxa created after ANALYZE must beat statistics-less idxab only while
-/// predicates do not favor it; once idxab carries more matching equal
-/// predicates it wins despite missing stats, except where idxca matches the
-/// same equals with real statistics. Pins skyline pruning across access-path
-/// row counts via EXPLAIN containment checks.
-#[test]
-#[ignore = "executed through tidb_session::tests_explain::new_index_without_stats_skyline_choice_matches_go"]
-fn new_index_without_stats_skyline_choice() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:788 TestIssue57948`.
-///
-/// With exactly one statistics-bearing index existing (idxb) after ANALYZE,
-/// `where b = 5` must pick idxb even though its statistics predate the index
-/// registration ordering issue.
-#[test]
-#[ignore = "executed through tidb_session::tests_explain::single_new_index_with_column_stats_is_chosen"]
-fn issue_57948_single_statistics_index_is_chosen() {}
-
 // Go TestVirtualColumnIndexEstimation (issue #69134) is exercised through
 // tidb-session::tests_explain::virtual_column_index_estimation_preserves_the_selective_suffix.
 // The native estimator's missing-virtual, missing-ordinary, TopN-only, and
@@ -634,18 +575,6 @@ fn issue_57948_single_statistics_index_is_chosen() {}
 // row_count_estimator::recursive_index_estimation_tests::missing_virtual_column_requires_index_histogram_fallback.
 // Recursive error injection belongs to TestNewIndexWithColumnStats below;
 // its error-propagation coverage remains open.
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:924
-/// TestNewIndexWithColumnStats`.
-///
-/// Identical data tables t (column stats only) and t2 (no stats at all):
-/// index scans on newly created idxa(a) must differ, with t's estimate within
-/// 0.1 of the true affected rows because column statistics supplement the
-/// missing index statistics. SQL/ANALYZE execution is mapped to
-/// `tidb_session::tests_explain::newly_created_index_estimates_from_existing_column_statistics`.
-#[test]
-#[ignore = "executed through the session's SQL/ANALYZE path"]
-fn new_index_with_column_stats_supplements_missing_index_stats() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:960
 /// TestEstimationUniqueKeyEqualConds`.
@@ -700,113 +629,10 @@ fn unique_key_equal_conds_return_exact_counts() {
     }
 }
 
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:994
-/// TestColumnIndexNullEstimation`.
-///
-/// Five NULL-bearing rows across idx_b(b)/idx_c_a(c,a): recorded plans pin
-/// NULL point ranges (IndexRangeScan range:[NULL,NULL] == 4.00), NULL column
-/// probes, and non-null interval estimates from cardinality_suite_out.json.
-/// The ten SQL plan cases are exercised through
-/// `tidb_session::tests_explain::null_column_and_index_ranges_match_cardinality_goldens`.
-#[test]
-#[ignore = "executed through the session's SQL/EXPLAIN path"]
-fn column_index_null_estimation_matches_recorded_plans() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1027
-/// TestUniqCompEqualEst`.
-///
-/// Clustered primary key(a,b) under EnableClusteredIndexDefModeOn: the suite
-/// pins the Point_Get operator reading range:[1 3,1 3] with 1.00 rows. The
-/// complete equality is exercised through
-/// `tidb_session::tests_explain::clustered_composite_primary_key_equality_matches_go_point_get`.
-#[test]
-#[ignore = "executed through the session's SQL/EXPLAIN path"]
-fn uniq_comp_equal_estimate_resolves_to_point_get() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1051 TestSelectivity`.
-///
-/// prepareSelectivity mocks five columns (NDV 54 repeat 10) and two composite
-/// indexes over encoded two-column keys (NDV 9 repeat 60) on RealtimeCount
-/// 540, then re-computes Selectivity() for nine expressions -- including a 64
-/// clause conjunction capped at pseudo selectivity 0.001 -- to eps 1e-9 both
-/// before and after inflating RealtimeCount 10x/ModifyCount 9x, under
-/// tidb_opt_risk_range_skew_ratio = 0.3.
-#[test]
-#[ignore = "executed with the exact AST/statistics fixture in tidb_executor::access_cost::tests::go_test_selectivity_matches_mock_hist_coll_before_and_after_growth"]
-fn selectivity_over_mocked_hist_coll_matches_recorded_ratios() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1146
-/// TestDNFCondSelectivity`.
-///
-/// DNF conditions use independence across branches (`b > 7 or c < 4` etc.,
-/// golden 0.34375/0.625/...) over four columns plus idx(b)/idx(d); also guards
-/// regressions for _tidb_rowid DNF, unloaded timestamp columns preventing
-/// infinite recursion (issue 22134), and blob/decimal/timestamp NOT-BETWEEN
-/// tuples (issue 27294). The numeric goldens and missing-statistics guard run
-/// in `tidb_executor::access_cost`; all three planner smoke cases run through
-/// `tidb_session::tests_explain::dnf_selectivity_safety_cases_match_go_smoke_coverage`.
-#[test]
-#[ignore = "executed with Go's cardinality-suite goldens and planner smoke cases in tidb_executor and tidb_session"]
-fn dnf_cond_selectivity_uses_independence_assumption() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1215
-/// TestIndexEstimationCrossValidate`.
-///
-/// With failpoint statistics/table/mockQueryBytesMaxUint64=return(100000),
-/// IndexRangeScan over key(a,b) reports 1.00 (cross-validation prefers bucket
-/// repeat over CMS noise); issue 22466 keeps TableFullScan 5.00 after
-/// re-analyzing only index b.
-#[test]
-#[ignore = "split across row_count_estimator::cross_validation_wins_over_a_maximally_noisy_cms and tidb_session::tests_explain::composite_index_estimate_and_empty_index_stats_match_go"]
-fn index_estimation_cross_validates_against_cms_maximum() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1243
-/// TestRangeStepOverflow`.
-///
-/// datetime histogram with years 3580..4862 must survive range detaching of
-/// '8499-01-23'..'9961-07-23' without overflow and load its statistics.
-#[test]
-#[ignore = "executed by tidb-session cardinality_stats_loading before and after production async histogram loading; storage I/O uses a test double"]
-fn range_step_overflow_on_datetime_histogram() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1465
-/// TestTopNAssistedEstimationWithoutNewCollation` and `:1477
-/// TestTopNAssistedEstimationWithNewCollation`.
-///
-/// Six string columns across utf8mb4/gbk collations, forty rows analyzed with
-/// 3 topn; 28 recorded explain/select queries per collation mode pin LIKE
-/// estimates assisted by TopN (e.g. like '%111%' reads 30.00) through
-/// tidb_default_string_match_selectivity=0.
-#[test]
-#[ignore = "executed through the production SQL/ANALYZE path in tidb_session::topn_assisted_string_match"]
-fn topn_assisted_string_match_estimation_golden_suite() {}
-
 /// Go `pkg/planner/cardinality/selectivity_test.go:1418`,
 /// `TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation`, is exercised
 /// through its active session/EXPLAIN path in
 /// `tidb_session::tests_explain::default_string_match_selectivity_zero_improves_like_estimates`.
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1519
-/// TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection`.
-///
-/// GetSelectivityByFilter over a LIKE '%R%' predicate on a three-bucket
-/// histogram must return ok=true with 2/3 selectivity while leaving the shared
-/// cached bounds selection untouched by a simulated concurrent VecEvalBool
-/// that narrowed Bounds.sel to {4,5}.
-#[test]
-#[ignore = "Rust's immutable HistColl equivalent is covered by logical::rewrite::analyzed_filter_selectivity_tests::string_match_estimation_does_not_mutate_shared_histogram"]
-fn string_match_selectivity_keeps_transient_bounds_selection() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1629
-/// TestGlobalStatsOutOfRangeEstimationAfterDelete`.
-///
-/// Range-partitioned table (p0..p4) analyzed with samplerate, then partially
-/// deleted: all thirteen recorded estimates, partition sets, and full-scan row
-/// counts are exercised through `tidb_session::tests_explain::
-/// global_partition_out_of_range_estimates_survive_delete_and_partition_analyze`.
-#[test]
-#[ignore = "covered by the production SQL/ANALYZE session regression"]
-fn global_stats_out_of_range_after_partition_delete() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1695 TestIssue39593`.
 ///
@@ -891,118 +717,6 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
         after_growth.est
     );
 }
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1743
-/// TestIndexRangeEstimationWithAppendedHandleColumn`.
-///
-/// Non-unique idx_ab(a,b) with only partial column stats: planner appends the
-/// handle column, and `a = 1 and b = 2 and id = 3` still estimates 1.00 with
-/// stats:partial markers instead of panicking.
-#[test]
-#[ignore = "executed with partial column statistics in tidb_session::tests_explain::appended_handle_range_uses_partial_column_statistics"]
-fn index_range_estimation_with_appended_handle_column() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1793
-/// TestIndexRangeEstimationWithTruncatedHandleRange`.
-///
-/// ia(a) + clustered id handle: pruned execution ranges keep handle dimensions
-/// ((5 10,5 +inf], [5 -inf,5 10)) with exclusive flag fixes yielding 10.00;
-/// point handle IN-lists get credit down to 2.00; unsigned handles never
-/// extend the range ([5,5]) because signed key encoding wraps at MaxInt64.
-#[test]
-#[ignore = "execution ranges and estimates are covered in tidb_session::tests_explain::truncated_integer_handle_ranges_match_go_cardinality_estimates"]
-fn index_range_estimation_with_truncated_handle_range() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:1876
-/// TestIndexRangeEstimationWithPrefixedCommonHandle`.
-///
-/// Clustered PK p1(2-prefix),p2 behind key ic(c): execution ranges keep prefix
-/// semantics ([5 "pp",5 "pp"]) while Selection re-checks eq(p1,'pp_055');
-/// tuple comparisons spanning index+handle columns must not read past the
-/// per-appended-column length slice (issue #70532).
-#[test]
-#[ignore = "execution and cardinality assertions are covered in tidb_session::tests_explain::prefixed_common_handle_ranges_match_go_cardinality_cases"]
-fn index_range_estimation_with_prefixed_common_handle() {}
-
-/// Go `TestDeriveTablePathStatsNoAccessConds`'s CountAfterAccess assertion is
-/// exercised in `tidb_executor::driver::planner_bridge::statistics_initialization_error_tests::unfiltered_table_path_count_uses_realtime_row_count`.
-#[test]
-#[ignore = "covered at the production stats-initialization boundary"]
-fn derive_table_path_stats_keeps_count_after_access_without_conditions() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2018
-/// TestIndexJoinInnerRowCountUpperBound`.
-///
-/// Mocked 500000-row stats (NDV 500) drive two recorded index-join plans,
-/// separated by SET Fix44855=ON. The active session test compares every
-/// original EXPLAIN cell, including the 500000000-to-2000000 scan-row cap.
-#[test]
-#[ignore = "covered by tidb_session::tests_explain::index_join_inner_row_count_upper_bound_matches_go"]
-fn index_join_inner_row_count_upper_bound_golden() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2089
-/// TestOrderingIdxSelectivityThreshold` and `:2173
-/// TestOrderingIdxSelectivityRatio`.
-///
-/// Mocked 100000-row / 1000-row suites run all 32 and 21 source statements:
-/// 28 and 15 complete EXPLAIN plans plus 10 setting changes. Active mappings:
-/// tidb_session::tests_explain::ordering_index_selectivity_threshold_matches_go_fixture
-/// and ordering_index_selectivity_ratio_matches_go_fixture. The fixtures are
-/// read directly from Go's cardinality_suite_out.json without plan normalization.
-#[test]
-#[ignore = "executed through both complete ordering-index session fixtures"]
-fn ordering_idx_selectivity_threshold_and_ratio_suites() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2256
-/// TestOrderingIdxSelectivityRatioForJoin`, `:2296 ...ForMergeJoin`, and
-/// `:2360 ...ForApply`.
-///
-/// Analyzed join tables and mocked Apply histograms force the source shapes under
-/// discouraging cost factors; explain format=verbose costs must be identical
-/// for ratio -1/0 and strictly increasing across 0 -> 0.5 -> 1 whenever an
-/// ordering index supplies the ORDER BY.
-#[test]
-#[ignore = "executed through tests_explain::ordering_ratio_increases_index_join_cost, ordering_ratio_increases_merge_join_cost and ordering_ratio_increases_apply_cost with the complete Go fixtures"]
-fn ordering_idx_selectivity_ratio_cost_monotonicity_for_join_shapes() {}
-
-/// Go `TestCrossValidationSelectivity` is exercised through
-/// `tidb_session::tests_explain::cross_validation_on_clustered_pk_range_matches_go`.
-#[test]
-#[ignore = "covered at the SQL planner/EXPLAIN boundary"]
-fn cross_validation_selectivity_on_clustered_pk_range() {}
-
-/// Go `TestIgnoreRealtimeStats`'s post-ANALYZE realtime-count behavior is
-/// exercised in
-/// `tidb_session::tests_explain::determinate_objective_uses_analyzed_row_count_after_inserts`.
-#[test]
-#[ignore = "partial SQL coverage; cluster stats-delta/cache refresh lifecycle remains open"]
-fn ignore_realtime_stats_by_optimizer_objective() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2567
-/// TestSubsetIdxCardinality`.
-///
-/// After loading queued histograms (sync wait 0), full-load flags hold for
-/// every column of iabc and the index itself; the five recorded distinct/count
-/// plans pin subset-vs-full index cardinality behavior.
-#[test]
-#[ignore = "executed by tidb-session cardinality_stats_loading through the catalog queue/cache lifecycle; storage I/O uses a test double"]
-fn subset_idx_cardinality_after_async_stats_load() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2635
-/// TestBuiltinInEstWithoutStats`.
-///
-/// Pseudo-stat table with ten rows: `a IN (1..8)` records Selection 1.00 over
-/// TableFullScan 10.00 stats:pseudo and must survive InitStatsLite/InitStats
-/// refreshes unchanged; ColAndIdxExistenceMap ends populated but with no
-/// analyzed columns. The initial post-delta EXPLAIN for both columns is
-/// exercised by `tidb_session::tests_explain::builtin_in_estimate_without_stats_keeps_selection_floor`;
-/// `tidb-session --test cardinality_stats_loading` additionally runs the
-/// production persisted-statistics loaders, repeated cache initialization,
-/// planner view and existence-map assertions. Storage bytes are in memory;
-/// live TiKV and background refresh scheduling remain separate gates.
-#[test]
-#[ignore = "executed by tidb-session cardinality_stats_loading through persisted statistics initialization and planner view"]
-fn builtin_in_estimate_without_stats_keeps_selection_floor() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:2754
 /// TestRiskRangeSkewRatioWithinBucket`.
@@ -1154,24 +868,6 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
     assert!((estimate_index(11, 1101, 100).est - 100.09).abs() < 0.1);
     assert!((estimate_index(3, 1101, 100).est - 109.99).abs() < 0.1);
 }
-
-/// Go `TestIssue64137`'s SQL estimator assertions are exercised in
-/// `tidb-session::tests_explain::small_ndv_out_of_range_index_reader_rows_match_go`.
-/// That session test supplies Go's post-`StatsHandle.Update` metadata because
-/// this source-shaped harness cannot run the domain stats-delta worker.
-#[test]
-#[ignore = "covered at the SQL estimator boundary; source mock lacks refreshed stats metadata"]
-fn issue_64137_small_ndv_out_of_range_index_reader_rows() {}
-
-/// GO PORT of `pkg/planner/cardinality/selectivity_test.go:3069
-/// TestUninitializedStats`.
-///
-/// Expression index idx_expr((cast(json_unquote(...)) collate utf8mb4_bin)):
-/// after explain-analyze triggers loading, show stats_histograms must not list
-/// allEvicted states and replans must never print unInitialized.
-#[test]
-#[ignore = "local SQL fixture executed by tidb-session tests_explain::expression_index_statistics_remain_initialized; cluster collector/storage fixtures cover virtual samples, live TiKV loading remains open"]
-fn uninitialized_expr_index_stats_finish_loading() {}
 
 /// GO PORT of `pkg/planner/cardinality/selectivity_test.go:3093
 /// TestEqualEstimateOnZeroRepeatBucketUpper`.

@@ -1,4 +1,4 @@
-# Remove unused server models and empty session harnesses
+# Remove unused server models and empty Rust harnesses
 
 
 This living ExecPlan follows root PLANS.md. Work in `/workspace/tidb` on
@@ -49,8 +49,8 @@ No defect fix or new Go package acceptance is claimed.
 - [x] Removed unused models, empty functions and duplicate source compilation.
 - [x] Reconcile active documentation and verify exact harness changes.
 - [x] Run grouped tests, affected all-target checks and lint; self-review passed.
-- [ ] Run the actual commit hook and save its external final receipt.
-- [ ] Save local recovery and reusable cloud draft; no push.
+- [x] Previous batch: actual hook, local commit d558cba172 and external final receipt completed.
+- [x] Previous batch: recovery verified and cloud draft33 read back; no push.
 
 ## Surprises & Discoveries
 
@@ -112,8 +112,8 @@ Implementation and 46 behavioral cases pass. Session harness: 2,192 to 1,993
 with the standalone target. Every other compiled identity is preserved. All
 17 nonempty bodies in mixed session files are byte-identical; 11 are in the
 already-unregistered part5 file and receive no execution credit. Affected all-target checking and make lint pass after the fixture repair.
-The normal commit hook and local recovery remain pending; their completed
-results will be recorded in the external final handoff. Cleanup changes no finding status:
+The previous normal commit hook and local recovery completed successfully;
+see /workspace/.cloud-setup/session-cleanup/final-handoff.json. Cleanup changes no finding status:
 86 tracked, 29 repaired, 57 unresolved (36 open, 21 partial). Full Go suites,
 full Rust suites, live multi-node and measured performance remain unverified.
 
@@ -126,3 +126,60 @@ No dependency, lockfile, generated source, Go source, real workload runner or
 native client changes are needed. The obligation ledger records removed
 identities, file hashes and relocated candidate rows. A validation receipt
 will distinguish exact compiled reductions from source-only deletions.
+
+## Continuation: remaining empty harness entries
+
+
+Starting at d558cba17238fbe11016482e7521fd275ae066e7, remove 347 empty ignored
+functions across 39 files in tidb-planner, tidb-executor, tidb-ast, tidb-expr
+and tidb-vardef. The core_physical_plan_gap_catalog_source module contains
+only 43 empty functions and an unused unit constant, so remove that module
+entirely. Other files retain all non-comment code except the exact empty
+blocks. Replace stale module-level inventory prose, but preserve contracts
+beside real tests. The compact empty-test-cleanup-obligations.json ledger
+records parent file hashes and original contract line ranges; Git history
+retains the full original Go obligations without duplicating stale prose.
+
+Milestone one is the exact deletion inventory and code preservation proof.
+Milestone two is grouped validation of surviving tests in affected modules,
+then affected checks, lint and one normal commit hook. Current Go fixtures,
+native client, dependencies and production behavior remain unchanged. Move
+329 now-stale candidate-index rows to recoverable historical line references.
+Do not close structural findings for harness cleanup.
+
+- [x] Inventory and remove 347 empty functions, one unused unit marker, one empty module.
+- [x] Verify all remaining non-comment code is byte-identical before formatting.
+- [x] Grouped surviving tests:80 passed; all removed identities absent. Root lint passed.
+- [x] Affected all-target checks passed; self-review and diff check passed.
+- [ ] Normal locked-build hook outcome recorded in the external final handoff.
+- [ ] Normal locked-build hook, local recovery and cloud draft; no push.
+
+Run from rust/ with CARGO_BUILD_JOBS=1 and the cloud environment activated:
+
+    cargo test --locked -p tidb-planner -p tidb-ast -p tidb-executor --test all --no-run
+    cargo test --locked -p tidb-expr -p tidb-vardef --lib --no-run
+    cargo check --locked -p tidb-planner -p tidb-ast -p tidb-executor -p tidb-expr -p tidb-vardef --all-targets
+
+Use the built harnesses with each affected module name as a filter and
+--test-threads=1. Preserve all results, including failures, under
+/workspace/.cloud-setup/empty-test-cleanup/. Then run root make lint and
+normal commit with TERM=xterm. The actual locked server hook is mandatory.
+The validation receipt owns exact commands and outcomes; completed final
+hook/bundle/draft results live in that directory's final-handoff.json.
+
+Discovery: prior strict inventories missed bare #[ignore] attributes and a
+unit-valued TestMain marker. None performs Go behavior. Whole-file rustfmt
+would introduce unrelated formatting changes; those edits were discarded
+and the exact removal batch reapplied. No production bug fix or complete Go
+package acceptance is claimed. Recover files with git show at the parent
+above, preserving concurrent changes. Findings remain 29 repaired and57
+unresolved (36 open,21 partial). No performance improvement is claimed until
+measured; reductions in source and harness entries are reported directly.
+
+Continuation outcome:347 empty functions and the unused TestMain marker are
+removed; all367 surviving functions in touched files remain verbatim. The
+built harness inventories contain none of the removed identities. Eighty
+representative cases pass; other unchanged cases are not counted as executed.
+233 obsolete mapping rows in17 historical receipts are also retired, retaining
+parent line references. No finding status changes. Final check/hook and
+recovery outcomes are recorded in the external final handoff named above.

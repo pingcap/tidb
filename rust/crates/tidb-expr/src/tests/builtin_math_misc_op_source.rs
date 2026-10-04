@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-first ports of `pkg/expression.part4` (`func Test*` items 181–240
-//! on `origin/master`, sorted by file path then line): the tail of
-//! `builtin_math_test.go` (`TestCRC32` .. `TestCot`), the shared
-//! `builtin_math_vec_test.go` map harnesses, the whole
-//! `builtin_miscellaneous_test.go` family and its vectorized sibling,
-//! `builtin_op_test.go` and `builtin_op_vec_test.go`, and
-//! `builtin_other_test.go::TestBitCount`. Every expectation was re-derived
-//! from the Go source on `origin/master`, not from earlier notes; families
-//! already pinned by earlier batches are cited in the receipt rather than
-//! duplicated row-for-row here.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use std::cell::RefCell;
 
@@ -940,17 +933,6 @@ fn sleep_row(arg: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
     ScalarFunction::new(CiString::new("sleep"), int_ft(), vec![const_arg(arg)])
         .eval(ctx, empty_row())
 }
-
-/// Go `pkg/expression/builtin_miscellaneous_vec_test.go:149
-/// TestSleepVectorized`, TIMING half: strict SLEEP(0.5) must occupy >= 0.5s
-/// of wall clock, and SLEEP(2) must return within <= 2s once
-/// `SQLKiller.SendKillSignal(QueryInterrupted)` fires a second in. Real-time
-/// sleeps slow the gate and no SQLKiller hook exists on the Rust context
-/// contract, so the timing claims stay Go-side evidence.
-#[test]
-#[ignore = "go-parity-gap: SQLKiller interruptibility and wall-clock duration \
-            bounds need real execution time absent from the value-tier ctx"]
-fn sleep_vectorized_timing_strict_real_duration_and_kill_signal() {}
 
 // ---------------------------------------------------------------------------
 // pkg/expression/builtin_op_test.go (items 223–236)

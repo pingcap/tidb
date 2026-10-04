@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/parser/ast/misc_test.go` (origin/master).
-//!
-//! Statement-level visitor covers built from parsed multi-statement scripts
-//! are transcreated as direct-construction walks over the same node
-//! families; the remaining rows hand-build the extracted AST states Go
-//! asserts on (hints, secure text, restore text, URL redaction).
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     AdminStmt, AnalyzeTableStmt, BeginStmt, BinaryOp, BrieKind, BrieOption,
@@ -296,22 +293,6 @@ pub fn compact_table(name: &str) -> tidb_ast::AlterTableStmt {
         }],
     }
 }
-
-/// `pkg/parser/ast/misc_test.go::TestDDLVisitorCoverMisc` /
-/// `TestDMLVistorCover`.
-///
-/// Both parse multi-statement SQL scripts and accept every resulting
-/// statement. Traversal itself is pinned per-family by
-/// `misc_visitor_cover`/`functions_visitor_cover`; the parse step belongs
-/// to tidb-parser, so the script-driven shapes stay behind an ignored gap
-/// here rather than being approximated.
-#[test]
-#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-fn ddl_visitor_cover_misc() {}
-
-#[test]
-#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-fn dml_vistor_cover() {}
 
 /// `pkg/parser/ast/misc_test.go::TestSensitiveStatement`.
 ///

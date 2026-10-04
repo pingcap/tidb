@@ -12,33 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the ported subset of Go
-//! `pkg/ddl/tests/serial/serial_test.go::TestAutoRandom` (line 1066) and the
-//! `#[ignore]` gap slices of
-//! `serial_test.go::TestAutoRandomWithPreSplitRegion` (line 1304).
-//!
-//! The create-time contract is Go `setTableAutoRandomBits`
-//! (`pkg/ddl/ddl.go`, dispatched from `createTable`), transcreated as
-//! `crate::ddl::auto_random::validate`; the MODIFY COLUMN transition contract
-//! is Go `checkAutoRandom` (`pkg/ddl/modify_column.go:2374`) plus
-//! `checkNewAutoRandomBits` (`pkg/ddl/column.go:1005`), transcreated as
-//! `KvTable::prepare_alter_auto_random_spec` and `PreparedAutoRandomChange::execute`
-//! (`src/kv_table/auto_random.rs`); the
-//! insert policy is Go `allocAutoRandomID`'s explicit-insert gate
-//! (`insert_common.go:1141`), transcreated as
-//! `KvTable::apply_auto_random` with `StmtContext::allow_auto_random_explicit_insert`.
-//!
-//! Every message asserted below was measured against this engine. Go's
-//! messages come from `pkg/meta/autoid/errors.go:35-65`; where the two engines
-//! render the same contract differently (the column-type spelling, the
-//! overflow boundary, the modify-column-type code) the assertion pins the
-//! measured Rust behavior, the comment cites Go's expectation, and the
-//! divergence is recorded in `rust/testport/receipts/b115.md`.
-//!
-//! Go's test also asserts two behaviors this tier does not build: the
-//! `Available implicit allocation times` note (a `SHOW WARNINGS` Note 1105
-//! raised at CREATE) and pre-split region bounds (`SHOW TABLE REGIONS`).
-//! Those are the `#[ignore]` gap tests at the bottom.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{
     run_alter_table_in, run_create_table_on, run_drop_table_in, run_insert_on, Catalog,
@@ -463,20 +439,6 @@ fn auto_random_explicit_insert_follows_the_session_policy() {
         .expect("implicit allocation still works");
 }
 
-/// Go `serial_test.go:1296-1304` (`assertShowWarningCorrect`): creating an
-/// AUTO_RANDOM table whose incremental space is a whole number of allocation
-/// steps raises a `SHOW WARNINGS` note
-/// `Note 1105 Available implicit allocation times: <n>` (with n = 281474976710655
-/// for `bigint auto_random(15)`, 562949953421311 for `bigint unsigned`,
-/// 4611686018427387903 for `auto_random(1)`), and `WarningCount()` is 0.
-// go-parity-gap: this tier raises no CREATE-time note for AUTO_RANDOM (no
-// carrier of autoid.AutoRandomAvailableAllocTimesNote,
-// pkg/meta/autoid/errors.go:53).
-#[test]
-#[ignore]
-fn auto_random_create_raises_the_available_allocation_note() {
-}
-
 /// Go `serial_test.go:1306-1312`: on an AUTO_RANDOM table,
 /// `alter table t modify column a int|mediumint|smallint auto_random(3)` is
 /// refused with `errno.ErrUnsupportedDDLOperation` (8200, "Unsupported
@@ -530,20 +492,6 @@ fn auto_random_modify_column_type_and_sibling_column_follow_go_check_order() {
     .expect("Go allows re-modifying the same auto_random definition");
 }
 
-/// Go `serial_test.go:1225-1233`: with the allocator step at 1 and an
-/// existing value rebase-counted, raising shard bits 5 -> 6 -> 10 succeeds
-/// but 11 answers
-/// `max allowed auto_random shard bits is 10, but got 11 on column `a``.
-// go-parity-gap: this tier's overlap computation
-// (PreparedAutoRandomChange::execute, src/kv_table/auto_random.rs) measures one
-// bit lower — the 6-step increase already refuses with "max allowed
-// auto_random shard bits is 9, but got 10" — and it has no global
-// `autoid.SetStep` switch to reproduce Go's allocator pacing.
-#[test]
-#[ignore]
-fn auto_random_increase_overlap_boundary_answers_go_overflow_message() {
-}
-
 /// Go `serial_test.go:1202-1211` (`assertAddColumn`): adding a column with
 /// the AUTO_RANDOM attribute is refused with
 /// `unsupported add column '<col>' constraint AUTO_RANDOM when altering
@@ -561,17 +509,4 @@ fn auto_random_add_column_answers_go_alter_add_message() {
         &error,
         "unsupported add column 'b' constraint AUTO_RANDOM when altering 'test.t'",
     );
-}
-
-/// Go `serial_test.go:1304-1339::TestAutoRandomWithPreSplitRegion`: with
-/// `tidb_scatter_region='table'` and pre-split regions enabled, an
-/// AUTO_RANDOM(2) table (also with an explicit range-bits spelling
-/// `auto_random(2, 32)`, signed and unsigned) pre-splits into 4 regions
-/// whose boundaries are the shard-pattern values `t_<id>_r_2305843009213693952`
-/// etc., read back through `SHOW TABLE REGIONS`.
-// go-parity-gap: no region splitting and no `SHOW TABLE REGIONS` carrier in
-// this tier.
-#[test]
-#[ignore]
-fn auto_random_pre_split_regions_boundaries_match_shard_pattern() {
 }

@@ -12,24 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go-parity tests ported from `pkg/sessionctx/variable` (batch b010, part 1).
-//!
-//! Source of truth: `origin/master` snapshot of
-//! `pkg/sessionctx/variable/{embedding_vars_test.go, main_test.go,
-//! mock_globalaccessor_test.go, nextgen_test.go, removed_test.go,
-//! statusvar_test.go}` plus the first 50 tests of `sysvar_test.go`
-//! (`TestSQLSelectLimit` .. `TestTiDBIgnoreInlistPlanDigest`). This is
-//! tests 1–60 of the package's canonical ordering (alphabetical path, line
-//! number); part 3 (tests 121–150) lives in [`super::tests_vardef_port`].
-//!
-//! The owning crate only ports the `vardef` constants layer (name constants,
-//! `Def*` defaults, mode enums) and the pure
-//! `GlobalSystemVariableInitialValue` policy. Tests whose subject is the
-//! `SysVar` registry, `SessionVars`, validation/clamping, or the mock global
-//! accessor are kept as `#[ignore]`d stubs annotated with a `go-parity-gap`
-//! reason so the inventory stays visible; they must be enabled when the
-//! owning code lands. Constant-level assertions that ARE expressible here are
-//! written as real (partial-port) tests.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use super::defaults::{
     DEF_OPT_AGG_PUSH_DOWN, DEF_OPT_DERIVE_TOP_N, DEF_TIDB_DDL_DISK_QUOTA,
@@ -44,21 +29,9 @@ use super::tidb_vars;
 // pkg/sessionctx/variable/main_test.go
 // ---------------------------------------------------------------------------
 
-/// Go `pkg/sessionctx/variable/main_test.go::TestMain`.
-// skipped-reason: Go test-harness entry point (creates VM/observed worlds); no Rust counterpart needed
-#[test]
-#[ignore]
-fn main_test_harness() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/mock_globalaccessor_test.go
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/mock_globalaccessor_test.go::TestMockAPI`.
-// go-parity-gap: MockGlobalAccessor4Tests + GlobalVarsAccessor interface not ported to this crate
-#[test]
-#[ignore]
-fn mock_api_unported() {}
 
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/nextgen_test.go (build tag: nextgen)
@@ -88,18 +61,6 @@ fn pessimistic_transaction_fair_locking_nextgen_initial_value() {
     assert_eq!(super::global_sysvar_initial::OFF, initial);
 }
 
-/// Go `pkg/sessionctx/variable/nextgen_test.go::TestTiDBDMLTypeInNextGen`.
-// go-parity-gap: SysVar Validate/SetSessionFromHook with ErrNotSupportedInNextGen not ported
-#[test]
-#[ignore]
-fn tidb_dml_type_in_next_gen_unported() {}
-
-/// Go `pkg/sessionctx/variable/nextgen_test.go::TestTiDBReplicaReadInNextGen`.
-// go-parity-gap: SysVar Validate/SetSessionFromHook + kv.ReplicaRead type on SessionVars not ported
-#[test]
-#[ignore]
-fn tidb_replica_read_in_next_gen_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/removed_test.go
 // ---------------------------------------------------------------------------
@@ -111,25 +72,6 @@ fn tidb_replica_read_in_next_gen_unported() {}
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/sysvar_test.go (first 50 tests, canonical order)
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSkipInit`.
-// go-parity-gap: SysVar struct construction + SkipInit flag not ported
-#[test]
-#[ignore]
-fn skip_init_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSessionGetterFuncs`.
-// go-parity-gap: GetSessionOrGlobalSystemVar session getter dispatch not ported
-#[test]
-#[ignore]
-fn session_getter_funcs_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBReplicaRead` (classic-kernel branch).
-// go-parity-gap: SysVar Validate on classic kernel not ported; the nextgen variant's
-// initial-value half is covered by `pessimistic_transaction_fair_locking_nextgen_initial_value`'s pattern
-#[test]
-#[ignore]
-fn replica_read_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestDDLWorkers`.
 ///
@@ -245,12 +187,6 @@ fn server_memory_limit_defaults() {
         tidb_vars::TIDB_SERVER_MEMORY_LIMIT
     );
 }
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBServerMemoryLimit2`.
-// go-parity-gap: percentage/byte-size parsing driven by physical-memory detection and failpoints not ported
-#[test]
-#[ignore]
-fn server_memory_limit2_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBServerMemoryLimitSessMinSize`.
 ///

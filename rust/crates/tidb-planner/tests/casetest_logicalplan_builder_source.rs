@@ -12,32 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports for `pkg/planner/core/casetest/logicalplan` (`pkg/planner.part6`
-//! items 302–303 on `origin/master`; family bootstrap is
-//! `logicalplan/main_test.go:24 TestMain`, skipped-reason in the receipt).
-//!
-//! `TestLogicalPlanTypeRegression` (`logical_plan_builder_test.go:57`) pins
-//! three behaviors; two of them are exactly what this crate's transcreated
-//! `buildSetOpr` type-merging pipeline owns, so they run as real assertions:
-//!
-//! 1. `SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2` over `c1 INT` /
-//!    `c1 INT UNSIGNED` reports `mysql.TypeLonglong`
-//!    ("union int and unsigned int will be promoted to long long").
-//! 2. `SELECT 0 UNION ALL SELECT c1 FROM t3` over `c1 BIGINT UNSIGNED`
-//!    reports `mysql.TypeNewDecimal` ("union int (even literal) and unsigned
-//!    bigint will be promoted to decimal").
-//!
-//! In Go both statements run through `PlanBuilder.buildProjection4Union`
-//! (`pkg/planner/core/logical_plan_builder.go:2053`) whose per-column result
-//! type is `unionJoinFieldType` (:2001) = `types.AggFieldType`
-//! (`pkg/types/field_type.go:63`, mixed-sign integral promotion bumping
-//! TypeLong → TypeLonglong and TypeLonglong → TypeNewDecimal) followed by the
-//! decimal-only sign rule and the flen arithmetic. The Rust owner of that path
-//! is `tidb_planner::plan_builder::set_opr::{build_projection4_union,
-//! union_join_field_type}` (same line-for-line sources), so the port asserts
-//! the same observable: the field type of column 0 on the built
-//! `LogicalUnionAll`'s schema — which is what Go's `rs.Fields()[0]` prints
-//! after execution.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::Stmt;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
@@ -193,31 +170,3 @@ fn logical_plan_type_regression_union_signed_literal_with_unsigned_bigint_promot
     let field_type = union_first_output_type("SELECT 0 UNION ALL SELECT c1 FROM t3");
     assert_eq!(field_type.code(), FieldTypeCode::NewDecimal);
 }
-
-/// GO PORT of `pkg/planner/core/casetest/logicalplan/
-/// logical_plan_builder_test.go:60-62`, issue:50235 arm of
-/// `TestLogicalPlanTypeRegression`.
-///
-/// Re-derived contract: a YEAR(4) primary-key column compared with the
-/// out-of-int64-range constant `16212511333665770580` still returns the stored
-/// row `2016`. In Go the ranger's range detacher converts the reference to the
-/// column's type without truncation errors and clamps the huge bound, leaving
-/// a full-table year range; correctness then needs a mock store, insert and
-/// executor round-trip.
-#[test]
-#[ignore = "go-parity-gap: needs executor/mock-store data round trip plus the session-backed YEAR range comparison from buildDataSource+ranger -- none exists in tidb-planner"]
-fn logical_plan_type_regression_year_upper_bound_still_matches_row() {}
-
-/// GO PORT of `pkg/planner/core/casetest/logicalplan/
-/// logical_plan_builder_test.go:25 TestGroupBySchema`.
-///
-/// Re-derived contract: with cascades off/on the EXPLAIN plan_tree of the
-/// scalar-subquery query (`EXISTS (... NATURAL RIGHT JOIN ... GROUP BY ...)`)
-/// must open with `TableDual root rows:0` and carry a Null-aware anti semi
-/// join under a ScalarSubQuery with seven ScalarQueryCol outputs, per the
-/// inline golden. Pinning it needs RunTestUnderCascades' live session plus the
-/// full optimize-and-print pipeline (`planner.Optimize` + explain printer),
-/// which tidb-planner deliberately does not have.
-#[test]
-#[ignore = "go-parity-gap: needs RunTestUnderCascades live session and whole-plan explain printing of the scalar-subquery/NATURAL-RIGHT-JOIN pipeline"]
-fn group_by_schema_explain_golden_with_scalar_subquery() {}

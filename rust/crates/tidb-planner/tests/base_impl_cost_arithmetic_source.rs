@@ -12,23 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port for `pkg/planner/implementation/base_test.go:28
-//! TestBaseImplementation` — item 1198 of `pkg/planner.part20` (all 1278
-//! `Test*`/`Benchmark*` declarations under `pkg/planner/` on `origin/master`,
-//! sorted by file then line, chunked by 60). The package's
-//! `main_test.go:24 TestMain` (item 1199) is bootstrap-only and is recorded
-//! as skipped-reason in the batch receipt.
-//!
-//! The Go test exercises `baseImpl` (`pkg/planner/implementation/base.go:
-//! 27-70`): plan identity (`GetPlan` returns exactly the wrapped plan),
-//! zero-cost initialization (`CalcCost` with no children sums nothing and
-//! ignores the unused cost hint), and the Set/Get cost pair. This crate
-//! models the cost state as
-//! [`tidb_planner::implementation_cost::ImplementationCost`], whose module
-//! doc records the deliberate boundary: physical-plan attachment
-//! (`AttachChildren`/`GetPlan`) is not modeled because no memo/physical-plan
-//! interface exists here. The cost assertions run for real below; the plan
-//! identity assertion is the documentary twin.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_planner::implementation_cost::ImplementationCost;
 
@@ -55,16 +41,3 @@ fn base_impl_cost_starts_at_zero_and_tracks_set_cost() {
     impl_cost.set_cost(6.0);
     assert_eq!(impl_cost.cost(), 6.0, "GetCost returns the SetCost value");
 }
-
-/// Documentary twin for the plan-identity assertion of
-/// `pkg/planner/implementation/base_test.go:36-37`:
-/// `require.Equal(t, p, impl.GetPlan())` — a `baseImpl` built around
-/// `physicalop.PhysicalLimit{}.Init(sctx, nil, 0, nil)` must return exactly
-/// that plan. `ImplementationCost` carries no plan (see its module-level
-/// boundary), so the wrapped-plan identity is unobservable here.
-///
-/// go-parity-gap: the memo/Implementation layer (wrapped PhysicalPlan,
-/// AttachChildren) is not modeled in this crate.
-#[test]
-#[ignore = "go-parity-gap: baseImpl.GetPlan plan identity needs the memo/implementation layer"]
-fn base_impl_get_plan_identity_documentary() {}

@@ -12,32 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Real ports of the constant-expression unit tests in
-//! `pkg/planner/core/expression_test.go` (`pkg/planner.part10` items 564–572
-//! on `origin/master`: TestBetween, TestCaseWhen, TestCast,
-//! TestCastRetTypeDoesNotShareASTFieldType, TestPatternIn, TestIsNull,
-//! TestCompareRow, TestIsTruth, TestBuildExpression).
-//!
-//! Pipeline parity: Go's `runTests` harness (:83) drives each case through TWO
-//! paths — `evalAstExpr(ctx, node)` (constant folding straight off the AST)
-//! and `buildExprAndEval` (`BuildSimpleExpr` + `Expression.Eval`) — requiring
-//! identical datums. The Rust crate carries one production stack for both
-//! shapes: `tidb_expr::simple_expr::build_simple_expr` IS the ported
-//! `expression_rewriter.go:108 buildSimpleExpr`, its per-node `fold_constant`
-//! hook replays Go's construction-time `foldConstant`
-//! (`pkg/expression/constant_fold.go`), and `tidb_expr::eval_expression_once`
-//! evaluates the built tree over the SAME single virtual row Go's
-//! `chunk.Row{}` leg uses (`lib.rs:446`). Results are formatted with Go's `%v`
-//! rendering (`fmt.Sprintf("%v", val.GetValue())`, :84/:92): ints print bare
-//! digits, strings print their contents, SQL NULL prints `<nil>`.
-//!
-//! `TestCompareRow` uses the evaluator's AST-level row-comparison path. The
-//! function registry intentionally keeps `row` out of its standalone builtin
-//! list (matching Go's `GetBuiltinList` skip), but parsed `ROW(...)` operands
-//! are rewritten and evaluated directly by `tidb-expr::row`. `TestBuildExpression`'s
-//! two `EvalInt` legs still need a chunk-backed row binder
-//! (`chunk.MutRowFromValues`), and `tidb-chunk` is not a `tidb-planner`
-//! dependency; that remains the recorded gap item here.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode, FieldTypeFlags};
@@ -460,11 +437,3 @@ fn build_expression_paths_agree_and_bind_names_in_order() {
         assert_folds_to(expr_text, &expected.to_string());
     }
 }
-
-/// GO PORT of `pkg/planner/core/expression_test.go:432 TestBuildExpression`,
-/// the `EvalInt(evalCtx, chunk.MutRowFromValues("", 1, 2).ToRow())` legs
-/// (:473-496): column-bearing `Expression`s evaluating against chunk-backed
-/// rows.
-#[test]
-#[ignore = "go-parity-gap: row-bound EvalInt needs chunk-backed rows; tidb-chunk is not a planner dependency"]
-fn build_expression_binds_column_values_through_chunk_rows() {}

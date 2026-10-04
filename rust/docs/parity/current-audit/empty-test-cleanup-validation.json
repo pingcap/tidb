@@ -1,0 +1,140 @@
+{
+  "date": "2026-10-04",
+  "parent": "d558cba17238fbe11016482e7521fd275ae066e7",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remaining empty Rust harness entries across planner/executor/expression/AST/vardef; no production logic, dependencies, Go fixtures or native client changed.",
+  "removed": {
+    "empty_ignored_functions": 347,
+    "affected_rust_files": 39,
+    "empty_modules": 1,
+    "unused_testmain_markers": 1,
+    "stale_candidate_rows": 329,
+    "obsolete_receipt_mapping_rows": 233,
+    "receipt_tables_affected": 17
+  },
+  "obligations": "empty-test-cleanup-obligations.json",
+  "preservation": {
+    "surviving_functions_verbatim": 367,
+    "changed_functions": []
+  },
+  "harnesses": {
+    "after": {
+      "tidb-expr-list.txt": 1260,
+      "tidb-ast-list.txt": 131,
+      "tidb-planner-list.txt": 461,
+      "tidb-executor-list.txt": 426,
+      "tidb-vardef-list.txt": 45
+    },
+    "removed_identities_absent": true
+  },
+  "behavioral_tests": [
+    {
+      "crate": "tidb-ast",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-ast/115436eb3d32f804/out/all-115436eb3d32f804",
+        "parser_ast_procedure_package_source",
+        "parser_ast_format_package_source",
+        "parser_ast_misc_package_source",
+        "parser_ast_functions_package_source",
+        "parser_ast_dml_import_package_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 28 passed; 0 failed; 0 ignored; 0 measured; 103 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/tidb-ast-tests.log"
+    },
+    {
+      "crate": "tidb-executor",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-executor/1bfef494df0e9611/out/all-1bfef494df0e9611",
+        "serial_column_flags_and_limits_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 421 filtered out; finished in 0.07s",
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/tidb-executor-tests.log"
+    },
+    {
+      "crate": "tidb-planner",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-planner/c8ff87d3f6e88e00/out/all-c8ff87d3f6e88e00",
+        "base_impl_cost_arithmetic_source",
+        "core_logical_plans_source",
+        "memo_group_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 456 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/tidb-planner-tests.log"
+    },
+    {
+      "crate": "tidb-expr",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-expr/00bc98de0f6e3b29/out/tidb_expr-00bc98de0f6e3b29",
+        "builtin_math_misc_op_source::bit_count_source_table",
+        "builtin_math_misc_op_source::logic_and_source_table",
+        "builtin_math_misc_op_source::conv_source_table_type_and_valid_prefix_rows",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1257 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/tidb-expr-tests.log"
+    },
+    {
+      "crate": "tidb-vardef",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-vardef/ba1b60efb1d92e2b/out/tidb_vardef-ba1b60efb1d92e2b",
+        "tests_sysvar_port",
+        "tests_variable_p2_port",
+        "tests_vardef_port",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 39 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s",
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/tidb-vardef-tests.log"
+    }
+  ],
+  "selected_passes": 80,
+  "validation": [
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner -p tidb-ast -p tidb-executor --test all --no-run",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/build-tests.log",
+      "sha256": "836e7b7390c4009bc75af81a662f11c8b9318f34b5472ac45b8ea056cf02765d"
+    },
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-expr -p tidb-vardef --lib --no-run",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/build-unit-tests.log",
+      "sha256": "010c460ba8b2fd758cf11a72e277bd5213e5ac616dbea6fc19264dcde5092ad3"
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p tidb-ast -p tidb-executor -p tidb-expr -p tidb-vardef --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/empty-test-cleanup/check.log",
+      "sha256": "837ba1f431d47ddaca8d147c16746759d2495ddcd0307e588ebb4ee5d68bc960"
+    }
+  ],
+  "counts_unchanged": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21
+  },
+  "limits": [
+    "Full Go/Rust suites and performance benchmarks not run.",
+    "Representative retained behaviors run; other unchanged test bodies receive no execution credit.",
+    "Historical ignored contracts and stale missing-owner comments are preserved as unverified obligations, not freshly reproduced defects.",
+    "No structural finding or complete Go package accepted.",
+    "No push or push dry run. Fresh-task restoration remains unverified."
+  ],
+  "final_gate": "Completed actual hook, local commit, bundle and draft receipts live in /workspace/.cloud-setup/empty-test-cleanup/final-handoff.json.",
+  "self_review": "git diff --check passed. All 367 surviving functions occur verbatim in the parent. Removed functions have strictly empty bodies and ignore attributes; the deleted module has no non-placeholder code. No behavioral assertion or failing regression removed."
+}

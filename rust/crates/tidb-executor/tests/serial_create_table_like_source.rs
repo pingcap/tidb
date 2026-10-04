@@ -12,24 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the ported slices of Go `pkg/ddl/tests/serial/serial_test.go`
-//! `TestCreateTableWithLike` (line 108) and
-//! `TestCreateTableWithLikeAtTemporaryMode` (line 232).
-//!
-//! The carrier is Go `BuildTableInfoWithLike` (`pkg/ddl/create_table.go:1300`)
-//! and the LIKE dispatch of `createTableWithInfo`, transcreated in
-//! `crate::ddl::run_create_table_in`'s `like_table` branch; the temporary
-//! refusals are Go `checkReferInfoForTemporaryTable`
-//! (`pkg/planner/core/preprocess.go:1556`) and `setTemporaryType`
-//! (`pkg/ddl/create_table.go:1026`).
-//!
-//! Go drives these through a full mock-store session, including two other
-//! schemas (`ctwl_db`, `ctwl_db1`) and region splitting. This tier has no
-//! CREATE DATABASE runner, so every cross-schema arm is ported over
-//! same-schema names, and the `SHOW TABLE REGIONS` arms stay in the
-//! `#[ignore]` gap tests. Nothing is approximated: the remaining region-split
-//! carrier gap is recorded explicitly, while temporary-copy option checks and
-//! duplicate warnings use the ordinary DDL path.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{
     run_alter_table_in, run_create_table_in, run_insert_on, run_select_on, Catalog, DriverError,
@@ -504,16 +489,4 @@ fn create_table_like_missing_source_wins_over_existing_target() {
         message_of(&error),
         "Table 'test_not_exist.t' doesn't exist"
     );
-}
-
-/// Go `serial_test.go:196-224`: with region splitting enabled
-/// (`tidb_scatter_region='table'`), `create table t1 like partition_t`
-/// pre-splits one region per partition (three regions whose names match
-/// `t_<pid>_.*`), and a `pre_split_regions` source copies its split bounds
-/// (`t_<id>_r_2305843009213693952` ...), recreated again after TRUNCATE.
-// go-parity-gap: no region splitting and no `SHOW TABLE REGIONS` carrier in
-// this tier.
-#[test]
-#[ignore]
-fn create_table_like_pre_splits_partition_and_shard_regions() {
 }

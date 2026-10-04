@@ -6,17 +6,6 @@ rust/crates/tidb-ast/src/expr/restore.rs	64	panic!("Format is not implemented fo
 rust/crates/tidb-ast/src/expr/restore.rs	82	Self::Row(_) => panic!("Format is not implemented for row expressions"),
 rust/crates/tidb-ast/src/expr/restore.rs	96	panic!("Format is not implemented for aggregate or window expressions")
 rust/crates/tidb-ast/src/expr/restore.rs	249	panic!("Format is not implemented for subquery expressions")
-rust/crates/tidb-ast/tests/parser_ast_dml_import_package_source.rs	552	// go-parity-gap: TestImportIntoFromSelectInvalidStmt pins PARSER grammar
-rust/crates/tidb-ast/tests/parser_ast_dml_import_package_source.rs	559	#[ignore = "go-parity-gap: FROM-SELECT import validation runs in tidb-parser grammar actions"]
-rust/crates/tidb-ast/tests/parser_ast_format_package_source.rs	480	// go-parity-gap: the Go table's three JSON-extraction Format rows require
-rust/crates/tidb-ast/tests/parser_ast_format_package_source.rs	485	#[ignore = "go-parity-gap: no JSON path model for json_extract / -> / ->> Format rows"]
-rust/crates/tidb-ast/tests/parser_ast_functions_package_source.rs	657	// go-parity-gap: TestConvert and TestChar pin PARSER-side charset
-rust/crates/tidb-ast/tests/parser_ast_functions_package_source.rs	662	#[ignore = "go-parity-gap: CONVERT charset validation ([parser:1115]) lives in tidb-parser grammar"]
-rust/crates/tidb-ast/tests/parser_ast_functions_package_source.rs	666	#[ignore = "go-parity-gap: CHAR charset validation ([parser:1115]) lives in tidb-parser grammar"]
-rust/crates/tidb-ast/tests/parser_ast_misc_package_source.rs	309	#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-rust/crates/tidb-ast/tests/parser_ast_misc_package_source.rs	313	#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-rust/crates/tidb-ast/tests/parser_ast_procedure_package_source.rs	270	#[ignore = "go-parity-gap: parse-driven visitor scripts require tidb-parser"]
-rust/crates/tidb-ast/tests/parser_ast_procedure_package_source.rs	275	#[ignore = "go-parity-gap: TestProcedure only asserts parses succeed (tidb-parser grammar)"]
 rust/crates/tidb-chunk/src/tests_mutrow.rs	227	// go-parity-gap: ShallowCopyPartialRow snapshotted instead of
 rust/crates/tidb-codec/src/column.rs	281	write!(formatter, "typed chunk column {field_type:?} is not implemented")
 rust/crates/tidb-distsql/src/chunk_decode.rs	207	"typed tipb row decoding is not implemented for {encode_type:?}"
@@ -114,11 +103,6 @@ rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	318	// go-parity-ga
 rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	321	#[ignore = "go-parity-gap: safe-point-expiry during partition backfill is not transcreated"]
 rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	334	// go-parity-gap: the tier's ADD PARTITION runner has no failure seam (the
 rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	339	#[ignore = "go-parity-gap: ADD PARTITION has no injectable failure to leave the meta untouched against"]
-rust/crates/tidb-executor/tests/ddl_integration_reorg_backfill_source.rs	34	#[ignore = "go-parity-gap: needs the DDL job state machine (SchemaState write-reorg transitions); the crate applies metadata directly with no job states"]
-rust/crates/tidb-executor/tests/ddl_integration_reorg_backfill_source.rs	49	/// go-parity-gap note: the Rust carrier now accepts non-partitioned partial
-rust/crates/tidb-executor/tests/ddl_integration_reorg_backfill_source.rs	56	#[ignore = "go-parity-gap: partial-index literal/type/shape validation and reorg lifecycle are not fully transcreated; FK IS NOT NULL predicate semantics are covered"]
-rust/crates/tidb-executor/tests/ddl_integration_reorg_backfill_source.rs	150	#[ignore = "go-parity-gap: config.CheckTableBeforeDrop and the drop-time fast-check path are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_integration_reorg_backfill_source.rs	222	#[ignore = "go-parity-gap: Go test is nextgen-kernel-gated (t.Skip otherwise) and drives DDL job-version/global-index V1 machinery the crate does not carry"]
 rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	149	// go-parity-gap: `detectAndUpdateJobVersion` (pkg/ddl/ddl.go:975), its
 rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	154	#[ignore = "go-parity-gap: detectAndUpdateJobVersion (pkg/ddl/ddl.go:975) and its server-info polling are not transcreated"]
 rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	167	// go-parity-gap: the DDL-side worker pool over `ngaut/pools` is not
@@ -139,10 +123,6 @@ rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	173	// go-parit
 rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	177	#[ignore = "go-parity-gap: external-workload TTL registration hooks are not transcreated"]
 rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	192	// go-parity-gap: the DDL job runner and its failpoints do not exist in this
 rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	195	#[ignore = "go-parity-gap: the DDL job runner and beforeRunOneJobStep failpoints are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_table_max_handle_source.rs	118	// go-parity-gap: GetTableMaxHandle and the mockstore region-split cluster
-rust/crates/tidb-executor/tests/ddl_table_max_handle_source.rs	133	// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
-rust/crates/tidb-executor/tests/ddl_table_max_handle_source.rs	147	// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
-rust/crates/tidb-executor/tests/ddl_table_max_handle_source.rs	160	// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
 rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	135	// go-parity-gap: the sysvar DEFINITION lives in tidb-session's catalog
 rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	140	#[ignore = "go-parity-gap: no SHOW/SET GLOBAL variable surface in this tier"]
 rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	157	// go-parity-gap: no job queue, no GetAllDDLJobs, no merging, and no
@@ -184,56 +164,6 @@ rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	970	// TABLE ac
 rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	972	#[ignore = "go-parity-gap: ALTER TABLE DROP PRIMARY KEY is unsupported in this tier"]
 rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	987	// go-parity-gap: the multi-spec ALTER here applies each spec as it goes
 rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	992	#[ignore = "go-parity-gap: multi-spec ALTER is not atomic (i1 vanishes on a failed drop) and duplicate drops report 1091 instead of 8200"]
-rust/crates/tidb-executor/tests/index_nokit_disk_full_pause_source.rs	101	#[ignore = "go-parity-gap: no Rust carrier for shouldAutoPauseExistingKVDiskFullTask/autoPauseAddIndexJobOnKVDiskFull (pkg/ddl/index.go:3115-3151) or errdef.IsKVDiskFullError task-error classification"]
-rust/crates/tidb-executor/tests/index_nokit_disk_full_pause_source.rs	121	#[ignore = "go-parity-gap: modifyTaskParamLoop (pkg/ddl/index.go:3359-3437) needs the systable.Manager and DXF storage.Manager abstraction pair plus proto.Task/ModifyParam carriers, none transcreated"]
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	166	// go-parity-gap: this tier refuses RANGE/LIST + SUBPARTITION BY outright
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1106	// go-parity-gap: physical regions, region splitting and SHOW TABLE ...
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1161	// go-parity-gap: this tier refuses to build GLOBAL indexes at all ("a
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1174	// go-parity-gap: same missing GLOBAL index carrier.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1186	// go-parity-gap: no failpoint hooks, no DDL job state machine, and no
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1197	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1211	// go-parity-gap: no failpoints/DDL states and no GLOBAL index carrier.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1222	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1233	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1244	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1254	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1264	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1275	// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1288	// go-parity-gap: no physical regions and no GLOBAL index carrier in this
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1302	// go-parity-gap: `ALTER TABLE ... EXCHANGE PARTITION` is refused by the
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1315	// go-parity-gap: EXCHANGE is unsupported and there is no concurrent DDL
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1328	// go-parity-gap: EXCHANGE unsupported and no failpoint hooks.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1338	// go-parity-gap: EXCHANGE unsupported and the auto-id rebase failpoint has
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1480	// go-parity-gap: this tier's TRUNCATE TABLE keeps the partition ids
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1493	// go-parity-gap: `ALTER TABLE ... ADD PRIMARY KEY` is refused by this tier
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1618	// go-parity-gap: `ALTER TABLE ... ADD PRIMARY KEY` is refused by this tier.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1629	// go-parity-gap: no DROP DATABASE carrier, no DDL job history, and no GC
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1652	// go-parity-gap: none of those carriers exist; nothing here is
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1664	// go-parity-gap: no schema-lease validator, no multi-session layer, and no
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1675	// go-parity-gap: no failpoints and no concurrent DDL runner.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1687	// go-parity-gap: no TiFlash replica machinery or failpoints.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1697	// go-parity-gap: REORGANIZE, REMOVE PARTITIONING and ALTER ... PARTITION BY
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1895	// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher;
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1905	// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1914	// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1923	// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1934	// go-parity-gap: REMOVE PARTITIONING, concurrent sessions, and the
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1947	// go-parity-gap: `INTERVAL` partitioning is refused by this tier's DDL
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1961	// go-parity-gap: `ALTER TABLE ... EXCHANGE PARTITION` is refused by the
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1973	// go-parity-gap: REORGANIZE, REMOVE PARTITIONING, ALTER ... PARTITION BY
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	1985	// go-parity-gap: REMOVE PARTITIONING and GLOBAL indexes are unsupported.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	2055	// go-parity-gap: this tier refuses GLOBAL indexes; DROP/ADD PRIMARY KEY
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	2115	// go-parity-gap: ALTER ... PARTITION BY is refused by the dispatcher.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	2125	// go-parity-gap: no infoschema version counter and no GLOBAL index carrier.
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	2181	// go-parity-gap: EXCHANGE PARTITION and the `_tidb_rowid` allocator are
-rust/crates/tidb-executor/tests/partition_db_partition_ddl_source.rs	2192	// go-parity-gap: EXCHANGE PARTITION and the shard_row_id_bits session
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	45	// go-parity-gap: no failpoint injection, no DDL job retry/rollback state
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	57	// go-parity-gap: no failpoint injection and no DDL job retry/rollback
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	70	// go-parity-gap: `ALTER TABLE ... EXCHANGE PARTITION` is refused by the
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	86	// go-parity-gap: no failpoint forcing, no EXCHANGE PARTITION, and no
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	98	// go-parity-gap: no EXCHANGE PARTITION and no GLOBAL index carrier.
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	122	// go-parity-gap: this tier refuses to build GLOBAL indexes at all ("a
-rust/crates/tidb-executor/tests/partition_exchange_global_index_source.rs	135	// go-parity-gap: the GLOBAL keyword is refused at CREATE TABLE in this
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	42	// go-parity-gap: no failpoints; `CREATE INDEX ... GLOBAL` answers 1105
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	43	// "this index kind is not supported yet" (measured); `admin check` has no
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	66	// go-parity-gap: `CREATE INDEX ... GLOBAL` unported (1105, measured), the
@@ -248,46 +178,7 @@ rust/crates/tidb-executor/tests/partition_pk_global_index_source.rs	257	// go-pa
 rust/crates/tidb-executor/tests/partition_pk_global_index_source.rs	259	// "not supported yet" (measured) — and it refuses a GLOBAL primary key at
 rust/crates/tidb-executor/tests/partition_pk_global_index_source.rs	283	// go-parity-gap: `ALTER TABLE ... PARTITION BY` answers 1105 "not supported
 rust/crates/tidb-executor/tests/partition_truncate_issue57780_source.rs	29	// go-parity-gap: the assertion is `dom.InfoSchema().SchemaMetaVersion()`
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	182	// go-parity-gap: the Rust DDL layer stores constraint strings verbatim and
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	233	// go-parity-gap: the Catalog has no database-level placement reference and
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	548	// go-parity-gap: no Rust carrier of the placement constraint conflict
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	563	// go-parity-gap: the executor has no CreateTableWithInfo entry point (only
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	576	// go-parity-gap: no database-level placement reference in the Catalog and
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	590	// go-parity-gap: no ALTER RANGE statement carrier and no rule-bundle store;
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	656	// go-parity-gap: the Catalog records no database-level placement reference
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	920	// go-parity-gap: the executor refuses ALTER TABLE partition SetOptions as
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	936	// go-parity-gap: the Catalog records no database-level placement
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	947	// go-parity-gap: no ALTER DATABASE placement carrier and no
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	959	// go-parity-gap: no GC worker or PD bundle store; the delete-range
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	970	// go-parity-gap: no GC worker or PD bundle store.
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	980	// go-parity-gap: no GC worker or PD bundle store.
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	993	// go-parity-gap: the DDL dispatch refuses partition SetOptions as
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1006	// go-parity-gap: ADD PARTITION with definition options (including
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1021	// go-parity-gap: Go's setup pokes `model.PartitionDefinition.
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1038	// go-parity-gap: PD bundle deletion via gcWorker.DeleteRanges is not
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1052	// go-parity-gap: the executor has no EXCHANGE PARTITION action (the AST arm
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1063	// go-parity-gap: no PD client and no bundle publication path; the
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1075	// go-parity-gap: no recover/flashback carrier in the executor and no GC
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1087	// go-parity-gap: ALTER TABLE ... PARTITION BY (repartition) is refused as
-rust/crates/tidb-executor/tests/placement_policy_ddl_source.rs	1099	// go-parity-gap: the bundle store and its checker (infosync.GetAllRuleBundles)
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	136	// go-parity-gap: this tier refuses `list (c)` with
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	148	// go-parity-gap: this tier's ALTER TABLE dispatch has no `PARTITION BY`
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	150	// "this ALTER TABLE action is not supported yet" refusal (1105) instead of
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	166	// go-parity-gap: REORGANIZE PARTITION is refused by this tier's ALTER
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	180	// go-parity-gap: ALTER TABLE ... PARTITION BY is refused by this tier's
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	195	// go-parity-gap: REORGANIZE PARTITION, the job queue/failpoints and the PD
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	207	// go-parity-gap: REMOVE PARTITIONING is refused by this tier's ALTER
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	221	// go-parity-gap: ALTER TABLE ... PARTITION BY is refused by this tier's
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	233	// go-parity-gap: ALTER TABLE ... PARTITION BY is refused by this tier's
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	246	// go-parity-gap: REORGANIZE PARTITION is refused by this tier's ALTER
-rust/crates/tidb-executor/tests/reorg_partition_ddl_failures_source.rs	259	// go-parity-gap: ALTER TABLE ... PARTITION BY is refused by this tier's
 rust/crates/tidb-executor/tests/sequence_function_values_source.rs	875	// go-parity-gap: the multi-row empty-list form `values (),(),...` that Go's
-rust/crates/tidb-executor/tests/serial_auto_random_source.rs	471	// go-parity-gap: this tier raises no CREATE-time note for AUTO_RANDOM (no
-rust/crates/tidb-executor/tests/serial_auto_random_source.rs	536	// go-parity-gap: this tier's overlap computation
-rust/crates/tidb-executor/tests/serial_auto_random_source.rs	571	// go-parity-gap: no region splitting and no `SHOW TABLE REGIONS` carrier in
-rust/crates/tidb-executor/tests/serial_column_flags_and_limits_source.rs	149	// go-parity-gap: this tier has no LOCK TABLES statement carrier and no
-rust/crates/tidb-executor/tests/serial_column_flags_and_limits_source.rs	253	// go-parity-gap: this tier has no carrier of `GetRangeEndKey` and no mock
-rust/crates/tidb-executor/tests/serial_create_table_like_source.rs	514	// go-parity-gap: no region splitting and no `SHOW TABLE REGIONS` carrier in
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	196	// go-parity-gap: this tier's ALTER/driver treats LOCK specs as no-ops
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	201	#[ignore = "go-parity-gap: table-lock meta (TableLockInfo) is never persisted in this tier"]
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	337	// go-parity-gap: batch CREATE TABLE is a JOB-level action (the job queue
@@ -302,9 +193,6 @@ rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	543	// go-parity-g
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	548	#[ignore = "go-parity-gap: no information_schema.partitions surface and no EXCHANGE PARTITION"]
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	562	// go-parity-gap: the refresh seam (`testutil.RefreshMeta` /
 rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	568	#[ignore = "go-parity-gap: no meta-KV-vs-infoschema refresh seam in this tier"]
-rust/crates/tidb-executor/tests/table_mode_transition_source.rs	99	// go-parity-gap: the table-mode access gate lives in the DDL executor and
-rust/crates/tidb-executor/tests/table_mode_transition_source.rs	115	// go-parity-gap: no CreateTableWithInfo/BatchCreateTableWithInfo carrier;
-rust/crates/tidb-executor/tests/table_mode_transition_source.rs	128	// go-parity-gap: no DDL job queue, no SetTableMode/RefreshMeta carrier, and
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	107	// go-parity-gap: no SET TIFLASH REPLICA carrier, no UpdateTableReplicaInfo,
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	120	// go-parity-gap: no mock TiFlash status server, no SET TIFLASH REPLICA
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	134	// go-parity-gap: documented divergence — this tier answers the generic 1105
@@ -324,8 +212,6 @@ rust/crates/tidb-meta/tests/meta_test_go_parity.rs	50	#[ignore = "go-parity-gap:
 rust/crates/tidb-meta/tests/meta_test_go_parity.rs	63	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 TableByID/TableByName/FindTableByPartitionID"]
 rust/crates/tidb-meta/tests/meta_test_go_parity.rs	76	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchema policy/group/FK/temp-table catalogs"]
 rust/crates/tidb-metadef/tests/model_parity_source.rs	410	/// this port uses `TruncateTableArgs{FKCheck: true}` — go-parity-gap:
-rust/crates/tidb-planner/tests/base_impl_cost_arithmetic_source.rs	66	/// go-parity-gap: the memo/Implementation layer (wrapped PhysicalPlan,
-rust/crates/tidb-planner/tests/base_impl_cost_arithmetic_source.rs	69	#[ignore = "go-parity-gap: baseImpl.GetPlan plan identity needs the memo/implementation layer"]
 rust/crates/tidb-planner/tests/cascades_drive_legacy_planner_source.rs	35	#[ignore = "go-parity-gap: needs testkit mock-store session + SetEnableCascadesPlanner var + explain format='brief' rendering; the cascades driver itself is unported"]
 rust/crates/tidb-planner/tests/cascades_drive_legacy_planner_source.rs	52	#[ignore = "go-parity-gap: needs live dual-engine EXPLAIN comparison (session vars, analyze pipeline, correlated-subquery build); unported surface"]
 rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	80	#[ignore = "go-parity-gap: pins zyedidia/generic/hashmap key-hash/equality split as used by legacy Group.hash2GroupExpr; the crate has no transcreation of that container"]
@@ -383,8 +269,6 @@ rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	150	#[ignore
 rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	41	#[ignore = "go-parity-gap: RunTestUnderCascades dual-mode execution needs the live session/executor stack; explain format='plan_tree' rendering over real plans is unported"]
 rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	60	#[ignore = "go-parity-gap: needs Preprocess/Build/LogicalOptimizeTest pipeline, Memo.Init stat derivation (up-down group-NDV propagation) and FD extraction -- all unported; Rust memo leaf keeps only ids/marks"]
 rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	77	#[ignore = "go-parity-gap: same missing pipeline as derive_stats_memo_group_states_golden (no plan builder, no stat propagation, no live session)"]
-rust/crates/tidb-planner/tests/casetest_ch_brief_explain_source.rs	36	#[ignore = "go-parity-gap: needs domain/table-meta TiFlash replica injection, json stats loading and full SQL planning -- none of the ch suite's execution surface exists in tidb-planner"]
-rust/crates/tidb-planner/tests/casetest_ch_brief_explain_source.rs	49	#[ignore = "go-parity-gap: same missing surface as ch_q2_brief_explain_golden_with_loaded_stats"]
 rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	35	#[ignore = "go-parity-gap: correlated scalar/ANY subquery execution requires the unported session+executor; grouping and PARTITION BY HASH handling likewise"]
 rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	53	#[ignore = "go-parity-gap: needs live SQL execution plus the stmtCtx alternative-decorrelate flag plumbing; neither exists here"]
 rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	72	#[ignore = "go-parity-gap: decimal(65,20) formatting + FROM-dual correlated execution are part of the unported executor"]
@@ -395,14 +279,6 @@ rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	83
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	98	#[ignore = "go-parity-gap: ROLLUP grouping-set planning plus the GROUPING argument check have no end-to-end owner in this crate"]
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	109	#[ignore = "go-parity-gap: needs the live MPP-enforcement decision loop over primary-key tables"]
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	125	#[ignore = "go-parity-gap: set_var hint evaluation, READ-COMMITTED txn context and MPP broadcast-join rendering are unported"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	35	#[ignore = "go-parity-gap: equivalence sweep needs the mock store, INSERT/SELECT execution and both prune-mode planning pipelines"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	45	#[ignore = "go-parity-gap: aggregate execution over partition scans unported"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	55	#[ignore = "go-parity-gap: view expansion + execution round trip needs the session/executor stack"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	66	#[ignore = "go-parity-gap: transaction visibility semantics live wholly outside tidb-planner"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	77	#[ignore = "go-parity-gap: each iteration plans+executes against the mock store; no benchdailies here"]
-rust/crates/tidb-planner/tests/casetest_list_partition_integration_source.rs	90	#[ignore = "go-parity-gap: benchdaily harness + the benchmark it schedules are executor-bound (see sibling)"]
-rust/crates/tidb-planner/tests/casetest_logicalplan_builder_source.rs	208	#[ignore = "go-parity-gap: needs executor/mock-store data round trip plus the session-backed YEAR range comparison from buildDataSource+ranger -- none exists in tidb-planner"]
-rust/crates/tidb-planner/tests/casetest_logicalplan_builder_source.rs	222	#[ignore = "go-parity-gap: needs RunTestUnderCascades live session and whole-plan explain printing of the scalar-subquery/NATURAL-RIGHT-JOIN pipeline"]
 rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs	40	#[ignore = "go-parity-gap: needs RunTestUnderCascadesWithDomain (mock-store + TiFlash replica meta injection), ANALYZE stats, session isolation variables and the integration_suite golden plans -- none of this surface exists in tidb-planner"]
 rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs	52	#[ignore = "go-parity-gap: needs hint-driven storage selection plus physical plan construction and plan_tree printing of ExchangeSender/Limit stacks"]
 rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs	63	#[ignore = "go-parity-gap: enforced-MPP planning with statement-warning capture needs the live session pipeline and golden book"]
@@ -429,148 +305,8 @@ rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs	267	#[ig
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	41	#[ignore = "go-parity-gap: needs CreateMockStore session+executor for explain analyze rows and recursive-CTE execution; enableParallelApply decision logic is unported"]
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	52	#[ignore = "go-parity-gap: RunTestUnderCascades live planning with hint-driven IndexJoin choice plus plan_tree printing and warning capture"]
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	65	#[ignore = "go-parity-gap: outerExpectedCnt estimation and KeepOrder selection in exhaustPhysicalPlans4LogicalApply are unported; assertions also compare executor outputs"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	52	#[ignore = "go-parity-gap: MPP/TiFlash explain goldens need mockstore session + Domain DDL executor + planner.Optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	65	#[ignore = "go-parity-gap: session warning plumbing + MPP-side hint validation inside the optimize pipeline unported"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	77	#[ignore = "go-parity-gap: BCJ cost-model choices are made by the MPP task generator over real fragments"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	90	#[ignore = "go-parity-gap: enforce-MPP planning over analyzed stats needs the session/stats stack"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	102	#[ignore = "go-parity-gap: MPP store counting + session variable range checks + optimize pipeline unported"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	112	#[ignore = "go-parity-gap: right-semi MPP plan construction needs the fragment/task generator"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	122	#[ignore = "go-parity-gap: right-outer MPP exchange placement needs the fragment/task generator"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	133	#[ignore = "go-parity-gap: planner.Optimize end-to-end against MockInfoSchema + stmt warning capture unported"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	146	#[ignore = "go-parity-gap: join-hint resolution + GenHintsFrom{Physical,Flat}Plan equivalence need the optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	157	#[ignore = "go-parity-gap: per-case AllowAggPushDown toggling + aggregate-hint warnings need the optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	167	#[ignore = "go-parity-gap: semi-join-rewrite transform lives behind the optimize pipeline with live sessions"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	177	#[ignore = "go-parity-gap: agg-to-cop hint cost trade-offs need cop-task cost factors over domain stats"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	190	#[ignore = "go-parity-gap: forceDynamicPrune failpoint + execution results over partitioned tables unported"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	200	#[ignore = "go-parity-gap: use/ignore-index resolution lives behind the optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	213	#[ignore = "go-parity-gap: FORCE_INDEX+IGNORE_INDEX interaction needs access-path selection over a session infoschema"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	224	#[ignore = "go-parity-gap: index-merge hint parsing needs ResetContextOfStmt + optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	234	#[ignore = "go-parity-gap: query-block hint propagation needs the name-resolution scopes of the builder"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	244	#[ignore = "go-parity-gap: projection inlining happens during index-join task construction under the optimizer"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	256	#[ignore = "go-parity-gap: index-join hint selection + warning filtering need the optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	266	#[ignore = "go-parity-gap: cross-database hint binding needs multi-schema infoschema + builder"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	277	#[ignore = "go-parity-gap: HJ build/probe enforcement under dynamic pruning needs executor results"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	287	#[ignore = "go-parity-gap: enforced-MPP joins over TiFlash replicas need the mock TiFlash store stack"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	298	#[ignore = "go-parity-gap: MPP fragment consistency decisions live in the fragment generator"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	309	#[ignore = "go-parity-gap: count-star TiFlash pushdown goldens need enforced MPP planning"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	320	#[ignore = "go-parity-gap: disaggregated-TiFlash config gate + static-partition isolation reads unported"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	329	#[ignore = "go-parity-gap: point-get index choice among unique keys needs access-path costing"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	340	#[ignore = "go-parity-gap: constant-folded subquery predicates need the expression rewrite stack"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	351	#[ignore = "go-parity-gap: GROUPING-with-rollup resolution error + expand operator goldens need the optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	393	#[ignore = "go-parity-gap: unique-key agg elimination goldens need cascade-template data + join optimizer"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	407	#[ignore = "go-parity-gap: limit-pushdown cost decisions need injected stats cache + optimize pipeline"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	424	#[ignore = "go-parity-gap: semi-join rewrite with implicit double casts needs type inference over plans"]
-rust/crates/tidb-planner/tests/casetest_physicalplantest_hint_plans_source.rs	437	#[ignore = "go-parity-gap: last_sql_use_alloc accounting belongs to the executor's chunk allocator"]
-rust/crates/tidb-planner/tests/core_expression_eval_source.rs	469	#[ignore = "go-parity-gap: row-bound EvalInt needs chunk-backed rows; tidb-chunk is not a planner dependency"]
-rust/crates/tidb-planner/tests/core_issuetest_regression_guards_source.rs	163	#[ignore = "go-parity-gap: needs full optimize+execute stack; ~40 heterogeneous issue blocks"]
-rust/crates/tidb-planner/tests/core_issuetest_regression_guards_source.rs	175	#[ignore = "go-parity-gap: needs only-full-group-by validation + constant-folding interplay"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	75	#[ignore = "go-parity-gap: needs ParseOneStmt->BuildLogicalPlanForTest->logicalOptimize->ToString over golden data"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	87	#[ignore = "go-parity-gap: requires full select building over schema'd mock tables plus type-flag preservation end-to-end"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	99	#[ignore = "go-parity-gap: union-all child planning plus projection elimination need the unported optimizer pipeline"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	111	#[ignore = "go-parity-gap: needs join predicate pushdown over built plans and PushedDownConds rendering"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	121	#[ignore = "go-parity-gap: outer-join WHERE split runs inside the unported predicate-pushdown rule driver"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	132	#[ignore = "go-parity-gap: needs the simplify-outer-join rule driven by the unported optimizer"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	144	#[ignore = "go-parity-gap: anti-semi conversion + constant-false folding live behind the unported builder/decorrelator"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	154	#[ignore = "go-parity-gap: not-null derivation is a pushdown-rule side effect the Rust pipeline cannot reach yet"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	165	#[ignore = "go-parity-gap: extra-handle-column synthesis happens inside unported table-scan building"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	177	#[ignore = "go-parity-gap: ONLY_FULL_GROUP_BY validation needs the unported group-by checker over built aggregates"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	192	#[ignore = "go-parity-gap: nondeterministic-function pushdown policy belongs to the unported expression rewrite over joins"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	201	#[ignore = "go-parity-gap: subquery expansion and semi-join rewrite need the full build pipeline"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	211	#[ignore = "go-parity-gap: the PlanBuilder itself and its session variables are unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	221	#[ignore = "go-parity-gap: aggregation pushdown rule + session var plumbing unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	232	#[ignore = "go-parity-gap: needs build+optimize+ToString over the unported pipeline"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	242	#[ignore = "go-parity-gap: tree-shape assertion needs the whole optimize stack to produce the tree"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	256	#[ignore = "go-parity-gap: expression/tableau validation and terror classification live in the unported validator/builder"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	272	#[ignore = "go-parity-gap: visitInfo collection lives in PlanBuilder.build* paths and the access checker is unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	282	#[ignore = "go-parity-gap: union planning and its error oracle need the unported builder"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	291	#[ignore = "go-parity-gap: TopN pushdown pass runs inside the unported optimizer"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	304	#[ignore = "go-parity-gap: name resolution (column/pattern binding with context-specific clause names) is unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	313	#[ignore = "go-parity-gap: view expansion during plan building is unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	326	#[ignore = "go-parity-gap: window function planning + AST restore round-trip need the full builder/session"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	337	#[ignore = "go-parity-gap: parallelism session vars feed the unported window planner"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	352	#[ignore = "go-parity-gap: skyline pruning itself and access-path candidates/cost stats are unported here"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	365	#[ignore = "go-parity-gap: TryFastPlan and StmtCtx.Tables registration are unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	377	#[ignore = "go-parity-gap: needs builder-side per-side projection synthesis driven by non-equi comparisons"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	387	#[ignore = "go-parity-gap: hint parsing/preference resolution feeds the unported builder"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	398	#[ignore = "go-parity-gap: outer-join simplification classification over built trees is unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	411	#[ignore = "go-parity-gap: correlated aggregate resolution spans builder + decorrelation rules"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	422	#[ignore = "go-parity-gap: batch point-get arity validation sits inside unported TryFastPlan"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	432	#[ignore = "go-parity-gap: deterministic re-build stability needs the builder and renderer"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	444	#[ignore = "go-parity-gap: orderby-in-subquery removal happens during subquery planning in the builder"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	456	#[ignore = "go-parity-gap: exists-arm LIMIT injection is a builder/decorrelate interaction, unported"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	472	#[ignore = "go-parity-gap: ROLLUP expand synthesis is built by PlanBuilder's currentBlockExpand machinery"]
-rust/crates/tidb-planner/tests/core_logical_plans_source.rs	484	#[ignore = "go-parity-gap: delete DML planning and TblColPosInfo layout computation are unported"]
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	54	/// go-parity-gap: needs the ClusterConfigTableExtractor's Extract to exist
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	69	/// go-parity-gap: same missing extractor surface. Pins time-range folding
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	80	/// go-parity-gap: same missing surface. Pins promotion-type constraints
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	91	/// go-parity-gap: same missing surface (MetricsSummaryTableExtractor folding
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	100	/// go-parity-gap: same missing surface (rule/rules to inspect, item filtering,
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	109	/// go-parity-gap: same missing surface (quantile+rules+time folding for
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	118	/// go-parity-gap: same missing surface (`inspection_rules`: rule/name lists,
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	127	/// go-parity-gap: same missing surface (`TIDB_HOT_REGIONS_HISTORY`: region /
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	137	/// go-parity-gap: same missing surface (`TIKV_REGION_PEERS`: db-name,
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	147	/// go-parity-gap: exercises extractor.EXTRACT dispatch end-to-end over
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	157	/// go-parity-gap: same missing surface as TIKV_REGION_PEERS above, for
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	166	/// go-parity-gap: pins that extractors fold `?` PARAMETER markers only after
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	176	/// go-parity-gap: pins infoschema-column extraction for
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	188	/// go-parity-gap: Go copies the STRUCT (`cloneSp := *sp`) and pins POINTER
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	201	/// go-parity-gap: same aliasing semantics for LogicalApply.EqualConditions —
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	212	/// go-parity-gap: golden plan_tree comparison over a full JSON-expression
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	222	/// go-parity-gap: ROLLUP/GROUPING result-count checks plus recorded
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	241	/// go-parity-gap: end-to-end statement execution (partitioned clustered table
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	252	/// go-parity-gap: `Fragment.init(PhysicalHashJoin)` singleton detection over
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	266	/// go-parity-gap: `mppTaskGenerator.fillLocalCTECounts` counting local
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	279	/// go-parity-gap: `BatchPointGetPlan.PrunePartitionsAndValues` dedup runs on
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	293	/// go-parity-gap: `tryToGetMppHashAggs` generating PhysicalHashAgg variants
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	304	/// go-parity-gap: `negotiateCommonType(lType, rType)` decimal flen/decimal
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	317	/// go-parity-gap: same negotiateCommonType surface over int-family pairs
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	328	/// go-parity-gap: `handleFineGrainedShuffle` walks a physical tree stamping
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	340	/// go-parity-gap: `PhysicalHashJoin.CanTiFlashUseHashJoinV2` gating on
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	353	/// go-parity-gap: `tidbCodecFuncHelper.extractTablePartition` guards
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	366	/// go-parity-gap: `schemaTableSorter` sorting schema/table PAIRS by (schema,
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	377	/// go-parity-gap: planner.Optimize accept/reject decisions for ANALYZE
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	387	/// go-parity-gap: ErrNotSupportedYet("FULL OUTER JOIN") raised under
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	398	/// go-parity-gap: Analyze.Opts[AnalyzeOptSampleRate] equals -1 for bare
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	408	/// go-parity-gap: with a client refusing every request type the planner still
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	418	/// go-parity-gap: `do 1 in (select a from t)` plans to
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	428	/// go-parity-gap: TIDB_INLJ(t1,t2) on a cartesian join falls back to
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	439	/// go-parity-gap: global bindings carrying read_from_storage(tiflash) +
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	450	/// go-parity-gap: leading/hash_join hints bind cleanly (no warnings), replay
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	460	/// go-parity-gap: with tidb_opt_advanced_join_hint=0 the same hints produce a
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	470	/// go-parity-gap: shuffle_join full-outer hash join must keep its left/right
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	480	/// go-parity-gap (intent unchanged): broadcast thresholds raised so the
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	490	/// go-parity-gap: legacy hint aliases (TIDB_SMJ↔MERGE_JOIN, TIDB_HJ↔HASH_JOIN,
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	501	/// go-parity-gap: with inl_join_inner_multi_pattern enabled, no index-join
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	511	/// go-parity-gap: outer-join twin of the previous arm — LEFT JOIN with the
-rust/crates/tidb-planner/tests/core_physical_plan_gap_catalog_source.rs	521	/// go-parity-gap: `INL_JOIN(t1, t2@subq)` with QB_NAME(subq) must plan an
-rust/crates/tidb-planner/tests/fts_resolve_index_source.rs	31	#[ignore = "go-parity-gap: kernel/deployment-mode gates and session error surfacing are outside this crate"]
-rust/crates/tidb-planner/tests/fts_resolve_index_source.rs	45	#[ignore = "go-parity-gap: FTS index resolution over executed plans needs TiFlash + session tier"]
-rust/crates/tidb-planner/tests/fts_resolve_index_source.rs	55	#[ignore = "go-parity-gap: prepared plan-cache interplay needs session plumbing"]
-rust/crates/tidb-planner/tests/fts_resolve_index_source.rs	66	#[ignore = "go-parity-gap: dirty-transaction detection spans executor state"]
-rust/crates/tidb-planner/tests/hint_optimizer_cost_factor_setvar_scenarios_source.rs	282	#[ignore = "go-parity-gap: no SET_VAR hint-to-variable pipeline, verbose-explain renderer or live plan selection exists; the per-factor placement itself is pinned by the five running scenario ports above"]
-rust/crates/tidb-planner/tests/logicalop_hash64_equals_source.rs	279	#[ignore = "go-parity-gap: LogicalSelection has no generated Hash64/Equals implementation or identity adapter in the Rust crate"]
-rust/crates/tidb-planner/tests/logicalop_hash64_equals_source.rs	382	#[ignore = "go-parity-gap: LogicalPartitionUnionAll's TypePartitionUnion identity (tag over embedded UnionAll) is unported"]
 rust/crates/tidb-planner/tests/logicalop_hash64_expand_apply_join_agg_source.rs	319	/// go-parity-gap: Go pins that a NON-NIL EMPTY `EqualConditions` slice hashes
 rust/crates/tidb-planner/tests/logicalop_hash64_expand_apply_join_agg_source.rs	344	/// go-parity-gap: the embedded-JOIN half of the Go sequence replays through
-rust/crates/tidb-planner/tests/memo_group_operations_source.rs	41	#[ignore = "go-parity-gap: crate Group carries no impl map keyed by PhysicalProperty.HashCode and no Implementation/physical-plan carrier"]
-rust/crates/tidb-planner/tests/memo_group_operations_source.rs	53	#[ignore = "go-parity-gap: crate Group has no Delete path and no per-operand FirstExpr head index"]
-rust/crates/tidb-planner/tests/memo_group_operations_source.rs	70	#[ignore = "go-parity-gap: needs parser -> BuildLogicalPlanForTest -> Convert2Group pipeline and Schema.PKOrUK carriers, none of which exist in this crate"]
-rust/crates/tidb-planner/tests/memo_group_source.rs	118	#[ignore = "go-parity-gap: crate Group has plain Vec membership without fingerprint-keyed dedup or self-fingerprint override hooks"]
-rust/crates/tidb-planner/tests/memo_group_source.rs	127	#[ignore = "go-parity-gap: crate Group has no delete path or fingerprint registry"]
-rust/crates/tidb-planner/tests/memo_group_source.rs	139	#[ignore = "go-parity-gap: crate Group lacks DeleteAll, operand first-element index, and Exists"]
-rust/crates/tidb-planner/tests/memo_group_source.rs	148	#[ignore = "go-parity-gap: crate Group has no Exists probe or delete path"]
-rust/crates/tidb-planner/tests/memo_group_source.rs	166	#[ignore = "go-parity-gap: needs BuildLogicalPlanForTest+Convert2Group pipeline and fingerprint-keyed Group dedup"]
-rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	80	#[ignore = "go-parity-gap: wired PhysicalPlan lacks Window and TiFlashFineGrainedShuffleStreamCount"]
-rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	86	/// go-parity-gap: Go shares ONE `*property.MPPPartitionColumn` between two
-rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	95	#[ignore = "go-parity-gap: PhysicalExchangeSender.ResolveIndicesItselfWithSchema (physical_exchange_sender.go:145) is unported"]
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	109	/// go-parity-gap: range/projection/selection/window explain redaction has no
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	112	#[ignore = "go-parity-gap: non-Limit explain rows need redaction-aware range/projection/selection explain surfaces"]
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	125	/// go-parity-gap: index-join range-decided-by explain spelling with
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	128	#[ignore = "go-parity-gap: range-decided-by explain redaction needs the index-join explain surface"]
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	145	/// go-parity-gap: MergeJoin explain rows with expr-pushdown-blacklist
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	148	#[ignore = "go-parity-gap: MergeJoin explain + expr pushdown blacklist have no Rust surface"]
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	164	/// go-parity-gap: TiFlash window/Exchange explain rows are unported.
-rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	166	#[ignore = "go-parity-gap: TiFlash window frame explain redaction is unported"]
 rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	147	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
 rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	155	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
 rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	162	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
@@ -691,11 +427,6 @@ rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_sour
 rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	475	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
 rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	481	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
 rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	487	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	235	#[ignore = "go-parity-gap: no session/Optimize/TryFastPlan driver exists, so the physical Point_Get plan carrying ID()==1 cannot be produced"]
-rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	244	#[ignore = "go-parity-gap: prepare/execute round-trips and metrics.PlanCacheCounter need the session+executor stack"]
-rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	251	#[ignore = "go-parity-gap: same session+executor boundary, plus Go's kerneltype.IsClassic gate has no Rust counterpart"]
-rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	259	#[ignore = "go-parity-gap: cross-session pessimistic lock ordering needs transactional execution"]
-rust/crates/tidb-planner/tests/tests_pointget_plan_cache_source.rs	266	#[ignore = "go-parity-gap: statement-hint application writes StmtCtx fields that no Rust surface carries yet"]
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
 rust/crates/tidb-server/src/cluster_session_node/mod.rs	6868	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
@@ -763,66 +494,6 @@ rust/crates/tidb-util/src/master_key/mod.rs	248	/// Azure's explicit "not implem
 rust/crates/tidb-util/src/master_key/mod.rs	281	"not implemented Azure KMS"
 rust/crates/tidb-util/src/memory/tracker.rs	1574	#[ignore] // go-parity-gap: relies on Go runtime.SetFinalizer machinery; Rust has no finalizers
 rust/crates/tidb-util/src/memory/tracker.rs	1585	#[ignore] // go-parity-gap: needs the globalArbitrator singleton (global_arbitrator.go) which is not ported
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	29	//! accessor are kept as `#[ignore]`d stubs annotated with a `go-parity-gap`
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	58	// go-parity-gap: MockGlobalAccessor4Tests + GlobalVarsAccessor interface not ported to this crate
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	92	// go-parity-gap: SysVar Validate/SetSessionFromHook with ErrNotSupportedInNextGen not ported
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	98	// go-parity-gap: SysVar Validate/SetSessionFromHook + kv.ReplicaRead type on SessionVars not ported
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	116	// go-parity-gap: SysVar struct construction + SkipInit flag not ported
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	122	// go-parity-gap: GetSessionOrGlobalSystemVar session getter dispatch not ported
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	128	// go-parity-gap: SysVar Validate on classic kernel not ported; the nextgen variant's
-rust/crates/tidb-vardef/src/tests_sysvar_port.rs	250	// go-parity-gap: percentage/byte-size parsing driven by physical-memory detection and failpoints not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	22	//! kept as `#[ignore]`d stubs annotated with a `go-parity-gap` reason so the
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1349	// go-parity-gap: SysVar struct + TypeFloat Validate/clamping not ported to Rust yet
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1355	// go-parity-gap: SysVar TypeBool validation (incl. AutoConvertNegativeBool) not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1361	// go-parity-gap: SysVar TypeTime validation not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1367	// go-parity-gap: SysVar registry + deprecation warning emission via StmtCtx not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1373	// go-parity-gap: SysVar registry with IsNoop flags not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1379	// go-parity-gap: SysVar registry + ValidateWithRelaxedValidation not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1385	// go-parity-gap: GetSysVar/SetSysVar global singleton deliberately replaced by explicit wiring in the rewrite
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1391	// go-parity-gap: TypeTime validation is timezone-sensitive; SysVar validation not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1397	// go-parity-gap: SessionVars runtime state deferred from this crate by design
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1403	// go-parity-gap: SetSystemVar/SetTCState machinery on SessionVars not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1409	// go-parity-gap: GetSysVar(...).Validate over SessionVars + MockGlobalAccessor not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1415	// go-parity-gap: stmt-summary sysvar validators over SessionVars not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1421	// go-parity-gap: SessionVars concurrency fields + SetSystemVar side effects not ported
-rust/crates/tidb-vardef/src/tests_vardef_port.rs	1427	// go-parity-gap: GetSessionStatesSystemVar on SessionVars not ported
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	35	//! `#[ignore]`d stubs annotated with a `go-parity-gap` reason so the
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	460	// go-parity-gap: iterates the full SysVar registry (GetSysVars) incl. private skipInit field; registry not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	480	// go-parity-gap: SessionVars.SetSystemVar validation (scope/type checks incl. global-only TiDBEnableStmtSummary) not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	486	// go-parity-gap: mock.Session context + stmtctx row counters/reset need executor/stmtctx crates, outside gate scope
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	492	// go-parity-gap: session-level isolation-read enforcement via testkit SQL execution; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	498	// go-parity-gap: session transaction table-delta map cloning lives in session/executor state; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	504	// go-parity-gap: savepoint semantics over kv.Transaction + session txn context; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	510	// go-parity-gap: non-prepared plan-cache statement eligibility lives in planner/executor; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	516	// go-parity-gap: sysvar hook context wiring (SetGlobalSysVarOnly + hook ctx) needs the SysVar registry layer
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	522	// go-parity-gap: executor chunk reuse API (executor.GetReuseChunk) not part of this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	528	// go-parity-gap: concurrent user-variable access on a live session needs the session runtime; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	534	// go-parity-gap: mysql status-flag mutation on SessionVars (SetStatus) needs parser/mysql + session runtime
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	540	// go-parity-gap: RowIDShardGenerator on SessionVars (util.RowIDShardGenerator) not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	546	// go-parity-gap: user-defined-variable session state (vars.UserVars) not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	552	// go-parity-gap: session+global sysvar interaction for tidb_opt_partial_ordered_index_for_top_n needs the SysVar registry + accessor
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	558	// go-parity-gap: planner behavior gated by tidb_opt_partial_ordered_index_for_top_n verified via testkit SQL; not portable to this leaf crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	564	// go-parity-gap: performance_schema session_connect_attrs accounting across sessions needs the server runtime
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	570	// go-parity-gap: tidb_cloud_storage_uri validation/hook (cloudstorage URI parse) not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	590	// go-parity-gap: sessionctx/slowlogrule field accessors over SessionVars/stmtctx runtime values not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	596	// go-parity-gap: sessionctx/slowlogrule SlowLogRule matching engine not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	602	// go-parity-gap: sessionctx/slowlogrule typed-condition matching (uint/time fields) not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	608	// go-parity-gap: sessionctx/slowlogrule multi-condition AND matching not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	614	// go-parity-gap: sessionctx/slowlogrule multi-rule OR matching not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	620	// go-parity-gap: slowlogrule parsed-rule type dispatch not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	626	// go-parity-gap: slowlogrule uint exec-detail field matching after parse not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	632	// go-parity-gap: slowlogrule single-field spec parsing not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	638	// go-parity-gap: slowlogrule session-rules parsing (NewSessionSlowLogRules) not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	644	// go-parity-gap: slowlogrule global-rules parsing not ported into this workspace crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	654	// go-parity-gap: constructs SysVar literals with ScopeFlag/TypeFlag/PossibleValues and walks the registry; SysVar struct not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	660	// go-parity-gap: index-join v2 sysvar compatibility shim over the registry + planner usage not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	666	// go-parity-gap: ErrXXX error definitions/registration for the variable package live in the error layer, not ported here
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	672	// go-parity-gap: asserts every config key has a registered SysVar; the registry does not exist in this rewrite
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	678	// go-parity-gap: SysVar int range validation + warning text (types.TinyIntValue etc.) not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	684	// go-parity-gap: performance_schema sysvar validation hooks not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	690	// go-parity-gap: SysVar uint range validation + clamping not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	696	// go-parity-gap: SysVar enum validation against PossibleValues not ported to this crate
-rust/crates/tidb-vardef/src/tests_variable_p2_port.rs	702	// go-parity-gap: SysVar duration validation (time.ParseDuration paths) not ported to this crate
 rust/third_party/tikv-client-rs/src/common/errors.rs	59	/// Feature is not implemented.
 rust/third_party/tikv-client-rs/src/mock.rs	431	unimplemented!()
 rust/third_party/tikv-client-rs/src/region_cache.rs	4199	unimplemented!()

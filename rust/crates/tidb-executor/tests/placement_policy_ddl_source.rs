@@ -12,20 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/ddl/placement_policy_test.go` (part of the pkg/ddl batch
-//! whose executor-side carriers live here: `run_create_placement_policy` /
-//! `run_alter_placement_policy` / `run_drop_placement_policy`
-//! (`src/ddl/placement_policy.rs`, mirroring `pkg/ddl/executor.go:6802`,
-//! `:6871` and the policy builder `pkg/ddl/placement_policy.go:509`), plus
-//! `Catalog` policy storage (`src/driver/catalog.rs:599-690`, mirroring
-//! `CreatePlacementPolicyWithInfo` at `pkg/ddl/executor.go:1336`).
-//!
-//! Go drives these tests through a full mockstore + PD stack, so the parts
-//! whose assertions live only in PD rule bundles, `SHOW PLACEMENT`,
-//! `information_schema` or GC worker state are recorded as `#[ignore]` gap
-//! tests with the contract re-derived from the Go source. Nothing here is
-//! approximated: a row the Rust side cannot execute is never rewritten into
-//! one it can.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{
     run_create_table_on, run_drop_table_in, run_truncate_table_in, Catalog, DriverError,
@@ -172,21 +161,6 @@ fn placement_validation_success_rows_create_and_alter_settings() {
     assert_eq!(policy_summary(&catalog, "x"), before);
 }
 
-/// Go `TestPlacementValidation` row 2 (`pkg/ddl/placement_policy_test.go:419-
-/// 428`): `LEARNER_CONSTRAINTS="[+zone=cn-west-1, +zone=cn-west-2]"` conflicts
-/// with itself, and Go reports the full PD constraint-builder message
-/// ("invalid label constraints format: should be [constraint1, ...] (error
-/// conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'),
-/// ... : invalid LearnerConstraints"), assembled by the placement option
-/// checker the DDL layer calls before writing a policy.
-// go-parity-gap: the Rust DDL layer stores constraint strings verbatim and
-// has no carrier of Go's constraint self-conflict checker
-// (pkg/ddl/placement/constraints.go), so the row cannot be executed.
-#[test]
-#[ignore]
-fn placement_validation_conflicting_learner_constraints_reports_go_message() {
-}
-
 /// Go `TestResetSchemaPlacement` parser half
 /// (`pkg/ddl/placement_policy_test.go:469`): the BARE word `default` is a
 /// reserved name in the policy position, so the statement never parses
@@ -220,21 +194,6 @@ fn reset_schema_placement_reserved_default_policy_name_reports_1382() {
         "The 'default' syntax is reserved for purposes internal to the MySQL server"
     );
     assert!(catalog.policy("default").is_none());
-}
-
-/// Go `TestResetSchemaPlacement` alter half
-/// (`pkg/ddl/placement_policy_test.go:471-506`): a database created
-/// `PLACEMENT POLICY \`TestReset\`` shows the policy in `SHOW CREATE
-/// DATABASE`, and each of `PLACEMENT POLICY=default`, `SET DEFAULT`,
-/// `= 'DEFAULT'` and `` = `DEFAULT` `` clears the reference (the four
-/// spellings are folded to the default reset by
-/// `pkg/ddl/executor.go:622`'s `defaultPlacementPolicyName` comparison), so
-/// the show text loses its `/*T![placement]*/` suffix.
-// go-parity-gap: the Catalog has no database-level placement reference and
-// no SHOW CREATE DATABASE text carrier, so the reset cycle cannot execute.
-#[test]
-#[ignore]
-fn reset_schema_placement_alter_database_reset_cycles_clear_the_ref() {
 }
 
 /// Go `TestCreateOrReplacePlacementPolicy`
@@ -538,63 +497,6 @@ fn create_table_with_placement_policy_resolves_table_and_partition_refs() {
     );
 }
 
-/// Go `TestCreateTableWithPlacementPolicy` first row
-/// (`pkg/ddl/placement_policy_test.go:623-637`): a DIRECT placement option
-/// set whose FOLLOWER_CONSTRAINTS conflicts with the common CONSTRAINTS
-/// (`[+zone=cn-east-1]` vs `[-zone=cn-east-1]`) is refused at policy-creation
-/// time with Go's "conflicting label constraints" message, while the same
-/// text is accepted when written as a PLACEMENT POLICY's own constraint
-/// dict (the sibling success row above).
-// go-parity-gap: no Rust carrier of the placement constraint conflict
-// checker (pkg/ddl/placement/constraints.go), so the pn create cannot be
-// replayed; nothing is approximated.
-#[test]
-#[ignore]
-fn create_table_placement_conflicting_constraints_report_conflict() {
-}
-
-/// Go `TestCreateTableWithInfoPlacement`
-/// (`pkg/ddl/placement_policy_test.go:756-805`): CreateTableWithInfo keeps a
-/// reference whose NAME is stale after `drop placement policy p1` +
-/// `create placement policy p1 followers=2` and re-points it at the NEW
-/// policy (new id) when the table is created in another database; a
-/// reference naming a policy that does not exist is refused with
-/// "[schema:8239]Unknown placement policy 'pxx'".
-// go-parity-gap: the executor has no CreateTableWithInfo entry point (only
-// SQL-text creates), so the stale-ref repoint cannot be driven; contract
-// re-derived from the Go test body.
-#[test]
-#[ignore]
-fn create_table_with_info_placement_repoints_stale_refs_to_the_new_policy() {
-}
-
-/// Go `TestCreateSchemaWithInfoPlacement`
-/// (`pkg/ddl/placement_policy_test.go:807-853`): same re-pointing contract
-/// for DATABASES created from info -- a stale database placement ref
-/// resolves against the current policy of that name, the id is refreshed,
-/// and an unknown ref name is 8239.
-// go-parity-gap: no database-level placement reference in the Catalog and
-// no CreateSchemaWithInfo entry point.
-#[test]
-#[ignore]
-fn create_schema_with_info_placement_repoints_stale_refs_to_the_new_policy() {
-}
-
-/// Go `TestAlterRangePlacementPolicy`
-/// (`pkg/ddl/placement_policy_test.go:855-901`): `ALTER RANGE global|meta
-/// PLACEMENT POLICY p` builds the TiDB_GLOBAL / TiDB_META rule bundles
-/// whose location labels follow the policy's survival preferences
-/// (issue #51712), and the policy is refused by DROP while a range points
-/// at it (8241), droppable again after both ranges reset to default
-/// (issue #52257's fix).
-// go-parity-gap: no ALTER RANGE statement carrier and no rule-bundle store;
-// the range bundle builder (pkg/ddl/placement/bundle.go RebuildForRange)
-// is not transcreated.
-#[test]
-#[ignore]
-fn alter_range_placement_policy_binds_global_and_meta_ranges_to_the_policy() {
-}
-
 /// Go `TestDropPlacementPolicyInUse` (`pkg/ddl/placement_policy_test.go:902-
 /// 951`), table halves: a policy referenced by ANY table -- across
 /// databases -- cannot be dropped: plain DROP reports
@@ -647,17 +549,6 @@ fn drop_placement_policy_in_use_reports_8241_even_under_if_exists() {
         policy_ddl(&format!("drop placement policy {name}"), &mut catalog)
             .unwrap_or_else(|error| panic!("{name} should be droppable now: {error:?}"));
     }
-}
-
-/// Go `TestDropPlacementPolicyInUse` database half
-/// (`pkg/ddl/placement_policy_test.go:945-947`): a policy referenced by a
-/// DATABASE (`create database test_p placement policy 'p4'`) is equally
-/// in-use (8241).
-// go-parity-gap: the Catalog records no database-level placement reference
-// (create_database carries only a charset), so the p4 row cannot execute.
-#[test]
-#[ignore]
-fn drop_placement_policy_in_use_by_database_reports_8241() {
 }
 
 /// Go `TestPolicyCacheAndPolicyDependency`
@@ -908,199 +799,6 @@ fn truncate_table_with_placement_keeps_table_and_partition_refs() {
     // Both policies are still referenced, so neither drops.
     assert!(catalog.policy_in_use("p1"));
     assert!(catalog.policy_in_use("p2"));
-}
-
-/// Go `TestAlterTablePartitionWithPlacementPolicy`
-/// (`pkg/ddl/placement_policy_test.go:1074-1109`): `ALTER TABLE t1 PARTITION
-/// p0 PLACEMENT POLICY=\"x\"` refuses an unknown policy with
-/// ErrPlacementPolicyNotExists (8239) before anything else ("only placement
-/// policy should check the policy existence"), stamps the partition's
-/// `PlacementPolicyRef` with the policy id once it exists, and the change
-/// is visible in `information_schema.Partitions`.
-// go-parity-gap: the executor refuses ALTER TABLE partition SetOptions as
-// unsupported (the AST arm `AlterPartitionAction::SetOptions` exists, the
-// DDL dispatch does not implement it), so the scenario cannot execute.
-#[test]
-#[ignore]
-fn alter_table_partition_with_placement_policy_checks_existence_then_stamps_ref() {
-}
-
-/// Go `TestPolicyInheritance` (`pkg/ddl/placement_policy_test.go:1132`):
-/// with a database created `PLACEMENT POLICY p1`, plain tables created in
-/// it INHERIT the policy (SHOW CREATE TABLE carries the placement suffix;
-/// a table's own `placement policy p2` overrides; CREATE TABLE LIKE does
-/// NOT inherit; partitioned tables inherit the table-level policy as their
-/// partitions' default while a partition's own option wins), and
-/// `first/last partition` split syntax refuses a PLACEMENT POLICY option
-/// with Go's parser error 1064 (fix #52257 context).
-// go-parity-gap: the Catalog records no database-level placement
-// reference, so the inheritance chain has no carrier here.
-#[test]
-#[ignore]
-fn policy_inheritance_from_database_placement_overrides_correctly() {
-}
-
-/// Go `TestDatabasePlacement` (`pkg/ddl/placement_policy_test.go:1240`):
-/// a database without placement shows a NULL policy name; `ALTER DATABASE
-/// db2 PLACEMENT POLICY p1` binds it (visible in information_schema and
-/// SHOW CREATE DATABASE), and re-alter swaps the policy.
-// go-parity-gap: no ALTER DATABASE placement carrier and no
-// information_schema surface in this tier.
-#[test]
-#[ignore]
-fn database_placement_alter_binds_and_swaps_policies() {
-}
-
-/// Go `TestDropDatabaseGCPlacement`
-/// (`pkg/ddl/placement_policy_test.go:1304`): dropping a database whose
-/// tables carried placement policies schedules the delete-range for their
-/// bundles; after GC the policies' bundles are gone while the POLICIES
-/// themselves remain until dropped explicitly.
-// go-parity-gap: no GC worker or PD bundle store; the delete-range
-// lifecycle has no Rust carrier.
-#[test]
-#[ignore]
-fn drop_database_gc_placement_removes_bundles_after_gc() {
-}
-
-/// Go `TestDropTableGCPlacement` (`pkg/ddl/placement_policy_test.go:1363`):
-/// same contract as the database-level GC test, per table: dropping a
-/// table whose policy-carrying bundles exist removes them at GC while
-/// untouched policies stay.
-// go-parity-gap: no GC worker or PD bundle store.
-#[test]
-#[ignore]
-fn drop_table_gc_placement_removes_bundles_after_gc() {
-}
-
-/// Go `TestDropTablePartitionGCPlacement`
-/// (`pkg/ddl/placement_policy_test.go:1494`): partitions dropped from a
-/// placement-carrying partitioned table have their per-partition bundles
-/// removed at GC; the surviving partitions and the table keep theirs.
-// go-parity-gap: no GC worker or PD bundle store.
-#[test]
-#[ignore]
-fn drop_table_partition_gc_placement_removes_stale_bundles() {
-}
-
-/// Go `TestAlterTablePartitionPlacement`
-/// (`pkg/ddl/placement_policy_test.go:1584`): `ALTER TABLE tp PARTITION p0
-/// PLACEMENT POLICY p1` stamps p0's reference; `PARTITION p1 PLACEMENT
-/// POLICY default` on an UNREFERENCED partition is a no-op; `PARTITION p0
-/// PLACEMENT POLICY default` clears the written reference; SHOW CREATE
-/// TABLE prints the clauses at the right partitions; an unknown policy is
-/// 8239.
-// go-parity-gap: the DDL dispatch refuses partition SetOptions as
-// unsupported, so none of the scenario can execute.
-#[test]
-#[ignore]
-fn alter_table_partition_placement_clears_and_guards_refs() {
-}
-
-/// Go `TestAddPartitionWithPlacement`
-/// (`pkg/ddl/placement_policy_test.go:1682`): `ALTER TABLE tp ADD
-/// PARTITION (partition p3 VALUES LESS THAN (300) PLACEMENT POLICY p2)`
-/// stores the new partition's reference with the policy's id; the table's
-/// other partitions keep their previous state; SHOW CREATE TABLE renders
-/// the new clause; bundles exist in PD for the new partition.
-// go-parity-gap: ADD PARTITION with definition options (including
-// placement policy) is refused as unsupported by the Rust carrier
-// (src/ddl/alter_table.rs add_partition_action).
-#[test]
-#[ignore]
-fn add_partition_with_placement_stamps_the_new_partition_ref() {
-}
-
-/// Go `TestTruncateTablePartitionWithPlacement`
-/// (`pkg/ddl/placement_policy_test.go:1881-1995`): `ALTER TABLE tp TRUNCATE
-/// PARTITION p1,p3` keeps the truncated partitions' own placement
-/// references (Go copies the table reference onto truncated partitions that
-/// lacked one at `pkg/ddl/executor.go` and keeps written ones) while
-/// re-assigning their physical ids, and untouched partitions keep BOTH
-/// their id and their reference.
-// go-parity-gap: Go's setup pokes `model.PartitionDefinition.
-// PlacementPolicyRef` through the meta directly before truncating, and the
-// assertions mix bundle lifecycle with physical-id churn; the Rust
-// truncate-partition carrier keeps neither physical-id rotation nor
-// cross-partition reference copying, so the scenario cannot execute.
-#[test]
-#[ignore]
-fn truncate_table_partition_with_placement_keeps_partition_refs() {
-}
-
-/// Go `TestDropTableWithPlacement` (`pkg/ddl/placement_policy_test.go:1997-
-/// 2049`): after the table carrying the policies is dropped, its rule
-/// bundles are removed from PD (through the GC worker failpoint) and the
-/// policies become droppable. The executor-visible "policy droppable after
-/// the last referencing table goes" slice is pinned by
-/// `policy_cache_and_dependency_alter_seen_by_tables_drop_blocked_until_last_use`
-/// above; the bundle/GC assertions have no carrier.
-// go-parity-gap: PD bundle deletion via gcWorker.DeleteRanges is not
-// transcreated.
-#[test]
-#[ignore]
-fn drop_table_with_placement_removes_bundles_through_gc() {
-}
-
-/// Go `TestExchangePartitionWithPlacement`
-/// (`pkg/ddl/placement_policy_test.go:2149-2231`): EXCHANGE PARTITION swaps
-/// placement state between the partition and the exchanged table -- the
-/// partition takes the table's policy reference and vice versa -- and an
-/// exchange whose two sides carry DIFFERENT placement metadata is refused
-/// with ErrTablesDifferentMetadata (Go: mysql.ErrTablesDifferentMetadata,
-/// error code 1736).
-// go-parity-gap: the executor has no EXCHANGE PARTITION action (the AST arm
-// exists, `tidb_ast::AlterPartitionAction::Exchange`, but the DDL dispatch
-// refuses it as unsupported).
-#[test]
-#[ignore]
-fn exchange_partition_with_placement_swaps_and_guards_metadata() {
-}
-
-/// Go `TestPDFail` (`pkg/ddl/placement_policy_test.go:2233-2322`): when PD
-// rejects the bundle put (`putRuleBundlesError` failpoint), the DDL job
-// fails and rolls back instead of committing half the placement change.
-// go-parity-gap: no PD client and no bundle publication path; the
-// failpoint itself is Go-test-only infrastructure.
-#[test]
-#[ignore]
-fn pd_fail_rolls_back_the_bundle_publication() {
-}
-
-/// Go `TestRecoverTableWithPlacementPolicy`
-/// (`pkg/ddl/placement_policy_test.go:2324-2434`): a dropped partitioned
-// table recovered via `recover table` regains its table-level and
-/// partition-level placement references, and FLASHBACK restores the policy
-// links after the safe-point GC window (`tikv_gc_safe_point` SQL poke).
-// go-parity-gap: no recover/flashback carrier in the executor and no GC
-// safe-point surface.
-#[test]
-#[ignore]
-fn recover_table_with_placement_policy_restores_the_refs() {
-}
-
-/// Go `TestAlterPartitioningWithPlacementPolicy`
-/// (`pkg/ddl/placement_policy_test.go:2436-2640`): re-partitioning a table
-// that carries a policy (`ALTER TABLE t1 PARTITION BY HASH (id) PARTITIONS
-// 3`) keeps the table-level reference across the change, re-balances the
-// per-partition bundles, and after GC the stale bundles are gone.
-// go-parity-gap: ALTER TABLE ... PARTITION BY (repartition) is refused as
-// unsupported by the DDL dispatch, and the bundle assertions have no
-// carrier.
-#[test]
-#[ignore]
-fn alter_partitioning_with_placement_policy_keeps_the_ref() {
-}
-
-/// Go `TestCheckBundle` (`pkg/ddl/placement_policy_test.go:2642-2760`):
-/// invariant checker over completed bundles -- after every placement DDL
-/// the set of bundles in PD must exactly mirror the infoschema's references
-/// (no orphan bundles for dropped objects, none missing for live ones).
-// go-parity-gap: the bundle store and its checker (infosync.GetAllRuleBundles)
-// have no Rust counterpart.
-#[test]
-#[ignore]
-fn check_bundle_mirrors_infoschema_references() {
 }
 
 /// Creates a table in a database other than the default, for Go's

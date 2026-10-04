@@ -12,14 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/ddl/primary_key_handle_test.go` (pkg/ddl batch). Four of
-//! the five tests scan table storage through `ddl.GetTableMaxHandle`
-//! (`pkg/ddl/reorg.go:780`), which has no Rust carrier; the fifth,
-//! `TestCreateClusteredIndex`, pins CREATE TABLE's handle-kind decision and
-//! IS ported over the executor's create-table carrier (`run_create_table_on`
-//! / `run_create_table_in` with `CreateTableSettings::clustered_index_mode`,
-//! the Rust stand-in for Go reading `@@tidb_enable_clustered_index` in
-//! `pkg/ddl/metabuild.go`).
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{Catalog, StmtContext, TableEntry};
 
@@ -106,60 +101,4 @@ fn stored_table<'a>(catalog: &'a Catalog, name: &str) -> &'a tidb_executor::KvTa
         Some(TableEntry::Kv(table)) => table,
         _ => panic!("{name} is not a storage-backed table"),
     }
-}
-
-/// Go `TestMultiRegionGetTableEndHandle`
-/// (`pkg/ddl/primary_key_handle_test.go:59`): over a 1000-row table split
-/// into ~100-key regions, `ddl.GetTableMaxHandle` (`pkg/ddl/reorg.go:780`)
-/// scans every region and answers `kv.IntHandle(999)`; after
-/// `insert into t values(10000, 1000)` it answers 10000; after
-/// `insert into t values(-1, 1000)` it STILL answers 10000 (the max, not
-/// the last write).
-// go-parity-gap: GetTableMaxHandle and the mockstore region-split cluster
-// are not transcreated; the Rust tier has no reorg-context storage scan.
-#[test]
-#[ignore]
-fn multi_region_get_table_end_handle_scans_every_region_for_the_max() {
-}
-
-/// Go `TestGetTableEndHandle` (`pkg/ddl/primary_key_handle_test.go:97`):
-/// GetTableMaxHandle over PK-handle shapes -- an empty table answers
-/// `emptyTable=true` with a nil handle; IntHandle boundaries -1,
-/// 9223372036854775806 and i64::MAX are all answered exactly; later
-/// smaller inserts do not lower the max; a 1000-row t1 answers 999; and
-/// for a non-handle-PK table (`t2 varchar`) the max `_tidb_rowid` queried
-/// by SQL equals GetTableMaxHandle's IntHandle answer, including at
-/// MaxInt64-1 and MaxInt64 row ids.
-// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
-// the reorg context).
-#[test]
-#[ignore]
-fn get_table_end_handle_answers_the_max_row_id_across_pk_shapes() {
-}
-
-/// Go `TestMultiRegionGetTableEndCommonHandle`
-/// (`pkg/ddl/primary_key_handle_test.go:187`): over a clustered table with
-/// PRIMARY KEY (a varchar(20), b int, c float) split across regions,
-/// GetTableMaxHandle answers the COMMON handle of the lexicographically
-/// greatest row ('999',999,999.0), 'a' after `(a,1,1,1)` is inserted, and
-/// still 'a' after the SMALLER '0000' row arrives -- common-handle ordering
-/// is the encoded column order, not insertion order.
-// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
-// the reorg context).
-#[test]
-#[ignore]
-fn multi_region_get_table_end_common_handle_orders_by_encoded_columns() {
-}
-
-/// Go `TestGetTableEndCommonHandle`
-/// (`pkg/ddl/primary_key_handle_test.go:227`): common-handle max-row scans
-/// for `(a varchar(15), b bigint)` and for the PREFIXED primary key
-/// `a(2)` -- the prefixed table's max handle truncates the column to the
-// index prefix length ('abccccc' -> "ab", 'azzzz' -> "az"), and an empty
-// table answers empty.
-// go-parity-gap: GetTableMaxHandle carrier missing (storage scan through
-// the reorg context).
-#[test]
-#[ignore]
-fn get_table_end_common_handle_truncates_prefixed_primary_keys() {
 }

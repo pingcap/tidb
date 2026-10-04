@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of Go `pkg/ddl/table_mode_test.go` (master): `TestTableModeBasic`
-//! (`:57`), `TestTableModeConcurrent` (`:185`) and
-//! `TestTableModeWithRefreshMeta` (`:312`). Go drives a full DDL executor
-//! (`domain.DDLExecutor`) with `CreateTableWithInfo`/`SetTableMode` jobs; the
-//! carried piece of that machinery in this tier is the mode-TRANSITION
-//! predicate `pkg/meta/model/table_mode.go:38 CanTransitionTo`
-//! (`tidb_model::TableMode::can_transition_to`), which is what decides every
-//! `SetTableMode` outcome the Go tests observe. The executor-level halves are
-//! recorded as `#[ignore]` gap tests with the contract re-derived from the Go
-//! source. Nothing is approximated.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_model::TableMode;
 
@@ -81,53 +74,4 @@ fn table_mode_concurrent_transition_outcomes_are_decided_by_the_gate() {
         .map(|target| TableMode::RESTORE.can_transition_to(*target))
         .collect();
     assert_eq!(outcomes, vec![true, false]);
-}
-
-/// Go `TestTableModeBasic`'s denial matrix
-/// (`pkg/ddl/table_mode_test.go:89-129`): against a table in ModeRestore
-/// (or ModeImport), reads (`select`, `explain`, `desc`), writes (`insert`,
-/// `replace`, `update`, `delete`), `truncate`, and every mutating DDL
-/// (`drop table`, `rename`, `modify/add/drop column`, `drop/add index`,
-/// `partition by`, `comment`, `convert character set`, `rename column`,
-/// `alter column set default`, `add foreign key`) fail with
-/// `ErrProtectedTableMode` (8258, `pkg/infoschema/error.go:112`) -- including
-/// inside an explicit transaction -- while metadata access (`show create
-/// table`, `show table status`, `show columns`, `show index`, `describe`,
-/// `create table like`, `create view`, FK child creation, and
-/// `admin checksum table`) stays allowed (`:82-99`). Dropping a foreign key
-/// of an Import-mode table is refused too (`:74`).
-// go-parity-gap: the table-mode access gate lives in the DDL executor and
-// planner fast paths (`infoschema.ErrProtectedTableMode` checks), which are
-// not transcreated in this tier; no statement here consults `TableInfo.Mode`.
-#[test]
-#[ignore]
-fn protected_table_mode_denials_match_go_matrix() {
-}
-
-/// Go `TestTableModeBasic`'s job half (`pkg/ddl/table_mode_test.go:65-77,
-/// 142-160`): `CreateTableWithInfo` PRESERVES the incoming mode (a table
-/// cloned with `Mode = TableModeImport` lands as Import; a Restore-mode
-/// clone lands as Restore, keeps its metadata accessible, and its FK child
-/// can be created and dropped), `BatchCreateTableWithInfo` lands three tables
-/// with modes Normal/Import/Restore respectively, and creating a
-/// Restore-mode clone over an existing Import-mode name fails with
-/// `Invalid mode set from (or by default) Import to Restore`.
-// go-parity-gap: no CreateTableWithInfo/BatchCreateTableWithInfo carrier;
-// the Rust create path never sets `TableInfo.Mode`.
-#[test]
-#[ignore]
-fn create_table_with_info_preserves_and_gates_the_mode() {
-}
-
-/// Go `TestTableModeWithRefreshMeta` (`pkg/ddl/table_mode_test.go:312-350`):
-/// after a table's ID is swapped to a partition ID by hand (the exchange-
-/// partition ID trick), `SetTableMode` fails with "doesn't exist" until the
-/// domain REFRESHES its metadata; after `RefreshMeta` the mode change
-/// succeeds and the table's read gate follows the mode (select refuses under
-/// Import with 8258, succeeds after returning to Normal).
-// go-parity-gap: no DDL job queue, no SetTableMode/RefreshMeta carrier, and
-// no meta-txn table-ID swap harness in this tier.
-#[test]
-#[ignore]
-fn table_mode_change_follows_a_refresh_meta() {
 }

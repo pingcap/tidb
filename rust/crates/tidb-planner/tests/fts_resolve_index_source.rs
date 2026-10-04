@@ -12,59 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Documentary gap ports for `pkg/planner/core/fts_resolve_index_test.go`
-//! (`pkg/planner.part10` items 574-577 on `origin/master`) and
-//! `pkg/planner/core/fulltext_to_like_test.go` items 578-579. The resolve-index
-//! tests all require STARTER deployment mode (`setStarterDeployModeForFTSTest`
-//! skips on classic kernels), mock TiFlash replicas and sessions; the two
-//! fulltext-to-like helpers are pure planner predicates exposed by
-//! [`tidb_planner::fulltext`].
-
-/// GO PORT of `pkg/planner/core/fts_resolve_index_test.go:32
-/// TestFTSRequiresStarterMode`.
-///
-/// Contract (:32-49): creating a table WITH a fulltext key, ALTER-adding a
-/// fulltext index and evaluating `fts_match_word('hello', title)` each fail
-/// with "… only supported in starter deployment mode" when not in starter
-/// mode; plain DDL/DML over fts_t stays legal.
-#[test]
-#[ignore = "go-parity-gap: kernel/deployment-mode gates and session error surfacing are outside this crate"]
-fn fts_requires_starter_mode_messages() {}
-
-/// GO PORT of `pkg/planner/core/fts_resolve_index_test.go:50
-/// TestTiFlashFTSMatchWordPushDown`.
-///
-/// Contract (:50-94): over fts_t with a public fulltext index and TiFlash
-/// replica, suite queries' plan_tree goldens pin index-resolution for
-/// FTS_MATCH_WORD; additionally EXPLAIN surfaces exact errors (:86-91) —
-/// SELECT-only match needs a WHERE twin (:86), wrapped SELECT matches must
-/// stay bare (:87), literal arguments must agree between SELECT and WHERE
-/// (:88), one MATCH per query (:89), a matching FTS index is required (:90)
-/// and ORDER BY match without LIMIT is rejected (:91).
-#[test]
-#[ignore = "go-parity-gap: FTS index resolution over executed plans needs TiFlash + session tier"]
-fn tiflash_fts_match_word_push_down_resolves_and_rejects() {}
-
-/// GO PORT of `pkg/planner/core/fts_resolve_index_test.go:95
-/// TestTiFlashFTSMatchWordPreparedPlanCache`.
-///
-/// Contract (:95-114): executing the prepared constant-match statement twice
-/// NEVER caches (`@@last_plan_from_cache` stays 0); preparing with a `?`
-/// parameter fails with "match against a non-constant string".
-#[test]
-#[ignore = "go-parity-gap: prepared plan-cache interplay needs session plumbing"]
-fn tiflash_fts_match_word_prepared_plan_never_caches() {}
-
-/// GO PORT of `pkg/planner/core/fts_resolve_index_test.go:115
-/// TestTiFlashFTSMatchWordDirtyTxn`.
-///
-/// Contract (:115-128): the pre-insert FTS query returns no rows; inside a
-/// transaction carrying an uncommitted insert, the same query fails with
-/// "cannot be used in a transaction with uncommitted changes"; rollback
-/// restores normal behavior.
-#[test]
-#[ignore = "go-parity-gap: dirty-transaction detection spans executor state"]
-fn tiflash_fts_match_word_dirty_txn_errors() {}
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 /// GO PORT of `pkg/planner/core/fulltext_to_like_test.go:25
 /// TestFTSModifierAllowsNativePushdown`.

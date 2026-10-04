@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go-parity tests ported from `pkg/sessionctx/variable` (batch b012, part 3).
-//!
-//! Source of truth: `origin/master` snapshot of
-//! `pkg/sessionctx/variable/tests/variable_test.go` and
-//! `pkg/sessionctx/variable/varsutil_test.go` (tests 121-150 of the package's
-//! canonical ordering). Tests whose subject (the `SysVar` registry,
-//! `SessionVars`, or `varsutil.go` helpers) is not ported into this crate are
-//! kept as `#[ignore]`d stubs annotated with a `go-parity-gap` reason so the
-//! inventory stays visible; they must be enabled when the owning code lands.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use super::defaults::DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER;
 use super::modes::{tidb_opt_enable_clustered, ClusteredIndexDefMode};
@@ -1344,90 +1338,6 @@ fn helper_funcs_tidb_opt_enable_clustered() {
         tidb_opt_enable_clustered("bogus")
     );
 }
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestFloatValidation.
-// go-parity-gap: SysVar struct + TypeFloat Validate/clamping not ported to Rust yet
-#[test]
-#[ignore]
-fn float_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestBoolValidation.
-// go-parity-gap: SysVar TypeBool validation (incl. AutoConvertNegativeBool) not ported
-#[test]
-#[ignore]
-fn bool_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestTimeValidation.
-// go-parity-gap: SysVar TypeTime validation not ported
-#[test]
-#[ignore]
-fn time_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestDeprecation.
-// go-parity-gap: SysVar registry + deprecation warning emission via StmtCtx not ported
-#[test]
-#[ignore]
-fn deprecation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestIsNoop.
-// go-parity-gap: SysVar registry with IsNoop flags not ported
-#[test]
-#[ignore]
-fn is_noop_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestValidateWithRelaxedValidation.
-// go-parity-gap: SysVar registry + ValidateWithRelaxedValidation not ported
-#[test]
-#[ignore]
-fn validate_with_relaxed_validation_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestSetSysVar.
-// go-parity-gap: GetSysVar/SetSysVar global singleton deliberately replaced by explicit wiring in the rewrite
-#[test]
-#[ignore]
-fn set_sys_var_unported() {}
-
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestTimeValidationWithTimezone.
-// go-parity-gap: TypeTime validation is timezone-sensitive; SysVar validation not ported
-#[test]
-#[ignore]
-fn time_validation_with_timezone_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestNewSessionVars`
-// go-parity-gap: SessionVars runtime state deferred from this crate by design
-#[test]
-#[ignore]
-fn new_session_vars_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestVarsutil`
-// go-parity-gap: SetSystemVar/SetTCState machinery on SessionVars not ported
-#[test]
-#[ignore]
-fn varsutil_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestValidate`
-// go-parity-gap: GetSysVar(...).Validate over SessionVars + MockGlobalAccessor not ported
-#[test]
-#[ignore]
-fn validate_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestValidateStmtSummary`
-// go-parity-gap: stmt-summary sysvar validators over SessionVars not ported
-#[test]
-#[ignore]
-fn validate_stmt_summary_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestConcurrencyVariables`
-// go-parity-gap: SessionVars concurrency fields + SetSystemVar side effects not ported
-#[test]
-#[ignore]
-fn concurrency_variables_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestSessionStatesSystemVar`
-// go-parity-gap: GetSessionStatesSystemVar on SessionVars not ported
-#[test]
-#[ignore]
-fn session_states_system_var_unported() {}
 
 /// The four defaults this port originally lacked, re-verified against
 /// `pkg/sessionctx/vardef/tidb_vars.go` (2026-09-05): `DefTiDBServerMemoryLimit`

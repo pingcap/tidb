@@ -14,18 +14,9 @@
 
 #![allow(missing_docs)]
 
-//! GO PORT of `pkg/planner/cardinality/ndv_test.go` (items 3-6 of the
-//! pkg/planner.part1 slice).
-//!
-//! The two running tests drive the dependency-closed estimators from
-//! `pkg/planner/cardinality/ndv.go`:
-//! `ScaleNDV` (`ndv.go:215`, transcreated as
-//! [`tidb_planner::cardinality::ndv::scale_ndv`]) and
-//! `EstimateColsNDVWithMatchedLen` (`ndv.go:87`, transcreated as
-//! [`tidb_planner::cardinality::ndv::estimate_cols_ndv_with_matched_len`]).
-//! Go passes a session whose `RiskScaleNDVSkewRatio` /
-//! `RiskGroupNDVSkewRatio` variable is 0 or mocked; here that value is a
-//! plain argument because the Rust leaf takes caller-owned statistics.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_planner::cardinality::ndv::{estimate_cols_ndv_with_matched_len, scale_ndv, GroupNdv};
 
@@ -204,28 +195,3 @@ fn single_column_ndv_keeps_the_source_one_value_floor() {
     let ndv = estimate_cols_ndv_with_matched_len(&[1], &[(1, 0.5)], 100.0, &[], 1.0);
     assert_eq!(ndv, (1.0, 1));
 }
-
-/// GO PORT of `pkg/planner/cardinality/ndv_test.go:58
-/// TestOptScaleNDVSkewRatioSetVar`.
-///
-/// Inserts 100 rows `(i%20, i)` into t(a int, b int, key(a), key(b)),
-/// analyzes, then re-plans `select distinct(a) from t where b<50` under three
-/// hint-injected `tidb_opt_scale_ndv_skew_ratio` values and pins the HashAgg
-/// estimates in decreasing order: 19.44 at ratio 0, 14.82 at 0.5, 10.20 at 1
-/// (ndv_test.go:88-94). Pins that raising the scale-NDV skew ratio pulls the
-/// aggregate estimate toward the skewed (row-count-proportional) extreme.
-#[test]
-#[ignore = "executed through tidb_session::tests_explain::ndv_skew_hint_changes_distinct_estimates_after_analyze"]
-fn opt_scale_ndv_skew_ratio_set_var_changes_distinct_aggregate_estimates() {}
-
-/// GO PORT of `pkg/planner/cardinality/ndv_test.go:79 TestIssue54812`.
-///
-/// Builds table t(a int, b int, key(a), key(b)) holding 100 rows `(i, 1)`
-/// plus 10 bulk inserts of `(100, 2)` (1100 rows total), analyzes and pins the
-/// `explain format='brief'` plan for `select distinct(a) from t where b=1`
-/// (ndv_test.go:106-112): HashAgg/TableReader/HashAgg all estimate 65.23 above
-/// Selection 100.00 over TableFullScan 1100.00 -- the selection rows scaled by
-/// the distinct-group NDV instead of collapsing onto it.
-#[test]
-#[ignore = "executed through tidb_session::tests_explain::ndv_skew_distinct_aggregation_preserves_selection_rows"]
-fn issue_54812_distinct_hashagg_scales_selection_rows() {}

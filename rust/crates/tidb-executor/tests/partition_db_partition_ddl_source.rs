@@ -12,35 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/tests/partition/db_partition_test.go` window of
-//! batch b113: `TestSubPartitioning` (line 422) through
-//! `TestIssue66077ExchangePartitionDifferentDefinitionsWithShardRowIDBits`
-//! (line 3980) — 52 of the batch's 60 `func Test*` items (the remaining 8
-//! live in `error_injection_test.go`, `exchange_partition_test.go` and
-//! `global_index_version_test.go`, ported in
-//! `partition_exchange_global_index_source.rs`).
-//!
-//! Carriers this tier HAS (so those tests run for real): CREATE TABLE with
-//! RANGE / RANGE COLUMNS / LIST / LIST COLUMNS / HASH / KEY partitioning and
-//! their full Go error taxonomy (`src/ddl/table_partition.rs`), TRUNCATE /
-//! DROP / ADD PARTITION (`src/ddl/alter_table.rs:367-560`,
-//! `src/kv_table/partition_maintenance.rs`), per-partition index-entry
-//! cleanup on both, `PARTITION (p)` selection, `USE INDEX` reads,
-//! `admin check table`, and the global-index version constants
-//! (`tidb-model/src/index.rs:51-68`).
-//!
-//! Carriers this tier LACKS (so those Go tests are `#[ignore]` gap tests,
-//! never approximated): GLOBAL indexes — the storage refuses to build one
-//! ("maintains only per-partition index entries"), EXCHANGE / REORGANIZE /
-//! COALESCE / CHECK / REMOVE PARTITIONING / `ALTER TABLE ... PARTITION BY`
-//! (all refused by the ALTER dispatcher), failpoints and concurrent
-//! sessions, regions / pre-split / `SHOW TABLE ... REGIONS`, TiFlash
-//! replicas, `SHOW CREATE TABLE` (session-level), statistics, and GC
-//! delete-range.
-//!
-//! Go runs everything through testkit sessions over a mockstore; the
-//! serialized ports below drive the same statements through `Catalog` with
-//! a stock STRICT `StmtContext`, the shape `run_create_table_on` documents.
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_executor::{
     admin_check, ddl, run_drop_table_in, run_insert_on, run_select_on, Catalog, DriverError,
@@ -155,20 +129,6 @@ fn sub_partitioning_hash_key_mix_errors_1500() {
     )
     .unwrap_err();
     assert_eq!(err_code(&key_key), 1500);
-}
-
-/// Go `TestSubPartitioning` rows 1-2
-/// (`pkg/ddl/tests/partition/db_partition_test.go:427-440`): RANGE+HASH and
-/// LIST+KEY subpartitioning CREATE SUCCEED with warning 8200
-/// "Unsupported subpartitioning, only using RANGE partitioning"
-/// (`pkg/ddl/partition.go:605`), and the stored metadata keeps ONLY the
-/// outer RANGE/LIST clause, which `SHOW CREATE TABLE` prints back.
-// go-parity-gap: this tier refuses RANGE/LIST + SUBPARTITION BY outright
-// ("... SUBPARTITION BY is not supported by this node") instead of Go's
-// warn-and-strip; there is no warning-and-store carrier.
-#[test]
-#[ignore]
-fn sub_partitioning_range_list_strips_subclause_with_warning_8200() {
 }
 
 // --- TestCreateTableWithRangeColumnPartition
@@ -1098,18 +1058,6 @@ fn alter_table_truncate_partition_by_list_columns() {
     assert!(rows.is_empty());
 }
 
-/// Go `TestAlterTableTruncatePartitionPreSplitRegion`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1211`): after
-/// `alter table t1 truncate partition p0`, `SHOW TABLE t1 REGIONS` still
-/// lists the pre-split region count (2, and 27 for the PRE_SPLIT_REGIONS=3
-/// table).
-// go-parity-gap: physical regions, region splitting and SHOW TABLE ...
-// REGIONS do not exist in this tier.
-#[test]
-#[ignore]
-fn alter_table_truncate_partition_pre_split_region_keeps_region_count() {
-}
-
 // --- TestCreateTableWithKeyPartition
 //     (pkg/ddl/tests/partition/db_partition_test.go:1244) ---
 //
@@ -1151,195 +1099,6 @@ fn create_table_with_key_partition() {
         &mut catalog,
         &ctx,
     );
-}
-
-/// Go `TestDropPartitionWithGlobalIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1262`): two GLOBAL unique
-/// indexes survive `alter table ... drop partition p2`, the surviving rows
-/// are `1 1 1` / `2 2 2`, and both indexes' entries for the dropped
-/// partition id are fully deleted (checked against mysql.gc_delete_range).
-// go-parity-gap: this tier refuses to build GLOBAL indexes at all ("a
-// GLOBAL index ... maintains only per-partition index entries"), so neither
-// the indexes nor their cleanup can be exercised.
-#[test]
-#[ignore]
-fn drop_partition_with_global_index_cleans_both_index_entries() {
-}
-
-/// Go `TestDropMultiPartitionWithGlobalIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1295`): dropping TWO
-/// partitions (`p1, p2`) with two GLOBAL unique indexes leaves only
-/// `21 21 21` / `29 29 29`, and both indexes are cleaned for the dropped
-/// ids.
-// go-parity-gap: same missing GLOBAL index carrier.
-#[test]
-#[ignore]
-fn drop_multi_partition_with_global_index_cleans_both_index_entries() {
-}
-
-/// Go `TestGlobalIndexInsertInDropPartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1329`): a failpoint at
-/// `beforeRunOneJobStep` interleaves inserts at StatePublic (admitted),
-/// StateWriteOnly (rejected with `[table:1526]Table has no partition for
-/// value matching a partition being dropped, 'p1'`), StateDeleteOnly and
-/// StateDeleteReorganization (admitted) during `drop partition p1`.
-// go-parity-gap: no failpoint hooks, no DDL job state machine, and no
-// GLOBAL index carrier.
-#[test]
-#[ignore]
-fn global_index_insert_in_drop_partition() {
-}
-
-/// Go `TestGlobalIndexUpdateInDropPartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1378`): an UPDATE
-/// admitted at StateDeleteOnly during `drop partition p1` must leave
-/// exactly `2 11 11` / `12 12 12` readable through the GLOBAL index.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_update_in_drop_partition() {
-}
-
-/// Go `TestTruncatePartitionWithGlobalIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1409`): per DDL state
-/// during `truncate partition p2`, the GLOBAL index serves (WriteOnly:
-/// count 5 and insert (5,5,5) admitted; DeleteOnly: Point_Get plans, empty
-/// reads for b=15/c=15 and a duplicate rejection; DeleteReorganization:
-/// reads empty and (15,15,15) admitted), and afterwards both indexes are
-/// cleaned for the old partition id.
-// go-parity-gap: no failpoints/DDL states and no GLOBAL index carrier.
-#[test]
-#[ignore]
-fn truncate_partition_with_global_index() {
-}
-
-/// Go `TestGlobalIndexUpdateInTruncatePartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1489`): under dynamic
-/// prune mode, an UPDATE admitted at StateDeleteOnly during
-/// `truncate partition p1` leaves `2 11 11` / `12 12 12` via the GLOBAL
-/// index.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_update_in_truncate_partition() {
-}
-
-/// Go `TestGlobalIndexUpdateInTruncatePartition4Hash`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1520`): the same
-/// interleaving on a HASH-partitioned table; the mid-truncate UPDATE must
-/// be admitted.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_update_in_truncate_partition_4_hash() {
-}
-
-/// Go `TestGlobalIndexReaderAndIndexLookUpInTruncatePartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1547`): at StateDeleteOnly
-/// of a truncate, index-only and index-lookup reads through the GLOBAL
-/// index still serve `11`/`12` rows in all orderings.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_reader_and_index_look_up_in_truncate_partition() {
-}
-
-/// Go `TestGlobalIndexInsertInTruncatePartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1578`): an INSERT
-/// admitted at StateDeleteOnly of a truncate must be visible afterwards.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_insert_in_truncate_partition() {
-}
-
-/// Go `TestGlobalIndexReaderInDropPartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1609`): an index-only
-/// read captured at StateDeleteOnly of a drop still returns `11`/`12`.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_reader_in_drop_partition() {
-}
-
-/// Go `TestGlobalIndexLookUpInDropPartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1639`): an index-lookup
-/// read captured at StateDeleteOnly of a drop returns the full
-/// `11 11 11` / `12 12 12` rows.
-// go-parity-gap: same missing failpoint + DDL-state + GLOBAL index
-// carriers.
-#[test]
-#[ignore]
-fn global_index_look_up_in_drop_partition() {
-}
-
-/// Go `TestGlobalIndexShowTableRegions`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1669`): with region
-/// splitting enabled, a 3-partition table lists 3 regions (one per
-/// partition), its local unique index 3, and after adding a GLOBAL index
-/// the table lists 4 (3 + the table-level global index) while the GLOBAL
-/// index lists 1.
-// go-parity-gap: no physical regions and no GLOBAL index carrier in this
-// tier.
-#[test]
-#[ignore]
-fn global_index_show_table_regions() {
-}
-
-/// Go `TestAlterTableExchangePartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1695`): EXCHANGE
-/// PARTITION validation over RANGE, HASH, RANGE COLUMNS and LIST/LIST
-/// COLUMNS shapes — matching rows must swap, non-matching must fail with
-/// `[ddl:1793]...ErrRowDoesNotMatchPartition`-shaped 1736-family errors,
-/// WITHOUT VALIDATION skips the check, cross-database exchange works, and
-/// column-id/index-id/tiflash/temp-table metadata mismatches are refused.
-// go-parity-gap: `ALTER TABLE ... EXCHANGE PARTITION` is refused by the
-// ALTER dispatcher in this tier.
-#[test]
-#[ignore]
-fn alter_table_exchange_partition() {
-}
-
-/// Go `TestExchangePartitionMultiTable`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:1975`): two racing
-/// EXCHANGE jobs — the first runs while the second queues behind the DDL
-/// lock; after an open insert-txn rolls back, the first succeeds, the
-/// second succeeds, and the rows land swapped (t1 gets 6, t2 gets 0, tp
-/// gets 3).
-// go-parity-gap: EXCHANGE is unsupported and there is no concurrent DDL
-// queue, `admin show ddl jobs` watcher, or multi-session layer.
-#[test]
-#[ignore]
-fn exchange_partition_multi_table() {
-}
-
-/// Go `TestExchangePartitionHook`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2028`): a failpoint at
-/// `afterWaitSchemaSynced` probes mid-exchange that inserting a
-/// non-matching row into the non-partitioned side fails with 1748
-/// ErrRowDoesNotMatchGivenPartitionSet; the exchange itself completes with
-/// `1` in p0.
-// go-parity-gap: EXCHANGE unsupported and no failpoint hooks.
-#[test]
-#[ignore]
-fn exchange_partition_hook() {
-}
-
-/// Go `TestExchangePartitionAutoID`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2060`): after an
-/// exchange with the `exchangePartitionAutoID` failpoint forcing a
-/// rebase, the next auto_insert on EITHER side allocates above 4,000,000.
-// go-parity-gap: EXCHANGE unsupported and the auto-id rebase failpoint has
-// no carrier.
-#[test]
-#[ignore]
-fn exchange_partition_auto_id() {
 }
 
 // --- TestAddPartitionTooManyPartitions
@@ -1472,31 +1231,6 @@ fn truncate_partition_and_drop_table() {
 
 }
 
-/// Go `TestTruncatePartitionAndDropTable`'s id-reassignment rows
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2311-2338`):
-/// `TRUNCATE TABLE` on a partitioned table must reassign EVERY partition id
-/// (oldPID != newPID for the range table t5, and all 12 hash `clients`
-/// definitions change).
-// go-parity-gap: this tier's TRUNCATE TABLE keeps the partition ids
-// unchanged (only TRUNCATE ... PARTITION reassigns), so the reassignment
-// contract cannot be pinned.
-#[test]
-#[ignore]
-fn truncate_table_reassigns_partition_ids() {
-}
-
-/// Go `TestPartitionDropPrimaryKeyAndDropIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2320`): a DROP INDEX /
-/// DROP PRIMARY KEY races concurrent UPDATE+INSERT loops against a
-/// 7-partition table; the drop must finish cleanly with the concurrent
-/// writes interleaved.
-// go-parity-gap: `ALTER TABLE ... ADD PRIMARY KEY` is refused by this tier
-// and there is no concurrent-statement runner to interleave the writes.
-#[test]
-#[ignore]
-fn partition_drop_primary_key_and_drop_index() {
-}
-
 // --- TestPartitionAddPrimaryKeyAndAddIndex
 //     (pkg/ddl/tests/partition/db_partition_test.go:2383) ---
 //
@@ -1610,95 +1344,6 @@ fn partition_add_index_over_range_and_hash() {
     ddl::run_alter_table_in("alter table t1 add index idx(a)", &mut catalog, "test", &ctx).unwrap();
     admin_check::check_table(&mut kv_table(&catalog, "t1"), None, &RowDecodeContext::for_query(&ctx))
         .unwrap();
-}
-
-/// Go `TestPartitionAddPrimaryKeyAndAddIndex`'s `primary key` halves
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2384-2385`): the same
-/// flows with `alter table ... add primary key idx1 (hired)`.
-// go-parity-gap: `ALTER TABLE ... ADD PRIMARY KEY` is refused by this tier.
-#[test]
-#[ignore]
-fn partition_add_primary_key_on_partitioned_tables() {
-}
-
-/// Go `TestDropSchemaWithPartitionTable`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2482`): dropping a
-/// database holding a partitioned table records a `drop schema` job whose
-/// args carry table + partition ids (3 for one partitioned table), and the
-/// GC worker eventually clears the retired physical ids.
-// go-parity-gap: no DROP DATABASE carrier, no DDL job history, and no GC
-// delete-range worker in this tier.
-#[test]
-#[ignore]
-fn drop_schema_with_partition_table() {
-}
-
-/// Go `TestPartitionErrorCode`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2559`). Every row of this
-/// test needs a carrier this tier lacks:
-/// - `alter table employees add partition partitions 8` SUCCEEDS in Go
-///   (grows 4 -> 12 hash partitions); this tier refuses
-///   `ADD PARTITION PARTITIONS n` outright.
-/// - `add partition (partition pNew values less than (42))` / `values in
-///   (42)` on a HASH table are Go `ast.ErrPartitionWrongValues` (1480);
-///   this tier answers 1512 (OnlyOnRangeList).
-/// - `coalesce partition 12` is Go `[ddl:1508]Cannot remove all partitions`
-///   and `coalesce partition 4` on a RANGE table is 1509
-///   ErrCoalesceOnlyOnHashPartition; this tier refuses COALESCE entirely.
-/// - `check/optimize/rebuild/repair partition` are Go 8200
-///   ErrUnsupportedDDLOperation; this tier answers them with the generic
-///   1105 refusal.
-/// - The final block interleaves a truncate with an open insert txn.
-// go-parity-gap: none of those carriers exist; nothing here is
-// approximated.
-#[test]
-#[ignore]
-fn partition_error_code() {
-}
-
-/// Go `TestCommitWhenSchemaChange`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2625`): an insert-txn
-/// held across `add index` / `exchange partition` DDLs must FAIL to commit
-/// with `domain.ErrInfoSchemaChanged` (8028), and `admin check table` plus
-/// empty reads must prove no data/index inconsistency.
-// go-parity-gap: no schema-lease validator, no multi-session layer, and no
-// commit-time schema-version check.
-#[test]
-#[ignore]
-fn commit_when_schema_change() {
-}
-
-/// Go `TestTruncatePartitionMultipleTimes`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2695`): two concurrent
-/// `truncate partition p0` statements — one wins, the loser is retried or
-/// errors at most once (failpoint-counted).
-// go-parity-gap: no failpoints and no concurrent DDL runner.
-#[test]
-#[ignore]
-fn truncate_partition_multiple_times() {
-}
-
-/// Go `TestAddPartitionReplicaBiggerThanTiFlashStores`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2724`): with mocked
-/// TiFlash store counts, `add partition` fails with "[ddl] the tiflash
-/// replica count: 1 should be less than the total tiflash server count: 0"
-/// and the wait-retry path rolls back with the mockWaitTiFlashReplica
-/// message.
-// go-parity-gap: no TiFlash replica machinery or failpoints.
-#[test]
-#[ignore]
-fn add_partition_replica_bigger_than_tiflash_stores() {
-}
-
-/// Go `TestReorgPartitionTiFlash`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:2767`): REORGANIZE /
-/// REMOVE PARTITIONING / `ALTER TABLE ... PARTITION BY key(a) partitions 3`
-/// preserve TiFlash replica availability metadata across the reorg.
-// go-parity-gap: REORGANIZE, REMOVE PARTITIONING and ALTER ... PARTITION BY
-// are refused by the ALTER dispatcher; TiFlash replicas do not exist here.
-#[test]
-#[ignore]
-fn reorg_partition_tiflash() {
 }
 
 // --- TestIssue40135Ver2 (pkg/ddl/tests/partition/db_partition_test.go:2884)
@@ -1887,107 +1532,6 @@ fn alter_modify_column_on_partitioned_table() {
         .unwrap();
 }
 
-/// Go `TestRemoveKeyPartitioning`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3079`): after `alter
-/// table t remove partitioning`, statistics fold to a single unpartitioned
-/// entry (`show stats_meta` one row of 95) and the SHOW CREATE output
-/// loses the partitioning clause.
-// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher;
-// statistics and SHOW CREATE TABLE have no carrier here either.
-#[test]
-#[ignore]
-fn remove_key_partitioning() {
-}
-
-/// Go `TestRemoveListPartitioning`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3131`): the LIST spelling
-/// of the remove-partitioning statistics contract.
-// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-#[test]
-#[ignore]
-fn remove_list_partitioning() {
-}
-
-/// Go `TestRemoveListColumnPartitioning`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3179`): the LIST COLUMNS
-/// (single varchar column) spelling.
-// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-#[test]
-#[ignore]
-fn remove_list_column_partitioning() {
-}
-
-/// Go `TestRemoveListColumnsPartitioning`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3227`): the LIST COLUMNS
-/// (int, varchar tuple) spelling.
-// go-parity-gap: REMOVE PARTITIONING is refused by the ALTER dispatcher.
-#[test]
-#[ignore]
-fn remove_list_columns_partitioning() {
-}
-
-/// Go `TestRemovePartitioningAutoIDs`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3275`): four sessions
-/// insert through a remove-partitioning DDL's state transitions; the
-/// `_tidb_rowid` allocator must keep monotonically distinct values across
-/// every infoschema version switch, pinned to exact row sets.
-// go-parity-gap: REMOVE PARTITIONING, concurrent sessions, and the
-// `_tidb_rowid` allocator are all absent from this tier.
-#[test]
-#[ignore]
-fn remove_partitioning_auto_ids() {
-}
-
-/// Go `TestAlterLastIntervalPartition`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3408`): INTERVAL
-/// partitioning expands `FIRST/LAST PARTITION LESS THAN` bounds into exact
-/// datetime definitions (3 -> 732 partitions for `alter ... last partition
-/// less than ('2025-01-01 00:00:00')`), with named `P_LT_<bound>`
-/// partitions shown back by SHOW CREATE.
-// go-parity-gap: `INTERVAL` partitioning is refused by this tier's DDL
-// builder ("CREATE TABLE ... PARTITION BY ... INTERVAL is not supported by
-// this node").
-#[test]
-#[ignore]
-fn alter_last_interval_partition() {
-}
-
-/// Go `TestExchangeValidateHandleNullValue`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3557`): NULL-valued rows
-/// route to p0 under HASH/RANGE, and an EXCHANGE of p1 with a table
-/// holding a NULL row fails with `[ddl:1737]Found a row that does not
-/// match the partition`; exchanging p0 with the NULL-holding table
-/// succeeds.
-// go-parity-gap: `ALTER TABLE ... EXCHANGE PARTITION` is refused by the
-// ALTER dispatcher.
-#[test]
-#[ignore]
-fn exchange_validate_handle_null_value() {
-}
-
-/// Go `TestReorgPartitionGlobalIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3597`): REORGANIZE /
-/// REMOVE PARTITIONING / `ALTER TABLE ... PARTITION BY ... UPDATE INDEXES`
-/// flip the two global unique indexes between GLOBAL and local metadata
-/// while every read path keeps serving all rows.
-// go-parity-gap: REORGANIZE, REMOVE PARTITIONING, ALTER ... PARTITION BY
-// and GLOBAL indexes are all unsupported in this tier.
-#[test]
-#[ignore]
-fn reorg_partition_global_index() {
-}
-
-/// Go `TestRemovePartitioningGlobalIndex`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3680`): remove
-/// partitioning demotes the GLOBAL unique index to local (with a NEW index
-/// id) while the plain unique index keeps its id, and re-partitioning with
-/// `update indexes (idx_a global)` demotes/promotes again.
-// go-parity-gap: REMOVE PARTITIONING and GLOBAL indexes are unsupported.
-#[test]
-#[ignore]
-fn remove_partitioning_global_index() {
-}
-
 // --- TestPrimaryGlobalIndex (pkg/ddl/tests/partition/db_partition_test.go:3731)
 //
 // The refusal rows this tier reproduces: a CLUSTERED primary key that does
@@ -2046,19 +1590,6 @@ fn primary_global_index_clustered_partition_key_errors() {
     }
 }
 
-/// Go `TestPrimaryGlobalIndex`'s NONCLUSTERED halves
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3783-3804`): `primary key
-/// nonclustered global` creates (with metadata pinned by checkGlobalAndPK),
-/// `drop primary key` / `add primary key (a) global` re-shape it, and
-/// `alter table ... partition by ... update indexes (\`primary\` global)`
-/// flips it during re-partitioning.
-// go-parity-gap: this tier refuses GLOBAL indexes; DROP/ADD PRIMARY KEY
-// and ALTER ... PARTITION BY are refused by the dispatcher.
-#[test]
-#[ignore]
-fn primary_global_index_nonclustered_flows() {
-}
-
 // --- TestPrimaryNoGlobalIndex (pkg/ddl/tests/partition/db_partition_test.go:3805)
 //
 // Without GLOBAL, a NONCLUSTERED primary key that misses the partitioning
@@ -2108,26 +1639,6 @@ fn primary_no_global_index_errors() {
     }
 }
 
-/// Go `TestPrimaryNoGlobalIndex`'s re-partitioning halves
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3825-3871`): `alter
-/// table t partition by key(b)/hash(a) partitions 3` (refused here) and
-/// the checkGlobalAndPK metadata sweeps after each.
-// go-parity-gap: ALTER ... PARTITION BY is refused by the dispatcher.
-#[test]
-#[ignore]
-fn primary_no_global_index_repartition_flows() {
-}
-
-/// Go `TestTruncateNumberOfPhases`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3873`): truncating one
-/// partition advances the schema meta version by exactly 4, with and
-/// without a GLOBAL index.
-// go-parity-gap: no infoschema version counter and no GLOBAL index carrier.
-#[test]
-#[ignore]
-fn truncate_number_of_phases() {
-}
-
 // --- TestIssue57780 (pkg/ddl/tests/partition/db_partition_test.go:3896)
 //
 // The issue-57780 shape: a RANGE COLUMNS(datetime) partitioned table with
@@ -2172,26 +1683,4 @@ fn issue_57780_add_and_change_column_on_partitioned_table() {
         .expect("test_decimal must exist after add + change");
     assert_eq!(column.field_type.flen(), 11);
     assert_eq!(column.field_type.decimal(), 2);
-}
-
-/// Go `TestExchangeTiDBRowID` (issue 64176,
-/// `pkg/ddl/tests/partition/db_partition_test.go:3937`): after an exchange,
-/// inserts into BOTH sides must keep allocating fresh `_tidb_rowid`s (the
-/// new side jumps to the 30001 shard range) — pinned to exact row sets.
-// go-parity-gap: EXCHANGE PARTITION and the `_tidb_rowid` allocator are
-// unsupported in this tier.
-#[test]
-#[ignore]
-fn exchange_tidb_row_id() {
-}
-
-/// Go `TestIssue66077ExchangePartitionDifferentDefinitionsWithShardRowIDBits`
-/// (`pkg/ddl/tests/partition/db_partition_test.go:3980`): a SHARD_ROW_ID_BITS=4
-/// nonclustered table exchanges with a partitioned twin declared with
-/// `/*T! SHARD_ROW_ID_BITS=4 */` despite different shard metadata.
-// go-parity-gap: EXCHANGE PARTITION and the shard_row_id_bits session
-// variable are unsupported in this tier.
-#[test]
-#[ignore]
-fn issue_66077_exchange_partition_with_shard_row_id_bits() {
 }

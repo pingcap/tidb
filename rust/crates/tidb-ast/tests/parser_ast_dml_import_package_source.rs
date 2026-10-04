@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/parser/ast/dml_test.go` (origin/master) covering import
-//! statements: `TestImportActions`, `TestImportIntoRestore`,
-//! `TestFulltextSearchModifier`, `TestImportIntoSecureText`, and
-//! `TestImportIntoFromSelectInvalidStmt`.
-//!
-//! Go parses each SQL case and restores the extracted node under
-//! `format.DefaultRestoreFlags`. This crate owns that AST state, so cases
-//! hand-build it; the SecureText rows assert against this crate's
-//! deterministic redaction order (Go iterates a map there and therefore
-//! needed a regex — see each comment).
+//! Behavioral tests retained from the Go source inventory.
+//! Removed empty entries and their original contracts are indexed in
+//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     AdminStmt, Assignment, BinaryOp, ColumnOrUserVar, DmlStmt, Expr, ImportIntoStmt,
@@ -548,13 +541,3 @@ fn import_into_secure_text() {
     );
     let _ = string("");
 }
-
-// go-parity-gap: TestImportIntoFromSelectInvalidStmt pins PARSER grammar
-// validation ("Cannot use user variable(1) in IMPORT INTO FROM SELECT
-// statement", "... user variable(b) ...", "Cannot use SET clause in IMPORT
-// INTO FROM SELECT statement."). Those checks run inside pkg/parser parsing
-// actions; this AST crate cannot parse, so they live behind tidb-parser's
-// grammar instead.
-#[test]
-#[ignore = "go-parity-gap: FROM-SELECT import validation runs in tidb-parser grammar actions"]
-fn import_into_from_select_invalid_stmt() {}
