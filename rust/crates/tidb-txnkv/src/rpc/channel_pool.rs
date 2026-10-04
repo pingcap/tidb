@@ -15,8 +15,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tidb_pd_client::{secure_endpoint, ClusterSecurity};
-use tonic::transport::Channel;
+use tidb_pd_client::{ClusterSecurity, TlsConfigError};
+use tonic::transport::{Channel, Endpoint};
 
 use super::execution::ConnectionTasks;
 use crate::client::PhysicalChannelIdentity;
@@ -32,6 +32,17 @@ const GRPC_INITIAL_WINDOW_SIZE: u32 = 1 << 27;
 /// connection-level flow-control window `grpc.WithInitialConnWindowSize` sets
 /// alongside the per-stream one.
 const GRPC_INITIAL_CONN_WINDOW_SIZE: u32 = 1 << 27;
+
+/// Constructs store endpoints with the existing shared TLS and HTTP/2 windows.
+/// MPP streams and ordinary KV channels consume the same defaults.
+pub fn store_endpoint(
+    address: &str,
+    security: &ClusterSecurity,
+) -> Result<Endpoint, TlsConfigError> {
+    Ok(tidb_pd_client::secure_endpoint(address, security)?
+        .initial_stream_window_size(GRPC_INITIAL_WINDOW_SIZE)
+        .initial_connection_window_size(GRPC_INITIAL_CONN_WINDOW_SIZE))
+}
 
 #[derive(Clone)]
 pub(super) struct VersionedChannel {
@@ -81,13 +92,12 @@ impl ChannelPool {
             return Ok(channel.clone());
         }
 
-        let endpoint = secure_endpoint(address, &self.security)
-            .map_err(|error| DirectUnaryClientError::InvalidAddress {
+        let endpoint = store_endpoint(address, &self.security).map_err(|error| {
+            DirectUnaryClientError::InvalidAddress {
                 address: address.to_owned(),
                 message: error.to_string(),
-            })?
-            .initial_stream_window_size(GRPC_INITIAL_WINDOW_SIZE)
-            .initial_connection_window_size(GRPC_INITIAL_CONN_WINDOW_SIZE);
+            }
+        })?;
         // Every connection in the shared transport uses this allocator. A
         // failed-attempt identity must never name a healthy sibling connection.
         let version = {

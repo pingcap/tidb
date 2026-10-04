@@ -144,6 +144,12 @@ impl ClusterSecurity {
         if !self.is_tls_enabled() {
             return Ok(None);
         }
+        // The process may link both providers through different transports.
+        // Preserve an explicitly selected provider; otherwise use the workspace's
+        // ring policy instead of rustls's ambiguous feature-based selection.
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         let ca = read_pem(&self.ca_path)?;
         let mut config = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
         if !self.cert_path.is_empty() && !self.key_path.is_empty() {

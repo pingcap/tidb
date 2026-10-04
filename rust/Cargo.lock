@@ -3834,6 +3834,7 @@ dependencies = [
  "etcd-client",
  "prometheus 0.13.4",
  "prost 0.14.4",
+ "rustls",
  "tidb-proto",
  "tikv-client",
  "tokio",

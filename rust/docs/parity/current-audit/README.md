@@ -1,5 +1,9 @@
 # Structural parity audit: current evidence
 
+The [MPP transport batch](mpp-transport-batch-repair.md) advances **M04/N03 together** through cluster TLS, shared store limits and cancellation/deadline setup. Five independent baseline failures and 32 distinct passing Rust cases validate the connected repairs. Both findings remain partial for their named wider owners. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)**; other 55 IDs retain prior evidence. No push.
+
+Earlier checkpoints below are historical.
+
 The [structural batch map](remaining-batches.md) assigns all **57 unresolved findings to ten shared-owner batches**, with explicit dependencies and completion boundaries. Whole Go packages retain atomic acceptance. Regression filters/compatible targets are grouped; final required gates run at the completed batch boundary.
 
 The [table-policy batch](table-policy-batch-repair.md) repairs **six Go contracts across T01/K03**, with **57 distinct passing Rust cases**, lint, all-target checks and locked server build. Both findings stay partial. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial).** Other 55 IDs retain prior evidence. No push.

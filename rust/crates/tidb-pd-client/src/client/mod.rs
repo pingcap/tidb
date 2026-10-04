@@ -147,6 +147,7 @@ struct RpcControl<'a> {
 
 struct PdClientShared {
     bootstrap_endpoint: String,
+    security: Arc<ClusterSecurity>,
     timeout: Duration,
     cluster_id: u64,
     state: Arc<RwLock<PdSharedState>>,
@@ -257,6 +258,7 @@ impl PdClient {
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker_seeds = seeds.clone();
+        let worker_security = Arc::clone(&security);
         let worker = std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -268,7 +270,7 @@ impl PdClient {
                     return;
                 }
             };
-            let mut clients = PdChannelCache::new(security);
+            let mut clients = PdChannelCache::new(worker_security);
             let members = match bootstrap_members(
                 &runtime,
                 &mut clients,
@@ -306,6 +308,7 @@ impl PdClient {
                 Ok(Self {
                     shared: Arc::new(PdClientShared {
                         bootstrap_endpoint,
+                        security,
                         timeout,
                         cluster_id,
                         state,
@@ -362,6 +365,12 @@ impl PdClient {
             .expect("PD state lock poisoned")
             .active_endpoint
             .clone()
+    }
+
+    /// The immutable cluster security owner also used by store RPC transports.
+    #[must_use]
+    pub fn security(&self) -> Arc<ClusterSecurity> {
+        Arc::clone(&self.shared.security)
     }
 
     /// Returns the configured PD deadline.
@@ -796,8 +805,8 @@ mod worker_lifecycle_tests {
     use std::sync::mpsc;
 
     use super::{
-        watch, Arc, Duration, JoinHandle, Mutex, PdClient, PdClientError, PdClientShared,
-        PdClientShutdownError, PdMemberSet, PdSharedState, RwLock, WorkerCommand,
+        watch, Arc, ClusterSecurity, Duration, JoinHandle, Mutex, PdClient, PdClientError,
+        PdClientShared, PdClientShutdownError, PdMemberSet, PdSharedState, RwLock, WorkerCommand,
     };
 
     fn test_client(
@@ -814,6 +823,7 @@ mod worker_lifecycle_tests {
         PdClient {
             shared: Arc::new(PdClientShared {
                 bootstrap_endpoint: "http://127.0.0.1:2379".to_owned(),
+                security: Arc::new(ClusterSecurity::plaintext()),
                 timeout: Duration::from_secs(30),
                 cluster_id: 42,
                 state: Arc::new(RwLock::new(PdSharedState {

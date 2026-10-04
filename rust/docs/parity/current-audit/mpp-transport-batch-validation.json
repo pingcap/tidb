@@ -1,0 +1,152 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "fe1e7ee0c8e8a516a3cf9771142ea7e78da99da7",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Existing-owner MPP transport maintenance across M04/N03; no whole-package transcreation acceptance.",
+  "finding_statuses": {
+    "M04": "partial",
+    "N03": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17
+  },
+  "distinct_passing_rust_cases": 32,
+  "passing_case_names": [
+    "client::worker_lifecycle_tests::close_cancels_in_flight_request_before_join",
+    "client::worker_lifecycle_tests::close_cancels_shared_request_handles",
+    "client::worker_lifecycle_tests::shutdown_recovers_poison_and_is_idempotent",
+    "client::worker_lifecycle_tests::shutdown_reports_closed_command_channel",
+    "client::worker_lifecycle_tests::shutdown_reports_missing_acknowledgement",
+    "client::worker_lifecycle_tests::shutdown_reports_worker_panic_after_acknowledgement",
+    "security::tests::ca_cert_key_builds_mutual_tls_identity",
+    "security::tests::ca_only_builds_server_verifying_tls",
+    "security::tests::missing_ca_file_is_a_read_error",
+    "security::tests::plaintext_when_no_ca_is_configured",
+    "tiflash_mpp_scan::dispatch_context_tests::classic_mpp_dispatch_uses_the_transactional_v1_codec",
+    "tiflash_mpp_scan::dispatch_context_tests::mpp_dispatch_task_timeout_matches_go",
+    "tiflash_mpp_scan::dispatch_context_tests::mpp_metadata_carries_the_domain_server_id",
+    "tiflash_mpp_scan::dispatch_context_tests::mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks",
+    "tiflash_mpp_scan::dispatch_context_tests::mpp_query_identity_is_unique_even_at_the_same_snapshot",
+    "tiflash_mpp_scan::dispatch_context_tests::mpp_query_timestamp_uses_unix_nanoseconds",
+    "tiflash_mpp_scan::mpp_read_batch_tests::canonical_kill_interrupts_a_stalled_receive",
+    "tiflash_mpp_scan::mpp_read_batch_tests::early_close_and_drop_cancel_the_gather_once",
+    "tiflash_mpp_scan::mpp_read_batch_tests::exact_disjoint_ranges_do_not_scan_the_gap",
+    "tiflash_mpp_scan::mpp_read_batch_tests::exact_ranges_clip_each_region_and_preserve_infinite_end",
+    "tiflash_mpp_scan::mpp_read_batch_tests::later_transport_error_preserves_first_packet_and_cancels",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_kill_interrupts_establishment_and_cancels_registered_gather",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_range_lookup_uses_shared_pagination_and_retained_cache",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_receive_deadline_cancels_a_stalled_packet_without_a_stream_lifetime_limit",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_setup_deadline_drops_the_stalled_operation",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_transport_accepts_packets_larger_than_tonic_default",
+    "tiflash_mpp_scan::mpp_read_batch_tests::mpp_transport_uses_cluster_tls_for_a_real_rpc",
+    "tiflash_mpp_scan::mpp_read_batch_tests::natural_completion_releases_memory_without_cancel",
+    "tiflash_mpp_scan::mpp_read_batch_tests::quota_exceeded_is_a_typed_sql_failure_and_cleans_up",
+    "tiflash_mpp_scan::mpp_read_batch_tests::remote_projection_uses_the_same_statement_memory_and_killer",
+    "tiflash_mpp_scan::mpp_read_batch_tests::stream_open_returns_before_tail_and_preserves_first_packet",
+    "tiflash_mpp_scan::mpp_read_batch_tests::unrelated_region_is_not_dispatched"
+  ],
+  "ignored_focused_cases": 0,
+  "baseline": {
+    "command": "cargo test --locked -p tidb-exec --lib -- mpp_transport_ mpp_setup_deadline mpp_kill_interrupts mpp_dispatch_task_timeout --test-threads=1",
+    "cwd": "/workspace/tidb/rust",
+    "log": "/workspace/.cloud-setup/mpp-transport-batch/baseline-confirmed.log",
+    "sha256": "02e94f653b2a56eea71428226bad5e4af3a180902054a71c2f2631e11893b671",
+    "exit_code": 101,
+    "failed_cases": 5,
+    "method": "Combined old-behavior replay: plaintext connect, inert setup await, task Timeout=10 and default tonic message limit. Corrected TLS fixture/provider prerequisites prevent the earlier fixture panic. Production fixes are restored afterward. Initial compilation and provider-fixture panics are excluded."
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-exec -p tidb-pd-client --lib -- tiflash_mpp_scan:: security::tests worker_lifecycle_tests --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/mpp-transport-batch/grouped-final.log",
+      "sha256": "f5c6647b3bbf3ac2b644f7bb1cada4d8f6fab9e88b3bd7d80ef85d469ffe11d1"
+    },
+    {
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-txnkv -p tidb-exec -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/mpp-transport-batch/all-targets.log",
+      "sha256": "c29ebcb3f6754ee59c289714f6a4844ba284f6e0f2d626a29c8b4c76711675de"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/mpp-transport-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/mpp-transport-batch/locked-build.log",
+      "sha256": "ecd1c39338044053cc3ef1c8e9bebe4279825e520bc96abfb65eacbe7201717f"
+    }
+  ],
+  "validated_source_sha256": {
+    "rust/Cargo.lock": "18f4b6986ed733b7a90068e7ab195c644a6036ebec5cc809eec1e6d1848633a1",
+    "rust/crates/tidb-exec/src/tiflash_mpp_scan.rs": "b3690cbb1da3eaf2f8682b326e659d5a582ae74e18cfbb4f3042410d01246ea3",
+    "rust/crates/tidb-pd-client/Cargo.toml": "26c78cc94792ebe36a270f20a96a7f48dbcb6f1a2783bdfe668195fad509308d",
+    "rust/crates/tidb-pd-client/src/client/mod.rs": "3546f7724efa2c835ac58354bbb58168336a9ed8177ef6672caf7fc98a5321ca",
+    "rust/crates/tidb-pd-client/src/security.rs": "f94afa24acbbbdaffda8815a21ef2c0e76670ed8838d25cc5b7fc7a39e6ace6f",
+    "rust/crates/tidb-txnkv/src/rpc/batch/transport.rs": "4785cb51c68c8ac890ad9df22a275641d6f5d8fa57e993bf2dc352351aadd235",
+    "rust/crates/tidb-txnkv/src/rpc/channel_pool.rs": "0cb3d729525163ed0f7f21d69ea61ed0603a667a6132f3ad45211b93ad2cf4bf",
+    "rust/crates/tidb-txnkv/src/rpc/mod.rs": "c61bb2142cce6f42345ee2745d558d6b07e23e039ce78e26bb327695ccea32ae",
+    "rust/crates/tidb-txnkv/src/rpc/unary.rs": "8ce133fafd686b462039caffd2c901b813806cb97197455d06f02225676256e7"
+  },
+  "go_source_sha256": {
+    "/workspace/.cloud-setup/go-master/go.mod": "08dbd6949e821eb1e0ffadcb3d96fa615a19f627b4a1363ea3bf451386c18f78",
+    "/workspace/.cloud-setup/go-master/pkg/store/copr/mpp.go": "8f60476304bcaad0315c30977abf75ce0878a0f1621ef519466154279689eb5c",
+    "/workspace/.cloud-setup/go-master/pkg/store/copr/batch_coprocessor.go": "d39b7cef54938935e6be3a90cf494ffa317b111f1689219aeefe1d61161a4790",
+    "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/client-go/v2@v2.0.8-0.20260928031501-8edb23f6c7ee/internal/client/client.go": "2d1c4d3b15a3039bd59b18a150dcc9ffbfd40bb13859545a6dadb60cb4c3e31a",
+    "/workspace/.cloud-setup/gopath/pkg/mod/github.com/tikv/client-go/v2@v2.0.8-0.20260928031501-8edb23f6c7ee/internal/client/conn_pool.go": "51f792832e9e3486c19e3095d7ff306ff4e10d2ad364f9ec9b772ff92440f8bd"
+  },
+  "additional_controls": [
+    "Per-receive expiration cancels a stalled packet exactly once; not a total stream lifetime limit.",
+    "Setup KILL preserves SQL error 1317 at the synchronous scanner boundary.",
+    "Deadline expiration retires the pending operation owner.",
+    "Existing stream backpressure, memory quota, completion and region invalidation cases remain passing."
+  ],
+  "removed": [
+    "MPP unconditional plaintext/eager connector",
+    "Independent unary and BatchCommands receive-size constants (all callers use shared policy)",
+    "MPP hard-coded ten-second task lifetime"
+  ],
+  "not_verified": [
+    "Complete Go copr/client/grpcutil package acceptance",
+    "Full PD service-mode/TSO/discovery and routing migration",
+    "Shared process MPP connection pool/recovery/backoff/dispatch retry choreography",
+    "Live multi-node TiKV/TiFlash, full cluster mTLS/SQL TLS policy and workload performance",
+    "Fresh behavioral reproduction of the other 55 register entries",
+    "Fresh-task restoration/publication and GitHub write permission"
+  ],
+  "historical_push_permission": {
+    "reprobed": false,
+    "reason": "User prohibits pushes including dry runs",
+    "diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut. HTTP 403.",
+    "classification": "Cannot distinguish GitHub account role from app installation scope; user arranges access; preserve exact origin"
+  },
+  "resource_recovery": {
+    "initial_locked_build": "failed: disk full and linker SIGBUS; not a source acceptance result",
+    "failed_log": "/workspace/.cloud-setup/mpp-transport-batch/locked-build-disk-failure.log",
+    "cleanup_log": "/workspace/.cloud-setup/mpp-transport-batch/server-cleanup-0.json",
+    "removed_old_unlinked_server_elf_bytes": 1314483672,
+    "go_build_cache": "104 MiB regenerated cache cleared after lint; no Go/build process running",
+    "preserved": "All source, tests, lockfiles, dependency/library fingerprints, logs, current linked reusable binaries and recovery bundle",
+    "additional_post_build_cleanup_log": "/workspace/.cloud-setup/mpp-transport-batch/server-cleanup-1.json",
+    "additional_unlinked_elf_bytes": 495966512,
+    "total_removed_elf_bytes": 1810450184
+  },
+  "actual_hook": "One ordinary local source-and-receipt commit must pass hooks/pre-commit and its locked server build. Final hook/commit/bundle/draft identities are recorded externally in Cloud mpp-transport-batch/final-handoff.json. No push or dry run."
+}

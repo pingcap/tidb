@@ -23,6 +23,7 @@ pub use async_completion::{
     CompletionRunOutcome, CompletionSpawner, PendingRequest,
 };
 pub use batch::BatchCommandTag;
+pub use channel_pool::store_endpoint;
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, TransportShutdownError,
@@ -35,6 +36,10 @@ pub use transaction::{
 };
 pub use transport_runtime::TransportShutdownCancellation;
 pub use unary::{UnaryCallContext, UnaryCancellation};
+
+/// Go client-go's MaxRecvMsgSize (math.MaxInt64-1), shared by unary,
+/// BatchCommands and MPP responses. Packet memory remains caller-accounted.
+pub const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 
 impl<T, E> batch::BatchEntryCompletion for CompletionRequest<T, E>
 where

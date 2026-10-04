@@ -34,7 +34,7 @@ use super::{
     OpaqueBatchCommand, PendingBatchCommand,
 };
 
-const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
+use crate::rpc::MAX_RECV_MESSAGE_SIZE;
 // Pinned client-go internal/client/client.go uses dialTimeout = 5s for
 // waitConnReady before BatchCommands stream creation.
 const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);

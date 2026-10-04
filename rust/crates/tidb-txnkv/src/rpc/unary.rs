@@ -42,7 +42,7 @@ use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcC
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
 // default is only 4 MiB, which is too small for valid TiKV responses.
-const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
+use super::MAX_RECV_MESSAGE_SIZE;
 
 /// Cloneable caller-owned cancellation state for one or more unary calls.
 ///

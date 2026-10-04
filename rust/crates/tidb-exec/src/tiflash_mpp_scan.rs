@@ -40,7 +40,7 @@ use tidb_executor::remote_scan::{
     PushdownReadEngine, PushdownRowStream, PushdownScanRequest, PushdownScannerError,
 };
 use tidb_executor::storage::StorageError;
-use tidb_pd_client::{PdClient, PdStoreState};
+use tidb_pd_client::{ClusterSecurity, PdClient, PdStoreState};
 use tidb_proto::mpp::{
     DispatchTaskRequest, EstablishMppConnectionRequest, MppDataPacket, TaskMeta,
 };
@@ -290,7 +290,6 @@ impl TiFlashMppScanSource {
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(meta.clone()),
             encoded_plan,
-            timeout: 10,
             regions: region_infos,
             schema_ver: (self.schema_version)(),
             ..Default::default()
@@ -301,14 +300,18 @@ impl TiFlashMppScanSource {
         let mut response = self
             .runtime
             .block_on(async {
-                let endpoint = format!("http://{address}");
-                let mut client = TikvClient::connect(endpoint)
-                    .await
-                    .map_err(|error| format!("tiflash mpp: dial {address}: {error}"))?;
-                let response = client
-                    .dispatch_mpp_task(dispatch_request)
-                    .await
-                    .map_err(|error| format!("tiflash mpp: dispatch: {error}"))?;
+                let security = self.pd.lock().expect("MPP PD lock poisoned").security();
+                let memory = &request.statement.memory;
+                let mut client = connect_mpp_client(&address, &security, memory).await?;
+                let mut dispatch_request = tonic::Request::new(dispatch_request);
+                dispatch_request.set_timeout(tikv_client::tikv::READ_TIMEOUT_MEDIUM);
+                let response = mpp_setup(
+                    memory,
+                    Some(tikv_client::tikv::READ_TIMEOUT_MEDIUM),
+                    "dispatch",
+                    client.dispatch_mpp_task(dispatch_request),
+                )
+                .await?;
                 let dispatch_response = response.into_inner();
                 if let Some(error) = &dispatch_response.error {
                     return Err(format!(
@@ -334,7 +337,7 @@ impl TiFlashMppScanSource {
                 )
                 .await
             })
-            .map_err(refuse)?;
+            .map_err(|message| mpp_open_error(&request.statement.memory, message))?;
         response.region_lease = Some(region_lease);
 
         let field_types: Vec<FieldType> = request
@@ -455,6 +458,53 @@ fn invalidate_mpp_retry_regions<L>(
     }
 }
 
+// Setup uses the same statement owner as packet consumption.
+async fn mpp_setup<T, E: std::fmt::Display>(
+    memory: &tidb_executor::StatementMemory,
+    timeout: Option<std::time::Duration>,
+    stage: &str,
+    future: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, String> {
+    mpp_memory_error(memory).map_err(|error| error.to_string())?;
+    tokio::pin!(future);
+    let deadline = async {
+        match timeout {
+            Some(timeout) => tokio::time::sleep(timeout).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            // An already-killed statement must not publish a successful setup.
+            biased;
+            _ = &mut deadline => return Err(format!("tiflash mpp: {stage}: timed out")),
+            result = &mut future => {
+                mpp_memory_error(memory).map_err(|error| error.to_string())?;
+                return result.map_err(|error| format!("tiflash mpp: {stage}: {error}"));
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                mpp_memory_error(memory).map_err(|error| error.to_string())?;
+            }
+        }
+    }
+}
+
+async fn connect_mpp_client(
+    address: &str,
+    security: &ClusterSecurity,
+    memory: &tidb_executor::StatementMemory,
+) -> Result<TikvClient<tonic::transport::Channel>, String> {
+    mpp_memory_error(memory).map_err(|error| error.to_string())?;
+    let endpoint = tidb_txnkv::rpc::store_endpoint(address, security)
+        .map_err(|error| format!("tiflash mpp: dial {address}: {error}"))?
+        .connect_timeout(std::time::Duration::from_secs(5));
+    // Go's store client dials without WithBlock. RPC readiness is bounded by
+    // the caller's request deadline, not a separate eager MPP handshake.
+    Ok(TikvClient::new(endpoint.connect_lazy())
+        .max_decoding_message_size(tidb_txnkv::rpc::MAX_RECV_MESSAGE_SIZE))
+}
+
 async fn establish_mpp_response(
     client: &mut TikvClient<tonic::transport::Channel>,
     meta: TaskMeta,
@@ -462,12 +512,16 @@ async fn establish_mpp_response(
     runtime: std::sync::Arc<tokio::runtime::Runtime>,
     memory: tidb_executor::StatementMemory,
 ) -> Result<MppQueryResponse, String> {
-    let connection = client
-        .establish_mpp_connection(EstablishMppConnectionRequest {
+    let connection = mpp_setup(
+        &memory,
+        None,
+        "connect stream",
+        client.establish_mpp_connection(EstablishMppConnectionRequest {
             sender_meta: Some(meta.clone()),
             receiver_meta: Some(receiver_meta),
-        })
-        .await;
+        }),
+    )
+    .await;
     match connection {
         Ok(connection) => Ok(MppQueryResponse {
             stream: Some(connection.into_inner()),
@@ -476,6 +530,7 @@ async fn establish_mpp_response(
             memory,
             cancel_meta: cancel_task_meta(&meta),
             held_bytes: 0,
+            receive_timeout: std::time::Duration::from_secs(3600),
             region_lease: None,
             completed: false,
             closed: false,
@@ -506,10 +561,11 @@ fn cancel_task_meta(meta: &TaskMeta) -> TaskMeta {
 async fn cancel_mpp_task(client: &mut TikvClient<tonic::transport::Channel>, meta: TaskMeta) {
     // The source makes one best-effort request, without retry, under the
     // maintained client's ReadTimeoutShort. Never hide the original failure.
-    let request = tidb_proto::mpp::CancelTaskRequest {
+    let mut request = tonic::Request::new(tidb_proto::mpp::CancelTaskRequest {
         meta: Some(meta),
         ..Default::default()
-    };
+    });
+    request.set_timeout(tikv_client::tikv::READ_TIMEOUT_SHORT);
     match tokio::time::timeout(
         tikv_client::tikv::READ_TIMEOUT_SHORT,
         client.cancel_mpp_task(request),
@@ -520,6 +576,19 @@ async fn cancel_mpp_task(client: &mut TikvClient<tonic::transport::Channel>, met
         Ok(Err(error)) => eprintln!("tiflash mpp: cancel failed: {error}"),
         Err(error) => eprintln!("tiflash mpp: cancel timed out: {error}"),
     }
+}
+
+fn mpp_open_error(
+    memory: &tidb_executor::StatementMemory,
+    message: String,
+) -> PushdownScannerError {
+    // The canonical killer stays signalled until statement retirement. Keep
+    // its SQL identity across the synchronous scanner boundary after cleanup.
+    let error = match memory.check() {
+        Err(error) => StorageError::Sql(tidb_executor::DriverError::Exec(error).to_mysql_error()),
+        Ok(()) => StorageError::Backend(message),
+    };
+    PushdownScannerError::Backend(error)
 }
 
 fn mpp_memory_error(memory: &tidb_executor::StatementMemory) -> Result<(), QueryResponseError> {
@@ -542,6 +611,7 @@ struct MppQueryResponse {
     memory: tidb_executor::StatementMemory,
     cancel_meta: TaskMeta,
     held_bytes: i64,
+    receive_timeout: std::time::Duration,
     region_lease: Option<BackgroundRegionCache<PdRegionLoader>>,
     completed: bool,
     closed: bool,
@@ -561,11 +631,14 @@ impl MppQueryResponse {
             return Ok(None);
         };
         let packet = self.runtime.block_on(async {
-            let message = stream.message();
+            // Go's stream lease bounds each Recv; it is not a total query timeout.
+            let message = tokio::time::timeout(self.receive_timeout, stream.message());
             tokio::pin!(message);
             loop {
                 tokio::select! {
-                    packet = &mut message => return packet.map_err(|error| QueryResponseError::Source(format!("tiflash mpp: stream: {error}"))),
+                    packet = &mut message => return packet
+                        .map_err(|_| QueryResponseError::Source("tiflash mpp: stream receive timed out".to_owned()))?
+                        .map_err(|error| QueryResponseError::Source(format!("tiflash mpp: stream: {error}"))),
                     _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => { mpp_memory_error(&self.memory)?; }
                 }
             }
@@ -759,6 +832,8 @@ fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequ
     // setAPICtx: the native keyspace codec owns both the wire API version
     // and the null-keyspace sentinel, rather than duplicating their numbers.
     let keyspace = tikv_client::request::Keyspace::Disable;
+    // Go copr.MPPClient.DispatchMPPTask task lifetime, independent of the RPC deadline.
+    request.timeout = 60;
     request.set_api_version(keyspace.api_version());
     request.set_keyspace_id(keyspace.context_keyspace_id());
     request
@@ -768,6 +843,13 @@ fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequ
 mod dispatch_context_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mpp_dispatch_task_timeout_matches_go() {
+        let wire = encode_dispatch_request(DispatchTaskRequest::default()).encode_to_vec();
+        let decoded = DispatchTaskRequest::decode(wire.as_slice()).unwrap();
+        assert_eq!(decoded.timeout, 60);
+    }
 
     #[test]
     fn mpp_queries_share_statement_identity_and_allocate_gathers_and_tasks() {
@@ -911,6 +993,8 @@ mod mpp_read_batch_tests {
     struct Service {
         cancels: Arc<AtomicUsize>,
         fail_tail: bool,
+        stall_setup: bool,
+        first_packet: Vec<u8>,
     }
     #[tonic::async_trait]
     impl Tikv for Service {
@@ -919,12 +1003,16 @@ mod mpp_read_batch_tests {
             _: tonic::Request<EstablishMppConnectionRequest>,
         ) -> Result<tonic::Response<tonic::codegen::BoxStream<MppDataPacket>>, tonic::Status>
         {
+            if self.stall_setup {
+                std::future::pending::<()>().await;
+            }
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             let fail_tail = self.fail_tail;
+            let first_packet = self.first_packet.clone();
             tokio::spawn(async move {
                 let _ = tx
                     .send(Ok(MppDataPacket {
-                        data: b"first".to_vec(),
+                        data: first_packet,
                         ..Default::default()
                     }))
                     .await;
@@ -959,6 +1047,32 @@ mod mpp_read_batch_tests {
             Self::with_tail(true)
         }
         fn with_tail(fail_tail: bool) -> Self {
+            Self::with_transport(fail_tail, false, false)
+        }
+        fn with_transport(fail_tail: bool, tls: bool, stall_setup: bool) -> Self {
+            Self::with_packet(fail_tail, tls, stall_setup, b"first".to_vec())
+        }
+        fn with_packet(
+            fail_tail: bool,
+            tls: bool,
+            stall_setup: bool,
+            first_packet: Vec<u8>,
+        ) -> Self {
+            if tls {
+                // Configure the fixture through the same process TLS owner.
+                ClusterSecurity::new(
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../tidb-pd-client/testdata/tls/ca.crt"
+                    )
+                    .to_owned(),
+                    String::new(),
+                    String::new(),
+                    Vec::new(),
+                )
+                .client_tls_config()
+                .unwrap();
+            }
             let runtime = Arc::new(
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
@@ -973,11 +1087,24 @@ mod mpp_read_batch_tests {
             let service = Service {
                 cancels: Arc::clone(&cancels),
                 fail_tail,
+                stall_setup,
+                first_packet,
             };
             let (shutdown, rx) = tokio::sync::oneshot::channel();
             let task = runtime.spawn(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                tonic::transport::Server::builder()
+                let mut server = tonic::transport::Server::builder();
+                if tls {
+                    server = server
+                        .tls_config(tonic::transport::ServerTlsConfig::new().identity(
+                            tonic::transport::Identity::from_pem(
+                                include_bytes!("../../tidb-pd-client/testdata/tls/server.crt"),
+                                include_bytes!("../../tidb-pd-client/testdata/tls/server.key"),
+                            ),
+                        ))
+                        .unwrap();
+                }
+                server
                     .add_service(TikvServer::new(service))
                     .serve_with_incoming_shutdown(
                         tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -1004,9 +1131,10 @@ mod mpp_read_batch_tests {
             memory: tidb_executor::StatementMemory,
         ) -> Result<MppQueryResponse, String> {
             self.runtime.block_on(async {
-                let mut client = TikvClient::connect(format!("http://{}", self.address))
-                    .await
-                    .unwrap();
+                let mut client =
+                    connect_mpp_client(&self.address, &ClusterSecurity::plaintext(), &memory)
+                        .await
+                        .unwrap();
                 let response = tokio::time::timeout(
                     Duration::from_millis(250),
                     establish_mpp_response(
@@ -1028,6 +1156,108 @@ mod mpp_read_batch_tests {
             self.runtime.block_on(self.task.take().unwrap()).unwrap();
         }
     }
+    #[test]
+    fn mpp_receive_deadline_cancels_a_stalled_packet_without_a_stream_lifetime_limit() {
+        let fixture = Fixture::new();
+        let mut response = fixture.open().unwrap();
+        assert_eq!(response.next().unwrap().unwrap().data.as_ref(), b"first");
+        response.receive_timeout = Duration::from_millis(20);
+        let started = std::time::Instant::now();
+        assert!(
+            matches!(response.next(), Err(QueryResponseError::Source(message)) if message.contains("receive timed out"))
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mpp_transport_accepts_packets_larger_than_tonic_default() {
+        let packet = vec![b'x'; 5 * 1024 * 1024];
+        let fixture = Fixture::with_packet(false, false, false, packet.clone());
+        let mut response = fixture.open().unwrap();
+        let received = response.next().unwrap().unwrap();
+        assert_eq!(received.data.as_ref(), packet.as_slice());
+        response.close();
+    }
+
+    #[test]
+    fn mpp_transport_uses_cluster_tls_for_a_real_rpc() {
+        let fixture = Fixture::with_transport(false, true, false);
+        let security = ClusterSecurity::new(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../tidb-pd-client/testdata/tls/ca.crt"
+            )
+            .to_owned(),
+            String::new(),
+            String::new(),
+            Vec::new(),
+        );
+        fixture.runtime.block_on(async {
+            let mut client = connect_mpp_client(
+                &fixture.address,
+                &security,
+                &tidb_executor::StatementMemory::default(),
+            )
+            .await
+            .unwrap();
+            client
+                .cancel_mpp_task(tidb_proto::mpp::CancelTaskRequest::default())
+                .await
+                .unwrap();
+        });
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mpp_setup_deadline_drops_the_stalled_operation() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (owner, retired) = tokio::sync::oneshot::channel::<()>();
+            let operation = async move {
+                let _owner = owner;
+                std::future::pending::<Result<(), tonic::Status>>().await
+            };
+            let result = tokio::time::timeout(
+                Duration::from_millis(250),
+                mpp_setup(
+                    &tidb_executor::StatementMemory::default(),
+                    Some(Duration::from_millis(20)),
+                    "dispatch",
+                    operation,
+                ),
+            )
+            .await;
+            let error = result
+                .expect("the RPC setup deadline must run")
+                .unwrap_err();
+            assert!(error.contains("timed out"), "{error}");
+            assert!(
+                retired.await.is_err(),
+                "the expired operation retained its owner"
+            );
+        });
+    }
+
+    #[test]
+    fn mpp_kill_interrupts_establishment_and_cancels_registered_gather() {
+        let fixture = Fixture::with_transport(false, false, true);
+        let memory = tidb_executor::StatementMemory::default();
+        let killer = Arc::clone(memory.sql_killer());
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        });
+        let result = fixture.open_with_memory(memory.clone());
+        thread.join().unwrap();
+        let error = result.err().expect("KILL must abort setup");
+        assert!(!error.contains("opening drained"), "{error}");
+        assert!(matches!(mpp_open_error(&memory, error),
+            PushdownScannerError::Backend(StorageError::Sql(error)) if error.code == 1317
+        ));
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn stream_open_returns_before_tail_and_preserves_first_packet() {
         let fixture = Fixture::new();

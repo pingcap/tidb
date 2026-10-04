@@ -1,5 +1,7 @@
 # Audit and remove Go/Rust structural mismatches
 
+Current maintenance checkpoint, 2026-10-04: [MPP transport ExecPlan](mpp-transport-batch-execplan.md) advances M04/N03 together through shared TLS/store limits and cancellation/deadline ownership. Five corrected baseline failures, 32 distinct passing Rust cases, affected all-target checking, lint and locked server build; both parent findings remain partial. Whole PD discovery/TSO/grpcutil/routing acceptance and shared MPP pooling/recovery remain open. The ten structural batches remain the scheduling authority. No push. Earlier checkpoints below retain historical scope.
+
 Current execution correction, 2026-10-04: [remaining-batches.md](parity/current-audit/remaining-batches.md) reconciles all 57 unresolved IDs into ten structural owner batches and defines shared package inventories, cross-batch gates and combined regression cadence. The current [table-policy ExecPlan](table-policy-batch-execplan.md) records six repaired T01/K03 contracts, 57 distinct passing Rust cases and required final gates; both parent findings stay partial. No push. Earlier checkpoints below retain historical scope/counts.
 
 
