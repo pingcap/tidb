@@ -166,6 +166,14 @@ impl RowDecodeContext {
         self.type_flags
     }
 
+    /// Bind the table/task mode to expression conversion as well as key decoding.
+    pub(crate) fn with_new_collation_enabled(mut self, enabled: bool) -> Self {
+        if self.expression.new_collation_enabled() != enabled {
+            self.expression = self.expression.with_new_collation_enabled(enabled);
+        }
+        self
+    }
+
     pub(crate) fn expression(&self) -> &crate::StmtContext {
         &self.expression
     }

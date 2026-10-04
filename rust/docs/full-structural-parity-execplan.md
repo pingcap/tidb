@@ -1,5 +1,8 @@
 # Audit and remove Go/Rust structural mismatches
 
+Current execution correction, 2026-10-04: [remaining-batches.md](parity/current-audit/remaining-batches.md) reconciles all 57 unresolved IDs into ten structural owner batches and defines shared package inventories, cross-batch gates and combined regression cadence. The current [table-policy ExecPlan](table-policy-batch-execplan.md) records six repaired T01/K03 contracts, 57 distinct passing Rust cases and required final gates; both parent findings stay partial. No push. Earlier checkpoints below retain historical scope/counts.
+
+
 ## Statement attribution continuation (2026-10-04)
 
 The [plan](statement-attribution-batch-execplan.md) and [receipt](parity/current-audit/statement-attribution-batch-repair.md) maintain O11/O18 together: physical compile failures do not count as executions; actual parse/physical compilation and deduplicated existing visits reach summaries through shared statement phases. Fifty-one Rust cases and twelve real MySQL/unistore checks pass, with lint/check/locked build. O11/O18 remain partial for complete profiling, visits/phases and transport. Counts remain 29 repaired,57 unresolved(40 open,17 partial). No push.

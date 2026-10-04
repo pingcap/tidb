@@ -972,3 +972,51 @@ fn generated_read_policy_general_decoder_does_not_apply_virtual_fill_rules() {
         );
     }
 }
+
+#[test]
+fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
+    let zone = SessionTimeZone::utc();
+    let statement = StmtContext::for_query();
+    assert!(statement.new_collation_enabled());
+    for (mode, expected) in [(false, 2), (true, 1)] {
+        for code in [FieldTypeCode::Enum, FieldTypeCode::Set] {
+            let source = column(1, "source", FieldType::new(FieldTypeCode::Varchar));
+            let mut field_type = FieldType::new(code).with_collation_name("utf8mb4_general_ci");
+            field_type.set_elems(vec!["A".into(), "a".into(), "B".into()]);
+            let mut generated = column(2, "generated", field_type);
+            generated.generated = Some(generated_column("source", false, &[source.clone()], &zone));
+            let mut table = KvTable::new(42, vec![source, generated]).with_new_collation_mode(mode);
+            table
+                .insert_row(&[Datum::new_string("a"), Datum::Null], &statement)
+                .unwrap();
+            let context = RowDecodeContext::for_query(&statement);
+            let (_, row) = table
+                .row_cursor_with_context(&context)
+                .unwrap()
+                .next_row()
+                .unwrap()
+                .unwrap();
+            let (_, projected) = table
+                .row_cursor_projected_with_context(Some(&[1]), None, &context)
+                .unwrap()
+                .next_row()
+                .unwrap()
+                .unwrap();
+            assert_eq!(projected, vec![row[1].clone()]);
+            assert_eq!(
+                row[1].collation(),
+                Some(tidb_datatype::Collation::Utf8Mb4GeneralCi)
+            );
+            match &row[1] {
+                Datum::Enum(member, _) => assert_eq!(member.value(), expected),
+                Datum::Set(member, _) => assert_eq!(member.value(), expected),
+                other => panic!("unexpected generated value: {other:?}"),
+            }
+            assert_eq!(
+                table.columns()[1].field_type.collation(),
+                tidb_datatype::Collation::Utf8Mb4GeneralCi
+            );
+        }
+    }
+    assert!(statement.new_collation_enabled());
+}

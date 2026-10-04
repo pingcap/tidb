@@ -1,5 +1,11 @@
 # Structural parity audit: current evidence
 
+The [structural batch map](remaining-batches.md) assigns all **57 unresolved findings to ten shared-owner batches**, with explicit dependencies and completion boundaries. Whole Go packages retain atomic acceptance. Regression filters/compatible targets are grouped; final required gates run at the completed batch boundary.
+
+The [table-policy batch](table-policy-batch-repair.md) repairs **six Go contracts across T01/K03**, with **57 distinct passing Rust cases**, lint, all-target checks and locked server build. Both findings stay partial. **Counts remain 86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial).** Other 55 IDs retain prior evidence. No push.
+
+Earlier checkpoints below are historical.
+
 The [statement attribution batch](statement-attribution-batch-repair.md) repairs three connected producer gaps under **O11/O18**, which remain partial: failed physical compilation is not an execution, summaries consume existing deduplicated table visits, and real parse/physical compile measurements share the statement lifetime. **51 distinct Rust tests and 12 MySQL/unistore checks pass**. Broader profiling, complete visits/phases and transport remain open. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** Other IDs retain prior evidence. No push.
 
 The exhaustive placeholder cleanup below is historical.

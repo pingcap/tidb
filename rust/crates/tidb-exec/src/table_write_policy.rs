@@ -42,6 +42,27 @@ pub(crate) fn insert_record(
     };
     BufferMutation::set_with_flags(key, value, lazy, assertion)
 }
+/// Go index.Create for optimistic lazy insertion. Non-distinct keys contain
+/// the row handle and need an assertion but no unique-key constraint check.
+/// Non-public indexes suppress assertions while retaining duplicate flags.
+pub(crate) fn insert_index(
+    key: Vec<u8>,
+    value: Vec<u8>,
+    distinct: bool,
+    public: bool,
+) -> Result<BufferMutation, MutationSetError> {
+    BufferMutation::set_with_flags(
+        key,
+        value,
+        distinct,
+        if public {
+            AssertionOp::AssertUnknown
+        } else {
+            AssertionOp::AssertNone
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

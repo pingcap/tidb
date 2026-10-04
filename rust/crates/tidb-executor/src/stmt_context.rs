@@ -532,6 +532,8 @@ pub struct StmtContextData {
     /// `@@character_set_connection` and `@@collation_connection`.
     connection_charset: String,
     connection_collation: String,
+    /// Go expression BuildContext.NewCollationEnabled, captured for this task.
+    new_collation_enabled: bool,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
     /// advances, shared across every statement of one session. `None` is a
     /// context with no session behind it (a test, a DEFAULT expression
@@ -995,6 +997,13 @@ macro_rules! context_configuration {
 }
 
 context_configuration! {
+    /// Captures the task's collation mode without changing process globals.
+    #[must_use]
+    pub fn with_new_collation_enabled(mut self, enabled: bool) -> Self {
+        self.new_collation_enabled = enabled;
+        self
+    }
+
     /// Binds the transaction owner's selected-row channel for this attempt.
     #[must_use]
     pub fn with_selected_lock_keys(
@@ -1936,6 +1945,7 @@ impl StmtContext {
             select_limit: session.select_limit,
             connection_charset: session.connection_charset,
             connection_collation: session.connection_collation,
+            new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
             user_vars: None,
             prepared_params: None,
@@ -3394,6 +3404,12 @@ impl StmtContext {
     #[must_use]
     pub fn replica_read(&self) -> ReplicaReadType {
         self.replica_read
+    }
+
+    /// The collation mode captured by this expression build context.
+    #[must_use]
+    pub fn new_collation_enabled(&self) -> bool {
+        self.new_collation_enabled
     }
 
     /// Attaches the connection charset/collation captured for this statement.

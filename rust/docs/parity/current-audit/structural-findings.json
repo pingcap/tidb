@@ -323,10 +323,10 @@
       "id": "T01",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "**Partially repaired:** generic BufferMutation::insert is removed after every Rust caller migrates to independent set_with_flags metadata. The existing optimistic configured-write owner now selects lazy AssertUnknown for ordinary record/unique-index inserts and checked AssertNotExist for INSERT IGNORE, REPLACE and ON DUPLICATE non-conflicts. Allocated/snapshot-checked system records use AssertNotExist without a lazy flag. Full system-index uniqueness checking/assertions and integrated pessimistic constraint-check policy remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-txnkv/src/transaction/mutation.rs::BufferMutation::set_with_flags`; `rust/crates/tidb-exec/src/table_write_policy.rs`; `real_tikv_dml.rs::plan_insert_with_check`, `system_row_write.rs::insert_row_with_collation`",
-      "go_owner": "Go pkg/table/tables/{tables,index}.go owns duplicate checking and transaction-mode assertion selection; KV transports independent flags. Optimistic lazy checks use AssertUnknown, checked/pessimistic checks use AssertNotExist. Full system-index and pessimistic prewrite constraint policy still require the complete table owner.",
-      "review_basis": "Rechecked against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb from integration 134a7557f1e55d829d5e33036d741d92682c3d63. Two policy and three physical-reader regressions fail before fixes. Existing-owner maintenance only; see dml-policy-batch-repair.md and validation JSON. Other IDs retain their recorded evidence."
+      "finding": "**Partially repaired:** all callers use independent BufferMutation flags. Existing optimistic configured writes and allocated/snapshot-checked system records retain their prior Go assertion selection. System-index distinct unique inserts/moves now request commit-time duplicate checks with AssertUnknown; nonunique and unique-NULL entries use AssertUnknown without that flag. Public index deletes assert existence; non-public assertions are suppressed and unchanged keys are retained. Full transaction-view duplicate/error/state/temp/global policy and pessimistic constraint checks remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/table_write_policy.rs::insert_index`; `system_row_write.rs::index_entries/rewrite_row`; `tidb-txnkv/src/transaction/mutation.rs`; receipt `table-policy-batch-repair.md`",
+      "go_owner": "Go pkg/table/tables/{tables,index}.go owns independent duplicate flags/assertions: optimistic lazy unique keys use AssertUnknown plus PresumeKeyNotExists; handle-qualified non-distinct entries omit the flag, and public deletion asserts existence. Complete transaction-view/state/temp/global and pessimistic owners remain unaccepted.",
+      "review_basis": "Cloud table-policy batch from 9a5877b155 against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Six independent contracts fail before/pass after; 57 distinct Rust cases and required lint/check/locked build pass. Existing-owner maintenance only; both findings remain partial. See table-policy-batch-repair.md and its validation JSON."
     },
     {
       "id": "T02",
@@ -674,10 +674,10 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; partial repair:** generated writes, reads and ANALYZE share the column-cast owner. Fixed-flags/raw conversion bypasses and storage reevaluation are removed; virtual-fill NULL/unsigned rules remain distinct from rowDecoder/reorg. ANALYZE and remote virtual-row projection now retain shared execution errors through SQL delivery and job-history rendering. Remaining gaps concern lower datatype error/value identities, generated-expression diagnostic context and legacy ENUM/SET collation override; other ANALYZE storage/build diagnostics still use generic adapters.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `generated_column.rs::fill_virtual_column_values`; `analyze.rs::AnalyzeError`; `kv_table/table_scan.rs::TableScanExec::next_source_row`; `rust/crates/tidb-exec/src/real_tikv_analyze.rs::ClusterAnalyzeError`; `rust/crates/tidb-server/src/sql_node.rs::cluster_analyze_error`; `../../analyze-error-ownership-execplan.md`",
-      "go_owner": "`pkg/table/column.go::castColumnValue` and `FillVirtualColumnValue`; `pkg/util/rowDecoder/decoder.go::EvalRemainedExprColumnMap`; `pkg/executor/analyze_col_sampling.go::decodeSampleDataWithVirtualColumn` and `analyze.go::handleResultsErrorWithConcurrency`. Sample evaluation retains its error through worker results; history renders its message without replacing the SQL failure. Lower conversion and expression producers still require complete-owner review.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. The retained strict generated-TINYINT probe now rejects overflow and stores no row, so that old symptom is repaired. Shared generated write/read/ANALYZE casts and typed delivery remain repaired. Lower datatype error/value identities, generated-expression argument context and legacy ENUM/SET collation context remain; other ANALYZE build/storage adapters remain generic. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**P1; partial repair:** generated writes, reads and ANALYZE share the column-cast owner and typed delivery. RowDecoder now carries its captured table/task collation mode into that owner. Legacy ENUM/SET matching on a new-collation process is binary while declared output/catalog collation is preserved; full and projected stored-row cursors share the repair. Lower datatype error/value identities, generated-expression diagnostics and broader generic ANALYZE build/storage adapters remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`",
+      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open.",
+      "review_basis": "Cloud table-policy batch from 9a5877b155 against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Six independent contracts fail before/pass after; 57 distinct Rust cases and required lint/check/locked build pass. Existing-owner maintenance only; both findings remain partial. See table-policy-batch-repair.md and its validation JSON."
     },
     {
       "id": "I04",
@@ -791,16 +791,16 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "77759b60eea08dd3b287768c188fcf119fadf3fc",
+    "integration_start": "9a5877b1555835de42cb29f410fac999167e8186",
     "findings": [
-      "O11",
-      "O18"
+      "T01",
+      "K03"
     ],
     "statuses_unchanged": true,
-    "receipt": "statement-attribution-batch-repair.md",
-    "validation": "statement-attribution-batch-validation.json",
-    "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim.",
-    "source_commit": "fb9510d33d849f8999f6006c6a1a70990e917d98"
+    "receipt": "table-policy-batch-repair.md",
+    "validation": "table-policy-batch-validation.json",
+    "scope": "Connected existing-owner table-policy maintenance across T01/K03; no transcreated package claim.",
+    "source_identity": "Source and receipts share one normal local commit; validated-source hashes identify the tested files."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -846,6 +846,23 @@
       "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
       "receipt": "cache-apply-batch-repair.md",
       "source_commit": "571fdb93c503dbae2e26a048a26bba3ff140dc36"
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "77759b60eea08dd3b287768c188fcf119fadf3fc",
+      "findings": [
+        "O11",
+        "O18"
+      ],
+      "statuses_unchanged": true,
+      "receipt": "statement-attribution-batch-repair.md",
+      "validation": "statement-attribution-batch-validation.json",
+      "scope": "Connected maintenance of existing O11/O18 producers; no transcreated package claim.",
+      "source_commit": "fb9510d33d849f8999f6006c6a1a70990e917d98"
     }
-  ]
+  ],
+  "execution_batches": {
+    "map": "remaining-batches.json",
+    "description": "Ten structural owner batches, exact one-to-one assignment of 57 unresolved IDs; shared package acceptance and cross-batch gates retained."
+  }
 }

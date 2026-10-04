@@ -585,7 +585,13 @@ fn index_entries(
         )
         .map_err(|error| encode_error(error.to_string()))?;
         let mutation = match op {
-            IndexOp::Delete => BufferMutation::delete(index_key),
+            IndexOp::Delete => {
+                if index.state == tidb_model::SchemaState::PUBLIC {
+                    BufferMutation::delete_existing(index_key)
+                } else {
+                    BufferMutation::delete(index_key)
+                }
+            }
             IndexOp::Put => {
                 let index_value = generate_index_value(
                     use_new_collation,
@@ -613,7 +619,12 @@ fn index_entries(
                     )?,
                 )
                 .map_err(|error| encode_error(error.to_string()))?;
-                BufferMutation::set(index_key, index_value)
+                crate::table_write_policy::insert_index(
+                    index_key,
+                    index_value,
+                    distinct,
+                    index.state == tidb_model::SchemaState::PUBLIC,
+                )
             }
         };
         mutations.push(mutation.map_err(|error| encode_error(error.to_string()))?);
@@ -1051,6 +1062,100 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
 mod tests {
     use super::*;
     use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+
+    fn indexed_fixture(unique: bool, nullable: bool) -> (TableInfo, RowValues) {
+        use tidb_model::index::{IndexColumn, IndexInfo};
+        let column = ColumnInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("v"),
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            ..Default::default()
+        };
+        let index = IndexInfo {
+            id: 2,
+            name: tidb_ast::CiString::new("v_idx"),
+            unique,
+            state: tidb_model::SchemaState::PUBLIC,
+            columns: vec![IndexColumn {
+                name: tidb_ast::CiString::new("v"),
+                offset: 0,
+                length: -1,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        (
+            TableInfo {
+                id: 42,
+                columns: vec![column].into(),
+                indices: vec![index].into(),
+                ..Default::default()
+            },
+            [(1, if nullable { Datum::Null } else { Datum::Int(7) })].into(),
+        )
+    }
+
+    #[test]
+    fn system_unique_index_insert_defers_duplicate_check_to_commit() {
+        let (table, values) = indexed_fixture(true, false);
+        let mutations = insert_row_with_collation(&table, 1, &values, true).unwrap();
+        assert!(mutations[1].presume_not_exists());
+        assert_eq!(
+            mutations[1].assertion(),
+            tidb_txnkv::AssertionOp::AssertUnknown
+        );
+    }
+
+    #[test]
+    fn system_nondistinct_index_insert_asserts_absence_without_duplicate_flag() {
+        for (unique, nullable) in [(false, false), (true, true)] {
+            let (table, values) = indexed_fixture(unique, nullable);
+            let mutations = insert_row_with_collation(&table, 1, &values, true).unwrap();
+            assert!(!mutations[1].presume_not_exists());
+            assert_eq!(
+                mutations[1].assertion(),
+                tidb_txnkv::AssertionOp::AssertUnknown
+            );
+        }
+    }
+
+    #[test]
+    fn system_public_index_delete_asserts_existing_entry() {
+        let (table, values) = indexed_fixture(true, false);
+        let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
+        let mutations = delete_row(&table, &key, &values).unwrap();
+        assert_eq!(
+            mutations[1].assertion(),
+            tidb_txnkv::AssertionOp::AssertExist
+        );
+    }
+
+    #[test]
+    fn system_index_move_checks_destination_and_preserves_unchanged_keys() {
+        let (table, values) = indexed_fixture(true, false);
+        let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
+        let unchanged = rewrite_rowid_row(&table, &key, &values, &values).unwrap();
+        assert_eq!(unchanged.len(), 1);
+        let changed = [(1, Datum::Int(8))].into();
+        let moved = rewrite_rowid_row(&table, &key, &values, &changed).unwrap();
+        assert_eq!(moved.len(), 3);
+        assert_eq!(moved[1].assertion(), tidb_txnkv::AssertionOp::AssertExist);
+        assert!(moved[2].presume_not_exists());
+        assert_eq!(moved[2].assertion(), tidb_txnkv::AssertionOp::AssertUnknown);
+    }
+
+    #[test]
+    fn system_nonpublic_index_suppresses_assertions_but_keeps_unique_check() {
+        let (table, values) = indexed_fixture(true, false);
+        table.indices.get(0).unwrap().write().state = tidb_model::SchemaState::WRITE_ONLY;
+        let inserted = insert_row_with_collation(&table, 1, &values, true).unwrap();
+        assert!(inserted[1].presume_not_exists());
+        assert_eq!(inserted[1].assertion(), tidb_txnkv::AssertionOp::AssertNone);
+        let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
+        let deleted = delete_row(&table, &key, &values).unwrap();
+        assert_eq!(deleted[1].assertion(), tidb_txnkv::AssertionOp::AssertNone);
+    }
 
     #[test]
     fn a_record_key_reads_back_the_handle_it_was_written_with() {

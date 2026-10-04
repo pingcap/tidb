@@ -218,16 +218,38 @@ pub(crate) fn cast_table_value_with_flags(
     flags: tidb_datatype::ConversionFlags,
     force_ignore_truncate: bool,
 ) -> Result<Datum, DriverError> {
-    cast_value_with_flags(
+    // Go CastColumnValue overrides only matching, on a cloned type. Keep the
+    // catalog type and the output datum's declared collation unchanged.
+    let legacy_enum_set = matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+    ) && !ctx.new_collation_enabled() && tidb_datatype::new_collation_enabled();
+    let legacy_type;
+    let conversion_type = if legacy_enum_set {
+        legacy_type = field_type.clone().with_collation_name("binary");
+        &legacy_type
+    } else {
+        field_type
+    };
+    let mut cast = cast_value_with_flags(
         value,
-        field_type,
+        conversion_type,
         column,
         0,
         ctx,
         CastShape::RawTable,
         force_ignore_truncate,
         flags,
-    )
+    )?;
+    if legacy_enum_set {
+        match &mut cast {
+            Datum::Enum(_, collation) | Datum::Set(_, collation) => {
+                *collation = field_type.collation();
+            }
+            _ => {}
+        }
+    }
+    Ok(cast)
 }
 
 /// HandleTruncate runs before forceIgnoreTruncate; warnings already appended

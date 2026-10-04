@@ -1,0 +1,326 @@
+{
+  "date": "2026-10-04",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "integration_start": "9a5877b1555835de42cb29f410fac999167e8186",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 57,
+    "repaired": 29
+  },
+  "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
+  "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
+  "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
+  "validation_policy": [
+    "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
+    "Implement all related producers, consumers, state transitions and removals in the selected coherent unit before final validation.",
+    "Capture a combined fail-before regression run; group multiple filters for the same Rust target in one invocation and group compatible crates in one Cargo command.",
+    "Run one combined post-change regression pass per target and the required integration/oracle gates. Recompile again only for a meaningful code change, failure or unresolved concern.",
+    "Run the required lint/all-target/publication build once at the completed batch boundary, then normal mandatory hook gates. Never bypass hooks.",
+    "Update both finding registers and living plans with actual evidence; partial fixes do not close parent findings or packages.",
+    "Keep all work local; no push or dry-run."
+  ],
+  "batches": [
+    {
+      "id": "B01",
+      "title": "Native PD and shared transport",
+      "findings": [
+        "P03",
+        "P06",
+        "T02",
+        "M04"
+      ],
+      "count": 4,
+      "dependencies": [],
+      "source_owners": [
+        "Pinned PD root, clients/tso, servicediscovery and grpcutil dependency closure",
+        "client-go internal/locate, internal/client and TiDB routing/MPP consumers"
+      ],
+      "completion_boundary": "One discovery/TSO/region/channel lifecycle; service-mode switches, options, deadlines, security, cancellation and joined close. Retire competing TiDB routing only after every ordinary/coprocessor/MPP consumer migrates.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "P03": "open",
+        "P06": "partial",
+        "T02": "partial",
+        "M04": "partial"
+      }
+    },
+    {
+      "id": "B02",
+      "title": "Shared SQL session, planner and table execution",
+      "findings": [
+        "A01",
+        "E02",
+        "E03",
+        "T01",
+        "K01",
+        "K03",
+        "S03",
+        "S04"
+      ],
+      "count": 8,
+      "dependencies": [
+        "B03"
+      ],
+      "source_owners": [
+        "pkg/session and sessiontxn providers",
+        "pkg/planner/core, pkg/executor, pkg/table/tables, pkg/meta/autoid"
+      ],
+      "completion_boundary": "One resolved privilege/FK/handle handoff and transaction-aware table policy, with prepared/migrated sessions and historical reads. Delete the matrix interpreter only after all its callers use the shared executor. T01/K03 maintenance is evidence inside this batch, not acceptance of it.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "A01": "partial",
+        "E02": "partial",
+        "E03": "partial",
+        "T01": "partial",
+        "K01": "open",
+        "K03": "partial",
+        "S03": "open",
+        "S04": "open"
+      }
+    },
+    {
+      "id": "B03",
+      "title": "Schema, identity and timestamp protection",
+      "findings": [
+        "O01",
+        "O02",
+        "O03",
+        "O09",
+        "I04",
+        "K02"
+      ],
+      "count": 6,
+      "dependencies": [
+        "B01",
+        "B04"
+      ],
+      "source_owners": [
+        "pkg/domain, domain/infosync, infoschema and issyncer",
+        "pkg/session, table/tables, store/gcworker"
+      ],
+      "completion_boundary": "Versioned schema/upgrade, cluster identity/leases, cached-table leases and all active timestamp producers/reporters. Reporting precedes GC activation; GC also requires B04 durable delete-range work. Safe submilestones may proceed before the final cyclic integration gate.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "O01": "open",
+        "O02": "open",
+        "O03": "open",
+        "O09": "open",
+        "I04": "open",
+        "K02": "open"
+      }
+    },
+    {
+      "id": "B04",
+      "title": "Durable DDL and placement recovery",
+      "findings": [
+        "D01",
+        "D02",
+        "D03",
+        "D05",
+        "D08",
+        "D09",
+        "D10",
+        "D11",
+        "F01",
+        "F02",
+        "O14"
+      ],
+      "count": 11,
+      "dependencies": [
+        "B01",
+        "B03",
+        "B08"
+      ],
+      "source_owners": [
+        "pkg/ddl, ddl/jobsubmit and complete reorganization owners",
+        "domain/infosync, domain/affinity and GC consumers"
+      ],
+      "completion_boundary": "Submit, schedule, execute, recover and wait on the same persisted job and schema lifecycle. Placement and delete ranges follow durable phases. Keep materialized-view/import seeds disabled until complete owners pass. B08 is required only for source modes that use DXF.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "D01": "open",
+        "D02": "open",
+        "D03": "open",
+        "D05": "partial",
+        "D08": "open",
+        "D09": "open",
+        "D10": "open",
+        "D11": "partial",
+        "F01": "partial",
+        "F02": "partial",
+        "O14": "open"
+      }
+    },
+    {
+      "id": "B05",
+      "title": "Account security, wire bytes and administration",
+      "findings": [
+        "A02",
+        "A03",
+        "N01",
+        "N03",
+        "N04",
+        "N05"
+      ],
+      "count": 6,
+      "dependencies": [
+        "B03"
+      ],
+      "source_owners": [
+        "pkg/privilege/privileges, parser/charset and config",
+        "pkg/server, pkg/executor and cmd/tidb-server"
+      ],
+      "completion_boundary": "Durable policy load/publication/authentication/writeback, verified TLS reload, byte-authoritative ingress and shared configuration consumers. Cross-node KILL requires B03 identity; independent security and charset packages can proceed without that gate.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "A02": "partial",
+        "A03": "open",
+        "N01": "open",
+        "N03": "partial",
+        "N04": "open",
+        "N05": "open"
+      }
+    },
+    {
+      "id": "B06",
+      "title": "Typed expression and optimizer execution",
+      "findings": [
+        "Q01",
+        "X01",
+        "E04"
+      ],
+      "count": 3,
+      "dependencies": [
+        "B02"
+      ],
+      "source_owners": [
+        "pkg/expression and complete signature dependencies",
+        "pkg/planner/core, Cascades/memo, pkg/executor"
+      ],
+      "completion_boundary": "Shared SQL/PB typed scalar/vector construction, real memo optimization and eligible cloned Apply/CTE/shuffle execution with shared candidates, errors, cancellation and joined close.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "Q01": "open",
+        "X01": "open",
+        "E04": "partial"
+      }
+    },
+    {
+      "id": "B07",
+      "title": "MPP fragments and compute topology",
+      "findings": [
+        "M01",
+        "M05"
+      ],
+      "count": 2,
+      "dependencies": [
+        "B01",
+        "B03",
+        "B06"
+      ],
+      "source_owners": [
+        "pkg/planner/core, executor/internal/mpp and store/copr",
+        "pkg/util/tiflashcompute"
+      ],
+      "completion_boundary": "Physical fragment/task graph, replica/topology selection and configured compute cache/dispatch/recovery. Transport M04 is primarily tracked in B01; this batch supplies its final MPP consumer acceptance.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "M01": "open",
+        "M05": "open"
+      }
+    },
+    {
+      "id": "B08",
+      "title": "Owned job, resource and bulk-operation runtimes",
+      "findings": [
+        "O04",
+        "O05",
+        "O06",
+        "O10",
+        "O15",
+        "E05",
+        "E07"
+      ],
+      "count": 7,
+      "dependencies": [
+        "B01",
+        "B03"
+      ],
+      "source_owners": [
+        "TTL, resource/runaway, domain/crossks and DXF manager packages",
+        "executor/importer, dxf/importinto and BRIE owners"
+      ],
+      "completion_boundary": "Compose controller before RU history and DXF before dependent import/reorg work. Share startup gates, durable task state, transfer/recovery, cancellation and shutdown; keyspace holders must protect their own timestamps.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "O04": "open",
+        "O05": "open",
+        "O06": "open",
+        "O10": "open",
+        "O15": "open",
+        "E05": "open",
+        "E07": "open"
+      }
+    },
+    {
+      "id": "B09",
+      "title": "Live information and statement observability",
+      "findings": [
+        "I01",
+        "I02",
+        "I03",
+        "O08",
+        "O11",
+        "O13",
+        "O16",
+        "O17",
+        "O18"
+      ],
+      "count": 9,
+      "dependencies": [
+        "B01",
+        "B02",
+        "B03",
+        "B08"
+      ],
+      "source_owners": [
+        "pkg/infoschema and remote executor retrievers",
+        "domain, plan replay, topsql, workloadlearning, telemetry and summary v1/v2"
+      ],
+      "completion_boundary": "Real peers and SQL events feed owned providers, summaries, profiles/reports, replay archives and periodic learning/telemetry. Reuse process/session lifetimes and avoid synthetic rows or zero-field acceptance. Workload repository remains separate from learning. Dependencies gate relevant consumers, not every leaf prerequisite.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "I01": "open",
+        "I02": "open",
+        "I03": "open",
+        "O08": "open",
+        "O11": "partial",
+        "O13": "open",
+        "O16": "open",
+        "O17": "open",
+        "O18": "partial"
+      }
+    },
+    {
+      "id": "B10",
+      "title": "Inference provider, batching and cache runtime",
+      "findings": [
+        "X02"
+      ],
+      "count": 1,
+      "dependencies": [
+        "B02",
+        "B06"
+      ],
+      "source_owners": [
+        "pkg/inference and full provider/batcher packages",
+        "Domain runtime, shared Ristretto dependency and expressions"
+      ],
+      "completion_boundary": "One provider/batcher/Domain/cache lifetime, configuration, errors, cancellation and joined close. One finding here represents a whole structural runtime, not a one-function fix.",
+      "acceptance": "unaccepted",
+      "finding_statuses": {
+        "X02": "open"
+      }
+    }
+  ]
+}

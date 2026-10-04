@@ -1,0 +1,421 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "9a5877b1555835de42cb29f410fac999167e8186",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Connected existing-owner table-policy maintenance across T01/K03; no transcreated package claim.",
+  "finding_statuses": {
+    "T01": "partial",
+    "K03": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-exec --lib system_ -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/system-final.log",
+      "sha256": "a7ee55ff5e2e9ea08d7259888cf5ea6bd31579ac45bf10b0f869449b0374a126",
+      "passing_cases": 23
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --lib table_write_policy::tests -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/policy.log",
+      "sha256": "f0cbecf2ab78bdd8ad9e869ada9298fc2e8c1127e8e5d9a22a84ceaf58c998b3",
+      "passing_cases": 3
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib legacy_enum_set_tests -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/legacy-final.log",
+      "sha256": "6f7b2839b903ebf2b996d52bc0ae7bfbcffd4e543ce4daf167597101cffcbfee",
+      "passing_cases": 3
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib driver::write_cast::source_tests -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/casts.log",
+      "sha256": "2cbb4e5f4b331bfdca2c635f19ab54684952a98eda61bbec11af7557ff1ea57a",
+      "passing_cases": 4
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib generated_column::tests -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/generated.log",
+      "sha256": "d5656aae7a660fdab3a3eef61263825ed04761efabea16d6e7930b41cafabec4",
+      "passing_cases": 7
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all row_decoder_source:: -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/row-decoder.log",
+      "sha256": "509c36f84b80365f3d7e940b7f4bd7cd0b5966c78d71a1a21d8cd8aeb8e1cf09",
+      "passing_cases": 17
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/all-targets.log",
+      "sha256": "b5b7fb8dd530de3322353eaf7a29ea6814de63c30328c321a7b4bce3aecff9f5"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/server-build.log",
+      "sha256": "dcff3d7f80a2fefe13dce6188e2c2cb11b1624c6a33380ee11269909a1e5ba2b"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/table-policy-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "regressions": {
+    "distinct_fail_before_pass_after": 6,
+    "before": [
+      {
+        "log": "/workspace/.cloud-setup/table-policy-batch/before-system.log",
+        "sha256": "438222654768801ac5cfc8bf8e8a46041b7f8618fba9035280d8143488e2460a",
+        "exit_code": 101,
+        "failures": 4
+      },
+      {
+        "log": "/workspace/.cloud-setup/table-policy-batch/before-legacy-final.log",
+        "sha256": "d38b26291df73f1e0662906d1a6f2592c08577ded6bf5d1d3ebc088645ac12b0",
+        "exit_code": 101,
+        "failures": 2
+      }
+    ],
+    "excluded": [
+      "Initial legacy test compile errors from incorrect AST pattern",
+      "Earlier combined ENUM/SET reproducer: duplicate evidence, not an additional failure",
+      "Repeated passing runs"
+    ]
+  },
+  "test_accounting": {
+    "distinct_rust_cases": 57,
+    "passing_executions": 57,
+    "ignored": 0,
+    "new_cases": 9,
+    "python_lint_cases_separate": 5,
+    "case_identities": [
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::clustered_handle_tests::a_common_handle_bucket_row_reads_its_identity_out_of_the_record_key"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::clustered_handle_tests::a_row_id_table_has_no_key_columns_to_decode"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::clustered_handle_tests::a_table_id_prefix_selects_exactly_that_tables_records"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::clustered_handle_tests::an_integer_handle_row_reads_its_primary_key_out_of_the_record_key"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::a_column_the_projection_does_not_carry_is_absent_rather_than_false"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::a_go_created_account_reads_back_with_the_hash_go_stored_for_its_password"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::a_go_created_role_reads_back_as_a_locked_passwordless_account"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::a_go_written_root_row_reads_back_as_the_row_go_seeds"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::reading_a_character_column_as_an_enum_is_refused_rather_than_guessed"
+      },
+      {
+        "target": "exec",
+        "name": "mysql_system_tables::tests::the_bootstrap_flag_row_reads_back_as_go_wrote_it"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::a_key_too_short_to_carry_a_handle_is_refused_rather_than_guessed"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::a_privilege_enum_is_written_as_its_member_not_as_a_string"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::a_record_key_reads_back_the_handle_it_was_written_with"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::a_set_column_is_written_as_the_bit_mask_go_stores"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::an_element_the_column_does_not_declare_is_refused_rather_than_invented"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::codec_projection_reads_the_current_shared_changing_field_type"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::dynamic_defaults_preserve_go_bytes_and_nil_interface_identity"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::enum_and_set_typing_preserve_arbitrary_go_string_bytes"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::system_index_move_checks_destination_and_preserves_unchanged_keys"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::system_nondistinct_index_insert_asserts_absence_without_duplicate_flag"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::system_nonpublic_index_suppresses_assertions_but_keeps_unique_check"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::system_public_index_delete_asserts_existing_entry"
+      },
+      {
+        "target": "exec",
+        "name": "system_row_write::tests::system_unique_index_insert_defers_duplicate_check_to_commit"
+      },
+      {
+        "target": "exec",
+        "name": "table_write_policy::tests::checked_absence_does_not_request_a_second_lazy_check"
+      },
+      {
+        "target": "exec",
+        "name": "table_write_policy::tests::optimistic_lazy_keeps_constraint_check_without_claiming_snapshot_absence"
+      },
+      {
+        "target": "exec",
+        "name": "table_write_policy::tests::pessimistic_lazy_keeps_not_exist_assertion"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::a_missing_not_null_column_reports_the_source_error"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::changing_column_cast_uses_the_statement_error_level"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::full_decode_recomputes_stored_values_and_retains_cast_warnings"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::generated_read_policy_general_decoder_does_not_apply_virtual_fill_rules"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::generated_read_policy_preserves_query_warnings_before_forced_suppression"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::generated_read_policy_trims_char_before_dependent_evaluation"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::generated_read_policy_zero_date_errors_survive_decoder_transport"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::legacy_generated_enum_set_cursor_preserves_members_and_declared_collation"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::live_consumers_share_full_and_projected_decoder_semantics"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::projected_row_decoder_keeps_common_handle_component_positions"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::projection_decodes_generated_dependencies_but_rejects_bad_offsets"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path_is_disabled"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::return_values_may_be_ignored_like_go"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::row_decoder_matches_defaults_generated_values_and_integer_handles"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::row_decoder_matches_temporal_defaults_and_null_rows"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::row_decoder_restores_every_common_handle_column"
+      },
+      {
+        "target": "executor-all",
+        "name": "row_decoder_source::split_phase_defers_changing_and_generated_columns"
+      },
+      {
+        "target": "executor-lib",
+        "name": "driver::write_cast::source_tests::generated_read_policy_raw_cast_honors_flags_before_force_ignore"
+      },
+      {
+        "target": "executor-lib",
+        "name": "driver::write_cast::source_tests::test_cast_value"
+      },
+      {
+        "target": "executor-lib",
+        "name": "driver::write_cast::source_tests::test_cast_value_strict"
+      },
+      {
+        "target": "executor-lib",
+        "name": "driver::write_cast::source_tests::timestamp_dst_gap_keeps_adjusted_value_and_insert_1292_diagnostic"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::a_chain_of_generated_columns_is_computed_left_to_right"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::a_changed_dependency_recomputes_the_whole_chain"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::an_unknown_dependency_is_reported_by_name"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::dependencies_are_the_offsets_the_expression_reads"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::materializing_twice_gives_the_same_row"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::only_virtual_leaves_a_stored_column_as_decoded"
+      },
+      {
+        "target": "executor-lib",
+        "name": "generated_column::tests::only_virtual_recomputes_a_virtual_column"
+      },
+      {
+        "target": "executor-lib",
+        "name": "kv_table::row_decoder::legacy_enum_set_tests::legacy_generated_enum_matching_is_binary_on_new_collation_process"
+      },
+      {
+        "target": "executor-lib",
+        "name": "kv_table::row_decoder::legacy_enum_set_tests::legacy_generated_set_matching_is_binary_on_new_collation_process"
+      },
+      {
+        "target": "executor-lib",
+        "name": "kv_table::row_decoder::legacy_enum_set_tests::new_collation_generated_enum_set_matching_remains_case_insensitive"
+      }
+    ]
+  },
+  "go_sources": [
+    {
+      "path": "pkg/table/tables/index.go",
+      "sha256": "8524c014d3edfa022bc37c1626857e84508df20b7221daef69e63a6c456162a5"
+    },
+    {
+      "path": "pkg/table/tables/tables.go",
+      "sha256": "d0b6204e9cade9e9cf5af83b64e682d8e49b4c90ed61b37e460acdb19b1fd46e"
+    },
+    {
+      "path": "pkg/table/column.go",
+      "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+    },
+    {
+      "path": "pkg/table/column_test.go",
+      "sha256": "90c9216b547efa1fbf2069ad39ae1f7959ddff1d6b2497e8adf6b7d41c3f70d2"
+    },
+    {
+      "path": "pkg/util/rowDecoder/decoder.go",
+      "sha256": "04da07f9a27ac87cfa1b256f12b472802b59b8d9d2974e6ea9f9a5284d5342b3"
+    }
+  ],
+  "validated_rust_snapshot": [
+    {
+      "path": "rust/crates/tidb-exec/src/system_row_write.rs",
+      "sha256": "6139cc07beea0035e8038ba44a3ff378575087e21c54b32dea1188f8bd904ef1"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/table_write_policy.rs",
+      "sha256": "00e8194a2f6d402bdf9e6e01937e750eb8c78cc0225e26805de2504923c5e232"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+      "sha256": "33edafc9db513b7c84b2e30ae1ced35da94724cbe051d47898a118ccd4f3849f"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/kv_table/row_decoder.rs",
+      "sha256": "008c61d41518dc6a9830bd1a69b61203c81f926c024bf7e8d00e2a0e69a58b82"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/kv_table/table_meta.rs",
+      "sha256": "afb2bdd17560738672ce687cf550c80f3ccb15bd4c1d319088b7bc13824ad048"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stmt_context.rs",
+      "sha256": "78f823a3cf577b60973ac4547975893ba9ef63ef277332fd9403cc58c35af245"
+    },
+    {
+      "path": "rust/crates/tidb-executor/tests/row_decoder_source.rs",
+      "sha256": "81c692dc643947a12e09034867912e814b421f65be7b16903cbaa2793728e76c"
+    }
+  ],
+  "remaining": [
+    "T01 transaction-view duplicate detection/error identity, full system-index state/temp/global branches, table integration and pessimistic constraint-check/prewrite policy remain unaccepted.",
+    "K03 lower datatype error/value identities, generated-expression diagnostic context and broader generic ANALYZE build/storage adapters remain unaccepted.",
+    "Other 55 unresolved IDs retain prior evidence; the batch map does not freshly behaviorally reproduce them.",
+    "No complete upstream Go package/platform/generated/fixture acceptance, full Go suites, live multi-node TiKV, TLS policy or performance validation."
+  ],
+  "validation_cadence": "This batch used too many separate Cargo invocations. Remaining-batches.md now requires complete structural units and combined target/filter regressions, with final required gates once per completed unit.",
+  "publication": {
+    "push": "not attempted; user prohibits push and dry-run",
+    "native_changed": false,
+    "source_and_receipts": "One normal local commit; actual precommit hook must pass cd rust && cargo build --locked -p tidb-server. Final commit/hook/bundle identity is recorded in /workspace/.cloud-setup/table-policy-batch/final-handoff.json."
+  }
+}
