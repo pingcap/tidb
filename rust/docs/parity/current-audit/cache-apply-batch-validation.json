@@ -187,7 +187,9 @@
     ],
     "passed": 20,
     "connections": 2,
-    "store": "unistore"
+    "store": "unistore",
+    "server_exit_code": 0,
+    "after_shutdown_socket_closed": true
   },
   "red_evidence": [
     {
@@ -215,5 +217,15 @@
     "Performance",
     "Fulltext execution"
   ],
-  "recovery": "Local commits and verified Cloud bundle; remote unchanged. Exact local-only snapshot restore in a new task is not verified."
+  "recovery": "Local commits and verified Cloud bundle; remote unchanged. Exact local-only snapshot restore in a new task is not verified.",
+  "source_commit": "571fdb93c503dbae2e26a048a26bba3ff140dc36",
+  "distinct_passing_test_cases": 199,
+  "self_review": "Changed source and test owners reviewed; git diff --check passed; register counts and residuals reviewed. No source changes after final relevant gates.",
+  "actual_source_commit_hook": {
+    "command": "TERM=xterm git commit --file /workspace/.cloud-setup/cache-apply-batch/commit-message.txt (core.hooksPath=hooks)",
+    "locked_build": "cd rust && cargo build --locked -p tidb-server",
+    "status": "passed",
+    "log": "/workspace/.cloud-setup/cache-apply-batch/source-commit-hook.log",
+    "sha256": "f3feaeb4c6f292d993cdb986d7b50ea768e5a04f6aee756eb410541f34f86072"
+  }
 }

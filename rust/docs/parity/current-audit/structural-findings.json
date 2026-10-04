@@ -803,6 +803,7 @@
     "scope": "Shared instance cache and parallel Apply existing-owner maintenance. E04 CTE/shuffle/full matrices remain partial; no complete package acceptance or push.",
     "integration_start": "ed4fe8e91f580d9b533595be5c2ccac05ff114a6",
     "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
-    "receipt": "cache-apply-batch-repair.md"
+    "receipt": "cache-apply-batch-repair.md",
+    "source_commit": "571fdb93c503dbae2e26a048a26bba3ff140dc36"
   }
 }

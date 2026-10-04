@@ -13,9 +13,9 @@ Repair multiple source-confirmed gaps together: C02 shared instance physical pla
 - [x] Capture failing production regressions before fixes.
 - [x] Compose domain cache admission, independent clone-on-read/write, limits, periodic eviction, metrics and joined shutdown.
 - [x] Compose Go parallel Apply eligibility, independently rebound workers, shared cache, ordering, error/cleanup and serial fallback.
-- [ ] Replace stale tests without losing source obligations; validate owners, session and real wire execution.
-- [ ] Run Ready checks, make lint and mandatory locked server build; self-review and maintain both finding registers and durable receipts.
-- [ ] Commit normally with actual hook, save recovery bundle and reusable Cloud draft; do not push.
+- [x] Replace stale tests without losing source obligations; validate owners, session and real wire execution.
+- [x] Run Ready checks, make lint and mandatory locked server build; self-review and maintain both finding registers and durable receipts.
+- [x] Commit normally with actual hook, save recovery bundle and reusable Cloud draft; do not push.
 
 ## Source ownership and design
 
@@ -33,7 +33,7 @@ The existing plan visitor can rebind every occurrence of an owned correlated col
 
 ## Outcomes
 
-Implementation is present. Final Ready checks, live wire execution and local recovery/draft checkpoint are in progress. E04 retains CTE/shuffle/full-matrix residuals; no complete Go package claim. C02 repairs its recorded shared-owner absence; N03 remains partial.
+Implementation and Ready validation passed: 199 distinct targeted Rust cases, all-target checks, make lint, the locked server build and 20 checks across two live MySQL connections. Source 571fdb93c503dbae2e26a048a26bba3ff140dc36 committed through the actual enforced build hook. The final receipt commit and external recovery/draft handoff retain their own completion evidence. E04 retains CTE/shuffle/full-matrix residuals; no complete Go package claim. C02 repairs its recorded shared-owner absence; N03 remains partial.
 
 
 ## Additional decisions
