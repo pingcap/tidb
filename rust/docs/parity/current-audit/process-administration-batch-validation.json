@@ -1,0 +1,435 @@
+{
+  "date": "2026-10-04",
+  "parent": "955859e5860028f125ef6a3250ff7cc1b03fd335",
+  "go_reference": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_unchanged": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Connected local process-administration maintenance across N04/A02/I01/N03; not whole-package transcreation acceptance.",
+  "advanced_findings": {
+    "N04": "partial",
+    "A02": "partial",
+    "I01": "partial",
+    "N03": "partial"
+  },
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 34,
+    "partial": 23
+  },
+  "other_unresolved_roots_freshly_reproduced": false,
+  "repaired_contracts": [
+    "Live enable-global-kill/compatible-kill-query config and KILL TIDB local policy",
+    "CONNECTION_ID() bypasses numeric parsing",
+    "Absent manager precedes global numeric parsing",
+    "Known local target authorization precedes execution warnings",
+    "SEM restricted users: target default roles, independent presented-host grant matching, caller active roles, same-username exemption",
+    "Target-owned prepared digest, memory/disk consumption, transaction timestamp in observer timezone, resource group, alias and affected rows",
+    "No statement trackers: zero memory/disk and nullable affected rows"
+  ],
+  "removed": [
+    "Duplicated marker-bit/global-ID decoding in Session::kill_stmt",
+    "Unconditional global-kill assumption and stale absent-SEM comments",
+    "Recomputed process digest, fabricated 4096-byte memory value and constant zero/empty process fields",
+    "Observer-owned resource group projection",
+    "Copied SHOW WARNINGS comments on process-list methods/tests"
+  ],
+  "commands": [
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-session --lib process_admin_batch -- --test-threads=1",
+      "result": "expected baseline failure: 0 passed, 7 failed, 0 ignored"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo test --locked -p tidb-session --lib -- tests_grants:: process::tests tests_observation process_digest --test-threads=1",
+      "result": "158 passed, 0 failed, 0 ignored"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo check --locked -p tidb-session -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "make lint",
+      "result": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb/rust",
+      "command": "cargo build --locked -p tidb-server",
+      "result": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/process-admin-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+      "result": "8 assertions passed; real MySQL/unistore; clean server exit 0"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "rustfmt --edition 2021 --check rust/crates/tidb-session/src/identity.rs rust/crates/tidb-session/src/privilege/registry_ops.rs rust/crates/tidb-session/src/process.rs rust/crates/tidb-session/src/process_arm.rs rust/crates/tidb-session/src/tests_grants/processlist.rs",
+      "result": "passed"
+    },
+    {
+      "cwd": "/workspace/tidb",
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_INCREMENTAL=0; RUST_MIN_STACK=33554432",
+  "baseline_wire": {
+    "phase": "before",
+    "command": [
+      "/workspace/tidb/rust/target/debug/tidb-server",
+      "--store",
+      "unistore",
+      "--config",
+      "/workspace/.cloud-setup/process-admin-batch/wire.toml",
+      "--auth-file",
+      "/workspace/.cloud-setup/users.tsv",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "33043",
+      "--report-status=false"
+    ],
+    "binary_sha256": "5cfdc1a423a1feb29e093d31ec8ae672ea90378a5c2b5668e67a08558a3375d2",
+    "checks": [
+      {
+        "name": "process alias belongs to target",
+        "pass": false
+      },
+      {
+        "name": "default resource group survives projection",
+        "pass": true
+      },
+      {
+        "name": "transaction timestamp is published",
+        "pass": false
+      },
+      {
+        "name": "affected rows belongs to target",
+        "pass": false
+      },
+      {
+        "name": "disabled global kill uses compatibility warning",
+        "pass": false
+      },
+      {
+        "name": "plain disabled KILL keeps connection",
+        "pass": true
+      },
+      {
+        "name": "TIDB extension bypasses numeric warnings",
+        "pass": true
+      },
+      {
+        "name": "TIDB extension kills local connection",
+        "pass": true
+      }
+    ],
+    "server_exit": 0
+  },
+  "after_wire": {
+    "phase": "after",
+    "command": [
+      "/workspace/tidb/rust/target/debug/tidb-server",
+      "--store",
+      "unistore",
+      "--config",
+      "/workspace/.cloud-setup/process-admin-batch/wire.toml",
+      "--auth-file",
+      "/workspace/.cloud-setup/users.tsv",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "52443",
+      "--report-status=false"
+    ],
+    "binary_sha256": "46e4f71210b77bb33ed98f765b50634e5e2a224dd6e45505c925762f413f92a6",
+    "checks": [
+      {
+        "name": "process alias belongs to target",
+        "pass": true
+      },
+      {
+        "name": "default resource group survives projection",
+        "pass": true
+      },
+      {
+        "name": "transaction timestamp is published",
+        "pass": true
+      },
+      {
+        "name": "affected rows belongs to target",
+        "pass": true
+      },
+      {
+        "name": "disabled global kill uses compatibility warning",
+        "pass": true
+      },
+      {
+        "name": "plain disabled KILL keeps connection",
+        "pass": true
+      },
+      {
+        "name": "TIDB extension bypasses numeric warnings",
+        "pass": true
+      },
+      {
+        "name": "TIDB extension kills local connection",
+        "pass": true
+      }
+    ],
+    "server_exit": 0
+  },
+  "unsuccessful_fixture_attempts": [
+    {
+      "file": "before-wire-fixture-error.json",
+      "reason": "CREATE RESOURCE GROUP is refused by the current wire catalog route; no source feature was added to satisfy the fixture. Group ownership remains covered by the Rust registry case."
+    },
+    {
+      "file": "before-wire-id-fixture-error.json",
+      "reason": "Wire IDs are encoded even IDs, not consecutive raw IDs. Remove that fixture assumption; malformed/odd numeric IDs remain explicitly covered in Rust."
+    }
+  ],
+  "passed_rust_cases": [
+    "process::tests::kill_reaches_the_target_and_unknown_ids_report_missing",
+    "process::tests::prepared_statement_publishes_its_prepare_time_digest",
+    "process::tests::registered_connection_leaves_the_list_with_its_guard",
+    "process::tests::running_statement_becomes_info_and_is_cleared_again",
+    "process::tests::show_truncates_info_at_a_hundred_runes_and_full_does_not",
+    "tests_grants::accounts::account_authentication_strings_follow_go_encode_password",
+    "tests_grants::accounts::alter_user_account_lock_unlock",
+    "tests_grants::accounts::alter_user_identified_with_changes_the_plugin_and_password",
+    "tests_grants::accounts::create_user_identified_with_stores_the_plugin_and_validates_credentials",
+    "tests_grants::accounts::delegated_account_storage_restores_local_mirrors_after_success_and_error",
+    "tests_grants::accounts::drop_user_clears_scoped_grant_rows",
+    "tests_grants::accounts::rename_user_moves_role_edges_and_default_roles",
+    "tests_grants::accounts::rename_user_moves_the_whole_account_row",
+    "tests_grants::accounts::require_policies_are_stored_shown_and_invalid_forms_are_refused",
+    "tests_grants::accounts::show_create_user_current_user_resolves_the_session_identity",
+    "tests_grants::accounts::show_create_user_names_the_accounts_own_plugin",
+    "tests_grants::accounts::show_create_user_prints_the_captured_default_clause_set",
+    "tests_grants::accounts::show_create_user_reflects_account_lock_for_roles_and_locked_users",
+    "tests_grants::accounts::show_create_user_reports_cannot_user_for_a_missing_account",
+    "tests_grants::column_grants::a_column_that_does_not_exist_is_refused_at_grant_time",
+    "tests_grants::column_grants::an_active_role_contributes_its_column_grants",
+    "tests_grants::column_grants::column_grants_merge_into_one_line_in_row_order",
+    "tests_grants::column_grants::only_the_four_column_privileges_accept_a_column_list",
+    "tests_grants::column_grants::table_and_column_grants_on_one_table_print_as_two_lines",
+    "tests_grants::column_grants::usage_with_a_column_list_grants_nothing_but_creates_the_table_row",
+    "tests_grants::dual_password::account_statements_keep_the_user_table_rows_written",
+    "tests_grants::dual_password::dual_password_combines_with_comment_atomically",
+    "tests_grants::dual_password::dual_password_privilege_gates_match_go",
+    "tests_grants::dual_password::retain_and_discard_maintain_the_additional_password_attribute",
+    "tests_grants::dual_password::retain_validation_errors_match_go",
+    "tests_grants::dual_password::set_password_retain_and_per_spec_dual_clauses",
+    "tests_grants::dynamic_grants::dynamic_privileges_grant_revoke_and_show_grants",
+    "tests_grants::dynamic_grants::super_is_the_fallback_for_every_dynamic_privilege",
+    "tests_grants::dynamic_grants::user_privileges_does_not_render_grant_option_as_usage",
+    "tests_grants::dynamic_grants::user_privileges_table_reports_static_and_dynamic_rows",
+    "tests_grants::dynamic_grants::user_privileges_uses_raw_host_patterns_and_mysql_schema_select",
+    "tests_grants::enforcement::changing_another_accounts_password_is_privileged_but_ones_own_is_not",
+    "tests_grants::enforcement::create_and_drop_user_need_create_user_authority",
+    "tests_grants::enforcement::dropping_a_system_user_needs_system_user_too",
+    "tests_grants::enforcement::grant_and_revoke_need_the_privilege_itself_plus_grant_option",
+    "tests_grants::enforcement::reading_another_accounts_credentials_and_grants_is_privileged",
+    "tests_grants::enforcement::role_grants_need_role_admin",
+    "tests_grants::enforcement::set_default_role_for_another_account_needs_create_user",
+    "tests_grants::password_policy::a_sandboxed_session_may_only_fix_its_own_password",
+    "tests_grants::password_policy::password_expire_interval_out_of_range_is_rejected_and_creates_nothing",
+    "tests_grants::password_policy::password_history_checks_native_and_salted_credentials_before_publication",
+    "tests_grants::password_policy::password_history_cutoff_follows_go_local_text_and_session_timestamp_conversion",
+    "tests_grants::password_policy::password_history_protects_union_of_recent_count_and_reuse_time",
+    "tests_grants::password_policy::password_history_uses_live_defaults_last_options_and_plugin_changes",
+    "tests_grants::password_policy::password_locking_options_store_gos_values_and_merge_on_alter",
+    "tests_grants::password_policy::show_create_user_prints_the_lockout_and_expiry_clauses",
+    "tests_grants::password_policy::validate_password_enforces_account_writes_and_scores_sql_values",
+    "tests_grants::processlist::grant_process_gates_processlist_visibility",
+    "tests_grants::processlist::information_schema_processlist_has_the_captured_column_list",
+    "tests_grants::processlist::information_schema_processlist_where_filters_by_user",
+    "tests_grants::processlist::kill_answers_ok_and_reaches_only_live_connections",
+    "tests_grants::processlist::kill_of_another_users_connection_accepts_connection_admin",
+    "tests_grants::processlist::kill_of_another_users_connection_requires_super",
+    "tests_grants::processlist::process_admin_batch_authorization_precedes_numeric_parser",
+    "tests_grants::processlist::process_admin_batch_connection_id_expression_bypasses_numeric_parser",
+    "tests_grants::processlist::process_admin_batch_kill_configuration",
+    "tests_grants::processlist::process_admin_batch_no_manager_skips_numeric_parser",
+    "tests_grants::processlist::process_admin_batch_processlist_reads_target_statement_state",
+    "tests_grants::processlist::process_admin_batch_processlist_without_statement_context",
+    "tests_grants::processlist::process_admin_batch_sem_target_defaults_and_caller_active_roles",
+    "tests_grants::processlist::process_privilege_gates_visibility_on_both_surfaces",
+    "tests_grants::processlist::show_full_processlist_does_not_truncate_info",
+    "tests_grants::processlist::show_processlist_lists_this_session",
+    "tests_grants::roles::a_role_can_be_hosted",
+    "tests_grants::roles::a_role_confers_process_only_while_it_is_active",
+    "tests_grants::roles::a_role_is_a_locked_account",
+    "tests_grants::roles::activation_is_direct_but_inheritance_is_transitive",
+    "tests_grants::roles::create_role_and_drop_role_are_privileges_of_their_own",
+    "tests_grants::roles::granting_a_role_adds_an_edge_and_a_show_grants_line",
+    "tests_grants::roles::revoking_and_dropping_a_role_clean_up_every_edge",
+    "tests_grants::roles::role_and_user_share_one_namespace_and_collide_only_on_creation",
+    "tests_grants::roles::set_default_role_multi_target_failure_publishes_nothing",
+    "tests_grants::roles::set_default_role_replaces_the_whole_default_set",
+    "tests_grants::roles::set_role_forms_and_current_role",
+    "tests_grants::roles::skip_unknown_current_user_is_not_the_explicit_self_shortcut",
+    "tests_grants::roles::the_role_line_sits_between_the_table_and_dynamic_lines",
+    "tests_grants::roles::with_admin_option_is_not_grammar",
+    "tests_grants::static_grants::create_user_rejects_a_duplicate_account",
+    "tests_grants::static_grants::db_scope_grant_rejects_global_only_privilege",
+    "tests_grants::static_grants::db_scope_grant_revoke_and_show_grants_round_trip",
+    "tests_grants::static_grants::db_scope_revoke_without_any_grant_row_is_refused",
+    "tests_grants::static_grants::grant_all_privileges_collapses_show_grants",
+    "tests_grants::static_grants::grant_all_withholds_grant_option_but_the_named_privilege_confers_it",
+    "tests_grants::static_grants::grant_option_is_a_per_scope_bit_printed_as_a_line_suffix",
+    "tests_grants::static_grants::grant_revoke_and_show_grants_round_trip",
+    "tests_grants::static_grants::grant_to_an_unknown_user_is_refused",
+    "tests_grants::static_grants::granting_an_unregistered_privilege_name_is_refused",
+    "tests_grants::static_grants::infoschema_privileges_tables_are_header_only",
+    "tests_grants::static_grants::revoke_from_an_unknown_user_is_refused",
+    "tests_grants::static_grants::show_grants_for_current_user_reports_root_bootstrap",
+    "tests_grants::static_grants::table_scope_grant_revoke_and_show_grants_round_trip",
+    "tests_grants::static_grants::tls_owner_grant_require_shares_account_policy_at_every_scope",
+    "tests_grants::table_scope::a_cte_reference_is_not_a_table",
+    "tests_grants::table_scope::a_prepared_execute_keeps_its_requests_and_checks_live_grants",
+    "tests_grants::table_scope::a_prepared_statement_keeps_the_database_current_at_prepare",
+    "tests_grants::table_scope::a_session_with_no_identity_is_unrestricted",
+    "tests_grants::table_scope::create_sequence_requires_create_privilege",
+    "tests_grants::table_scope::database_ddl_demands_create_and_drop_before_catalog_mutation",
+    "tests_grants::table_scope::delete_demands_select_then_delete",
+    "tests_grants::table_scope::dml_owner_delete_resolution_excludes_nested_query_aliases",
+    "tests_grants::table_scope::dml_owner_unqualified_delete_needs_only_delete_privilege",
+    "tests_grants::table_scope::explain_uses_the_same_privileges_as_its_target",
+    "tests_grants::table_scope::information_schema_needs_no_grant",
+    "tests_grants::table_scope::insert_replace_and_on_duplicate_demand_their_own_privileges",
+    "tests_grants::table_scope::insert_select_demands_select_on_the_source",
+    "tests_grants::table_scope::joined_update_privileges_follow_resolved_assignment_targets",
+    "tests_grants::table_scope::joined_update_privileges_preserve_planner_name_errors",
+    "tests_grants::table_scope::joined_update_privileges_resolve_the_session_temporary_overlay",
+    "tests_grants::table_scope::prepared_joined_update_privileges_allow_parameterized_derived_sources",
+    "tests_grants::table_scope::prepared_joined_update_rechecks_resolved_target_privileges",
+    "tests_grants::table_scope::prepared_joined_update_resolves_targets_again_after_ddl",
+    "tests_grants::table_scope::select_demands_select_on_every_table_it_reads",
+    "tests_grants::table_scope::table_ddl_demands_its_own_privilege",
+    "tests_grants::table_scope::update_demands_select_then_update",
+    "tests_grants::visibility::a_column_grant_shows_the_schema_but_lists_no_table",
+    "tests_grants::visibility::a_role_carries_visibility",
+    "tests_grants::visibility::a_server_admin_privilege_is_not_schema_visibility",
+    "tests_grants::visibility::a_single_table_grant_shows_one_schema_and_one_table",
+    "tests_grants::visibility::an_invisible_schema_reports_1044_even_when_it_does_not_exist",
+    "tests_grants::visibility::columns_uses_the_narrower_column_privilege_mask",
+    "tests_grants::visibility::create_temporary_tables_shows_the_schema_and_no_table",
+    "tests_grants::visibility::every_table_walking_retriever_filters",
+    "tests_grants::visibility::information_schema_is_visible_without_any_grant",
+    "tests_grants::visibility::schemata_asks_a_narrower_question_than_show_databases",
+    "tests_grants::visibility::user_attributes_rows_follow_go_visibility_rules",
+    "tests_observation_batch::observation_batch_completed_sql_reaches_summary_reader",
+    "tests_observation_batch::observation_batch_completed_sql_reaches_topsql_aggregator",
+    "tests_observation_batch::observation_batch_disabled_summary_clears_commit_predecessor",
+    "tests_observation_batch::observation_batch_dml_scratch_success_waits_for_durable_failure",
+    "tests_observation_batch::observation_batch_durable_named_execute_keeps_retained_sql",
+    "tests_observation_batch::observation_batch_failed_physical_planning_is_not_an_execution",
+    "tests_observation_batch::observation_batch_frontend_parse_is_transferred_and_not_reused",
+    "tests_observation_batch::observation_batch_internal_sql_is_not_reported_as_a_user",
+    "tests_observation_batch::observation_batch_persistent_instance_getters_read_live_config",
+    "tests_observation_batch::observation_batch_persistent_sql_reads_memory_and_disk_and_flushes",
+    "tests_observation_batch::observation_batch_prelock_breakpoint_does_not_suppress_execution_counter",
+    "tests_observation_batch::observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call",
+    "tests_observation_batch::observation_batch_prepared_execution_records_original_sql",
+    "tests_observation_batch::observation_batch_reader_filters_statements_by_authenticated_user",
+    "tests_observation_batch::observation_batch_real_query_records_parse_and_compile_phases",
+    "tests_observation_batch::observation_batch_routed_completion_waits_for_durable_outcome",
+    "tests_observation_batch::observation_batch_routed_prelock_failure_counts_one_execution",
+    "tests_observation_batch::observation_batch_sql_execute_uses_retained_statement_digest",
+    "tests_observation_batch::observation_batch_streaming_result_publishes_once_at_close",
+    "tests_observation_batch::observation_batch_tables_and_phase_times_follow_real_statement",
+    "tests_observation_batch::observation_plan_batch_binary_prepared_keeps_summary_plan",
+    "tests_observation_batch::observation_plan_batch_binary_switch_is_live_across_sessions",
+    "tests_observation_batch::observation_plan_batch_disabled_set_skips_begin_but_dml_does_not",
+    "tests_observation_batch::observation_plan_batch_encoded_plan_reaches_summary",
+    "tests_observation_batch::observation_plan_batch_join_cte_and_dml_keep_tree_ownership",
+    "tests_observation_batch::observation_plan_batch_topsql_disabled_and_disable_mid_execution",
+    "tests_observation_batch::observation_plan_batch_topsql_enable_during_fast_plan_keeps_finish",
+    "tests_observation_batch::observation_plan_batch_topsql_enable_during_scan_keeps_begin"
+  ],
+  "production_and_test_sources": [
+    {
+      "path": "rust/crates/tidb-session/src/identity.rs",
+      "sha256": "151f04b373ce696fac565229677398dd9c2f1a86e15ec24e0b14daceb012cba7"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/privilege/registry_ops.rs",
+      "sha256": "690d6e44ef5131c5f684684ea317b904902562022d0b36d9157d482df6f02873"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/process.rs",
+      "sha256": "ea0fd282b27b26e1deb527a736f4814c3b5d2d9ac3d342c95caf7332b6bc4a73"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/process_arm.rs",
+      "sha256": "324375a45d00cf44e6e40e4f44de8810303ded73bc4e97b80d104fce982057d8"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_grants/processlist.rs",
+      "sha256": "9e3a86774ec6402afb0a078fd838c1cc03c1b9fceffeeed952f06e68b7e2feb2"
+    }
+  ],
+  "go_evidence": [
+    {
+      "path": "pkg/executor/simple.go",
+      "sha256": "f90475274996ea4015c84436c3dc0c3db603e2c623e020188059f8f476748332"
+    },
+    {
+      "path": "pkg/planner/core/planbuilder.go",
+      "sha256": "dfe3898638fab653ee37716c5c5e1528c475d1ec73d4b325efde5c61e7507e17"
+    },
+    {
+      "path": "pkg/privilege/privileges/cache.go",
+      "sha256": "1154db6ac869a02759ed4633e7a810630a0ca971e47014542c0523a96d324fe5"
+    },
+    {
+      "path": "pkg/privilege/privileges/privileges.go",
+      "sha256": "6d5dc165873fa66caee8cbd6938de17798ba19314233c7be11c8388c8bd492f8"
+    },
+    {
+      "path": "pkg/session/sessmgr/processinfo.go",
+      "sha256": "566f07935a75a36669f0dddc9afd1f51b747762ad6dd8a29b4df4e84d3e8d25b"
+    },
+    {
+      "path": "pkg/util/globalconn/globalconn.go",
+      "sha256": "a82e7c388a1ea492d414ae3cbd1bc2ffefd6a4ddf8e0680250d23a6761afc277"
+    },
+    {
+      "path": "pkg/config/config.go",
+      "sha256": "6442648a776d073f2fe7a7b07059e7fb9c6579155045cda31968c954550e0b99"
+    }
+  ],
+  "logs": {
+    "before.log": "c9be3e3ed2f49375e1f58d4211196f6e6e79410dd7e4d653ad60fb4c94addeba",
+    "after.log": "87cef3b55784e2ab0ac0dc94f3348d94becbf820a51642e36f3ee62d2a0f741a",
+    "all-targets.log": "407f5834a89f68d0e2ec9346b8cba047155a316485da4fe6a14c054c6c93a3b8",
+    "build.log": "37caee8455c059e331177f2fed69f199057223bec8fd74a5f8051f666b9be74e",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "before-wire.json": "09a686d1d00cf4a0a8176a05c48400303fd543c6320dc6b82961c0a6d204f96f",
+    "after-wire.json": "0c06c663c6d047e303b9b3b74e9e2c3956f82dce03752966d216bf2e7fccd642",
+    "before-wire-fixture-error.json": "407aef96ebccf7317c8556227d7f7fa5992543abbbb6764b43c427abe1409e6d",
+    "before-wire-id-fixture-error.json": "0fe5783c8e00dabeef25ac71ea3ef7004772c9713d22e37d43bdeb6c8bc37760",
+    "wire.py": "f24f393a8767eb1c2b06dad07b1cd92064f65fd9c0d127cf747bc3c2c4101c7f"
+  },
+  "remaining": [
+    "N04: remote server-ID comparison, leased cluster identity, discovery, TiPB remote KILL transport and internal auto-analyze process authorization",
+    "I01: complete Go statement-context reference-count, memory-arbitration and CPU measurement owners; process projection currently uses safely retained registry trackers, not full Go refcount invalidation",
+    "Complete privilege/configuration/information-schema packages, other provider gaps and full upstream artifact obligations",
+    "Existing three planner-estimate failures and five DDL failures remain enabled; not rerun by this scope",
+    "Full Go/Rust suites, live multi-node TiKV/TLS matrices, measured performance and fresh-task restoration are unverified"
+  ],
+  "self_review": "Shared config/parser/role/registry ownership; no duplicate state authority, native or dependency changes; target snapshots use the existing entry lock; process-global tests run in isolated child processes. Both registers and all 57 unresolved batch assignments reconcile.",
+  "publication": {
+    "pushed": false,
+    "push_dry_run": false,
+    "local_commit_hook": "Actual hook result recorded after commit in /workspace/.cloud-setup/process-admin-batch/final-handoff.json; mandatory locked server build, never bypass.",
+    "cloud_draft": "Saved after validated local commit; final-handoff.json records exact revision and recovery bundle.",
+    "fresh_task_restore": "unverified"
+  }
+}

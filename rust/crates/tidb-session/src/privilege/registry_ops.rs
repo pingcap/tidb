@@ -1260,6 +1260,45 @@ impl PrivilegeRegistry {
             })
     }
 
+    /// Go `RequestDynamicVerificationWithUser`: target users carry a presented
+    /// host, not necessarily the account's stored host pattern. Default-role
+    /// and dynamic-grant rows each match that host independently.
+    #[must_use]
+    pub fn has_dynamic_priv_with_default_roles(&self, user: &str, host: &str, name: &str) -> bool {
+        let defaults = self
+            .lock_default_roles()
+            .iter()
+            .filter(|((candidate, pattern), _)| candidate == user && host_matches(pattern, host))
+            .flat_map(|(_, roles)| roles.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut identities = vec![(user.to_owned(), host.to_owned())];
+        if let Some(account) = self.matching_account(user, host) {
+            identities.extend(self.effective_roles(&account, &defaults));
+        }
+        let name = name.to_ascii_uppercase();
+        {
+            let grants = self.lock_dynamic();
+            if identities.iter().any(|(user, host)| {
+                grants.iter().any(|((candidate, pattern), privileges)| {
+                    candidate == user
+                        && host_matches(pattern, host)
+                        && privileges.contains_key(&name)
+                })
+            }) {
+                return true;
+            }
+        }
+        if tidb_util::sem_compat::is_enabled()
+            && tidb_util::sem_compat::is_restricted_privilege(&name)
+        {
+            return false;
+        }
+        identities.iter().any(|(user, host)| {
+            self.matching_account(user, host)
+                .is_some_and(|(user, host)| self.has_global_priv(&user, &host, GlobalPriv::Super))
+        })
+    }
+
     /// Sets every bit in `mask` on the account's `(database)` row, creating
     /// the row if this is its first DB-scope grant (Go's `checkAndInitDBPriv`
     /// inserting a fresh `mysql.DB` row before `grantDBLevel` sets bits on

@@ -6,13 +6,289 @@
 use crate::tests_support::*;
 use crate::*;
 
-/// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.
-///
-/// NOT PORTED from Go's own suites: the warnings raised by evaluation
-/// (`1/0` is 1365 there) and by write-time truncation, because this tier
-/// does not yet produce those warnings -- only the preprocessor gate and
-/// the failed-statement error reach the buffer here. The filter forms of
-/// both statements are refused, not ignored.
+// Config and SEM are process-wide in Go and Rust. Run their cases in a child
+// process so normal parallel tests cannot observe a temporary policy.
+fn isolated_process_admin_case(name: &str) -> bool {
+    if std::env::var("TIDB_PROCESS_ADMIN_CASE").as_deref() == Ok(name) {
+        return true;
+    }
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("tests_grants::processlist::{name}"),
+            "--nocapture",
+        ])
+        .env("TIDB_PROCESS_ADMIN_CASE", name)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    false
+}
+
+#[derive(Default)]
+struct KillCounter(std::sync::atomic::AtomicUsize);
+
+impl process::ProcessKillTarget for KillCounter {
+    fn cancel_query(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn kill_connection(&self) {
+        self.cancel_query();
+    }
+}
+
+#[test]
+fn process_admin_batch_kill_configuration() {
+    if !isolated_process_admin_case("process_admin_batch_kill_configuration") {
+        return;
+    }
+    use tidb_config::config_tree::config::update_global;
+    let registry = process::ProcessRegistry::default();
+    let target = Arc::new(KillCounter::default());
+    let mut session = Session::new();
+    session.attach_process(
+        7,
+        registry.register(
+            7,
+            String::new(),
+            String::new(),
+            String::new(),
+            Some(target.clone()),
+        ),
+    );
+    update_global(|cfg| {
+        cfg.enable_global_kill = false;
+        cfg.compatible_kill_query = false;
+    });
+    session.run("KILL QUERY 7").unwrap();
+    assert_eq!(session.warnings()[0].message, "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead");
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    session.run("KILL TIDB QUERY 7").unwrap();
+    assert!(session.warnings().is_empty());
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    update_global(|cfg| cfg.compatible_kill_query = true);
+    session.run("KILL QUERY 7").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    update_global(|cfg| cfg.enable_global_kill = true);
+    session.run("KILL TIDB QUERY 7").unwrap();
+    assert!(session.warnings()[0]
+        .message
+        .contains("truncated ConnectionID"));
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    for (id, suffix) in [(1_u64 << 63, "int64"), (1_u64 << 32, "uint32")] {
+        session.run(&format!("KILL {id}")).unwrap();
+        assert_eq!(
+            session.warnings()[0].message,
+            format!("Parse ConnectionID failed: unexpected connectionID exceeds {suffix}")
+        );
+    }
+}
+
+#[test]
+fn process_admin_batch_connection_id_expression_bypasses_numeric_parser() {
+    let registry = process::ProcessRegistry::default();
+    let target = Arc::new(KillCounter::default());
+    let mut session = Session::new();
+    session.attach_process(
+        7,
+        registry.register(
+            7,
+            String::new(),
+            String::new(),
+            String::new(),
+            Some(target.clone()),
+        ),
+    );
+    session.run("KILL QUERY CONNECTION_ID()").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(session.warnings().is_empty());
+}
+
+#[test]
+fn process_admin_batch_no_manager_skips_numeric_parser() {
+    let mut session = Session::new();
+    for sql in ["KILL 7", "KILL 9223372036854775808", "KILL CONNECTION_ID()"] {
+        session.run(sql).unwrap();
+        assert!(
+            session.warnings().is_empty(),
+            "{sql}: {:?}",
+            session.warnings()
+        );
+    }
+}
+
+#[test]
+fn process_admin_batch_authorization_precedes_numeric_parser() {
+    let registry = process::ProcessRegistry::default();
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privileges);
+    boot.run("CREATE USER bob").unwrap();
+    let mut bob = authenticated_session(&privileges, "bob", "%");
+    bob.attach_process(
+        2,
+        registry.register(2, "bob".into(), String::new(), String::new(), None),
+    );
+    let _victim = registry.register(
+        7,
+        "root".into(),
+        "127.0.0.1:1234".into(),
+        String::new(),
+        None,
+    );
+    assert!(matches!(
+        bob.run("KILL 7"),
+        Err(DriverError::KillAccessDenied)
+    ));
+}
+
+#[test]
+fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
+    if !isolated_process_admin_case(
+        "process_admin_batch_sem_target_defaults_and_caller_active_roles",
+    ) {
+        return;
+    }
+    let registry = process::ProcessRegistry::default();
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privileges);
+    for sql in [
+        "CREATE USER bob",
+        "CREATE USER protected",
+        "CREATE ROLE restricted_target, killer",
+        "GRANT RESTRICTED_USER_ADMIN ON *.* TO restricted_target",
+        "GRANT restricted_target TO protected",
+        "SET DEFAULT ROLE restricted_target TO protected",
+        "GRANT SUPER ON *.* TO bob",
+        "GRANT RESTRICTED_CONNECTION_ADMIN ON *.* TO killer",
+        "GRANT killer TO bob",
+    ] {
+        boot.run(sql).unwrap();
+    }
+    let mut bob = authenticated_session(&privileges, "bob", "%");
+    bob.attach_process(
+        2,
+        registry.register(2, "bob".into(), "127.0.0.1:12".into(), String::new(), None),
+    );
+    let target = Arc::new(KillCounter::default());
+    let _victim = registry.register(
+        4,
+        "protected".into(),
+        "[::1]:1234".into(),
+        String::new(),
+        Some(target.clone()),
+    );
+    tidb_util::sem::enable();
+    assert!(
+        matches!(bob.run("KILL 4"), Err(DriverError::SpecificAccessDenied(name)) if name == "RESTRICTED_CONNECTION_ADMIN")
+    );
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    bob.run("SET ROLE killer").unwrap();
+    bob.run("KILL 4").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    bob.run("SET ROLE NONE").unwrap();
+    assert!(matches!(
+        bob.run("KILL 4"),
+        Err(DriverError::SpecificAccessDenied(_))
+    ));
+    let mut same_user = authenticated_session(&privileges, "protected", "%");
+    same_user.attach_process(
+        6,
+        registry.register(6, "protected".into(), String::new(), String::new(), None),
+    );
+    same_user.run("KILL 4").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // Granted but non-default target roles do not protect the target.
+    privileges.set_default_roles(&("protected".into(), "%".into()), &[]);
+    bob.run("KILL 4").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 3);
+    // Go matches global_grants independently of the selected user row.
+    privileges.create_user("protected", "::1", "");
+    privileges.grant_dynamic("protected", "%", "RESTRICTED_USER_ADMIN", false);
+    assert!(matches!(
+        bob.run("KILL 4"),
+        Err(DriverError::SpecificAccessDenied(_))
+    ));
+    tidb_util::sem::disable();
+    bob.run("KILL 4").unwrap();
+    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 4);
+}
+
+#[test]
+fn process_admin_batch_processlist_reads_target_statement_state() {
+    use tidb_util::memory::Tracker;
+    let registry = process::ProcessRegistry::default();
+    let mut observer = Session::new();
+    observer.attach_process(
+        2,
+        registry.register(2, String::new(), String::new(), String::new(), None),
+    );
+    let peer = registry.register(4, String::new(), String::new(), String::new(), None);
+    let mem = Tracker::new(1, -1);
+    let disk = Tracker::new(2, -1);
+    mem.consume(123);
+    disk.consume(456);
+    peer.set_trackers(mem.clone(), disk.clone());
+    registry.statement_started_with_digest(
+        4,
+        "execute prepared using @arg",
+        Some("prepared-sql-digest"),
+        "autocommit",
+    );
+    let ts = (1_609_459_200_123_u64 << 18) + 9;
+    registry.statement_metadata(
+        4,
+        ts,
+        "target_group".into(),
+        "target_alias".into(),
+        tidb_parser::RedactMode::Disabled,
+        Default::default(),
+    );
+    registry.statement_affected_rows(4, 17);
+    observer.run("SET time_zone='+08:00'").unwrap();
+    let sql = "SELECT DIGEST,MEM,DISK,TxnStart,RESOURCE_GROUP,SESSION_ALIAS,ROWS_AFFECTED FROM information_schema.PROCESSLIST WHERE ID=4";
+    let mut expected = vec![vec![
+        "prepared-sql-digest".to_owned(),
+        "123".into(),
+        "456".into(),
+        format!("01-01 08:00:00.123({ts})"),
+        "target_group".into(),
+        "target_alias".into(),
+        "17".into(),
+    ]];
+    assert_eq!(row_text(observer.run(sql)), expected);
+    observer.run("SET time_zone='America/Los_Angeles'").unwrap();
+    mem.consume(-23);
+    disk.consume(-56);
+    expected[0][1] = "100".into();
+    expected[0][2] = "400".into();
+    expected[0][3] = format!("12-31 16:00:00.123({ts})");
+    assert_eq!(row_text(observer.run(sql)), expected);
+}
+
+#[test]
+fn process_admin_batch_processlist_without_statement_context() {
+    let registry = process::ProcessRegistry::default();
+    let mut observer = Session::new();
+    observer.attach_process(
+        2,
+        registry.register(2, String::new(), String::new(), String::new(), None),
+    );
+    let _peer = registry.register(4, String::new(), String::new(), String::new(), None);
+    assert_eq!(
+        row_text(
+            observer.run(
+                "SELECT MEM,DISK,ROWS_AFFECTED FROM information_schema.PROCESSLIST WHERE ID=4"
+            )
+        ),
+        [["0", "0", "NULL"]]
+    );
+}
+
 /// Captured from TiDB (`show processlist` on a fresh testkit session):
 ///
 /// ```text

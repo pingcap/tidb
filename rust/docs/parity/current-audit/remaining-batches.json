@@ -6,8 +6,8 @@
     "tracked": 86,
     "unresolved": 57,
     "repaired": 29,
-    "open": 35,
-    "partial": 22
+    "open": 34,
+    "partial": 23
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
@@ -189,7 +189,7 @@
         "A03": "partial",
         "N01": "open",
         "N03": "partial",
-        "N04": "open",
+        "N04": "partial",
         "N05": "partial"
       },
       "latest_maintenance": {
@@ -208,6 +208,16 @@
         ],
         "receipt": "observation-plan-batch-validation.json",
         "acceptance": "partial maintenance of existing owners; complete packages remain unaccepted"
+      },
+      "latest_process_administration_maintenance": {
+        "receipt": "process-administration-batch-validation.json",
+        "advanced_findings": [
+          "A02",
+          "N03",
+          "N04"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "Remote KILL and cluster/server identity, complete statement-context lifetime and remaining security/config/information providers remain unaccepted."
       }
     },
     {
@@ -346,6 +356,14 @@
         ],
         "receipt": "observation-plan-batch-validation.json",
         "acceptance": "partial maintenance of existing owners; complete packages remain unaccepted"
+      },
+      "latest_process_administration_maintenance": {
+        "receipt": "process-administration-batch-validation.json",
+        "advanced_findings": [
+          "I01"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "Remote KILL and cluster/server identity, complete statement-context lifetime and remaining security/config/information providers remain unaccepted."
       }
     },
     {

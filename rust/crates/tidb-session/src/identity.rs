@@ -318,9 +318,7 @@ impl Session {
         let Some(registry) = self.privileges.as_ref() else {
             return false;
         };
-        let account = (user.to_owned(), host.to_owned());
-        let roles = registry.default_roles(&account);
-        registry.has_dynamic_priv_with_roles(user, host, &roles, name, false)
+        registry.has_dynamic_priv_with_default_roles(user, host, name)
     }
 
     /// Go's `CheckPrivilege` (`planner/core/optimizer.go` around line 187)

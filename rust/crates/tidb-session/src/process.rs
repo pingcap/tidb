@@ -56,8 +56,8 @@ pub trait ProcessKillTarget: Send + Sync {
     fn kill_connection(&self);
 }
 
-/// One row of `SHOW [FULL] PROCESSLIST`, in Go `ProcessInfo` order.
-#[derive(Clone, Debug)]
+/// One snapshot shared by SHOW and information_schema.PROCESSLIST.
+#[derive(Clone, Debug, Default)]
 pub struct ProcessRow {
     /// Connection identity (`Id`).
     pub id: u64,
@@ -77,6 +77,20 @@ pub struct ProcessRow {
     /// The statement currently running (`Info`), `None` for an idle
     /// connection, which Go reports as SQL NULL.
     pub info: Option<String>,
+    /// Published SQL digest, including the original prepared statement digest.
+    pub digest: String,
+    /// Bytes consumed by the target's retained memory tracker.
+    pub mem_bytes: i64,
+    /// Bytes consumed by the target's retained disk tracker.
+    pub disk_bytes: i64,
+    /// Target transaction timestamp, zero when no transaction is published.
+    pub cur_txn_start_ts: u64,
+    /// Target connection's resource group.
+    pub resource_group: String,
+    /// Target connection's session alias.
+    pub session_alias: String,
+    /// Statement affected rows; absent when no statement trackers are attached.
+    pub affected_rows: Option<u64>,
 }
 
 /// One live transaction exposed by `information_schema.TIDB_TRX`.
@@ -511,6 +525,20 @@ impl ProcessRegistry {
                     time: now.saturating_duration_since(entry.since).as_secs(),
                     state: entry.state.clone(),
                     info: entry.info.clone(),
+                    digest: entry.digest.clone(),
+                    mem_bytes: entry
+                        .mem_tracker
+                        .as_ref()
+                        .map_or(0, |tracker| tracker.bytes_consumed()),
+                    disk_bytes: entry
+                        .disk_tracker
+                        .as_ref()
+                        .map_or(0, |tracker| tracker.bytes_consumed()),
+                    cur_txn_start_ts: entry.cur_txn_start_ts,
+                    resource_group: entry.resource_group_name.clone(),
+                    session_alias: entry.session_alias.clone(),
+                    affected_rows: (entry.mem_tracker.is_some() || entry.disk_tracker.is_some())
+                        .then_some(entry.affected_rows),
                 }
             })
             .collect();

@@ -29,126 +29,96 @@ impl Session {
         &mut self,
         kill: &tidb_ast::KillStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
+        const INVALID_OPERATION: &str = "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead";
+        let registry = self.process.as_ref().map(|guard| guard.registry().clone());
         let target = match &kill.target {
-                        tidb_ast::KillTarget::ConnectionId(id) => *id,
-                        // Go accepts `KILL CONNECTION_ID()` (kill my own
-                        // connection) and rejects every other expression with
-                        // this exact message.
-                        tidb_ast::KillTarget::Expr(tidb_ast::Expr::Func { name, args, .. })
-                            if name.eq_ignore_ascii_case("connection_id") && args.is_empty() =>
-                        {
-                            self.connection_id.unwrap_or(0)
-                        }
-                        tidb_ast::KillTarget::Expr(_) => {
-                            return Err(DriverError::unsupported(
-                                "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead",
-                            ))
-                        }
-                    };
-        // go `globalconn.ParseConnID` + `SimpleExec.execKillStmt`: with the
-        // oracle's `enable-global-kill = true`, BOTH the plain `KILL` and
-        // the `KILL TIDB` forms decode the id through the global-conn
-        // encoding before any lookup (go runs the same ParseConnID block
-        // unconditionally once the config gate is passed -- simple.go's own
-        // `!EnableGlobalKill` early path never runs there). A 32-bit id
-        // carrying the 64-bit marker bit warns "truncated" and does
-        // nothing; out-of-range ids warn the parse failure.
-        // if !kill.tidb_extension {  -- the gate the pre-global-kill fork
-        // had; go's config-gated path makes the checks unconditional.
-        {
-            if target & 0x8000_0000_0000_0000 > 0 {
-                self.append_warning(
-                    crate::WarningLevel::Warning,
-                    1105,
-                    "Parse ConnectionID failed: unexpected connectionID exceeds int64".to_owned(),
-                );
-                return Ok(Some(StmtOutput::Affected(0)));
-            }
-            if target & 0x1 > 0 {
-                if target & 0xFFFF_FFFF_0000_0000 == 0 {
-                    self.append_warning(
-                        crate::WarningLevel::Warning,
-                        1105,
-                        "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. \
-                         Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill \
-                         without truncating ConnectionID."
-                            .to_owned(),
-                    );
-                    return Ok(Some(StmtOutput::Affected(0)));
+            tidb_ast::KillTarget::ConnectionId(id) => *id,
+            tidb_ast::KillTarget::Expr(tidb_ast::Expr::Func { name, args, .. })
+                if name.eq_ignore_ascii_case("connection_id") && args.is_empty() =>
+            {
+                // Go executes this local expression before numeric ID/config gates.
+                if let Some(registry) = registry {
+                    registry.kill(self.connection_id.unwrap_or(0), kill.query);
                 }
-            } else if target & 0xFFFF_FFFF_0000_0000 > 0 {
-                self.append_warning(
-                    crate::WarningLevel::Warning,
-                    1105,
-                    "Parse ConnectionID failed: unexpected connectionID exceeds uint32".to_owned(),
-                );
                 return Ok(Some(StmtOutput::Affected(0)));
             }
-        }
-        // Captured from TiDB: KILL of an id this server does not
-        // hold is NOT an error -- it answers OK, having done
-        // nothing. (1094 `Unknown thread id` belongs to EXPLAIN
-        // FOR CONNECTION, not to KILL.) A session with no server
-        // front holds no connection at all, which is Go's
-        // `sm == nil` early return: also a silent no-op.
-        if let Some(guard) = &self.process {
-            // Go `planbuilder.go`'s `*ast.KillStmt` case: everyone
-            // may KILL their own connection regardless of
-            // privilege; killing anyone else's requires the
-            // DYNAMIC `CONNECTION_ADMIN`, reported as
-            // `ErrSpecificAccessDenied.GenWithStackByArgs("SUPER
-            // or CONNECTION_ADMIN")` (1227) -- NOT the unused
-            // 1095 `ErrKillDenied` errno entry, which no code
-            // path in current Go ever raises. SUPER still passes
-            // because it is the fallback for every dynamic
-            // privilege, which is exactly why Go's message names
-            // both.
-            //
-            // Go additionally requires `RESTRICTED_CONNECTION_ADMIN`
-            // to kill a connection owned by a
-            // `RESTRICTED_USER_ADMIN` user, but only under SEM
-            // (`appendVisitInfoIsRestrictedUser` returns early
-            // when `sem.IsEnabled()` is false); with no SEM in
-            // this tier that branch is unreachable, so it is
-            // deliberately absent rather than half-modelled.
-            let is_self = self.connection_id == Some(target);
-            if !is_self {
-                let owner = guard
-                    .registry()
-                    .snapshot()
-                    .into_iter()
-                    .find(|row| row.id == target)
-                    .map(|row| row.user);
-                // Go compares the process's USERNAME against the
-                // logged-in username, ignoring host.
-                let same_user = owner.as_deref() == Some(self.process_list_user().as_str());
-                let may_kill = self.privilege_checks_bypassed()
-                    || self.privileges.as_ref().is_some_and(|registry| {
-                        self.current_identity().is_some_and(|(user, host)| {
-                            registry.has_dynamic_priv_with_roles(
-                                user,
-                                host,
-                                self.active_roles(),
-                                "CONNECTION_ADMIN",
-                                false,
-                            )
-                        })
-                    });
-                if owner.is_some() && !same_user && !may_kill {
+            tidb_ast::KillTarget::Expr(_) => {
+                return Err(DriverError::unsupported(INVALID_OPERATION));
+            }
+        };
+
+        // Go's planner checks the local target before executeKillStmt applies
+        // config or ID warnings. Same username is exempt regardless of host.
+        if let Some(owner) = registry
+            .as_ref()
+            .and_then(|registry| registry.snapshot().into_iter().find(|row| row.id == target))
+        {
+            if owner.user != self.process_list_user() {
+                if !self.has_dynamic_privilege("CONNECTION_ADMIN", false) {
                     return Err(DriverError::KillAccessDenied);
                 }
+                // The front end stores the display address (Go Host + Port).
+                // Verification needs the presented host without its port.
+                let host = owner
+                    .host
+                    .rsplit_once(':')
+                    .filter(|(host, port)| {
+                        port.parse::<u16>().is_ok()
+                            && (!host.contains(':')
+                                || (host.starts_with('[') && host.ends_with(']')))
+                    })
+                    .map_or(owner.host.as_str(), |(host, _)| {
+                        host.trim_start_matches('[').trim_end_matches(']')
+                    });
+                if tidb_util::sem::is_enabled()
+                    && self.target_has_dynamic_privilege(&owner.user, host, "RESTRICTED_USER_ADMIN")
+                    && !self.has_dynamic_privilege("RESTRICTED_CONNECTION_ADMIN", false)
+                {
+                    return Err(DriverError::SpecificAccessDenied(
+                        "RESTRICTED_CONNECTION_ADMIN".to_owned(),
+                    ));
+                }
             }
-            guard.registry().kill(target, kill.query);
+        }
+
+        let config = tidb_config::config_tree::config::get_global_config();
+        if !config.enable_global_kill {
+            if kill.tidb_extension || config.compatible_kill_query {
+                if let Some(registry) = registry {
+                    registry.kill(target, kill.query);
+                }
+            } else {
+                self.append_warning(
+                    crate::WarningLevel::Warning,
+                    1105,
+                    INVALID_OPERATION.to_owned(),
+                );
+            }
+            return Ok(Some(StmtOutput::Affected(0)));
+        }
+        let Some(registry) = registry else {
+            return Ok(Some(StmtOutput::Affected(0)));
+        };
+        match tidb_util::globalconn::parse_conn_id(target) {
+            Err(error) => {
+                self.append_warning(
+                    crate::WarningLevel::Warning,
+                    1105,
+                    format!("Parse ConnectionID failed: {error}"),
+                );
+            }
+            Ok((_, true)) => {
+                self.append_warning(crate::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned());
+            }
+            Ok((_, false)) => {
+                // Remote routing still requires the shared cluster/server-ID
+                // owner (N04/O01); this registry only holds local connections.
+                registry.kill(target, kill.query);
+            }
         }
         Ok(Some(StmtOutput::Affected(0)))
     }
 
-    /// `SHOW WARNINGS` / `SHOW ERRORS` output: one row per buffered warning,
-    /// or the count when the source wrote `SHOW COUNT(*) WARNINGS`.
-    ///
-    /// Captured from TiDB: the columns are `Level`, `Code`, `Message`; the
-    /// count form returns a single `@@session.warning_count` column; and
-    /// `SHOW ERRORS` shows only the `Error`-level rows.
     /// The rows of `SHOW [FULL] PROCESSLIST`.
     ///
     /// With a server front end this is the whole live connection list. A
@@ -250,6 +220,8 @@ impl Session {
                 } else {
                     "show processlist".to_owned()
                 }),
+                resource_group: self.active_resource_group.clone(),
+                ..process::ProcessRow::default()
             }],
         };
         if self.has_process_privilege() {
@@ -269,27 +241,23 @@ impl Session {
     /// `ToRow` builds on `ToRowForShow(true)`, i.e. `INFO` is never truncated
     /// here (unlike `SHOW PROCESSLIST` without `FULL`).
     ///
-    /// NOT MODELLED (this tier tracks none of these per connection, so each
-    /// is Go's own value for a connection with no live statement context --
-    /// `RefCountOfStmtCtx` fails to increase -- rather than an invented one):
-    /// `DIGEST` is `""`, `MEM`/`DISK`/`TIDB_CPU`/`TIKV_CPU` are `0`,
-    /// `MEM_ARBITRATION`/`MEM_WAIT_ARBITRATE_START`/
-    /// `MEM_WAIT_ARBITRATE_BYTES`/`ROWS_AFFECTED` are `NULL`, and
-    /// `TxnStart`/`RESOURCE_GROUP`/`SESSION_ALIAS` are `""`.
+    /// Memory arbitration and SQL CPU timing still need their statement
+    /// owners. The other values are snapshots of the target's published state.
     pub(crate) fn process_list_table_rows(&self) -> Vec<Vec<Datum>> {
         self.visible_process_rows(true)
             .into_iter()
             .map(|row| {
-                // DIGEST: go `processinfo` carries the sha1 hex of the
-                // normalized query text.
-                let digest = row.info.as_deref().map(|info| {
-                    tidb_parser::digest_normalized(&tidb_parser::normalize(
-                        info,
-                        tidb_parser::RedactMode::Enabled,
-                    ))
-                    .as_str()
-                    .to_owned()
-                });
+                let txn_start = if row.cur_txn_start_ts == 0 {
+                    String::new()
+                } else {
+                    let time = tidb_expr::sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
+                        .with_timezone(&self.session_time_zone());
+                    format!(
+                        "{}({})",
+                        time.format("%m-%d %H:%M:%S%.3f"),
+                        row.cur_txn_start_ts
+                    )
+                };
                 vec![
                     Datum::UInt(row.id),
                     Datum::Bytes(row.user.into_bytes()),
@@ -310,31 +278,19 @@ impl Session {
                         Some(info) => Datum::Bytes(info.into_bytes()),
                         None => Datum::Null,
                     },
-                    // DIGEST
-                    match digest {
-                        Some(hex) => Datum::Bytes(hex.into_bytes()),
-                        None => Datum::Bytes(Vec::new()),
-                    },
-                    // MEM: go's session baseline allocation (4096 bytes).
-                    Datum::UInt(4096),
+                    Datum::Bytes(row.digest.into_bytes()),
+                    Datum::Int(row.mem_bytes),
                     // MEM_ARBITRATION
                     Datum::Null,
                     // MEM_WAIT_ARBITRATE_START
                     Datum::Null,
                     // MEM_WAIT_ARBITRATE_BYTES
                     Datum::Null,
-                    // DISK
-                    Datum::UInt(0),
-                    // TxnStart
-                    Datum::Bytes(Vec::new()),
-                    // RESOURCE_GROUP: go reports the session's active
-                    // resource group; this tier's default is `default`.
-                    Datum::Bytes(self.active_resource_group.as_bytes().to_vec()),
-                    // SESSION_ALIAS
-                    Datum::Bytes(Vec::new()),
-                    // ROWS_AFFECTED: go's processinfo reports the statement's
-                    // affected-rows count, which is 0 for a running query.
-                    Datum::Int(0),
+                    Datum::Int(row.disk_bytes),
+                    Datum::Bytes(txn_start.into_bytes()),
+                    Datum::Bytes(row.resource_group.into_bytes()),
+                    Datum::Bytes(row.session_alias.into_bytes()),
+                    row.affected_rows.map_or(Datum::Null, Datum::UInt),
                     // TIDB_CPU
                     Datum::Int(0),
                     // TIKV_CPU
