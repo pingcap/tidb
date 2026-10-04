@@ -858,7 +858,8 @@ type indexJoinInnerChildWrapper struct {
 	zippedChildren []base.LogicalPlan
 }
 
-// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
+// checkIndexJoinInnerTaskWithAgg checks if join key set, together with the inner columns that
+// join inequalities may turn into scan ranges, is subset of group by items.
 // Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
 // Current limitation:
 // This check currently relies on UniqueID matching between:
@@ -870,7 +871,7 @@ type indexJoinInnerChildWrapper struct {
 // nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
-func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, otherConds []expression.Expression, dataSourceSchema *expression.Schema) bool {
 	// Only direct GROUP BY columns count as grouping keys. A column that merely
 	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
 	// partition the groups by that column, so probing per join-key value would
@@ -889,6 +890,26 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinK
 	for _, key := range innerJoinKeys {
 		if expression.ExprFromSchema(key, dataSourceSchema) {
 			innerKeysFromDataSource[key.UniqueID] = struct{}{}
+		}
+	}
+	// Inequalities in the join's other conditions can also become scan ranges below the
+	// aggregation (see indexJoinPathBuildColManager), e.g. `a.c2 > t1.c2` with index(c1, c2).
+	// Such a range filters rows before they are aggregated, so the inner column must be a
+	// grouping key as well.
+	for _, cond := range otherConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		switch sf.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE:
+		default:
+			continue
+		}
+		for _, arg := range sf.GetArgs() {
+			if col, ok := arg.(*expression.Column); ok && expression.ExprFromSchema(col, dataSourceSchema) {
+				innerKeysFromDataSource[col.UniqueID] = struct{}{}
+			}
 		}
 	}
 	if len(innerKeysFromDataSource) > len(groupByCols) {
@@ -932,7 +953,7 @@ childLoop:
 		return nil
 	}
 	for _, child := range wrapper.zippedChildren {
-		if la, ok := child.(*logicalop.LogicalAggregation); ok && !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, wrapper.ds.Schema()) {
+		if la, ok := child.(*logicalop.LogicalAggregation); ok && !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, p.OtherConditions, wrapper.ds.Schema()) {
 			return nil
 		}
 	}

@@ -148,4 +148,22 @@ select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, coun
 select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
 set @@sql_mode=default;
 
+# Case 6: UNSAFE - join inequality (a_t.c2 > tj1.c2) would become an index range on c2 below the agg, but c2 is not in GROUP BY (c1) -> INL_JOIN hint should be rejected
+drop table if exists tj4, tj5;
+create table tj4(c1 int, c2 int);
+create table tj5(c1 int, c2 int, key idx(c1, c2));
+insert into tj4 values(1, 15);
+insert into tj5 values(1, 10), (1, 20);
+set @@sql_mode='';
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+show warnings;
+select /*+ INL_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
+select /*+ HASH_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
+set @@sql_mode=default;
+
+# Case 7: SAFE - join inequality column (c2) IS in GROUP BY (c1, c2) -> INL_JOIN with range on c2 should work
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+select /*+ INL_JOIN(a_t) */ tj4.c1, a_t.c2, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.c2;
+select /*+ HASH_JOIN(a_t) */ tj4.c1, a_t.c2, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.c2;
+
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
