@@ -210,7 +210,7 @@ structural finding closure follows from removing these unused models.
 
 - [x] Verify callers and remove models, stale APIs and redundant test roots.
 - [x] Run grouped retained behavioral tests and affected all-target checks: 56 cases pass.
-- [ ] Self-review, root lint, normal build hook and local recovery; no push.
+- [x] Self-review, root lint, normal build hook and local recovery; no push.
 
 From rust/ after sourcing /workspace/.cloud-setup/env.sh, run:
 
@@ -233,3 +233,50 @@ keeps its cancellation and row-mapping assertions. Grouped behavior tests,
 affected all-target checks, lint and diff review pass. Actual commit hook
 and recovery results are recorded in the external final-handoff.json;
 no finding status or upstream package acceptance changes.
+
+## Continuation: duplicate Cargo targets and private test copies
+
+
+Starting at 635c89db48471af893b6129976c713864fd9a56d, remove 11 standalone
+Cargo targets whose files already compile into their crate's all aggregate.
+These files contain 281 test definitions across 16,778 source lines. Keep every
+suite and assertion; remove only the redundant build/run registrations in
+tidb-exec, tidb-planner and tidb-txnkv. The configured relation-binding test
+also moves to the planner aggregate after replacing its private source copy
+and fake read_only_scan module with the real library imports. Four additional
+source copies (ORDER/LIMIT, DISTINCT, error context and lock model) switch to
+their existing public owners. No production code or Go obligations change.
+
+Milestone one is the Cargo registration inventory and migration. Milestone
+two proves all selected cases still exist once in each aggregate, runs the
+migrated behavioral suites in one batch and checks all affected targets.
+Retain the adaptive-limit benchmark's source include: its owner is private,
+and widening production visibility merely for cleanup is unnecessary.
+
+- [x] Inventory 11 duplicate targets and migrate five private source copies.
+- [x] Build aggregates and prove all 281 identities occur once; 299 pass, five established DDL failures retained.
+- [ ] Affected checks, lint, review and mandatory locked-build commit hook.
+
+Activate /workspace/.cloud-setup/env.sh and run from rust/:
+
+    cargo test --locked -p tidb-exec -p tidb-planner -p tidb-txnkv --test all --no-run
+    cargo check --locked -p tidb-exec -p tidb-planner -p tidb-txnkv --all-targets
+
+Run built harnesses with the retired target names and five migrated module
+names as filters, --test-threads=1. Check exact nonzero results and preserve
+all failures. No new tests are needed for registration-only changes. Run root
+make lint, self-review and normal commit; its actual hook must run the locked
+server build. External evidence lives in /workspace/.cloud-setup/harness-dedup/.
+Recover individual edits with git show at the parent above, preserving
+concurrent changes. Historical receipt commands stay historical; the scripts
+README gives current aggregate selection. No push or publication. Findings
+remain 29 repaired and 57 unresolved; no whole Go package completion or
+measured workload speedup is claimed.
+
+Continuation outcome: twelve standalone link targets and five private source
+copies are gone. Production code and all281 duplicated cases are unchanged;
+the 23 migrated test bodies retain all executable statements. Five existing
+DDL failures match the committed dml-policy baseline and remain enabled.
+Affected checks and lint pass; actual final hook/recovery evidence lives in
+the external final-handoff.json. One inactive183MB retired-target executable
+was removed after its unchanged cases passed in the aggregate.

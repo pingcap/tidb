@@ -14,10 +14,7 @@
 
 #![allow(missing_docs)]
 
-#[path = "../src/lock/model.rs"]
-mod model;
-
-use model::{
+use tidb_txnkv::lock::{
     decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,
 };
 use tidb_proto::KvrpcLockInfo;

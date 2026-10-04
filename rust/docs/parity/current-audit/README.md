@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-[Unused-owner cleanup](dead-owner-cleanup-validation.json): four metadata prototypes, obsolete DistSQL errors and five standalone targets removed; 56 retained cases pass. Finding statuses are unchanged.
+[Harness consolidation](harness-dedup-validation.json) removes 12 standalone targets and five private source copies. All 281 formerly duplicated cases remain registered once; 299 selected cases pass and five established DDL failures remain. Finding statuses are unchanged.
 
 The current register has **86 findings: 29 repaired and 57 unresolved (36 open, 21 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
 

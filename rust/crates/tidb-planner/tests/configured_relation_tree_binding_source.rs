@@ -12,28 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// aggregate-test: standalone
-
 //! Source-derived tests for configured two-relation name binding.
 
-mod read_only_scan {
-    pub mod configured_catalog {
-        pub use tidb_planner::read_only_scan::configured_catalog::*;
-    }
-    pub use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
-
-    pub(crate) fn fold_identifier(identifier: &str) -> String {
-        identifier.to_lowercase()
-    }
-}
-
-#[path = "../src/configured_relation_tree.rs"]
-mod configured_relation_tree;
-
-use configured_relation_tree::{
+use tidb_planner::configured_relation_tree::{
     BoundJoinConstraint, ConfiguredRelationTree, RelationBindError, RelationSide,
 };
-use read_only_scan::{configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable};
+use tidb_planner::read_only_scan::{
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
+};
 
 fn catalog() -> ConfiguredCatalog {
     ConfiguredCatalog::new([

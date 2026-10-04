@@ -14,10 +14,7 @@
 
 //! Direct translation of `pkg/expression/aggregation/util_test.go`.
 
-#[path = "../src/aggregate_distinct.rs"]
-mod aggregate_distinct;
-
-use aggregate_distinct::DistinctChecker;
+use tidb_exec::aggregate::aggregate_distinct::DistinctChecker;
 use tidb_datatype::{Collation, Datum, Decimal};
 
 /// Source: `pkg/expression/aggregation/util_test.go::TestDistinct`.

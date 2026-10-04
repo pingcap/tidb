@@ -11,6 +11,18 @@ activate `/workspace/.cloud-setup/env.sh` in each shell and group related filter
 CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- <filter_a> <filter_b> --test-threads=1
 ```
 
+For integration suites in `tidb-exec`, `tidb-planner` and `tidb-txnkv`, use
+one aggregate target with module filters, for example:
+
+```bash
+cargo test --locked -p tidb-exec --test all -- prepared_dml_lowering_source cluster_ddl_source --test-threads=1
+```
+
+The duplicate standalone registrations for 11 suites and the private-source
+relation-binding target are retired. Historical receipts retain their original
+`--test <suite>` commands; use `--test all -- <suite>` to select those suites
+now. Deliberately standalone targets listed in Cargo.toml remain supported.
+
 Use the pinned toolchain and existing profile/cache. Heavy Cloud links use one
 build job; do not force an unrelated release build just to run a focused check.
 

@@ -14,10 +14,7 @@
 
 //! Source-shaped tests for the shared configured ORDER BY LIMIT contract.
 
-#[path = "../src/configured_order_limit_contract.rs"]
-mod configured_order_limit_contract;
-
-use configured_order_limit_contract::{
+use tidb_planner::configured_order_limit_contract::{
     ConfiguredLimitWindow, ConfiguredLimitWindowError, ConfiguredOrderDirection,
     ConfiguredOrderKey, ConfiguredOrderLimitSpec, ConfiguredOrderLimitSpecError,
 };

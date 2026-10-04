@@ -1,0 +1,171 @@
+{
+  "date": "2026-10-04",
+  "parent": "635c89db48471af893b6129976c713864fd9a56d",
+  "scope": "Retire duplicated test targets and private source copies without deleting behavioral cases or changing production code.",
+  "removed": {
+    "duplicate_standalone_targets": 11,
+    "additional_target_consolidated": 1,
+    "duplicated_test_registrations": 281,
+    "duplicated_test_source_lines": 16778,
+    "private_source_copies": 5,
+    "inactive_obsolete_binary_bytes": 183089440
+  },
+  "targets": [
+    {
+      "crate": "tidb-txnkv",
+      "module": "snapshot_scan_page_deadline_source",
+      "tests": 2,
+      "unchanged_sha256": "e7e4aed436714cbecdb506f47c1464e78b71d7d74058c1fa58b96373c4ab8d44"
+    },
+    {
+      "crate": "tidb-txnkv",
+      "module": "region_error_recovery_source",
+      "tests": 26,
+      "unchanged_sha256": "d584bbf8ceabafd153c5f3b870bd6960d5e46a6fbe837c1e34f2c3459aef075b"
+    },
+    {
+      "crate": "tidb-txnkv",
+      "module": "region_batch_locate_source",
+      "tests": 14,
+      "unchanged_sha256": "764adaa3633c80355b16a71e24b48345f9294456bcfbf8027b6809ce05c69c50"
+    },
+    {
+      "crate": "tidb-txnkv",
+      "module": "shared_read_runtime_source",
+      "tests": 3,
+      "unchanged_sha256": "3770c3a8dbbe46828bc6d7e1609fe70cf013311d1704e5cafb323255cb450612"
+    },
+    {
+      "crate": "tidb-txnkv",
+      "module": "tikv_transaction_driver_source",
+      "tests": 9,
+      "unchanged_sha256": "55bcf54843edeab394f7f88fc2d5fcd851c535bea56f54624090a4c065d014ea"
+    },
+    {
+      "crate": "tidb-exec",
+      "module": "prepared_dml_lowering_source",
+      "tests": 83,
+      "unchanged_sha256": "d941f1147670a95d96fadd44f58975de0f7ee5c7ee116d9294eee99f6ded6414"
+    },
+    {
+      "crate": "tidb-exec",
+      "module": "cluster_account_write_source",
+      "tests": 16,
+      "unchanged_sha256": "2a2c5b67918598e5eddb3e74ffa6904e2d9bd20c8ad05f91e49c125586dfcdce"
+    },
+    {
+      "crate": "tidb-exec",
+      "module": "cluster_sysvar_write_source",
+      "tests": 5,
+      "unchanged_sha256": "d48b03c140c3b2c3cf0e5693d983a778167579d94c77e48eeca2129c8f7091e9"
+    },
+    {
+      "crate": "tidb-exec",
+      "module": "cluster_ddl_source",
+      "tests": 116,
+      "unchanged_sha256": "aa20277a7066d67dcd6ff84178d36d028a20b948eb11bb302d45328ce75f2f95"
+    },
+    {
+      "crate": "tidb-planner",
+      "module": "rule_partition_pruning_pruner_source",
+      "tests": 3,
+      "unchanged_sha256": "b597cc6e60a32bbc832fc630a45688a4ab0732642b8a534617c9908722cee313"
+    },
+    {
+      "crate": "tidb-planner",
+      "module": "tiflash_mpp_root_shape_source",
+      "tests": 4,
+      "unchanged_sha256": "00f593dc6b049e7b8accfe77998207dc81e9d684f5eff0c7a8633d7a08d88ee6"
+    }
+  ],
+  "preservation": {
+    "former_duplicate_cases_each_registered_once": 281,
+    "migrated_test_bodies_unchanged_except_comment": 23,
+    "proof_log": "registration-proof.json",
+    "body_proof": "body-proof.json"
+  },
+  "tests": [
+    {
+      "crate": "tidb-exec",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-exec/a2887d144c588a7f/out/all-a2887d144c588a7f",
+        "prepared_dml_lowering_source",
+        "cluster_account_write_source",
+        "cluster_sysvar_write_source",
+        "cluster_ddl_source",
+        "aggregate_distinct_source",
+        "error_context_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "summary": "FAILED. 224 passed; 5 failed; 0 ignored; 0 measured; 619 filtered out; finished in 16.96s",
+      "log": "/workspace/.cloud-setup/harness-dedup/tidb-exec-tests.log"
+    },
+    {
+      "crate": "tidb-planner",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-planner/c8ff87d3f6e88e00/out/all-c8ff87d3f6e88e00",
+        "rule_partition_pruning_pruner_source",
+        "tiflash_mpp_root_shape_source",
+        "configured_relation_tree_binding_source",
+        "configured_order_limit_contract_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 17 passed; 0 failed; 0 ignored; 0 measured; 450 filtered out; finished in 0.01s",
+      "log": "/workspace/.cloud-setup/harness-dedup/tidb-planner-tests.log"
+    },
+    {
+      "crate": "tidb-txnkv",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-txnkv/4987d0a7c287c62b/out/all-4987d0a7c287c62b",
+        "snapshot_scan_page_deadline_source",
+        "region_error_recovery_source",
+        "region_batch_locate_source",
+        "shared_read_runtime_source",
+        "tikv_transaction_driver_source",
+        "lock_model_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 58 passed; 0 failed; 0 ignored; 0 measured; 379 filtered out; finished in 2.23s",
+      "log": "/workspace/.cloud-setup/harness-dedup/tidb-txnkv-tests.log"
+    }
+  ],
+  "outcome": {
+    "passed": 299,
+    "failed": 5,
+    "failure_names": [
+      "a_created_database_is_stored_exactly_as_the_go_server_stores_it",
+      "a_created_database_persists_its_resolved_charset_and_collation",
+      "a_modify_column_reorganizes_exactly_where_go_says_it_must",
+      "check_job_submission_precedes_every_schema_transition",
+      "completed_check_schema_stays_active_until_schema_sync"
+    ],
+    "diagnosis": "Exact same five unchanged DDL cases recorded in dml-policy-batch-validation.json and mdl-mode-review.md. Existing notifier fixtures, MODIFY admission and CHECK history expectations; preserved, not counted as passing. No fresh parent rebuild was necessary for unchanged test and production files."
+  },
+  "checks": {
+    "aggregate_build": "cargo test --locked -p tidb-exec -p tidb-planner -p tidb-txnkv --test all --no-run: passed",
+    "all_targets": "cargo check --locked -p tidb-exec -p tidb-planner -p tidb-txnkv --all-targets: passed",
+    "lint": "make lint: passed",
+    "metadata": "cargo metadata --locked --no-deps --format-version 1 confirms retired targets absent",
+    "diff_review": "passed; no production/dependency/lockfile/native changes",
+    "commit_hook": "Actual hooks/pre-commit must run cargo build --locked -p tidb-server; SHA-dependent final result in external final-handoff.json"
+  },
+  "limits": "No full Go/Rust suite, live cluster, whole-package completion, finding closure or measured workload speedup. No push.",
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21
+  },
+  "external_evidence": "/workspace/.cloud-setup/harness-dedup",
+  "log_sha256": {
+    "build-tests.log": "0e7584722d191b86f346562148caf1176ba9c8c16b1eafb1fc554d95a3e6e0dd",
+    "check.log": "d0c6744472d7ea8a9c29d825bfceb86eb2b69d2221de7b5848061a9906aeceba",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "test-results.json": "cf7abc31d3088e28b340b1105cc57e664c2aa97df69955b929cc2bb2b67334ed",
+    "registration-proof.json": "217b715a5d4e2983ce2b7a055695722f8b654063446375bfe882c7e4eea42dd7"
+  }
+}

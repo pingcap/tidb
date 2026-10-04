@@ -14,12 +14,7 @@
 
 #![allow(missing_docs)]
 
-// The module moved to `tidb-executor`, where the coprocessor request is
-// built; `tidb_exec::error_context` still re-exports it.
-#[path = "../../tidb-executor/src/error_context.rs"]
-mod error_context;
-
-use error_context::{
+use tidb_exec::error_context::{
     resolve_err_level, ErrGroup, ErrorContext, ErrorContextFlags, ErrorDisposition, Level, LevelMap,
 };
 use tidb_datatype::{ConversionContext, ConversionFlags, ConversionLocation, STRICT_FLAGS};
@@ -121,7 +116,7 @@ fn statement_defaults_warn_on_division_but_keep_other_groups_strict() {
 #[test]
 fn disposition_is_typed_and_does_not_mutate_warning_state() {
     // Source: pkg/errctx/context.go:128-168. The Rust leaf returns a typed
-    // action; the future statement owner will append the warning itself.
+    // action; the statement owner appends the warning itself.
     let ctx = ErrorContext::new()
         .with_group_level(ErrGroup::Truncate, Level::Warn)
         .with_group_level(ErrGroup::DupKey, Level::Ignore);

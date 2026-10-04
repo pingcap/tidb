@@ -1,6 +1,6 @@
 # Remaining structural mismatches, maintained 2026-10-04
 
-[Unused-owner cleanup](dead-owner-cleanup-validation.json): four metadata prototypes, obsolete DistSQL errors and five standalone targets removed; 56 retained cases pass. Finding statuses are unchanged.
+[Harness consolidation](harness-dedup-validation.json) removes 12 standalone targets and five private source copies. All 281 formerly duplicated cases remain registered once; 299 selected cases pass and five established DDL failures remain. Finding statuses are unchanged.
 
 Harness maintenance: [347 empty entries removed](empty-test-cleanup-validation.json), preserving all meaningful bodies and unverified Go obligations. Finding statuses are unchanged.
 
