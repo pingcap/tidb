@@ -815,6 +815,7 @@
     "production_behavior_changed": false,
     "finding_statuses_changed": false,
     "receipt": "placeholder-test-removal.md",
-    "obligation_ledger": "placeholder-test-obligations.json"
+    "obligation_ledger": "placeholder-test-obligations.json",
+    "source_commit": "e20b110a9d2df0b531aae231f6b931088c3e2c5d"
   }
 }

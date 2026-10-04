@@ -16,7 +16,7 @@ Remove compiled tests that perform no assertions and only advertise historical m
 - [x] Capture the pre-removal aggregate test list (1306 entries).
 - [x] Move complete historical contracts and candidate evidence into the audit ledger; remove files and useless LRU diagnostic probes.
 - [x] Verify the aggregate list loses exactly the 55 named empty tests and nothing else; run real LRU/instance/Apply planner tests and lint.
-- [ ] Run locked server build through the actual hook, commit locally and refresh recovery/startup handoff without pushing.
+- [x] Run locked server build through the actual hook, commit locally and refresh recovery/startup handoff without pushing.
 
 ## Context and Orientation
 
@@ -62,4 +62,4 @@ No production API, Cargo dependency, lockfile, Go source or native client change
 ## Outcomes & Retrospective
 
 
-Removal and scoped verification passed: exactly 55 ignored empty entries disappeared, all 1251 other entries remain, all 55 Go identities and historical Rust hashes verify, 22 real Rust cases pass, planner all-target checking and make lint pass. The locked server build also passed. Normal hook commits and recovery/draft delivery are in progress. Cloud evidence belongs under `/workspace/.cloud-setup/placeholder-removal`. Complete upstream fixtures, failpoints, live TiKV, performance and package acceptance remain outside this cleanup.
+Removal and scoped verification passed: exactly 55 ignored empty entries disappeared, all 1251 other entries remain, all 55 Go identities and historical Rust hashes verify, 22 real Rust cases pass, planner all-target checking and make lint pass. The locked server build also passed. Source e20b110a9d2df0b531aae231f6b931088c3e2c5d committed through the actual locked-build hook. The final receipt commit and post-commit recovery/draft readback are recorded in `/workspace/.cloud-setup/placeholder-removal/final-handoff.json`; nothing is pushed. Cloud evidence belongs under `/workspace/.cloud-setup/placeholder-removal`. Complete upstream fixtures, failpoints, live TiKV, performance and package acceptance remain outside this cleanup.

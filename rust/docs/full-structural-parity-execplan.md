@@ -1,5 +1,9 @@
 # Audit and remove Go/Rust structural mismatches
 
+## Empty planner test cleanup checkpoint (2026-10-04)
+
+The [cleanup plan](placeholder-test-removal-execplan.md) removes 55 ignored empty tests across five planner modules and two assertion-free LRU probe loops. The [receipt](parity/current-audit/placeholder-test-removal.md) and [unverified obligation ledger](parity/current-audit/placeholder-test-obligations.json) retain all current Go identities/historical contracts and 81 relocated candidate-index rows. Exact harness set difference preserves every other entry. Production owners, Go obligations and counts are unchanged: 29 repaired and 57 unresolved (40 open, 17 partial). No push.
+
 ## Cache/Apply continuation checkpoint (2026-10-04)
 
 The [cache/Apply batch](parity/current-audit/cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.

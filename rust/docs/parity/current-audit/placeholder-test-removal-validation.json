@@ -96,5 +96,15 @@
   "push": {
     "authorized": false,
     "attempted": false
+  },
+  "source_commit": "e20b110a9d2df0b531aae231f6b931088c3e2c5d",
+  "actual_precommit_hook": {
+    "command": "TERM=xterm git commit -m \"test: retire empty planner placeholders and diagnostic probes\"",
+    "hooks_path": "hooks",
+    "locked_build": "cd rust && cargo build --locked -p tidb-server",
+    "status": "passed",
+    "exit_code": 0,
+    "log": "/workspace/.cloud-setup/placeholder-removal/source-commit-hook.log",
+    "sha256": "64fe89e066efcf7f33b3fcc60cc776429c8a995cbf2c51b1824ea7096c7d3e58"
   }
 }
