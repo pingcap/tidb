@@ -756,7 +756,7 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 	} else {
 		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
 	}
-	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild)
+	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild, innerJoinKeys)
 	if innerChildWrapper == nil {
 		return nil
 	}
@@ -858,7 +858,72 @@ type indexJoinInnerChildWrapper struct {
 	zippedChildren []base.LogicalPlan
 }
 
-func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
+// checkIndexJoinInnerTaskWithAgg checks if join key set, together with the inner columns that
+// join inequalities may turn into scan ranges, is subset of group by items.
+// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+// Current limitation:
+// This check currently relies on UniqueID matching between:
+// 1) columns extracted from GroupByItems, and
+// 2) columns from DataSource that are used as inner join keys.
+// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
+// reject some valid index join plans (false negatives) to keep correctness.
+// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, otherConds []expression.Expression, dataSourceSchema *expression.Schema) bool {
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+
+	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column
+	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
+	// and the newly generated keys will not cause the split.
+	innerKeysFromDataSource := make(map[int64]struct{}, len(innerJoinKeys))
+	for _, key := range innerJoinKeys {
+		if expression.ExprFromSchema(key, dataSourceSchema) {
+			innerKeysFromDataSource[key.UniqueID] = struct{}{}
+		}
+	}
+	// Inequalities in the join's other conditions can also become scan ranges below the
+	// aggregation (see indexJoinPathBuildColManager), e.g. `a.c2 > t1.c2` with index(c1, c2).
+	// Such a range filters rows before they are aggregated, so the inner column must be a
+	// grouping key as well.
+	for _, cond := range otherConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		switch sf.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE:
+		default:
+			continue
+		}
+		for _, arg := range sf.GetArgs() {
+			if col, ok := arg.(*expression.Column); ok && expression.ExprFromSchema(col, dataSourceSchema) {
+				innerKeysFromDataSource[col.UniqueID] = struct{}{}
+			}
+		}
+	}
+	if len(innerKeysFromDataSource) > len(groupByCols) {
+		return false
+	}
+	for keyColID := range innerKeysFromDataSource {
+		if _, ok := groupByCols[keyColID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan, innerJoinKeys []*expression.Column) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
 	nextChild := func(pp base.LogicalPlan) base.LogicalPlan {
 		if len(pp.Children()) != 1 {
@@ -886,6 +951,11 @@ childLoop:
 	}
 	if wrapper.ds == nil || wrapper.ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
+	}
+	for _, child := range wrapper.zippedChildren {
+		if la, ok := child.(*logicalop.LogicalAggregation); ok && !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, p.OtherConditions, wrapper.ds.Schema()) {
+			return nil
+		}
 	}
 	return wrapper
 }
