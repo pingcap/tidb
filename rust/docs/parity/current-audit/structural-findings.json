@@ -810,14 +810,16 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "integration_start": "2cecf1e7c2b4907a8c5d891f0288e18dda4d9850",
-    "removed_modules": 2,
-    "retired_existing_tests": 9,
-    "relocated_go_tests": 11,
-    "withdrawn_new_adapter_tests": 2,
+    "integration_start": "880246825ccaea2c945b963a7d1d49a500d6cf1a",
+    "receipt": "obsolete-tooling-removal-validation.json",
+    "retired_gate_tests": 1,
+    "retired_probe_modules": 1,
+    "relocated_behavior_assertions": "Exact default-OR tree shape moves into existing pipes_as_concat_sql_mode_matches_go; original meaningful obligation retained.",
+    "retired_binary_targets": [
+      "select-one-profile"
+    ],
     "finding_statuses_changed": false,
-    "receipt": "dml-trigger-owner-batch-repair.md",
-    "inventory": "dml-trigger-owner-batch-validation.json"
+    "scope": "Remove obsolete source-size policy, duplicated profiling/parser scaffolding and stale status reports; no Go package acceptance."
   },
   "test_cleanup_history": [
     {
@@ -856,6 +858,17 @@
       "finding_statuses_changed": false,
       "receipt": "transport-expression-empty-test-removal.md",
       "obligation_ledger": "transport-expression-empty-test-obligations.json"
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "2cecf1e7c2b4907a8c5d891f0288e18dda4d9850",
+      "removed_modules": 2,
+      "retired_existing_tests": 9,
+      "relocated_go_tests": 11,
+      "withdrawn_new_adapter_tests": 2,
+      "finding_statuses_changed": false,
+      "receipt": "dml-trigger-owner-batch-repair.md",
+      "inventory": "dml-trigger-owner-batch-validation.json"
     }
   ],
   "repair_history": [

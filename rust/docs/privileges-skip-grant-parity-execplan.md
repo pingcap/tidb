@@ -154,7 +154,7 @@ Production and regression evidence is carried by:
 - `rust/crates/tidb-config/src/config_tree/config.rs`
 - `rust/crates/tidb-exec/src/real_tikv_privileges.rs`
 - `rust/crates/tidb-server/src/{auth_identity.rs,configured_user_store.rs,lib.rs,mysql_connection.rs,node_config.rs,pipeline_session.rs,real_tikv_multi_node.rs,sql_node.rs}`
-- `rust/crates/tidb-server/src/bin/select-one-profile.rs`
+- Historical SELECT1 probe: `git show 880246825c:rust/crates/tidb-server/src/bin/select-one-profile.rs`; retired because its manually reconstructed phases no longer model the ordinary session.
 - `rust/crates/tidb-server/src/real_tikv_node/mod.rs`
 - `rust/crates/tidb-server/src/cluster_session_node/{boot.rs,mod.rs,tests/accounts.rs,tests/node_fixture.rs,tests/schema_changes.rs,tests/statistics.rs}`
 - `rust/crates/tidb-server/src/cluster_sysvar_seam.rs`

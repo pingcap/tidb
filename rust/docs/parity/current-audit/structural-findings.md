@@ -4,6 +4,8 @@
 
 Current [TLS owner maintenance](tls-owner-batch-repair.md) advances A02/A03/N03 together across account mutation, TLS admission and process configuration. All three remain partial for their named wider obligations. Other54 unresolved IDs retain earlier evidence; this batch is not a fresh whole-register reproduction.
 
+The [tooling removal receipt](obsolete-tooling-removal-validation.json) retires the file-size gate and obsolete profiling/probe scaffolding, preserving the parser behavior assertion. Documentation consolidation changes no finding status or upstream validation obligation.
+
 Go references mean separately refreshed master `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`, kvproto `v0.0.0-20260820070758-623e58e60fa9`, PD client `v0.0.0-20260805103528-afa43111d149`, etcd API `v3.5.15`, and TiPB `v0.0.0-20260908093239-fed7bc47c39d`.
 
 Paths are relative to the repository root. Unless explicitly reproduced, consequences are source-based inferences. Complete source/generated/platform/build/test/fixture coverage remains required for package acceptance; no live multi-node or performance acceptance is implied. The [audit index](README.md) links historical reviews/receipts and retained failed validations. Duplicate historical summaries and stale count snapshots have been removed from this current register; original receipts retain their pins and results.

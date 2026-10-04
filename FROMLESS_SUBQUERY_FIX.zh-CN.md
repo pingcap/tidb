@@ -26,6 +26,6 @@ make lint
 - TableDual planner：6 passed，`/tmp/fromless-planner.log`。
 - session integration：310 passed，`/tmp/fromless-integration.log`。
 - lint：退出 0，`/tmp/fromless-lint.log`。
-- 真实 access-path：退出 0，完整命令及 ready 证据见 `READINESS_CURRENT_STATUS.zh-CN.md`。
+- 真实 access-path：退出 0，完整命令及 ready 证据见 `READINESS_VERIFICATION.zh-CN.md`（原始历史报告可从 `git show 880246825c:READINESS_CURRENT_STATUS.zh-CN.md` 读取）。
 
 本改动使无 FROM 的逻辑叶节点持有合法空 schema，未改变行数、存储或协议。全量 session、workspace、Go/Bazel 及另外三个 RealTiKV runner 未在本轮完整重跑；不声明所有 failed cases 或完整 Go package 转写完成。共享统计加载的既有未提交工作保持独立。

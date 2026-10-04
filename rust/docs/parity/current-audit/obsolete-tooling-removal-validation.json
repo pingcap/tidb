@@ -1,0 +1,177 @@
+{
+  "date": "2026-10-04",
+  "start": "880246825ccaea2c945b963a7d1d49a500d6cf1a",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_unchanged": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "concurrent_integration_preserved_unmerged": "91010d96bb3e32468bd56ea2b07d255248485489",
+  "inventory": [
+    {
+      "path": "rust/scripts/check-source-size.sh",
+      "before_sha256": "a0ae35ad5c0f39ab8c97617c60fada735b79efa95741eb611963bd893b377b86",
+      "before_lines": 51,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "rust/scripts/source_size_bounds.txt",
+      "before_sha256": "8c1e3b615b3f509792f6d881e5035e59600a682cfc938e94bb39e39c333581ad",
+      "before_lines": 3,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "rust/difftests/result-tests/tests/source_size_ratchet.rs",
+      "before_sha256": "f722024627ee2fbbf936542989126c781a1c6bae4af3b688d0b19d719c9b6eaa",
+      "before_lines": 38,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "rust/docs/source-size-restoration-execplan.md",
+      "before_sha256": "d59d5ff3d2d44eebdb1b85c2a12ebfaf2fbe7ac25c6245eee7fafc64874407ea",
+      "before_lines": 161,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "rust/crates/tidb-server/src/bin/select-one-profile.rs",
+      "before_sha256": "8e451dc60a6a694610106a794f5772f68c001d0f6f1d31803915e81febb57409",
+      "before_lines": 252,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "rust/crates/tidb-parser/src/pipes_probe_test.rs",
+      "before_sha256": "f50a4a883f71653c04a665ca570d9ac09006e9ed3d0f7ef3bb5546db18d3366c",
+      "before_lines": 43,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "CLUSTER_SESSION_READINESS_CURRENT.zh-CN.md",
+      "before_sha256": "5dc27e6beeedd64b617679de250961396d5f7436437dbf9027c084d313a068d8",
+      "before_lines": 64,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "READINESS_CURRENT_STATUS.zh-CN.md",
+      "before_sha256": "38c519c9bb7c0f3d2fe505b40743de9c4928e25774d6d119f3f12487a352e0c8",
+      "before_lines": 44,
+      "action": "deleted",
+      "after_lines": 0
+    },
+    {
+      "path": "BLOCKER_RESOLUTION_REPORT.zh-CN.md",
+      "before_sha256": "5864630dd38982c4ddcae5661a24fd4b0c0fabcb03ec56704b1b9c238513c102",
+      "before_lines": 3915,
+      "action": "consolidated",
+      "after_lines": 11
+    },
+    {
+      "path": "BLOCKER_RESOLUTION.md",
+      "before_sha256": "56fb78bfa7ea83b36910b08d9f59a5c34a0c4ef4b4023f9cdd708a53e323b4e2",
+      "before_lines": 111,
+      "action": "consolidated",
+      "after_lines": 9
+    },
+    {
+      "path": "READINESS_VERIFICATION.zh-CN.md",
+      "before_sha256": "49ef437a77f8d2bf6b214576dca12b36676cd0cc5102c91dabec5c175960b18b",
+      "before_lines": 68,
+      "action": "consolidated",
+      "after_lines": 19
+    },
+    {
+      "path": "rust/scripts/README.md",
+      "before_sha256": "2ad2476c1f86c0e5ff74af60a5f8f4c8eb628a05fe3f08c79eda74c8e57b8147",
+      "before_lines": 50,
+      "action": "consolidated",
+      "after_lines": 53
+    }
+  ],
+  "targets": {
+    "removed": [
+      [
+        "difftest-result-tests",
+        "source_size_ratchet",
+        [
+          "test"
+        ]
+      ],
+      [
+        "tidb-server",
+        "select-one-profile",
+        [
+          "bin"
+        ]
+      ]
+    ],
+    "added": [],
+    "remaining": 261
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-parser --lib -- pipes_as_concat_sql_mode_matches_go operator_precedence --test-threads=1",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/obsolete-tooling-removal/parser-tests.log",
+      "sha256": "e2f1dfceb1557afc00e352882fd75e5a5e441c03ec1bc135f612fa8d5794fc95"
+    },
+    {
+      "command": "cargo check --locked -p tidb-parser -p tidb-server -p difftest-result-tests --all-targets",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/obsolete-tooling-removal/all-targets.log",
+      "sha256": "be47eb381341e8e5b720a3d5e64dea027d4e1c4ead22836a815ac4ae8780f6bc"
+    },
+    {
+      "command": "make lint",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/obsolete-tooling-removal/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-parser/src/tests/expr.rs",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/obsolete-tooling-removal/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "parser_cases_passed": 2,
+  "removed_test_identities": [
+    "difftest-result-tests::source_size_ratchet::no_source_file_grows_huge_silently",
+    "tidb-parser::pipes_probe_test::probe_parse_pipes_shape"
+  ],
+  "preserved_behavior": "The probe SQL and exact OR/coalesce/separator tree assertion moved into existing pipes_as_concat_sql_mode_matches_go. Only private rendering/module scaffolding is removed. Existing concat and operator precedence cases pass.",
+  "source_basis": {
+    "parser": "Go parser.y:1812 %left pipes or pipesAsOr; lexer.go:282 maps default || to pipesAsOr.",
+    "profile": "The removed session_stages manually times control_transaction/parse_statement/apply_set_stmt/statement_kind/run_with_columns. Production pipeline_session.rs::execute_write uses parse_at_statement_boundary; the executable is neither the ordinary server path nor a Go workload acceptance unit.",
+    "size_gate": "Rust-only 2200-line policy traversed all crate files and required file splits regardless of Go ownership. Current explicit removal request supersedes the historical restoration instruction."
+  },
+  "retained": "Real server/bootstrap/stats/session tools; live workload runners; readiness delay/death/timeout and cleanup-path safety tests; all upstream source/fixtures and meaningful test obligations.",
+  "additional_checks": [
+    "Only the two named Cargo targets disappear; all other targets unchanged.",
+    "Retained readiness helper/test and four runners pass bash -n.",
+    "No executable references remain to removed gate/probe/profiler; remaining references explicitly describe historical or removed artifacts.",
+    "git diff --check and self-review pass."
+  ],
+  "current_source_sha256": {
+    "rust/crates/tidb-parser/src/lib.rs": "f474ff6d0ab344985fe3d797bddaa7ec3439d6681dd535264b1f21d65e97ee11",
+    "rust/crates/tidb-parser/src/tests/expr.rs": "bcb511dbbad248dec841072702e0989f6ed83ec1fbc8291f4dd27b429078c277",
+    "rust/difftests/result-tests/Cargo.toml": "73846942125567bc393848d494487b71c078146ffcece486777e3f9d60af3d52"
+  },
+  "counts_unchanged": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "historical_evidence": "All before-images and their recorded failure descriptions remain at git show880246825ccaea2c945b963a7d1d49a500d6cf1a:<path>. Historical /tmp and laptop logs are not claimed to exist in Cloud. Removal does not close their failures.",
+  "commit_gate": "Actual hooks/pre-commit must run cd rust && cargo build --locked -p tidb-server. Exact final SHA, hook outcome, recovery bundle and Cloud draft recorded after completion in /workspace/.cloud-setup/obsolete-tooling-removal/final-handoff.json.",
+  "limits": [
+    "No full Go suite, full Rust suite, live multi-node or performance run.",
+    "Prior parser14/expression3 failures retain earlier evidence; they were not rerun or erased.",
+    "No complete Go package accepted and no structural finding status changed.",
+    "No push or dry run; fresh-task unpublished-commit restoration remains unverified."
+  ]
+}

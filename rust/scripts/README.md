@@ -4,11 +4,15 @@ Operational tooling for the Rust workspace.
 
 ## Running tests
 
-Run scoped tests from `rust/` with 12 build jobs:
+Run Cargo from `rust/` so the workspace configuration is applied. In Cloud,
+activate `/workspace/.cloud-setup/env.sh` in each shell and group related filters:
 
 ```bash
-cargo test --offline --locked --release -j12 -p tidb-session --lib <test_filter>
+CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib -- <filter_a> <filter_b> --test-threads=1
 ```
+
+Use the pinned toolchain and existing profile/cache. Heavy Cloud links use one
+build job; do not force an unrelated release build just to run a focused check.
 
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
@@ -34,17 +38,16 @@ connection, leader-transfer and blocked-shutdown campaign has passed on the shar
 server. That live composition still requires validation. The removal and test
 coverage inventory is in `../docs/parity/current-audit/shared-server-session-repair.md`.
 
-## When the machine gets slow, it is usually disk
+## Build artifacts and retired tooling
 
-Builds and tests thrash long before the disk reports itself full. Free space in
-this order, cheapest first:
+Check disk capacity before heavy builds. Remove only identified inactive,
+regeneratable artifacts when needed, retaining current dependencies, binaries,
+logs, source and recovery bundles. Broad cache deletion or worktree removal is
+not an ordinary test step.
 
-```bash
-go clean -cache                          # 16-36GB of gorun/goeval capture cruft
-rm -rf rust/target/debug/incremental     # ~53GB, keeps every compiled dependency
-git worktree list                        # agent worktrees run 4-11GB EACH
-```
-
-`cargo clean` frees the same space as the second line but costs a full
-workspace rebuild — reach for it last. Remove an agent worktree as soon as its
-work is cherry-picked rather than batching the cleanup.
+The source-line-count gate and its Cargo wrapper are retired: Go behavior and
+ownership determine acceptance, not a 2,200-line threshold. The private
+`select-one-profile` executable is also retired; its manually reconstructed
+statement phases no longer model the ordinary session. Use the real server and
+maintained workload runners for measurements. No workload speedup is established
+by removing these tools.

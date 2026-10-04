@@ -1841,6 +1841,5 @@ fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
     String::from_utf8(out).expect("unescaping valid UTF-8 SQL preserves valid UTF-8")
 }
 
-mod pipes_probe_test;
 #[cfg(test)]
 mod tests;

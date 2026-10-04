@@ -987,6 +987,30 @@ fn pipes_as_concat_sql_mode_matches_go() {
         concat("SELECT a || b COLLATE utf8mb4_bin"),
         "SELECT CONCAT(`a`, `b` COLLATE utf8mb4_bin)"
     );
+    // Preserve the retired q84 probe's exact left-associative OR shape.
+    // Go parser.y: %left pipes or pipesAsOr; lexer.go maps default || to OR.
+    let Stmt::Query(query) =
+        parse("SELECT coalesce(c_last_name,'') || ', ' || coalesce(c_first_name,'') FROM t")
+            .unwrap()
+    else {
+        panic!("expected query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select")
+    };
+    let SelectField::Expr {
+        expr: Expr::Binary(tidb_ast::BinaryOp::LogicOr, left, right),
+        ..
+    } = &select.fields[0]
+    else {
+        panic!("expected outer OR")
+    };
+    let Expr::Binary(tidb_ast::BinaryOp::LogicOr, first, separator) = left.as_ref() else {
+        panic!("expected left-associated OR")
+    };
+    assert!(matches!(first.as_ref(), Expr::Func { name, .. } if name == "coalesce"));
+    assert!(matches!(separator.as_ref(), Expr::String(value) if value == ", "));
+    assert!(matches!(right.as_ref(), Expr::Func { name, .. } if name == "coalesce"));
     // Unset, the same spelling is still boolean OR.
     assert_eq!(r("select 'a' || 'b'"), "SELECT _UTF8MB4'a' OR _UTF8MB4'b'");
 }

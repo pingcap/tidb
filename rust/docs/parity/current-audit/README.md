@@ -4,6 +4,8 @@ The current register has **86 findings: 29 repaired and 57 unresolved (39 open, 
 
 The [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
 
+The [tooling removal inventory](obsolete-tooling-removal-validation.json) records retired nonbehavioral gates, profiling/probe scaffolding and superseded report before-images. Counts and previous failure dispositions are unchanged.
+
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
