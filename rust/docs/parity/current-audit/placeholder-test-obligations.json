@@ -1,0 +1,1150 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "65c099a9715bf77b92484a1ca9934d008ff57d90",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remove ignored empty Rust harness entries; preserve complete historical documentary contracts as unverified obligations. No upstream tests deleted or findings closed.",
+  "historical_text_policy": "Historical comments are documentary seed evidence, not current claims that listed owners remain absent. Matching Go declarations confirms source identity, not full fixture or behavioral acceptance.",
+  "files": [
+    {
+      "removed_path": "rust/crates/tidb-planner/tests/plan_cache_lru_instance_suites_source.rs",
+      "historical_sha256": "a810450ae8802e356110cecdfcadd71c02b87a853205a5c9989bb4596ca35e58",
+      "historical_module_context": "//! `pkg/planner.part14` DOCUMENTED GAP ports for the two TOP-LEVEL plan\n//! cache suites:\n//!\n//! * `pkg/planner/core/plan_cache_instance_test.go:47\n//!   TestInstancePlanCacheSuite`\n//! * `pkg/planner/core/plan_cache_lru_test.go:49 TestLRUPlanCacheSuite`\n//!\n//! Both are honest `#[ignore]` gap ports. The Go suites exercise\n//! `core.LRUPlanCache` (`pkg/planner/core/plan_cache_lru.go:65`) and the\n//! `sessionctx.InstancePlanCache` implementation over\n//! `coretestsdk.MockContext()` sessions plus a Domain `StatsHandle`; this\n//! crate has neither. The workspace's session-tier plan caches\n//! (`tidb-session`'s `prepared_plan_cache.rs`/`non_prepared_plan_cache.rs`)\n//! are `pub(crate)` with a different key design and are outside this batch's\n//! gate crate. Nothing is approximated: each entry records the re-derived Go\n//! contract.",
+      "obligations": [
+        {
+          "removed_empty_test": "lru_plan_cache_put_get_delete_capacity_guard_suite",
+          "historical_ignore_reason": "go-parity-gap: LRUPlanCache (plan_cache_lru.go:65) container/bucket internals and MockContext session unported",
+          "historical_contract": "/// GO PARITY GAP port of `pkg/planner/core/plan_cache_lru_test.go:49\n/// TestLRUPlanCacheSuite`.\n///\n/// go-parity-gap: `NewLRUPlanCache` and its container/list + bucket internals\n/// are unported. The suite subtests pin, over a `MockContext` session:\n/// `Put` clamps a 0 capacity to 100 (:65), evicts the oldest same-key entry\n/// (onEvict counted :89-93) keeping `size == capacity` (:85), a key maps to\n/// multi values keyed by param types (:75-83); `Get` returns the LRU head\n/// value and refreshes recency, misses on param-type mismatch; `Delete`\n/// removes exactly one entry, `DeleteAll` clears every bucket; `SetCapacity`\n/// shrinks/grows with eviction to the new bound; regression cases pin\n/// memory-guard behavior (quota overridde eviction, stats-hash keying); and\n/// `MemoryUsage` sums per-entry memory against the guard threshold.\n",
+          "upstream_test": "TestLRUPlanCacheSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/plan_cache_lru_test.go",
+              "line": 49,
+              "sha256": "acc0553496764b92ac49b831f789e3ba009a20720e0239e4beed9dfcea1fab1c"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "instance_plan_cache_basic_match_opts_evict_concurrency_suite",
+          "historical_ignore_reason": "go-parity-gap: sessionctx.InstancePlanCache implementation + Domain StatsHandle session stack unported",
+          "historical_contract": "/// GO PARITY GAP port of `pkg/planner/core/plan_cache_instance_test.go:47\n/// TestInstancePlanCacheSuite`.\n///\n/// go-parity-gap: the domain-scoped instance plan cache carrier and its\n/// `sessionctx.InstancePlanCache` interface are unported (the crate's only\n/// traces are the sysvar defaults recorded in tidb-session's optimizer\n/// sysvar catalog). The suite subtests pin, over `MockContext` sessions:\n/// basic put/get/hit/miss with memory accounting (:55-133); `Put` matching\n/// on param types and refusing entries over the memory quota\n/// (:135-197); `EvictAll` clearing plus restricted-key eviction (:199-218);\n/// and concurrent reads (:220-255) and mixed concurrent write/read\n/// (:257-end) without data races or lost entries.\n",
+          "upstream_test": "TestInstancePlanCacheSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/plan_cache_instance_test.go",
+              "line": 47,
+              "sha256": "c54f182fa9a92e49c0a38bf7bacde7a527b1fd0ed66758c1582ff72af8f34992"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        }
+      ],
+      "relocated_candidate_evidence": [
+        {
+          "original_line": "35",
+          "evidence": "/// go-parity-gap: `NewLRUPlanCache` and its container/list + bucket internals"
+        },
+        {
+          "original_line": "46",
+          "evidence": "#[ignore = \"go-parity-gap: LRUPlanCache (plan_cache_lru.go:65) container/bucket internals and MockContext session unported\"]"
+        },
+        {
+          "original_line": "52",
+          "evidence": "/// go-parity-gap: the domain-scoped instance plan cache carrier and its"
+        },
+        {
+          "original_line": "62",
+          "evidence": "#[ignore = \"go-parity-gap: sessionctx.InstancePlanCache implementation + Domain StatsHandle session stack unported\"]"
+        }
+      ]
+    },
+    {
+      "removed_path": "rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs",
+      "historical_sha256": "c149a663244dcb551db935f777eb84539553bbda68face8cb63088eee3d0069d",
+      "historical_module_context": "//! Documentary ports for `pkg/planner/core/tests/prepare/` \u2014 items 1144\u20131169\n//! of `pkg/planner.part20` (all 1278 `Test*`/`Benchmark*` declarations under\n//! `pkg/planner/` on `origin/master`, sorted by file then line, chunked by 60).\n//!\n//! `prepare/main_test.go:25 TestMain` (item 1144) is bootstrap-only\n//! (`testsetup.SetupForCommonTest` + the goleak ignore list) and is recorded\n//! as skipped-reason in the batch receipt \u2014 no behavior to assert \u2014 following\n//! crate precedent for bootstrap-only families.\n//!\n//! Every remaining test in `prepare_test.go` drives prepared statements\n//! through `testkit` over a mock store: `prepare`/`execute` round-trips,\n//! `Session.PrepareStmt`/`ExecutePreparedStmt` binary protocol, the\n//! `metrics.PlanCacheCounter`/`PreparedStmtGauge` prometheus surfaces,\n//! `@@last_plan_from_cache`, `SessionVars.FoundInPlanCache`,\n//! `StmtCtx.IndexNames`/`ReadFromTableCache`, `admin flush plan_cache`,\n//! and `explain for connection`. The crate has no session, executor, plan\n//! cache, or metrics surface (the boundary recorded by receipts b083/b084/\n//! b092/b095/b096 for neighbouring planner parts), so all 24 tests are\n//! documentary `#[ignore]` ports. Each doc comment re-derives the pinned\n//! contract from the master source; nothing is approximated into passing.",
+      "obligations": [
+        {
+          "removed_empty_test": "point_get_prepared_plan4plan_cache_uncacheable_flag_forces_replan",
+          "historical_ignore_reason": "go-parity-gap: prepared execution + PlanCacheStmt.StmtCacheable need the session stack",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:49\n/// TestPointGetPreparedPlan4PlanCache`.\n///\n/// Contract: on `ps_text.t (a int, b int, c int, primary key k_a(a),\n/// unique key k_b(b))` seeded 1/2/3, prepare `select * from t where a = ?`,\n/// then force `PlanCacheStmt.StmtCacheable = false` (:67) before the first\n/// `ExecutePreparedStmt` with param 0 and a second execute with a nil param\n/// (:69-75). With the statement marked uncacheable every execution must\n/// generate the plan afresh, so the nil param cannot be served from the plan\n/// built for `a = 0` (the regression this pins).\n///\n/// go-parity-gap: PrepareStmt/ExecutePreparedStmt over a live session plus\n/// the PlanCacheStmt.StmtCacheable flag are unported.\n",
+          "upstream_test": "TestPointGetPreparedPlan4PlanCache",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 49,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "random_flush_plan_cache_scope_semantics",
+          "historical_ignore_reason": "go-parity-gap: admin flush plan_cache + per-session caches need session/executor machinery",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:79\n/// TestRandomFlushPlanCache`.\n///\n/// Contract: two sessions each prepare the same five statements (the t1\u00d7t2\n/// join plus plain and point selects on t1/t2). After a warm-up phase where\n/// every statement must report `@@last_plan_from_cache = 1` (:114-121), ten\n/// rounds of random `admin flush instance plan_cache` / `admin flush session\n/// plan_cache` (picked by `rand.Intn(10)`: 0 \u2192 instance scope issued on\n/// either session, 1 \u2192 tk's session, 2 \u2192 tk2's session, :124-143) must make\n/// the flushed scope(s) miss (`last_plan_from_cache = 0`, :147-150; an\n/// instance flush resets BOTH sessions while a session flush leaves the\n/// other session's cache warm), then hit again after the refilling execute.\n/// The closing `admin flush global plan_cache` must fail with exactly\n/// \"Do not support the 'admin flush global scope.'\" (:158-159).\n///\n/// go-parity-gap: admin flush plan_cache scopes and per-session plan caches\n/// are unported.\n",
+          "upstream_test": "TestRandomFlushPlanCache",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 79,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_cache_hits_across_index_and_privilege_changes",
+          "historical_ignore_reason": "go-parity-gap: prepared execution with index hints and grant/revoke cache invalidation unported",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:162\n/// TestPrepareCache`.\n///\n/// Contract: on `t(a int primary key, b int, c int, index idx1(b, a),\n/// index idx2(b))` seeded with (1,1,1)..(6,1,2): `execute stmt1 using @a,@b`\n/// (use index idx1, `a=? and b=?`) returns `1 1 1`; `stmt2` (idx2, `b=?`)\n/// returns `1 1` and `6 1`; `stmt3` (`a=?`) returns `1 1 1`; `stmt4`\n/// (`a > ?` with @a=3) returns `4 4 4`,`5 5 5`,`6 1 2`; `stmt5`\n/// (`select c from t order by c`) returns `1 2 2 3 4 5`; `stmt6`\n/// (`distinct a order by a`) returns 1..6 \u2014 each executed twice so the\n/// second run exercises the cache (:173-199). The privilege arm: user\n/// `u_tp@localhost` with SELECT on `test.tp` executes prepared\n/// `ps_stp_r` (`select * from tp where c1 > ?`) three times hitting the\n/// cache; after root `revoke all on test.tp` the next execute must ERROR;\n/// after re-grant it hits again (:196-231).\n///\n/// go-parity-gap: prepare/execute protocol, use-index plans, and privilege\n/// re-validation on cached plans are all session/executor surfaces.\n",
+          "upstream_test": "TestPrepareCache",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 162,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_cache_changing_param_type_matches_literal_sql",
+          "historical_ignore_reason": "go-parity-gap: randomized prepared-vs-literal result equality needs the executor stack",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:318\n/// TestPrepareCacheChangingParamType`.\n///\n/// Contract: for the five typed tables t_tinyint, t_unsigned, t_float,\n/// t_decimal(10,2), t_year (each with ten random valid rows plus null\n/// variants, :335-341), repeatedly prepare the seven parameter shapes\n/// `a=?`, `b=?`, `a in (?,?,?)`, `b in (?,?,?)`, `a>?`, `b>?`, `a>? and b>?`\n/// (:347-354) and execute them with random parameter values drawn from the\n/// null/valid/out-of-range/invalid/str generators (`randValue` :238-316).\n/// Every prepared-execution result must equal the corresponding literal SQL\n/// (`compareResult` :349-357 sorts both sides; errors must match errors).\n///\n/// go-parity-gap: randomized execution over typed columns with\n/// prepared/literal result comparison needs the executor.\n",
+          "upstream_test": "TestPrepareCacheChangingParamType",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 318,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_cache_deferred_now_rebuilds_index_range_per_execution",
+          "historical_ignore_reason": "go-parity-gap: plan-cache rebuild of deferred now(3) needs builder+cache+metrics surfaces",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:376\n/// TestPrepareCacheDeferredFunction`.\n///\n/// Contract: `sel1` = `select id, c1 from t1 where c1 < now(3)` on\n/// `t1(id int PRIMARY KEY, c1 TIMESTAMP(3) ...)` is built twice through\n/// `core.NewPlanBuilder().Init` + `builder.Build` + `core.GetPlanFromPlanCache`\n/// (:400-413). Each cached plan string must match the IndexReader regexp\n/// `IndexReader\\(Index\\(t1.idx1\\)\\[\\[-inf,<timestamp-millis>\\)\\)\\]` (:387),\n/// the `metrics.PlanCacheCounter{label=\"prepare\"}` counter must read 0 then 1\n/// (:415-417), and `planStr[0] < planStr[1]` lexically (:420) \u2014 now(3) is a\n/// deferred function, so the cached plan is REBUILT per execution with a\n/// fresh timestamp bound that only grows.\n///\n/// go-parity-gap: PlanBuilder.Build + GetPlanFromPlanCache + core.ToString +\n/// metrics counters are session-level machinery.\n",
+          "upstream_test": "TestPrepareCacheDeferredFunction",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 376,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_cache_now_statement_constant_vs_sysdate",
+          "historical_ignore_reason": "go-parity-gap: now()/sysdate() statement-constant semantics need the executor runtime",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:423\n/// TestPrepareCacheNow`.\n///\n/// Contract: prepared `select now(), current_timestamp(), utc_timestamp(),\n/// unix_timestamp(), sleep(0.1), now(), ...` \u2014 on the SECOND (cached)\n/// execution, columns 5..8 must equal columns 0..3 respectively (:433-436):\n/// now-family functions are statement-time constants, stable across the\n/// sleep(0.1) inside one execution. Second arm with plan cache disabled:\n/// `select sleep(a), now(6), sysdate(6), sysdate(6)=now(6) from t` changes\n/// its result set when `tidb_sysdate_is_now` flips from 0 to 1 (:441-447) \u2014\n/// sysdate is NOT a statement constant unless the variable says so.\n///\n/// go-parity-gap: statement-time constant freezing and sysdate semantics\n/// live in the executor/expression runtime.\n",
+          "upstream_test": "TestPrepareCacheNow",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 423,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_over_max_prepared_stmt_count_gauge_and_limit",
+          "historical_ignore_reason": "go-parity-gap: prepared-stmt gauge + global max_prepared_stmt_count live in the session layer",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:449\n/// TestPrepareOverMaxPreparedStmtCount`.\n///\n/// Contract: `metrics.PreparedStmtGauge` goes +1 on `prepare stmt1` and back\n/// on `deallocate prepare stmt1` (:455-461); `@@max_prepared_stmt_count`\n/// reads -1 by default and honors `set @@global.max_prepared_stmt_count = 2`\n/// (:465-467); closing the session releases its prepared statement\n/// (gauge -1, :470-473); preparing statements until the gauge reaches the\n/// limit must make the next prepare fail with\n/// `errno.ErrMaxPreparedStmtCountReached` (:477-484).\n///\n/// go-parity-gap: PreparedStmtGauge metrics and the global limit enforced in\n/// the session layer are unported.\n",
+          "upstream_test": "TestPrepareOverMaxPreparedStmtCount",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 449,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_with_snapshot_reads_recorded_ts",
+          "historical_ignore_reason": "go-parity-gap: prepared execution under tidb_snapshot needs txn/storage plumbing",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:502\n/// TestPrepareWithSnapshot`.\n///\n/// Contract: after recording a transaction's `@@tidb_current_ts` (:516-518),\n/// updating the row to v=3, preparing `s1`/`s2` and setting\n/// `@@tidb_snapshot = <ts>` (:523), executing the prepared plans must\n/// read the SNAPSHOT: `1 2`, not the newer v=3 (:524-525) \u2014 the snapshot\n/// flag set between executions must be honored by prepared plans.\n///\n/// go-parity-gap: tidb_snapshot reads need transaction/storage plumbing.\n",
+          "upstream_test": "TestPrepareWithSnapshot",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 502,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_cache_for_partition_static_vs_dynamic_prune",
+          "historical_ignore_reason": "go-parity-gap: static/dynamic partition pruning interplay with the plan cache is unported",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:528\n/// TestPrepareCacheForPartition`.\n///\n/// Contract: for each `@@tidb_partition_prune_mode` in {static, dynamic},\n/// `planCacheUsed` is \"0\"/\"1\" (:537-539). Over hash-partitioned\n/// t_index_read (PK (id,k), `partition by hash(id+k) partitions 10`) and\n/// t_table_read (PK id), prepared point selects return abc/xyz per param,\n/// first execute `last_plan_from_cache=0` (:549-558). Over range-\n/// partitioned t_range_index/t_range_table (p0<4, p1<14, p2<20), analyzed,\n/// each new param value (1/5/13/17) hits the cache ONLY in dynamic mode\n/// (:583-596, :607-623). Over list (`id*2-id`) and list-columns (id)\n/// partitioned t_list_index, params 1/5/9/12/100 behave the same, with\n/// @id=100 returning EMPTY rows while still hitting the cache in dynamic\n/// mode (:646-651, :673-678).\n///\n/// go-parity-gap: partition pruning per execution mode inside the prepared\n/// plan cache needs the full pruning + cache stack.\n",
+          "upstream_test": "TestPrepareCacheForPartition",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 528,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "issue_33031_partition_pointget_skips_cache_with_overoptimize_warning",
+          "historical_ignore_reason": "go-parity-gap: partition point/batch-get cache-skipping warnings need the session stack",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:680\n/// TestIssue33031`.\n///\n/// Contract: `Issue33031(COL1 int, COL2 bigint, UNIQUE KEY UK_COL1(COL1))\n/// PARTITION BY RANGE (COL1) (P0 VALUES LESS THAN (0))` with row (-5,7).\n/// Static mode: `execute stmt using @d,@a,@b,@c` on\n/// `select *,? from Issue33031 where col2 < ? and col1 in (?, ?)` never sets\n/// `FoundInPlanCache` (:692-699). Dynamic mode (after analyze): the\n/// non-matching param set misses, the matching set `@a=112,@b=-2,@c=-5`\n/// returns `-5 7 33` AND hits the cache (:700-712); `explain for connection`\n/// shows `IndexLookUp` (:715-717). After\n/// `alter table Issue33031 remove partitioning` (:718), execution returns the\n/// warning \"Warning 1105 skip prepared plan-cache: Batch/PointGet plans may\n/// be over-optimized\" twice, `FoundInPlanCache` stays false, and explain\n/// shows `Batch_Point_Get` (:719-727).\n///\n/// go-parity-gap: FoundInPlanCache + skip-cache warnings + explain-for-\n/// connection are session/executor surfaces.\n",
+          "upstream_test": "TestIssue33031",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 680,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "plan_cache_union_scan_invalidation_and_reuse_matrix",
+          "historical_ignore_reason": "go-parity-gap: txn-scoped union-scan invalidation with cache counters is unported",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:742\n/// TestPlanCacheUnionScan`.\n///\n/// Contract (counter-driven, `metrics.PlanCacheCounter{label=\"prepare\"}` with\n/// the resettable test hook :747-751): stmt1 `select * from t1 where a > ?`:\n/// before `begin` the plan is cached outside txn context; inside a txn the\n/// first two executes CANNOT reuse it (counter stays 0, :764-766); after\n/// `insert into t1 values(1)` the cached plan is invalid, not chosen, and\n/// removed (counter 1, :770-778); an insert into the UNRELATED t2 keeps t1's\n/// cached plan chosen (counter 2, :779-787); after `rollback` the\n/// union-scan-bearing cached plan IS reused for correctness (counter 3,\n/// :788-794). stmt2 (left join on true) repeats the matrix with the\n/// `<nil>`\u2192`1 1` join results (:796-838); stmt3 (`select 1 from t3 where\n/// a = null`) repeats it keeping the result empty through insert/rollback\n/// (:840-870).\n///\n/// go-parity-gap: union-scan plan invalidation inside transactions plus\n/// prometheus counters need the executor.\n",
+          "upstream_test": "TestPlanCacheUnionScan",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 742,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "plan_cache_switch_db_keeps_resolved_database",
+          "historical_ignore_reason": "go-parity-gap: prepared-stmt DB binding in the plan cache key needs the session stack",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:872\n/// TestPlanCacheSwitchDB`.\n///\n/// Contract: preparing `select * from t` on a session with NO default\n/// database errors `[planner:1046]No database selected`, while the explicit\n/// `select * from test.t` prepares fine (:884-890) on an LRU plan cache\n/// built via `core.NewLRUPlanCache(100, 0.1, math.MaxUint64, ...)`. After\n/// `use plan_cache` (where a NEW t(a int) holds (1)), the OLD prepared\n/// statement still reads test.t (-1) and hits the cache on the second\n/// execute (:897-903); re-preparing the same SQL now binds plan_cache.t\n/// (returns 1) (:905-912); re-preparing `select * from test.t` binds test.t\n/// again (:913-918) \u2014 the plan cache key includes the resolved DB.\n///\n/// go-parity-gap: session default-DB resolution inside the cache key is a\n/// session surface.\n",
+          "upstream_test": "TestPlanCacheSwitchDB",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 872,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "invisible_index_prepare_updates_stmtctx_index_names",
+          "historical_ignore_reason": "go-parity-gap: invisible-index replanning and StmtCtx.IndexNames are executor surfaces",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:919\n/// TestInvisibleIndexPrepare`.\n///\n/// Contract: on `t(a int, unique idx_a(a))`, two executes of prepared\n/// `select a from t order by a` record `StmtCtx.IndexNames == [\"t:idx_a\"]`\n/// (:931-934); after `alter table t alter index idx_a invisible` two more\n/// executes leave `IndexNames` EMPTY (:936-939); after re-visible it is\n/// `[\"t:idx_a\"]` again (:941-945) \u2014 the cached plan must respect the index's\n/// visibility flag at (re)build time.\n///\n/// go-parity-gap: StmtCtx.IndexNames and index-visibility replanning need\n/// the executor.\n",
+          "upstream_test": "TestInvisibleIndexPrepare",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 919,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "plan_cache_snapshot_reuses_plan_against_old_ts",
+          "historical_ignore_reason": "go-parity-gap: plan-cache reads under tidb_snapshot need txn/storage plumbing",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:946\n/// TestPlanCacheSnapshot`.\n///\n/// Contract: `t(id int)` with rows 1..4, prepared `select * from t where\n/// id=?` warms the cache (miss, hit; :963-969). A recorded start-ts\n/// (:972-975) becomes `@@tidb_snapshot`; after inserting another id=1 row,\n/// executing the cached plan under the snapshot must STILL return only `1`\n/// (the old snapshot) and hit the cache (:977-982).\n///\n/// go-parity-gap: prepared reads under tidb_snapshot need txn plumbing.\n",
+          "upstream_test": "TestPlanCacheSnapshot",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 946,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "partition_table_plan_cache_randomized_dynamic_prune",
+          "historical_ignore_reason": "go-parity-gap: randomized partition plan-cache consistency needs the executor stack",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:985\n/// TestPartitionTable`.\n///\n/// Contract: dynamic prune mode over six t1/t2 scheme pairs \u2014 hash(int, 20\n/// parts), range(int 0..100M in 5 parts), range columns(varchar), range\n/// columns(datetime), range columns(date), list(int 0..19 in 4 parts) \u2014\n/// each seeded with 2048 identical random rows and analyzed (:1042-1095).\n/// Prepared `select * from %v where a > ?` runs on t1 and t2: the first\n/// execute misses (`@@last_plan_from_cache = 0` on BOTH, :1107-1110), then\n/// for 100 random @a values the t1/t2 executions must return IDENTICAL\n/// sorted rows (:1118, :1127-1128) and hit the cache (:1125, :1128); a run\n/// may instead emit warnings, which `show warnings` must contain verbatim\n/// as \"skip plan-cache: plan rebuild failed, \" (:1120-1123). A run may emit\n/// at most 4 such warnings total (`require.Less(t, numWarns, 5)`, :1130).\n/// Seeded by `time.Now().UnixNano()` (:995).\n///\n/// go-parity-gap: randomized cross-partition prepared consistency + cache-hit\n/// ratio needs the executor.\n",
+          "upstream_test": "TestPartitionTable",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 985,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "partition_varied_data_sources_plan_cache_hit_tolerance",
+          "historical_ignore_reason": "go-parity-gap: randomized prepared workload over partitioned/normal tables needs the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1148\n/// TestPartitionWithVariedDataSources`.\n///\n/// Contract: dynamic mode; six tables \u2014 trangePK/thashPK/tnormalPK (int\n/// primary key) and trangeIdx/thashIdx/tnormalIdx (int unique key) over the\n/// same 1000 random distinct rows, analyzed (:1158-1195). For PK tables,\n/// prepared tablescan (`a > ? and a < ?`), pointget (`a = ?`), batchget\n/// (`a in (?,?,?)`) must return identical sorted results across the three\n/// tables and hit the plan cache from loop 1 on (:1213-1259); same for the\n/// unique-key tables' indexscan/indexlookup/pointget-on-idx/batchget-on-idx\n/// (:1262-1314); note the pointget-miss tolerance guard at :1296 compares\n/// `tbl == 'tnormalPK'` inside the trangeIdx/thashIdx/tnormalIdx loop, so it\n/// can never fire as written (Go-side quirk, kept verbatim here). At most\n/// `3 + 10*loops*3*4/100` cache misses are allowed overall (:1321-1323); one\n/// loop intentionally exercises duplicate IN-list values (:1207-1212,\n/// :1282-1284).\n///\n/// go-parity-gap: cross-table prepared result equality + tolerance-bounded\n/// cache-hit accounting need the executor.\n",
+          "upstream_test": "TestPartitionWithVariedDataSources",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1148,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "cached_table_prepared_plans_read_table_cache",
+          "historical_ignore_reason": "go-parity-gap: cached-table + plan-cache interaction needs the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1326\n/// TestCachedTable`.\n///\n/// Contract: `t(a int, b int, index i_b(b))` with (1,1),(2,2) is\n/// `alter table t cache`d (:1336); within 50 plain reads the table cache\n/// must load (`StmtCtx.ReadFromTableCache` true, :1346-1357). Four prepared\n/// statements \u2014 tableScan (`a>=?`), indexScan (`select b use index(i_b)\n/// where b>?`), indexLookup (`b>? and b<?`), pointGet (`b=?`) \u2014 are warmed\n/// (:1359-1362), then re-executed: tableScan/indexScan/pointGet read FROM\n/// the table cache AND hit the plan cache (:1364-1371, :1379-1381);\n/// indexLookup with @a=1,@b=3 (resolving to b=2) reads the cache but must\n/// NOT hit the PLAN cache (:1374-1376) \u2014\n/// cached-table reads forbid the plan cache for range accesses.\n///\n/// go-parity-gap: cached-table (mem-cache) reads plus plan-cache interaction\n/// are unported.\n",
+          "upstream_test": "TestCachedTable",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1326,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "plan_cache_rc_infoschema_change_misses_cache",
+          "historical_ignore_reason": "go-parity-gap: RC-isolation cache invalidation on schema change is a session surface",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1385\n/// TestPlanCacheWithRCWhenInfoSchemaChange` (classic kernel only: skipped\n/// under next-gen at :1386-1388).\n///\n/// Contract: two pessimistic READ-COMMITTED sessions prepare the same\n/// `select /*+use_index(t1, ic)*/ * from t1 where 1` (text and binary\n/// protocol, :1392-1400) and both miss then read empty. A third session\n/// drops index ic and inserts (1, 0) (:1405-1407); the next executes in BOTH\n/// protocols must see `1 0` and MISS the plan cache\n/// (`@@last_plan_from_cache = 0`, :1409-1417) \u2014 the RC isolation forces\n/// latest-info-schema reads, invalidating the cached plan.\n///\n/// go-parity-gap: RC isolation + infoschema-version invalidation of cached\n/// plans need the session stack.\n",
+          "upstream_test": "TestPlanCacheWithRCWhenInfoSchemaChange",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1385,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "prepare_execute_normal_sql_consistency_across_ddl",
+          "historical_ignore_reason": "go-parity-gap: text/binary/plain-SQL consistency across DDL is an executor surface",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1429\n/// TestConsistencyBetweenPrepareExecuteAndNormalSql` (classic kernel only,\n/// skipped under next-gen at :1430-1432).\n///\n/// Contract: `t1(id int primary key, c int)` with (1,1),(2,2); the same\n/// `select * from t1` is run as text-protocol `execute s`, binary-protocol\n/// `ExecutePreparedStmt`, and plain SQL \u2014 all three return `1 1`,`2 2`\n/// (:1450-1458). After tk2 `alter table t1 drop column c` and insert (3),\n/// all three must return `1 1`,`2 2`,`3 <nil>` (:1460-1472) \u2014 MDL disabled,\n/// RC isolation keeps the executing txn on its snapshot infoschema. After\n/// COMMIT and a new pessimistic txn, plain SQL sees the latest schema\n/// (`1`,`2`,`3`, :1475-1489).\n///\n/// go-parity-gap: three-protocol result equality across DDL needs the\n/// executor.\n",
+          "upstream_test": "TestConsistencyBetweenPrepareExecuteAndNormalSql",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1429,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "cache_hit_in_rc_first_miss_then_hits",
+          "historical_ignore_reason": "go-parity-gap: RC cache hit/miss tracking across protocols is a session surface",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1508\n/// TestCacheHitInRc` (classic kernel only, skipped under next-gen at\n/// :1509-1511).\n///\n/// Contract: in a pessimistic READ-COMMITTED txn over\n/// `t1(id int primary key, c int)`, prepared `select * from t1` \u2014 first\n/// `execute s` misses (`last_plan_from_cache = 0`), then a binary-protocol\n/// `ExecutePreparedStmt` HITS, and the next text `execute s` hits again\n/// (`verifyCache` :1483-1506, driven at :1526-1537).\n///\n/// go-parity-gap: hit/miss tracking across protocols needs the session\n/// stack.\n",
+          "upstream_test": "TestCacheHitInRc",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1508,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "cache_hit_in_for_update_read",
+          "historical_ignore_reason": "go-parity-gap: for-update reads + cache hit tracking need the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1540\n/// TestCacheHitInForUpdateRead`.\n///\n/// Contract: identical verifyCache sequence to TestCacheHitInRc but for\n/// prepared `select * from t1 where id = 1 for update` inside a pessimistic\n/// txn (:1540-1563): first execute misses, then binary + text executions hit\n/// the plan cache \u2014 FOR UPDATE reads do not disable the cache by themselves.\n///\n/// go-parity-gap: for-update reads + cache hit tracking need the executor.\n",
+          "upstream_test": "TestCacheHitInForUpdateRead",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1540,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "point_get_for_update_autocommit_cache_after_ddl_and_update",
+          "historical_ignore_reason": "go-parity-gap: autocommit for-update point-get caching needs the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1564\n/// TestPointGetForUpdateAutoCommitCache`.\n///\n/// Contract: autocommit (no explicit txn) prepared point-get\n/// `select * from t1 where id = 1 for update`: first execute misses, second\n/// HITS (:1581-1589). After tk2 `alter table t1 drop column c` and\n/// `update t1 set id = 10 where id = 1` (:1591-1592), the next execute\n/// returns EMPTY and MISSES (schema changed, row gone), and the following\n/// execute hits again (:1594-1602).\n///\n/// go-parity-gap: autocommit point-get caching + DML-driven invalidation\n/// need the executor.\n",
+          "upstream_test": "TestPointGetForUpdateAutoCommitCache",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1564,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "dynamic_partition_pruning_pointget_cache_matrix",
+          "historical_ignore_reason": "go-parity-gap: partition-prune-mode cache gating with explain goldens is unported",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1605\n/// TestPrepareCacheForDynamicPartitionPruning`.\n///\n/// Contract: `t(a int, b bigint, UNIQUE KEY(a)) PARTITION BY RANGE (a)\n/// (P0 VALUES LESS THAN (0))` with (-5,7), analyzed; prepared\n/// `select * from t where a = ? and b < ?`. Static mode: the non-matching\n/// param (@a=1) explains as `TableDual_7` and never hits the cache; the\n/// matching param (@a=-5) explains as `Selection_8` over `Point_Get_7` with\n/// warning \"Warning 1105 skip prepared plan-cache: query accesses partitioned\n/// tables is un-cacheable if tidb_partition_pruning_mode = 'static'\"\n/// (:1636-1650). Dynamic mode: both arms explain as `Selection_6` and the\n/// matching arm HITS the cache with no warnings (:1638-1642). The TableDual\n/// arm's `FoundInPlanCache` equals (mode == dynamic) (:1653-1656).\n///\n/// go-parity-gap: explain-for-connection goldens + prune-mode cache gates\n/// need the session stack.\n",
+          "upstream_test": "TestPrepareCacheForDynamicPartitionPruning",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1605,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "hash_partition_pk_pointget_plan_cache",
+          "historical_ignore_reason": "go-parity-gap: hash-partition point-get cache hits need the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1660\n/// TestHashPartitionAndPlanCache`.\n///\n/// Contract: `t(b varchar(255), a int primary key nonclustered, key(b))\n/// PARTITION BY HASH (a) partitions 5` with 10 rows, analyzed. Prepared\n/// `select * from t where a = ?`: @a=1 explains (explain for connection) as\n/// `Point_Get_1` and misses; @a=2 returns `2 2` and HITS, still explaining\n/// as `Point_Get_1` (:1673-1696). Re-created with `a int, unique key (a)`\n/// (non-PK unique), the same two-param sequence repeats the miss-then-hit\n/// Point_Get pattern (:1698-1710).\n///\n/// go-parity-gap: hash-partition point-get caching with explain-for-\n/// connection needs the session stack.\n",
+          "upstream_test": "TestHashPartitionAndPlanCache",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1660,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "batch_pointget_plan_cache_mixed_literal_param_in_list",
+          "historical_ignore_reason": "go-parity-gap: batch-point-get range rebuild on cache hit needs the executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/tests/prepare/prepare_test.go:1711\n/// TestBatchPointGetPlanCacheMixedInList`.\n///\n/// Contract: `t (k1 int, k2 int, v int, unique key uk(k1, k2))` with\n/// (1,2,100),(3,2,200),(1,4,300); prepared\n/// `select v from t where (k1, k2) in ((1, ?), (?, 2))` mixes a literal and\n/// a parameter marker WITHIN one IN-list row (the comment at :1716-1719\n/// records the historical nil index-column-type deref panic on the second,\n/// cache-hit execution). @a=2,@b=3 returns 100/200; @a=4,@b=3 returns\n/// 200/300 WITH `FoundInPlanCache` true (:1721-1727) \u2014 the batch-point-get\n/// range rebuild must fill every index column's type from the resolved\n/// schema, not from the parameter.\n///\n/// go-parity-gap: batch-point-get rebuild on cache hit needs the executor.\n",
+          "upstream_test": "TestBatchPointGetPlanCacheMixedInList",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/tests/prepare/prepare_test.go",
+              "line": 1711,
+              "sha256": "0d6225335ba3d715695497cdca3c88a8903c24228cddbc0a56e4cfe685cffcaa"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        }
+      ],
+      "relocated_candidate_evidence": [
+        {
+          "original_line": "47",
+          "evidence": "/// go-parity-gap: PrepareStmt/ExecutePreparedStmt over a live session plus"
+        },
+        {
+          "original_line": "50",
+          "evidence": "#[ignore = \"go-parity-gap: prepared execution + PlanCacheStmt.StmtCacheable need the session stack\"]"
+        },
+        {
+          "original_line": "68",
+          "evidence": "/// go-parity-gap: admin flush plan_cache scopes and per-session plan caches"
+        },
+        {
+          "original_line": "71",
+          "evidence": "#[ignore = \"go-parity-gap: admin flush plan_cache + per-session caches need session/executor machinery\"]"
+        },
+        {
+          "original_line": "90",
+          "evidence": "/// go-parity-gap: prepare/execute protocol, use-index plans, and privilege"
+        },
+        {
+          "original_line": "93",
+          "evidence": "#[ignore = \"go-parity-gap: prepared execution with index hints and grant/revoke cache invalidation unported\"]"
+        },
+        {
+          "original_line": "108",
+          "evidence": "/// go-parity-gap: randomized execution over typed columns with"
+        },
+        {
+          "original_line": "111",
+          "evidence": "#[ignore = \"go-parity-gap: randomized prepared-vs-literal result equality needs the executor stack\"]"
+        },
+        {
+          "original_line": "127",
+          "evidence": "/// go-parity-gap: PlanBuilder.Build + GetPlanFromPlanCache + core.ToString +"
+        },
+        {
+          "original_line": "130",
+          "evidence": "#[ignore = \"go-parity-gap: plan-cache rebuild of deferred now(3) needs builder+cache+metrics surfaces\"]"
+        },
+        {
+          "original_line": "145",
+          "evidence": "/// go-parity-gap: statement-time constant freezing and sysdate semantics"
+        },
+        {
+          "original_line": "148",
+          "evidence": "#[ignore = \"go-parity-gap: now()/sysdate() statement-constant semantics need the executor runtime\"]"
+        },
+        {
+          "original_line": "162",
+          "evidence": "/// go-parity-gap: PreparedStmtGauge metrics and the global limit enforced in"
+        },
+        {
+          "original_line": "165",
+          "evidence": "#[ignore = \"go-parity-gap: prepared-stmt gauge + global max_prepared_stmt_count live in the session layer\"]"
+        },
+        {
+          "original_line": "177",
+          "evidence": "/// go-parity-gap: tidb_snapshot reads need transaction/storage plumbing."
+        },
+        {
+          "original_line": "179",
+          "evidence": "#[ignore = \"go-parity-gap: prepared execution under tidb_snapshot needs txn/storage plumbing\"]"
+        },
+        {
+          "original_line": "197",
+          "evidence": "/// go-parity-gap: partition pruning per execution mode inside the prepared"
+        },
+        {
+          "original_line": "200",
+          "evidence": "#[ignore = \"go-parity-gap: static/dynamic partition pruning interplay with the plan cache is unported\"]"
+        },
+        {
+          "original_line": "219",
+          "evidence": "/// go-parity-gap: FoundInPlanCache + skip-cache warnings + explain-for-"
+        },
+        {
+          "original_line": "222",
+          "evidence": "#[ignore = \"go-parity-gap: partition point/batch-get cache-skipping warnings need the session stack\"]"
+        },
+        {
+          "original_line": "241",
+          "evidence": "/// go-parity-gap: union-scan plan invalidation inside transactions plus"
+        },
+        {
+          "original_line": "244",
+          "evidence": "#[ignore = \"go-parity-gap: txn-scoped union-scan invalidation with cache counters is unported\"]"
+        },
+        {
+          "original_line": "260",
+          "evidence": "/// go-parity-gap: session default-DB resolution inside the cache key is a"
+        },
+        {
+          "original_line": "263",
+          "evidence": "#[ignore = \"go-parity-gap: prepared-stmt DB binding in the plan cache key needs the session stack\"]"
+        },
+        {
+          "original_line": "276",
+          "evidence": "/// go-parity-gap: StmtCtx.IndexNames and index-visibility replanning need"
+        },
+        {
+          "original_line": "279",
+          "evidence": "#[ignore = \"go-parity-gap: invisible-index replanning and StmtCtx.IndexNames are executor surfaces\"]"
+        },
+        {
+          "original_line": "291",
+          "evidence": "/// go-parity-gap: prepared reads under tidb_snapshot need txn plumbing."
+        },
+        {
+          "original_line": "293",
+          "evidence": "#[ignore = \"go-parity-gap: plan-cache reads under tidb_snapshot need txn/storage plumbing\"]"
+        },
+        {
+          "original_line": "312",
+          "evidence": "/// go-parity-gap: randomized cross-partition prepared consistency + cache-hit"
+        },
+        {
+          "original_line": "315",
+          "evidence": "#[ignore = \"go-parity-gap: randomized partition plan-cache consistency needs the executor stack\"]"
+        },
+        {
+          "original_line": "335",
+          "evidence": "/// go-parity-gap: cross-table prepared result equality + tolerance-bounded"
+        },
+        {
+          "original_line": "338",
+          "evidence": "#[ignore = \"go-parity-gap: randomized prepared workload over partitioned/normal tables needs the executor\"]"
+        },
+        {
+          "original_line": "355",
+          "evidence": "/// go-parity-gap: cached-table (mem-cache) reads plus plan-cache interaction"
+        },
+        {
+          "original_line": "358",
+          "evidence": "#[ignore = \"go-parity-gap: cached-table + plan-cache interaction needs the executor\"]"
+        },
+        {
+          "original_line": "373",
+          "evidence": "/// go-parity-gap: RC isolation + infoschema-version invalidation of cached"
+        },
+        {
+          "original_line": "376",
+          "evidence": "#[ignore = \"go-parity-gap: RC-isolation cache invalidation on schema change is a session surface\"]"
+        },
+        {
+          "original_line": "392",
+          "evidence": "/// go-parity-gap: three-protocol result equality across DDL needs the"
+        },
+        {
+          "original_line": "395",
+          "evidence": "#[ignore = \"go-parity-gap: text/binary/plain-SQL consistency across DDL is an executor surface\"]"
+        },
+        {
+          "original_line": "408",
+          "evidence": "/// go-parity-gap: hit/miss tracking across protocols needs the session"
+        },
+        {
+          "original_line": "411",
+          "evidence": "#[ignore = \"go-parity-gap: RC cache hit/miss tracking across protocols is a session surface\"]"
+        },
+        {
+          "original_line": "422",
+          "evidence": "/// go-parity-gap: for-update reads + cache hit tracking need the executor."
+        },
+        {
+          "original_line": "424",
+          "evidence": "#[ignore = \"go-parity-gap: for-update reads + cache hit tracking need the executor\"]"
+        },
+        {
+          "original_line": "437",
+          "evidence": "/// go-parity-gap: autocommit point-get caching + DML-driven invalidation"
+        },
+        {
+          "original_line": "440",
+          "evidence": "#[ignore = \"go-parity-gap: autocommit for-update point-get caching needs the executor\"]"
+        },
+        {
+          "original_line": "457",
+          "evidence": "/// go-parity-gap: explain-for-connection goldens + prune-mode cache gates"
+        },
+        {
+          "original_line": "460",
+          "evidence": "#[ignore = \"go-parity-gap: partition-prune-mode cache gating with explain goldens is unported\"]"
+        },
+        {
+          "original_line": "474",
+          "evidence": "/// go-parity-gap: hash-partition point-get caching with explain-for-"
+        },
+        {
+          "original_line": "477",
+          "evidence": "#[ignore = \"go-parity-gap: hash-partition point-get cache hits need the executor\"]"
+        },
+        {
+          "original_line": "493",
+          "evidence": "/// go-parity-gap: batch-point-get rebuild on cache hit needs the executor."
+        },
+        {
+          "original_line": "495",
+          "evidence": "#[ignore = \"go-parity-gap: batch-point-get range rebuild on cache hit needs the executor\"]"
+        }
+      ]
+    },
+    {
+      "removed_path": "rust/crates/tidb-planner/tests/task_stringer_physical_unit_source.rs",
+      "historical_sha256": "ad74097133be573686dd8fe079b136d3afc6c73a75ea6b41d8a13ba302c2340b",
+      "historical_module_context": "//! Documentary gap ports for three `pkg/planner/core` physical/stringer unit\n//! tests (`pkg/planner.part15` items 869\u2013871 on `origin/master`).\n//!\n//! | Go function | Rust test |\n//! | --- | --- |\n//! | `stringer_test.go:30 TestPlanStringer` | [`plan_stringer_show_operator_renderings`] |\n//! | `task_heavy_function_optimize_test.go:36 TestGetPushedDownTopNHeavyFunctionNotFirstByItem` | [`pushed_down_topn_moves_heavy_function_byitem_last`] |\n//! | `task_test.go:32 TestPhysicalUnionScanAttach2Task` | [`physical_union_scan_attach_keeps_child_plan_chain`] |",
+      "obligations": [
+        {
+          "removed_empty_test": "plan_stringer_show_operator_renderings",
+          "historical_ignore_reason": "go-parity-gap: plan Build + ToString rendering of Show operators is not transcreated",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/stringer_test.go:30 TestPlanStringer`.\n///\n/// Re-derived contract: after building and logically optimizing SHOW\n/// statements against a mock store, `core.ToString(p)` renders the Show\n/// operator with exactly one decoration per statement shape (:37-123):\n/// `Show(field:[a])` for column-list/DESC-with-column, bare `Show` for\n/// plain DESC, `Show(field_pattern:[a%])` for column LIKE patterns,\n/// `Show(table:[t])` vs `Show(table_pattern:[t%])` for table lists/patterns\n/// (case-insensitive match normalizes `'T'` \u2192 lower), mirrored database and\n/// collation variants, and a WHERE-filtered show rendering as\n/// `Show->Sel([eq(Column#13, a)])->Projection`.\n",
+          "upstream_test": "TestPlanStringer",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/stringer_test.go",
+              "line": 30,
+              "sha256": "b83f1d41ef1e69c5943ae1e2867068d5980a25f07a78767fddbb5de2b18c4b63"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "pushed_down_topn_moves_heavy_function_byitem_last",
+          "historical_ignore_reason": "covered by task::attach_tests::mpp_topn_materializes_heavy_by_items_once; this source receipt remains for the Go fixture",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/task_heavy_function_optimize_test.go:36\n/// TestGetPushedDownTopNHeavyFunctionNotFirstByItem`.\n///\n/// Re-derived contract under fix-control 56318 (:38-40): build a PhysicalTopN\n/// whose by-items are `[coalesce(score,0) (no heavy fn, Desc),\n/// 1*(1-vec_cosine_distance(vec,const))+(1*(1-distance))` nested vector\n/// expression (heavy, Desc)] over a TiFlash child plan (:137-188);\n/// `ContainHeavyFunction` flips false/true across the two exprs (:177-178).\n/// `getPushedDownTopN(topN, childPlan, kv.TiFlash)` must return both halves\n/// non-nil with the pushed-down TopN REORDERED so no heavy expression sits\n/// first \u2014 position 1 holds the only Column item at index == output-schema\n/// length (:190-211) in BOTH the pushed-down and global TopN.\n",
+          "upstream_test": "TestGetPushedDownTopNHeavyFunctionNotFirstByItem",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/task_heavy_function_optimize_test.go",
+              "line": 36,
+              "sha256": "14a13347a23f406aff28f1e91cd35b1c9d0d1a7c7ce4b4a3e2cde66cace6f0e9"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "physical_union_scan_attach_keeps_child_plan_chain",
+          "historical_ignore_reason": "go-parity-gap: PhysicalUnionScan.Attach2Task + RootTask identity wiring not on this crate's physical tree yet",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/task_test.go:32 TestPhysicalUnionScanAttach2Task`.\n///\n/// Re-derived contract: chain TableScan\u2192TableReader\u2192Projection\u2192Selection as\n/// root-task plans; attaching `PhysicalUnionScan{Conditions:[col,cst]}`\n/// twice (:72-73, :84-86) must leave each task's plan chain POINTER-identical \u2014\n/// union scan returns the child task itself when conditions are not constant\n/// (Attach2Task's passthrough arm), asserted by comparing task.Plan()\n/// identity down three levels including TableReader.TablePlans[0] (:76-79,\n/// :89-91). The second attach onto a Projection-topped task behaves the same,\n/// requiring the union scan's Self to be initialized (:85).\n",
+          "upstream_test": "TestPhysicalUnionScanAttach2Task",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/task_test.go",
+              "line": 32,
+              "sha256": "5661c73f40341fbeb31f0b91362c2365394c08f3c228cf0c1b19dfac3d6b22d7"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        }
+      ],
+      "relocated_candidate_evidence": [
+        {
+          "original_line": "36",
+          "evidence": "#[ignore = \"go-parity-gap: plan Build + ToString rendering of Show operators is not transcreated\"]"
+        },
+        {
+          "original_line": "67",
+          "evidence": "#[ignore = \"go-parity-gap: PhysicalUnionScan.Attach2Task + RootTask identity wiring not on this crate's physical tree yet\"]"
+        }
+      ]
+    },
+    {
+      "removed_path": "rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs",
+      "historical_sha256": "2150dee01a648d8f73e5aa769932089daf654ac3fd85b054995815996a7eb214",
+      "historical_module_context": "//! Documentary gap ports for `pkg/planner/core/casetest/rule`\n//! (`pkg/planner.part9` items 482-508 on `origin/master`): `dual_test.go`,\n//! `rule_cdc_join_reorder_test.go`, `rule_common_handle_ordering_test.go`,\n//! `rule_common_handle_range_test.go`, `rule_correlate_test.go`,\n//! `rule_derive_topn_from_window_test.go`,\n//! `rule_eliminate_empty_selection_test.go`,\n//! `rule_eliminate_projection_test.go`,\n//! `rule_inject_extra_projection_test.go`, `rule_join_reorder_test.go`,\n//! `rule_outer2inner_test.go`, `rule_outer_to_semi_join_test.go`,\n//! `rule_predicate_pushdown_test.go`, `rule_predicate_simplification_test.go`.\n//!\n//! Every one of these tests drives parsed SQL through `testkit` sessions\n//! (several through `RunTestUnderCascades[_WithDomain]`, which runs each case\n//! twice: cascades engine off/on), compares `EXPLAIN FORMAT='plan_tree'` /\n//! `'brief'` goldens loaded from BookKeeper suites\n//! (`main_test.go:29-58` registers outer2inner, derive_topn_from_window,\n//! join_reorder_suite, predicate_pushdown_suite, predicate_simplification,\n//! outer_to_semi_join_suite, correlate_suite, cdc_join_reorder_suite and\n//! order_aware_join_reorder_suite books), executes result checks against real\n//! mock-store data, and toggles session variables such as\n//! `tidb_opt_enable_alternative_logical_plans`,\n//! `tidb_opt_enable_advanced_join_reorder`,\n//! `tidb_opt_join_reorder_threshold`, `tidb_opt_hash_join_cost_factor` and\n//! `tidb_enable_parallel_apply`. The Rust workspace has no SQL-to-plan\n//! pipeline, session/executor testkit, TiFlash replica metadata, hint/warning\n//! plumbing, or plan-tree explain renderer yet; these are recorded gaps, not\n//! approximations.\n//!\n//! | Go function (`pkg/planner/core/casetest/rule`) | Rust test |\n//! | --- | --- |\n//! | `dual_test.go:23 TestDual` | [`dual_null_comparisons_fold_to_table_dual`] |\n//! | `rule_cdc_join_reorder_test.go:122 TestCDCJoinReorder` | [`cdc_join_reorder_result_matches_pre_cdc_baseline`] |\n//! | `rule_cdc_join_reorder_test.go:178 TestJoinReorderPushSelection` | [`join_reorder_push_selection_plans_with_sel_on_top`] |\n//! | `rule_cdc_join_reorder_test.go:244 TestDPJoinReorder` | [`dp_join_reorder_result_matches_greedy_baseline`] |\n//! | `rule_cdc_join_reorder_test.go:299 TestOrderAwareJoinReorderPushSelection` | [`order_aware_join_reorder_push_selection_keeps_hint_applicable`] |\n//! | `rule_cdc_join_reorder_test.go:350 TestOrderAwareJoinReorderAlternativeRound` | [`order_aware_join_reorder_alternative_round_smoke`] |\n//! | `rule_cdc_join_reorder_test.go:393 TestDPJoinReorderLeadingHint` | [`dp_join_reorder_leading_hint_warns_inapplicable_for_dp`] |\n//! | `rule_common_handle_ordering_test.go:38 TestCommonHandleIndexOrdering` | [`common_handle_index_ordering_avoids_topn_for_pk_suffix_order`] |\n//! | `rule_common_handle_range_test.go:29 TestCommonHandleIndexRanges` | [`common_handle_index_ranges_append_clustered_pk_suffix`] |\n//! | `rule_common_handle_range_test.go:273 TestCommonHandleIndexRangesWithTupleCompare` | [`common_handle_index_ranges_tuple_compare_spans_appended_handle`] |\n//! | `rule_correlate_test.go:29 TestCorrelateNullSemantics` | [`correlate_solver_preserves_three_valued_null_semantics`] |\n//! | `rule_correlate_test.go:65 TestCorrelateAlternativeChoosesApply` | [`correlate_alternative_round_prefers_apply_over_index_join`] |\n//! | `rule_correlate_test.go:97 TestCorrelatedInApplyEliminatesDistinct` | [`correlated_in_apply_eliminates_inner_distinct_aggregation`] |\n//! | `rule_correlate_test.go:154 TestCorrelate` | [`correlate_suite_plan_and_result_golden`] |\n//! | `rule_correlate_test.go:226 TestCorrelateParallelApply` | [`correlate_parallel_apply_runs_concurrent_and_matches_serial`] |\n//! | `rule_correlate_test.go:285 TestCorrelateWithCostFactors` | [`correlate_cost_factors_let_apply_win_over_penalized_joins`] |\n//! | `rule_derive_topn_from_window_test.go:30 TestDerivedTopNSuite` | [`derived_topn_suite_tiflash_pushdown_and_rand_topn_shape`] |\n//! | `rule_eliminate_empty_selection_test.go:23 TestEmptySelectionEliminator` | [`empty_selection_eliminator_multi_join_plan_golden`] |\n//! | `rule_eliminate_projection_test.go:27 TestEliminateProjectionSuite` | [`eliminate_projection_suite_apply_and_expression_index`] |\n//! | `rule_inject_extra_projection_test.go:31 TestWrapCastForAggFuncs` | see `rule_inject_extra_projection_wrap_cast_source.rs` (real port) |\n//! | `rule_join_reorder_test.go:48 TestJoinReorderSuite` | [`join_reorder_suite_plain_and_domain_subtests`] |\n//! | `rule_outer2inner_test.go:24 TestOuter2InnerSuite` | [`outer2inner_suite_null_reject_conditions_and_golden_book`] |\n//! | `rule_outer_to_semi_join_test.go:24 TestOuterToSemiJoin` | [`outer_to_semi_join_suite_plan_and_results`] |\n//! | `rule_outer_to_semi_join_test.go:91 TestSemiJoinRewrite` | [`semi_join_rewrite_hint_enables_index_hash_join_delete`] |\n//! | `rule_predicate_pushdown_test.go:80 TestPredicatePushdownSuite` | [`predicate_pushdown_suite_constant_propagation_and_pushdown`] |\n//! | `rule_predicate_simplification_test.go:24 TestPredicateSimplification` | [`predicate_simplification_suite_plan_cache_aware_golden`] |",
+      "obligations": [
+        {
+          "removed_empty_test": "dual_null_comparisons_fold_to_table_dual",
+          "historical_ignore_reason": "go-parity-gap: needs the SQL optimize pipeline plus plan_tree explain rendering of TableDual folding",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/casetest/rule/dual_test.go:23 TestDual`.\n///\n/// Re-derived contract: over `t(id PK auto_increment, d INT)` inside a live\n/// cascades session, every contradictory WHERE becomes a root TableDual:\n/// `select a from (select d as a from t where d=0) k where k.a=5` explains to\n/// exactly `TableDual root  rows:0` (subquery alias both sides) and returns\n/// zero rows; `(select 1+2 as a ...) k where k.a=5` keeps a\n/// Projection(3->Column) above TableDual; and `d !=/>/>=/</<=/= null` \u2014 six\n/// comparisons against NULL that are never TRUE \u2014 all fold to\n/// `TableDual root  rows:0` (dual_test.go:27-52). Needs SQL parsing +\n/// constant-folding predicate handling + plan rendering.\n",
+          "upstream_test": "TestDual",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/dual_test.go",
+              "line": 23,
+              "sha256": "5797459bc5e410ae7bd6783ba3af79bd94eddf3726483588b14793f933429a6b"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "order_aware_join_reorder_push_selection_keeps_hint_applicable",
+          "historical_ignore_reason": "go-parity-gap: large analyzed fixtures + warning-stream assertions live behind the unported hint pipeline",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:299\n/// TestOrderAwareJoinReorderPushSelection`.\n///\n/// Builds t6..t9 (8000/6000/7000/9000 analyzed rows with hot/cold category\n/// skew, helper `prepareOrderAwareJoinReorderTables` :27-72); per case, SET; per case, SET\n/// inputs execute while query plans are gold-checked AND `show warnings` for\n/// every explained query must NOT contain \"leading hint is inapplicable\"\n/// (`:344`), pinning that order-aware reorder keeps leading hints applicable\n/// even with selections on top.\n",
+          "upstream_test": "TestOrderAwareJoinReorderPushSelection",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go",
+              "line": 299,
+              "sha256": "9d645fe88ce3cfe479061df7b1a40549616140f372c86db0cfa81e94548a674b"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "order_aware_join_reorder_alternative_round_smoke",
+          "historical_ignore_reason": "go-parity-gap: the alternative logical-plan round is not implemented in the Rust planner",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:350\n/// TestOrderAwareJoinReorderAlternativeRound`.\n///\n/// Loads alternative-round tables oa_order_t1..t4, obj, relationship\n/// (:74-131, recursive-CTE bulk inserts). Every input either executes (SET)\n/// or is planned+explained and recorded (`:369-385`); the suite's own Check\n/// step means a passing run proves each shape PLANS without error across the\n/// alternative-round replay.\n",
+          "upstream_test": "TestOrderAwareJoinReorderAlternativeRound",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go",
+              "line": 350,
+              "sha256": "9d645fe88ce3cfe479061df7b1a40549616140f372c86db0cfa81e94548a674b"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "dp_join_reorder_leading_hint_warns_inapplicable_for_dp",
+          "historical_ignore_reason": "go-parity-gap: leading-hint inapplicability warnings originate in the unported DP reorder path",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go:393\n/// TestDPJoinReorderLeadingHint`.\n///\n/// Advanced join reorder ON with threshold 10; `SELECT /*+ LEADING(t2, t3) */\n/// * FROM t1 JOIN t2 ... JOIN t3 ...` then scans `show warnings` for\n/// exactly \"leading hint is inapplicable for the DP join reorder algorithm\"\n/// and requires it found (`:403-415`).\n",
+          "upstream_test": "TestDPJoinReorderLeadingHint",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_cdc_join_reorder_test.go",
+              "line": 393,
+              "sha256": "9d645fe88ce3cfe479061df7b1a40549616140f372c86db0cfa81e94548a674b"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "common_handle_index_ordering_avoids_topn_for_pk_suffix_order",
+          "historical_ignore_reason": "go-parity-gap: index keep-order costing over appended common-handle columns needs live findBestTask + explain text",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_common_handle_ordering_test.go:38\n/// TestCommonHandleIndexOrdering`.\n///\n/// Clustered-PK(a1 varchar, a2 int) table with ic(d)/ic_overlap(d,a1)/\n/// ic_multi(b,d)/uic(c UNIQUE) plus a prefixed PK(p1(2),p2) table and a\n/// single-varchar-PK table; eight cases assert keep order:true / absence of\n/// TopN-Sort for ORDER BY on the full clustered handle when the chosen\n/// secondary index physically ends with it (e.g. cases 1-3 :63-118),\n/// uniqueness/prefix truncation preventing keep order (case 4/7 :120-161), DESC\n/// reverse-scan ordering (case 5 :163-180), mixed ASC/DESC falling back to a\n/// sort (case 6 :182-194), and exact sorted result rows alongside each\n/// explain probe.\n",
+          "upstream_test": "TestCommonHandleIndexOrdering",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_common_handle_ordering_test.go",
+              "line": 38,
+              "sha256": "a6f97d8b5bcc4398d862cef1deea30792f4517c1d30b8fdaad8069bc16076ef7"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "common_handle_index_ranges_append_clustered_pk_suffix",
+          "historical_ignore_reason": "go-parity-gap: ranger range-extension over appended handle columns is evaluated during unported access-path building",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_common_handle_range_test.go:29\n/// TestCommonHandleIndexRanges`.\n///\n/// Clustered PK(tenant,seq) table with ia(a)/ia_overlap(a,tenant)/ub(b\n/// unique); predicates on clustered PK columns must extend non-unique\n/// secondary-index ranges with the appended full handle: point range\n/// `[10 2,10 2]` (:60), open range `(10 1 100,10 1 +inf]` (:72), non-point\n/// `(10 1,10 +inf]` (:83), IN-list ranges `[20 2,20 2]` (:94), staying at the\n/// declared column when an earlier PK col is unbound (:105), overlap index\n/// without re-appending tenant (:117+) \u2014 each paired with exact result rows\n/// and decimal variants at the tail (:240-266).\n",
+          "upstream_test": "TestCommonHandleIndexRanges",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_common_handle_range_test.go",
+              "line": 29,
+              "sha256": "6402001d05155e92cd0c1e9411b361d4ae0f166ce806f4f59295b76239bb6d27"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "common_handle_index_ranges_tuple_compare_spans_appended_handle",
+          "historical_ignore_reason": "go-parity-gap: tuple-comparison range derivation lives in the ranger pass behind unported planning",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_common_handle_range_test.go:273\n/// TestCommonHandleIndexRangesWithTupleCompare`.\n///\n/// Issue #70532 regression: tuple comparison `(a,b,c) > (1,2,3)` on a table\n/// with KEY ia(a) and clustered PK(b,c) must DNF-expand into\n/// `range:(1 2 3,1 2 +inf], (1 2,1 +inf], (1,+inf]` \u2014 reaching INTO the\n/// appended handle with matching prefix lengths; a three-column handle\n/// reaches one further (`(a,b,c,d) > (1,2,3,4)`, :307-315), each verified by\n/// exact explain substring plus ordered result rows.\n",
+          "upstream_test": "TestCommonHandleIndexRangesWithTupleCompare",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_common_handle_range_test.go",
+              "line": 273,
+              "sha256": "6402001d05155e92cd0c1e9411b361d4ae0f166ce806f4f59295b76239bb6d27"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlate_solver_preserves_three_valued_null_semantics",
+          "historical_ignore_reason": "go-parity-gap: scalar-IN execution semantics need the executor stack",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_correlate_test.go:29\n/// TestCorrelateNullSemantics`.\n///\n/// With `tidb_opt_enable_alternative_logical_plans=ON`: scalar IN over a\n/// nullable subquery must return NULL, never 0 \u2014 non-null outer/null inner\n/// (`tn.a in (select sn.a...)` -> `<nil>`, :41), null outer/non-null inner\n/// (:48), and NOT NULL pairs answering 1/1/0 for (1,2,3) IN {1,2} (:57).\n/// Guards CorrelateSolver from breaking 3-valued logic of the restored Apply.\n",
+          "upstream_test": "TestCorrelateNullSemantics",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 29,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlate_alternative_round_prefers_apply_over_index_join",
+          "historical_ignore_reason": "go-parity-gap: alternative-plan cost comparison between Apply and IndexJoin happens in the unported optimizer",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_correlate_test.go:65\n/// TestCorrelateAlternativeChoosesApply`.\n///\n/// Over t1/t2(keyed) with `where b=1 and a in (select a from t2)`: OFF mode\n/// decorrelates to IndexJoin (+StreamAgg); ON mode must choose the cheaper\n/// Apply+Limit from the correlate round (:86-95) \u2014 asserted by scanning\n/// `explain format='brief'` operator column for IndexJoin vs Apply \u2014 and the\n/// answer `1 1` must be identical in both modes (:97-101).\n",
+          "upstream_test": "TestCorrelateAlternativeChoosesApply",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 65,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlated_in_apply_eliminates_inner_distinct_aggregation",
+          "historical_ignore_reason": "go-parity-gap: opt_rule_blacklist reload, apply distinct-elimination and explain info columns are unported",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_correlate_test.go:97\n/// TestCorrelatedInApplyEliminatesDistinct`.\n///\n/// Three-table contractors/members/employments fixture; blacklists the\n/// aggregation_eliminate rule (`insert into mysql.opt_rule_blacklist ...\n/// admin reload`, :136-138) and asserts the Apply plan still shows the inner\n/// distinct agg (`group by:` + `firstrow(` in operator info, via the\n/// explainHasDistinctLikeAgg helper at :211-219);\n/// removes the blacklist again and asserts the correlated-IN apply eliminated\n/// the inner distinct agg, with count(1)=2 as the result (:144-153).\n",
+          "upstream_test": "TestCorrelatedInApplyEliminatesDistinct",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 97,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlate_suite_plan_and_result_golden",
+          "historical_ignore_reason": "go-parity-gap: correlate suite plans/results need session + optimizer + executor",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/casetest/rule/rule_correlate_test.go:154\n/// TestCorrelate`.\n///\n/// Correlate golden book: three keyed two-column tables filled 3/2/2 rows;\n/// `tidb_opt_enable_alternative_logical_plans=ON`; every correlate-suite SQL\n/// is checked against its recorded `explain format='brief'` plan AND executed\n/// results (`:181-188`) under both cascades modes.\n",
+          "upstream_test": "TestCorrelate",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 154,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlate_parallel_apply_runs_concurrent_and_matches_serial",
+          "historical_ignore_reason": "go-parity-gap: parallel-apply executor concurrency reporting is unported",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_correlate_test.go:226\n/// TestCorrelateParallelApply`.\n///\n/// Correlate alternative + `tidb_enable_parallel_apply=ON` +\n/// concurrency 5: plan shows Apply, EXPLAIN ANALYZE reports\n/// `Concurrency:` > 1 for it (:252-267), and parallel+correlate rows equal\n/// the serial/no-correlate run of the same query (:269-281).\n",
+          "upstream_test": "TestCorrelateParallelApply",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 226,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "correlate_cost_factors_let_apply_win_over_penalized_joins",
+          "historical_ignore_reason": "go-parity-gap: cost-factor session variables feed the unported cost model during live planning",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_correlate_test.go:285\n/// TestCorrelateWithCostFactors`.\n///\n/// Correlate suite replay with `tidb_opt_hash_join_cost_factor=1000` and\n/// `tidb_opt_merge_join_cost_factor=1000` set (:298-300) so penalized\n/// hash/merge joins lose to the correlate alternative; per case both brief\n/// plan and results match the recorded book entries (:308-315).\n",
+          "upstream_test": "TestCorrelateWithCostFactors",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_correlate_test.go",
+              "line": 285,
+              "sha256": "c2a13ba79f3775adf9e74c55d6d5721ddc0902392ab2a4be3499605cacbabe95"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "derived_topn_suite_tiflash_pushdown_and_rand_topn_shape",
+          "historical_ignore_reason": "go-parity-gap: TiFlash replica injection, MPP planning and rand() execution are all outside the crate",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_derive_topn_from_window_test.go:30\n/// TestDerivedTopNSuite`.\n///\n/// Sub-test `TestPushDerivedTopnFlash` (:41): with\n/// tidb_opt_derive_topn=1/enforce_mpp=1 over TiFlash-replica'd t+t3 the\n/// derive_topn_from_window book plans are pinned. Sub-test `TestTopNPushdown`\n/// (:66): with the flag off, `select rand() ... order by limit 10` rows must\n/// be monotonic non-decreasing AND the plan stays root-TopN over\n/// Projection(rand()) over TableReader/TableFullScan keep order:false,\n/// stats:pseudo (:72-79) \u2014 deriving TopN from window must not fire here.\n",
+          "upstream_test": "TestDerivedTopNSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_derive_topn_from_window_test.go",
+              "line": 30,
+              "sha256": "2b73887d7a24600cfe93d5564178a69e07ab82c1c6cc9a85dd9e4c84e46f629b"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "empty_selection_eliminator_multi_join_plan_golden",
+          "historical_ignore_reason": "go-parity-gap: plan_tree golden comparison over the multi-join optimized tree needs the full rule pipeline",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_eliminate_empty_selection_test.go:23\n/// TestEmptySelectionEliminator`.\n///\n/// Five generated A/F/G/J/L wide tables; two fully expanded multi-join\n/// queries explain to exact plan trees whose Selections survive elimination \u2014\n/// HAVING conditions become root Selections above joins with Point_Get builds\n/// (:33-77), and an aggregate-with-HAVING right-outer-join tree lands\n/// Point_Get(handle:41) below StreamAgg (:78-90). Pins the rule keeps\n/// non-empty Selections where the HAVING clause moved them.\n",
+          "upstream_test": "TestEmptySelectionEliminator",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_eliminate_empty_selection_test.go",
+              "line": 23,
+              "sha256": "73c243dd0662af8204ffd5d6fb58a7bc7c9dfb7339239696280e7eefbf0231c8"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "eliminate_projection_suite_apply_and_expression_index",
+          "historical_ignore_reason": "go-parity-gap: CTE + scalar-subquery Apply planning and expression-index indexes are unported surfaces",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_eliminate_projection_test.go:27\n/// TestEliminateProjectionSuite`.\n///\n/// Sub-test `testWithApply` (:35-68): CTE-templated scalar-subquery lookups\n/// must return '1' and keep an Apply node in the EXPLAIN tree (projection\n/// elimination must not erase the Apply boundary) for both ordered and\n/// unordered CTE bodies. Sub-test `testElinimateProjectionWithExpressionIndex`\n/// (:70-115): expression-index coalesce keys over USING-joined tables remain\n/// stable across 20 repeated runs returning zero rows.\n",
+          "upstream_test": "TestEliminateProjectionSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_eliminate_projection_test.go",
+              "line": 27,
+              "sha256": "4e82c563c5561503cfd1f0f4380e1818a9725b148c1d40465f668dfd90144406"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "join_reorder_suite_plain_and_domain_subtests",
+          "historical_ignore_reason": "go-parity-gap: hint-aware join reorder + dynamic partition pruning need the full planner runtime",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_join_reorder_test.go:48\n/// TestJoinReorderSuite`.\n///\n/// Multi-part suite over the join_reorder_suite book. PlainCases run under\n/// plain cascades: TestOptEnableHashJoin honors\n/// `tidb_opt_enable_hash_join=off` (:53-62), TestJoinOrderHint4DynamicPartitionTable\n/// force-prunes partitions dynamically via failpoint (:64-80),\n/// TestLeadingHintInapplicableKeepsOtherConds keeps other conditions after an\n/// inapplicable leading hint (:81-97), TestLeadingHintWithNonEqJoinUnderOuterJoin\n/// applies leading hints around non-equi OR-conditions with distinct plans for\n/// hint orders (:98-129), TestOuterJoinReorderNullExtendedNonEqSafety\n/// (:129-158); DomainCases re-run partitioned variants under domain control\n/// (:160-215). All compare exact plan_tree outputs + warnings.\n",
+          "upstream_test": "TestJoinReorderSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_join_reorder_test.go",
+              "line": 48,
+              "sha256": "d715b023a74b51f4d21cfc8ed07065bd6d85a1333f853650f7f7c76157aafc27"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "outer2inner_suite_null_reject_conditions_and_golden_book",
+          "historical_ignore_reason": "go-parity-gap: null-reject analysis over arbitrary expressions runs inside the unported optimizer",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_outer2inner_test.go:24\n/// TestOuter2InnerSuite`.\n///\n/// Book-driven outer-to-inner conversion plans plus hand-written probes:\n/// ti.Inlj over left-join with OR'd null-filtering predicate keeps IndexJoin\n/// (:75-79), structural null-reject proofs (`length(trim(cast(...)))>0` turns\n/// LEFT JOIN inner, `coalesce(t2.k,1)>0` stays outer, `1 in (t2.k,...)`\n/// semantics at :81-100), issue #66825/#58793/#66833 partial-null-comparison\n/// cases keeping `left outer join` intact (:102-146), constant-propagation\n/// smoke tests (:150-155), and the tail regression probes reproduced in\n/// issues #65166/#58836 windows-over-dual plans (:156-198).\n",
+          "upstream_test": "TestOuter2InnerSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_outer2inner_test.go",
+              "line": 24,
+              "sha256": "7964670c7cded0b6ebac636343823ea9d6ad12ceda4e6e045a49c5b7bf792882"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "outer_to_semi_join_suite_plan_and_results",
+          "historical_ignore_reason": "go-parity-gap: outer\u2192semi-join rewriting plus result execution need the live stack",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go:24\n/// TestOuterToSemiJoin`.\n///\n/// A/B nullable-pair tables plus t1..t3 single-column NOT NULL tables drive\n/// the outer_to_semi_join_suite book: each SQL gets plan + executed-result\n/// goldens (:56-64); tail check for issue #68112 reproduces anti-semi-join\n/// (`t_inner.id is null` union-all branch) returning `<nil>,<nil>,z` (:67-78).\n",
+          "upstream_test": "TestOuterToSemiJoin",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go",
+              "line": 24,
+              "sha256": "4eb6ce78de9f05a1d155d34697db4614908b6ab79e6a3509f8e3d832fd0f83bf"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "semi_join_rewrite_hint_enables_index_hash_join_delete",
+          "historical_ignore_reason": "go-parity-gap: semi_join_rewrite rewrite path is exercised through DELETE plans of the unported optimizer",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go:91\n/// TestSemiJoinRewrite`.\n///\n/// Delete-through-semi-join: `delete from t1 where t1.id in (select\n/// /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)` must\n/// exhibit IndexHashJoin (MustHavePlan, :104) and delete exactly id='1'\n/// (:105); re-inserting plus forcing\n/// `tidb_opt_enable_semi_join_rewrite=off` while\n/// `tidb_opt_enable_alternative_logical_plans=on` STILL yields IndexHashJoin\n/// via the alternative round (:109-111).\n",
+          "upstream_test": "TestSemiJoinRewrite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go",
+              "line": 91,
+              "sha256": "4eb6ce78de9f05a1d155d34697db4614908b6ab79e6a3509f8e3d832fd0f83bf"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "predicate_pushdown_suite_constant_propagation_and_pushdown",
+          "historical_ignore_reason": "go-parity-gap: predicate-pushdown planning over collations/TiFlash isolation engines is unported",
+          "historical_contract": "/// GO PORT of\n/// `pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go:80\n/// TestPredicatePushdownSuite`.\n///\n/// Two book sub-tests. testConstantPropagateWithCollation (:85-105):\n/// collation-mixed schemas t/foo/bar/t0..t4/t1_65994/t2_65994 with seeded\n/// rows; entries record plan + warnings + RESULTS (executed).\n/// testPredicatePushDown (:106+): TiFlash-replica'd crm_rd_150m driving\n/// month() pushdown under isolation engines='tiflash' plus further pages of\n/// the predicate_pushdown_suite book, comparing plan_tree and warnings for\n/// every entry.\n",
+          "upstream_test": "TestPredicatePushdownSuite",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go",
+              "line": 80,
+              "sha256": "e364ffd8092a72959491f30f682e8801e0a37c1e20eaa12978215e684ef14304"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        }
+      ],
+      "relocated_candidate_evidence": [
+        {
+          "original_line": "84",
+          "evidence": "#[ignore = \"go-parity-gap: needs the SQL optimize pipeline plus plan_tree explain rendering of TableDual folding\"]"
+        },
+        {
+          "original_line": "98",
+          "evidence": "#[ignore = \"go-parity-gap: large analyzed fixtures + warning-stream assertions live behind the unported hint pipeline\"]"
+        },
+        {
+          "original_line": "111",
+          "evidence": "#[ignore = \"go-parity-gap: the alternative logical-plan round is not implemented in the Rust planner\"]"
+        },
+        {
+          "original_line": "123",
+          "evidence": "#[ignore = \"go-parity-gap: leading-hint inapplicability warnings originate in the unported DP reorder path\"]"
+        },
+        {
+          "original_line": "140",
+          "evidence": "#[ignore = \"go-parity-gap: index keep-order costing over appended common-handle columns needs live findBestTask + explain text\"]"
+        },
+        {
+          "original_line": "156",
+          "evidence": "#[ignore = \"go-parity-gap: ranger range-extension over appended handle columns is evaluated during unported access-path building\"]"
+        },
+        {
+          "original_line": "170",
+          "evidence": "#[ignore = \"go-parity-gap: tuple-comparison range derivation lives in the ranger pass behind unported planning\"]"
+        },
+        {
+          "original_line": "183",
+          "evidence": "#[ignore = \"go-parity-gap: scalar-IN execution semantics need the executor stack\"]"
+        },
+        {
+          "original_line": "196",
+          "evidence": "#[ignore = \"go-parity-gap: alternative-plan cost comparison between Apply and IndexJoin happens in the unported optimizer\"]"
+        },
+        {
+          "original_line": "211",
+          "evidence": "#[ignore = \"go-parity-gap: opt_rule_blacklist reload, apply distinct-elimination and explain info columns are unported\"]"
+        },
+        {
+          "original_line": "222",
+          "evidence": "#[ignore = \"go-parity-gap: correlate suite plans/results need session + optimizer + executor\"]"
+        },
+        {
+          "original_line": "234",
+          "evidence": "#[ignore = \"go-parity-gap: parallel-apply executor concurrency reporting is unported\"]"
+        },
+        {
+          "original_line": "246",
+          "evidence": "#[ignore = \"go-parity-gap: cost-factor session variables feed the unported cost model during live planning\"]"
+        },
+        {
+          "original_line": "261",
+          "evidence": "#[ignore = \"go-parity-gap: TiFlash replica injection, MPP planning and rand() execution are all outside the crate\"]"
+        },
+        {
+          "original_line": "275",
+          "evidence": "#[ignore = \"go-parity-gap: plan_tree golden comparison over the multi-join optimized tree needs the full rule pipeline\"]"
+        },
+        {
+          "original_line": "289",
+          "evidence": "#[ignore = \"go-parity-gap: CTE + scalar-subquery Apply planning and expression-index indexes are unported surfaces\"]"
+        },
+        {
+          "original_line": "307",
+          "evidence": "#[ignore = \"go-parity-gap: hint-aware join reorder + dynamic partition pruning need the full planner runtime\"]"
+        },
+        {
+          "original_line": "323",
+          "evidence": "#[ignore = \"go-parity-gap: null-reject analysis over arbitrary expressions runs inside the unported optimizer\"]"
+        },
+        {
+          "original_line": "335",
+          "evidence": "#[ignore = \"go-parity-gap: outer\u2192semi-join rewriting plus result execution need the live stack\"]"
+        },
+        {
+          "original_line": "350",
+          "evidence": "#[ignore = \"go-parity-gap: semi_join_rewrite rewrite path is exercised through DELETE plans of the unported optimizer\"]"
+        },
+        {
+          "original_line": "365",
+          "evidence": "#[ignore = \"go-parity-gap: predicate-pushdown planning over collations/TiFlash isolation engines is unported\"]"
+        }
+      ]
+    },
+    {
+      "removed_path": "rust/crates/tidb-planner/tests/core_integration_apply_lateral_cardinality_source.rs",
+      "historical_sha256": "90b82112cef5cc70010a46b2a8c737216bd1a989eefdfda47242e8257308b903",
+      "historical_module_context": "//! Port ledger for `pkg/planner/core/integration_test.go` Apply/LATERAL\n//! cardinality and correlated-order items (`pkg/planner.part11`, Go items\n//! 622\u2013625 on `origin/master`).\n//!\n//! Family contract: LATERAL/correlated execution planning metrics \u2014\n//! estimated-vs-actual Apply row counts from `explain analyze`, Apply-cache\n//! on/off decisions recorded in operator info, and order-provisioning of\n//! index scans through correlated equalities \u2014 measured over analyzed\n//! mock-store tables with `insert into mysql.opt_rule_blacklist\n//! value(\"decorrelate\")` keeping subqueries as Applies.\n//!\n//! All four items are honest gap ports: this crate has no cost model driver,\n//! no explain-analyze executor and no apply cache; nothing was approximated\n//! to simulate Go behavior.",
+      "obligations": [
+        {
+          "removed_empty_test": "lateral_join_cardinality_is_outer_times_per_execution_rows",
+          "historical_ignore_reason": "go-parity-gap: needs lateral join cardinality + explain analyze est/act pipeline",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/integration_test.go:1773\n/// TestLateralJoinCardinality`.\n///\n/// Re-derived contract: a derived table executed once per outer row already\n/// accounts for its correlated predicates in its own stats, so the Apply/join\n/// estimate must equal the PRODUCT of outer rows \u00d7 per-execution inner rows \u2014\n/// never rescaled by correlated-column NDV selectivity (:1773-1841):\n/// lateral scalar MIN aggregate \u2192 exactly 600 (one row/outer) actual AND\n/// equal estimate (:1822-1824); lateral ORDER BY+LIMIT 3 \u2192 1800 (=600\u00d73,\n/// :1827-1830); unbounded GROUP BY k2 \u2192 30000 (=30 keys \u00d7 20 matches \u00d7 \u2026,\n/// every matched tl_inner row once, :1835-1838). Fixture: tl_inner 30 groups\n/// \u00d7 50 rows analyzed all columns; tl_outer 600 rows over the same 30 keys\n/// (:1780-1812); est/act extracted from explain-analyze Apply rows (:1816).\n",
+          "upstream_test": "TestLateralJoinCardinality",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/integration_test.go",
+              "line": 1825,
+              "sha256": "fdb179cc7230a850dde2a2066d6caf7412811e9d42a4b814cfb510f60ece0a0f"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "apply_cache_uses_reaching_row_values_not_apply_row_count",
+          "historical_ignore_reason": "go-parity-gap: needs apply-cache costing keyed on outer-row value repetition",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/integration_test.go:1843\n/// TestApplyCacheEnabledByOuterRowCount`.\n///\n/// Re-derived contract: the Apply cache decision is taken from how often the\n/// SAME correlated VALUE recurs among ROWS REACHING the Apply \u2014 not from its\n/// output row count (:1843-1927). With identical 40-rows-per-outer lateral\n/// payloads: tac_uniq (50 distinct keys, one outer row each) \u2192 info contains\n/// \"cache:OFF\" (:1902-1903); tac_rep (10 rows per key) \u2192 \"cache:ON\"\n/// (:1905-1907); joining tac_uniq to tac_fan which duplicates each key ten\n/// times flips it to \"cache:ON\" even though the correlated column is that\n/// table's PRIMARY KEY (:1912-1923). Explain-analyze Apply row column 5\n/// carries the exec info (:1877-1884).\n",
+          "upstream_test": "TestApplyCacheEnabledByOuterRowCount",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/integration_test.go",
+              "line": 1895,
+              "sha256": "fdb179cc7230a850dde2a2066d6caf7412811e9d42a4b814cfb510f60ece0a0f"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "cor_col_equality_provides_index_order_and_limit_one_plans",
+          "historical_ignore_reason": "go-parity-gap: needs cor-col order provisioning + early-stop limit push into cop paths",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/integration_test.go:1929\n/// TestCorColEqProvidesIndexOrder`.\n///\n/// Re-derived contract: an `index_col = correlated_col` access condition pins\n/// its index position to ONE value per execution, so later index columns are\n/// ordered and an early-stop plan replaces TopN sorting (:1929-2017):\n/// requireEarlyStopPlan asserts keep order:true scan + Limit(cop[tikv],\n/// count:1) + root Limit(count:1) and NO TopN operator anywhere (:1956-1967).\n/// Holds for MIN over clustered PK (k1,k2) with cor-eq on k1 (results 10,10,\n/// 30,30,50 :1976-1978), for secondary ik(k1,v,k2) with literal v=1 equality\n/// (NULL-padded results :1980-1983), and for explicit ORDER BY..LIMIT 1\n/// inside the subquery (:1985-1990). A correlated RANGE predicate (t2.c <\n/// t1.c after b-eq) does NOT pin order \u2192 TopN must SURVIVE (:1994-2012).\n",
+          "upstream_test": "TestCorColEqProvidesIndexOrder",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/integration_test.go",
+              "line": 1981,
+              "sha256": "fdb179cc7230a850dde2a2066d6caf7412811e9d42a4b814cfb510f60ece0a0f"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        },
+        {
+          "removed_empty_test": "explain_analyze_dml_waits_for_paused_commit_finish",
+          "historical_ignore_reason": "go-parity-gap: needs DML explain-analyze execution + txn-commit failpoint hook",
+          "historical_contract": "/// GO PORT of `pkg/planner/core/integration_test.go:2019\n/// TestExplainAnalyzeDMLCommit` (issue #37373).\n///\n/// Re-derived contract: while commit is paused by failpoint\n/// github.com/pingcap/tidb/pkg/session/mockSleepBeforeTxnCommit=return(500)\n/// (:2026-2031), executing `explain analyze delete from t` must still\n/// complete without error only AFTER the commit finishes \u2014 no interference\n/// between explain-analyze execution and in-flight txn commit; the following\n/// plain select observes the deleted state (empty result, :2036).\n",
+          "upstream_test": "TestExplainAnalyzeDMLCommit",
+          "current_go_declarations": [
+            {
+              "path": "pkg/planner/core/integration_test.go",
+              "line": 2071,
+              "sha256": "fdb179cc7230a850dde2a2066d6caf7412811e9d42a4b814cfb510f60ece0a0f"
+            }
+          ],
+          "verification": "unverified complete upstream fixture/behavior obligation"
+        }
+      ],
+      "relocated_candidate_evidence": [
+        {
+          "original_line": "44",
+          "evidence": "#[ignore = \"go-parity-gap: needs lateral join cardinality + explain analyze est/act pipeline\"]"
+        },
+        {
+          "original_line": "60",
+          "evidence": "#[ignore = \"go-parity-gap: needs apply-cache costing keyed on outer-row value repetition\"]"
+        },
+        {
+          "original_line": "77",
+          "evidence": "#[ignore = \"go-parity-gap: needs cor-col order provisioning + early-stop limit push into cop paths\"]"
+        },
+        {
+          "original_line": "90",
+          "evidence": "#[ignore = \"go-parity-gap: needs DML explain-analyze execution + txn-commit failpoint hook\"]"
+        }
+      ]
+    }
+  ],
+  "removed_empty_tests": 55,
+  "relocated_candidate_rows": 81
+}

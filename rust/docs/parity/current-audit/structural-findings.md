@@ -1,5 +1,9 @@
 # Remaining structural mismatches, reviewed 2026-10-03
 
+The [placeholder cleanup](placeholder-test-removal.md) removes **55 ignored empty tests in five planner modules** and two assertion-free LRU diagnostic loops. All 55 Go declarations and their historical contracts remain in an [unverified ledger](placeholder-test-obligations.json); 81 dangling candidate-index rows moved there. Every other aggregate test entry is preserved. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** Production owners and safety fallbacks are unchanged.
+
+The cache/Apply checkpoint below is historical.
+
 The [cache/Apply batch](cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.
 
 The statement-observation checkpoint below is historical.

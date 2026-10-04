@@ -1,0 +1,100 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "65c099a9715bf77b92484a1ca9934d008ff57d90",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "scope": "Test-harness cleanup only; no production behavior, Go test obligations or finding statuses removed. No complete Go package acceptance.",
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-planner --test all -- --list (before deletion)",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/before-list.log",
+      "sha256": "523aca6e74b1303b044ffd4a798787cbc8242c9d211954e5ebd639ed740f62f9",
+      "listed_entries": 1306
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test all -- --list (after deletion)",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/after-list.log",
+      "sha256": "3bc42d1b8363c6d921b863328553312f25bf0dc67744a4a51e8a86d050755565",
+      "listed_entries": 1251
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --lib plan_cache_ -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/cache-tests.log",
+      "sha256": "2c8014b041cd17cc6358a6119ca9d2ee6ff1fb2fe1a5c2d8383614064cbcec76",
+      "passing_cases": 19
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner --test all casetest_parallel_apply_suite_source -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/apply-planner-tests.log",
+      "sha256": "672fdb5a8b3bf366867df2de7db496008285e8de1398e7294a6686c11c133723",
+      "passing_cases": 3
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/all-targets-check.log",
+      "sha256": "01f7bcf1b5b664a381ef2db169d9693c08bcfbe4da161326cdf32fe3a2795b63"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/placeholder-removal/server-build.log",
+      "sha256": "213384a6576e7d4d82e0719a7da788e3806dc15aaf04033e7a25951e0f64b5dc"
+    }
+  ],
+  "removal_verification": {
+    "removed_empty_tests": 55,
+    "before": 1306,
+    "after": 1251,
+    "all_other_test_names_preserved": true,
+    "upstream_declarations_matched": 55,
+    "historical_source_hashes_verified": true,
+    "candidate_rows_relocated": 81,
+    "active_assertions_removed": 0,
+    "meaningful_LRU_assertions_preserved": true
+  },
+  "passing_test_cases": 22,
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 40,
+    "partial": 17
+  },
+  "self_review": "Diff, complete archived contracts, current Go identities, exact harness set difference and unchanged behavioral assertions reviewed. git diff --check passed.",
+  "unverified": [
+    "Complete original Go fixture/failpoint matrices",
+    "Live multi-node TiKV",
+    "Performance",
+    "Whole-package acceptance"
+  ],
+  "SQL_evidence": "Prior cache/Apply batch remains applicable; no production SQL change or wire rerun in this cleanup.",
+  "push": {
+    "authorized": false,
+    "attempted": false
+  }
+}

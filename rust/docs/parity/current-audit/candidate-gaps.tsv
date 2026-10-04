@@ -764,27 +764,6 @@ rust/crates/tidb-planner/tests/casetest_pushdown_tiflash_keep_order_projection_s
 rust/crates/tidb-planner/tests/casetest_pushdown_tiflash_keep_order_projection_source.rs	80	#[ignore = "go-parity-gap: projection-pushdown shaping on TiFlash scans needs physical plan builder"]
 rust/crates/tidb-planner/tests/casetest_pushdown_tiflash_keep_order_projection_source.rs	93	#[ignore = "go-parity-gap: projection-to-cop request shaping needs tiflash task generation"]
 rust/crates/tidb-planner/tests/casetest_pushdown_tiflash_keep_order_projection_source.rs	105	#[ignore = "go-parity-gap: predicate (selection) pushdown decisions over replicas need full planner"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	84	#[ignore = "go-parity-gap: needs the SQL optimize pipeline plus plan_tree explain rendering of TableDual folding"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	98	#[ignore = "go-parity-gap: large analyzed fixtures + warning-stream assertions live behind the unported hint pipeline"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	111	#[ignore = "go-parity-gap: the alternative logical-plan round is not implemented in the Rust planner"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	123	#[ignore = "go-parity-gap: leading-hint inapplicability warnings originate in the unported DP reorder path"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	140	#[ignore = "go-parity-gap: index keep-order costing over appended common-handle columns needs live findBestTask + explain text"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	156	#[ignore = "go-parity-gap: ranger range-extension over appended handle columns is evaluated during unported access-path building"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	170	#[ignore = "go-parity-gap: tuple-comparison range derivation lives in the ranger pass behind unported planning"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	183	#[ignore = "go-parity-gap: scalar-IN execution semantics need the executor stack"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	196	#[ignore = "go-parity-gap: alternative-plan cost comparison between Apply and IndexJoin happens in the unported optimizer"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	211	#[ignore = "go-parity-gap: opt_rule_blacklist reload, apply distinct-elimination and explain info columns are unported"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	222	#[ignore = "go-parity-gap: correlate suite plans/results need session + optimizer + executor"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	234	#[ignore = "go-parity-gap: parallel-apply executor concurrency reporting is unported"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	246	#[ignore = "go-parity-gap: cost-factor session variables feed the unported cost model during live planning"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	261	#[ignore = "go-parity-gap: TiFlash replica injection, MPP planning and rand() execution are all outside the crate"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	275	#[ignore = "go-parity-gap: plan_tree golden comparison over the multi-join optimized tree needs the full rule pipeline"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	289	#[ignore = "go-parity-gap: CTE + scalar-subquery Apply planning and expression-index indexes are unported surfaces"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	307	#[ignore = "go-parity-gap: hint-aware join reorder + dynamic partition pruning need the full planner runtime"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	323	#[ignore = "go-parity-gap: null-reject analysis over arbitrary expressions runs inside the unported optimizer"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	335	#[ignore = "go-parity-gap: outer→semi-join rewriting plus result execution need the live stack"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	350	#[ignore = "go-parity-gap: semi_join_rewrite rewrite path is exercised through DELETE plans of the unported optimizer"]
-rust/crates/tidb-planner/tests/casetest_rule_suites_source.rs	365	#[ignore = "go-parity-gap: predicate-pushdown planning over collations/TiFlash isolation engines is unported"]
 rust/crates/tidb-planner/tests/casetest_scalarsubquery_non_evaled_source.rs	35	#[ignore = "go-parity-gap: scalar-subquery execution-time errors need the executor + EXPLAIN ANALYZE renderer"]
 rust/crates/tidb-planner/tests/casetest_scalarsubquery_non_evaled_source.rs	48	#[ignore = "go-parity-gap: needs live EXPLAIN ANALYZE over executed subqueries"]
 rust/crates/tidb-planner/tests/casetest_schema_cannot_find_column_source.rs	38	#[ignore = "go-parity-gap: views, USING resolution over prepared fields and join-UPDATE need the unported pipeline"]
@@ -828,10 +807,6 @@ rust/crates/tidb-planner/tests/casetest_windows_pushdown_source.rs	99	#[ignore =
 rust/crates/tidb-planner/tests/cbo_and_enforce_mpp_source.rs	36	#[ignore = "go-parity-gap: analyzed-table access-path optimization loop needs session/store"]
 rust/crates/tidb-planner/tests/cbo_and_enforce_mpp_source.rs	48	#[ignore = "go-parity-gap: verbose-cost rendering plus TiFlash row-size model need session/Domain"]
 rust/crates/tidb-planner/tests/core_expression_eval_source.rs	469	#[ignore = "go-parity-gap: row-bound EvalInt needs chunk-backed rows; tidb-chunk is not a planner dependency"]
-rust/crates/tidb-planner/tests/core_integration_apply_lateral_cardinality_source.rs	44	#[ignore = "go-parity-gap: needs lateral join cardinality + explain analyze est/act pipeline"]
-rust/crates/tidb-planner/tests/core_integration_apply_lateral_cardinality_source.rs	60	#[ignore = "go-parity-gap: needs apply-cache costing keyed on outer-row value repetition"]
-rust/crates/tidb-planner/tests/core_integration_apply_lateral_cardinality_source.rs	77	#[ignore = "go-parity-gap: needs cor-col order provisioning + early-stop limit push into cop paths"]
-rust/crates/tidb-planner/tests/core_integration_apply_lateral_cardinality_source.rs	90	#[ignore = "go-parity-gap: needs DML explain-analyze execution + txn-commit failpoint hook"]
 rust/crates/tidb-planner/tests/core_integration_planner_gap_guards_source.rs	45	#[ignore = "go-parity-gap: needs hint parser wiring + range-buildable hypothetical indexes + MustHavePlan surface"]
 rust/crates/tidb-planner/tests/core_integration_planner_gap_guards_source.rs	59	#[ignore = "go-parity-gap: needs cached-table meta + union scan planning + statement-context ReadFromTableCache flag"]
 rust/crates/tidb-planner/tests/core_integration_planner_gap_guards_source.rs	79	#[ignore = "go-parity-gap: needs sysvar semantics + read-for-write engine gating across DML explains"]
@@ -1120,10 +1095,6 @@ rust/crates/tidb-planner/tests/physical_plan_splitavg_correlated_pushdown_source
 rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	80	#[ignore = "go-parity-gap: wired PhysicalPlan lacks Window and TiFlashFineGrainedShuffleStreamCount"]
 rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	86	/// go-parity-gap: Go shares ONE `*property.MPPPartitionColumn` between two
 rust/crates/tidb-planner/tests/physicalop_memory_trace_clone_stream_count_source.rs	95	#[ignore = "go-parity-gap: PhysicalExchangeSender.ResolveIndicesItselfWithSchema (physical_exchange_sender.go:145) is unported"]
-rust/crates/tidb-planner/tests/plan_cache_lru_instance_suites_source.rs	35	/// go-parity-gap: `NewLRUPlanCache` and its container/list + bucket internals
-rust/crates/tidb-planner/tests/plan_cache_lru_instance_suites_source.rs	46	#[ignore = "go-parity-gap: LRUPlanCache (plan_cache_lru.go:65) container/bucket internals and MockContext session unported"]
-rust/crates/tidb-planner/tests/plan_cache_lru_instance_suites_source.rs	52	/// go-parity-gap: the domain-scoped instance plan cache carrier and its
-rust/crates/tidb-planner/tests/plan_cache_lru_instance_suites_source.rs	62	#[ignore = "go-parity-gap: sessionctx.InstancePlanCache implementation + Domain StatsHandle session stack unported"]
 rust/crates/tidb-planner/tests/plan_cost_ver2_session_suite_source.rs	37	/// go-parity-gap: needs `explain analyze format=true_card_cost` over a
 rust/crates/tidb-planner/tests/plan_cost_ver2_session_suite_source.rs	45	#[ignore = "go-parity-gap: needs EXPLAIN ANALYZE true_card_cost sessions; formula printing pipeline unported"]
 rust/crates/tidb-planner/tests/plan_cost_ver2_session_suite_source.rs	51	/// go-parity-gap: needs the `factor costs: ` warning JSON emitted under
@@ -1215,56 +1186,6 @@ rust/crates/tidb-planner/tests/pointget_issue_fixcontrol_source.rs	66	/// go-par
 rust/crates/tidb-planner/tests/pointget_issue_fixcontrol_source.rs	69	#[ignore = "go-parity-gap: same explain/session boundary plus the kerneltype gate is unported"]
 rust/crates/tidb-planner/tests/pointget_issue_fixcontrol_source.rs	82	/// go-parity-gap: needs UPDATE execution over a table with an enum column
 rust/crates/tidb-planner/tests/pointget_issue_fixcontrol_source.rs	85	#[ignore = "go-parity-gap: UPDATE/SELECT execution over an enum column needs the executor stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	47	/// go-parity-gap: PrepareStmt/ExecutePreparedStmt over a live session plus
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	50	#[ignore = "go-parity-gap: prepared execution + PlanCacheStmt.StmtCacheable need the session stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	68	/// go-parity-gap: admin flush plan_cache scopes and per-session plan caches
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	71	#[ignore = "go-parity-gap: admin flush plan_cache + per-session caches need session/executor machinery"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	90	/// go-parity-gap: prepare/execute protocol, use-index plans, and privilege
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	93	#[ignore = "go-parity-gap: prepared execution with index hints and grant/revoke cache invalidation unported"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	108	/// go-parity-gap: randomized execution over typed columns with
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	111	#[ignore = "go-parity-gap: randomized prepared-vs-literal result equality needs the executor stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	127	/// go-parity-gap: PlanBuilder.Build + GetPlanFromPlanCache + core.ToString +
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	130	#[ignore = "go-parity-gap: plan-cache rebuild of deferred now(3) needs builder+cache+metrics surfaces"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	145	/// go-parity-gap: statement-time constant freezing and sysdate semantics
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	148	#[ignore = "go-parity-gap: now()/sysdate() statement-constant semantics need the executor runtime"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	162	/// go-parity-gap: PreparedStmtGauge metrics and the global limit enforced in
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	165	#[ignore = "go-parity-gap: prepared-stmt gauge + global max_prepared_stmt_count live in the session layer"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	177	/// go-parity-gap: tidb_snapshot reads need transaction/storage plumbing.
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	179	#[ignore = "go-parity-gap: prepared execution under tidb_snapshot needs txn/storage plumbing"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	197	/// go-parity-gap: partition pruning per execution mode inside the prepared
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	200	#[ignore = "go-parity-gap: static/dynamic partition pruning interplay with the plan cache is unported"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	219	/// go-parity-gap: FoundInPlanCache + skip-cache warnings + explain-for-
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	222	#[ignore = "go-parity-gap: partition point/batch-get cache-skipping warnings need the session stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	241	/// go-parity-gap: union-scan plan invalidation inside transactions plus
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	244	#[ignore = "go-parity-gap: txn-scoped union-scan invalidation with cache counters is unported"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	260	/// go-parity-gap: session default-DB resolution inside the cache key is a
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	263	#[ignore = "go-parity-gap: prepared-stmt DB binding in the plan cache key needs the session stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	276	/// go-parity-gap: StmtCtx.IndexNames and index-visibility replanning need
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	279	#[ignore = "go-parity-gap: invisible-index replanning and StmtCtx.IndexNames are executor surfaces"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	291	/// go-parity-gap: prepared reads under tidb_snapshot need txn plumbing.
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	293	#[ignore = "go-parity-gap: plan-cache reads under tidb_snapshot need txn/storage plumbing"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	312	/// go-parity-gap: randomized cross-partition prepared consistency + cache-hit
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	315	#[ignore = "go-parity-gap: randomized partition plan-cache consistency needs the executor stack"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	335	/// go-parity-gap: cross-table prepared result equality + tolerance-bounded
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	338	#[ignore = "go-parity-gap: randomized prepared workload over partitioned/normal tables needs the executor"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	355	/// go-parity-gap: cached-table (mem-cache) reads plus plan-cache interaction
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	358	#[ignore = "go-parity-gap: cached-table + plan-cache interaction needs the executor"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	373	/// go-parity-gap: RC isolation + infoschema-version invalidation of cached
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	376	#[ignore = "go-parity-gap: RC-isolation cache invalidation on schema change is a session surface"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	392	/// go-parity-gap: three-protocol result equality across DDL needs the
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	395	#[ignore = "go-parity-gap: text/binary/plain-SQL consistency across DDL is an executor surface"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	408	/// go-parity-gap: hit/miss tracking across protocols needs the session
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	411	#[ignore = "go-parity-gap: RC cache hit/miss tracking across protocols is a session surface"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	422	/// go-parity-gap: for-update reads + cache hit tracking need the executor.
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	424	#[ignore = "go-parity-gap: for-update reads + cache hit tracking need the executor"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	437	/// go-parity-gap: autocommit point-get caching + DML-driven invalidation
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	440	#[ignore = "go-parity-gap: autocommit for-update point-get caching needs the executor"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	457	/// go-parity-gap: explain-for-connection goldens + prune-mode cache gates
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	460	#[ignore = "go-parity-gap: partition-prune-mode cache gating with explain goldens is unported"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	474	/// go-parity-gap: hash-partition point-get caching with explain-for-
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	477	#[ignore = "go-parity-gap: hash-partition point-get cache hits need the executor"]
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	493	/// go-parity-gap: batch-point-get rebuild on cache hit needs the executor.
-rust/crates/tidb-planner/tests/prepare_plan_cache_session_suite_source.rs	495	#[ignore = "go-parity-gap: batch-point-get range rebuild on cache hit needs the executor"]
 rust/crates/tidb-planner/tests/preprocess_validator_suite_source.rs	30	/// go-parity-gap: needs `core.Preprocess` + the session type/DDL validators.
 rust/crates/tidb-planner/tests/preprocess_validator_suite_source.rs	38	#[ignore = "go-parity-gap: core.Preprocess session validation tier unported"]
 rust/crates/tidb-planner/tests/preprocess_validator_suite_source.rs	44	/// go-parity-gap: needs `core.Preprocess` over a Domain infoschema with
@@ -1288,8 +1209,6 @@ rust/crates/tidb-planner/tests/redact_explain_limit_redaction_source.rs	166	#[ig
 rust/crates/tidb-planner/tests/runtime_filter_generator_local_mode_source.rs	34	#[ignore = "go-parity-gap: needs TiFlash-replica MPP planning, runtime-filter operators and plan_tree golden rendering"]
 rust/crates/tidb-planner/tests/subquery_collate_plan_source.rs	38	/// go-parity-gap: explain-format plan goldens over a live session with
 rust/crates/tidb-planner/tests/subquery_collate_plan_source.rs	41	#[ignore = "go-parity-gap: collation-driven explain goldens need the session + explain stack"]
-rust/crates/tidb-planner/tests/task_stringer_physical_unit_source.rs	36	#[ignore = "go-parity-gap: plan Build + ToString rendering of Show operators is not transcreated"]
-rust/crates/tidb-planner/tests/task_stringer_physical_unit_source.rs	67	#[ignore = "go-parity-gap: PhysicalUnionScan.Attach2Task + RootTask identity wiring not on this crate's physical tree yet"]
 rust/crates/tidb-planner/tests/tests_analyze_cte_session_suites_source.rs	39	#[ignore = "go-parity-gap: ANALYZE execution lives far outside tidb-planner's ported surface"]
 rust/crates/tidb-planner/tests/tests_analyze_cte_session_suites_source.rs	54	#[ignore = "go-parity-gap: definer-rights views + CTE planning/explain rendering unported"]
 rust/crates/tidb-planner/tests/tests_extractor_memtable_infoschema_source.rs	44	#[ignore = "go-parity-gap: needs live memtable query execution and extractor plumbing"]

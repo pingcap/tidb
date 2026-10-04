@@ -330,10 +330,6 @@ mod tests {
                 test_value(&param_types(code), 10),
             );
         }
-        for key in ["key-0", "key-1", "key-2"] {
-            let code = 30 + key.trim_start_matches("key-").parse::<i64>().unwrap();
-            eprintln!("probe {key}: {}", cache.get(key, &vec![11, code]).is_some());
-        }
         // keys 0 and 1 were evicted by capacity; keys 2, 3 and the newest
         // remain, and a hit with the exact parameter signature moves its
         // entry to the front (Go asserts the front key per hit).
@@ -393,12 +389,6 @@ mod tests {
             cache.put("key-1", vec![11_i64, code], test_value(&[11_i64, code], 10));
         }
         assert_eq!(cache.size(), 5);
-        for code in 0..5_i64 {
-            eprintln!(
-                "probe code {code}: {}",
-                cache.get("key-1", &vec![11, code]).is_some()
-            );
-        }
 
         cache.set_capacity(3).expect("capacity 3 is legal");
         assert_eq!(cache.size(), 3);
