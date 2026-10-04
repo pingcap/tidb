@@ -2599,3 +2599,9 @@ Final connected DML/SET checkpoint: E03/T01/N03 remain partial after eleven beha
 ## Statement observation checkpoint, 2026-10-03
 
 The [observation ExecPlan](statement-observation-batch-execplan.md) advances O18/O11/N03 together through the existing SummaryStmt gate, real SQL summary/counter publication, routed durable completion and persistent startup/fallback/readers/flush. The current register has 58 unresolved (42 open, sixteen partial), 28 repaired and 86 tracked. Plan/phase/RPC/network/RU/CPU attribution and complete TopSQL registration/profiling/transport remain unresolved; empty measurements are not behavioral acceptance. Three harmful historical schema/order assertions are corrected and the injected cumulative-summary fixture is replaced by real SQL. The [durable receipt](parity/current-audit/statement-observation-batch-repair.md) records the actual validation and local commit gate. No push or whole-package acceptance is authorized by this checkpoint.
+
+
+## Shared MPP/process lifecycle checkpoint, 2026-10-04
+
+The [shared MPP lifecycle batch](parity/current-audit/shared-mpp-lifecycle-repair.md) advances **M04/N03/T02 together**: one process fleet, generation retirement/joined close, and actual PD/store security bootstrap. Five runtime baseline failures and 58 distinct passing Rust cases validate this maintenance. **86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)** remain; other 54 IDs retain previous evidence. No whole-package acceptance or push.
+

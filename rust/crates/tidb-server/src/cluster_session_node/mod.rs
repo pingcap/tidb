@@ -7697,6 +7697,7 @@ pub fn build_tiflash_mpp_source(
     Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
         authority.pd_client()?,
         authority.region_cache_opener()?,
+        authority.store_rpc_opener()?,
         schema_version,
     ))
 }

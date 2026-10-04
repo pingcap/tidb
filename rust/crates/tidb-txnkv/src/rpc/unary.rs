@@ -356,16 +356,29 @@ fn configured_connection_count(value: Option<&str>) -> std::num::NonZeroUsize {
 
 impl RawTransportClient {
     pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
+        Self::with_security(Arc::new(ClusterSecurity::plaintext()))
+    }
+
+    pub(super) fn with_security(
+        security: Arc<ClusterSecurity>,
+    ) -> Result<Self, DirectUnaryClientError> {
         let count = configured_connection_count(
             std::env::var("TIKV_GRPC_CONNECTION_COUNT").ok().as_deref(),
         );
-        Self::with_connection_count(count)
+        Self::with_security_and_connection_count(security, count)
     }
 
     pub(super) fn with_connection_count(
         count: std::num::NonZeroUsize,
     ) -> Result<Self, DirectUnaryClientError> {
-        let owner = TransportRuntime::new(Arc::new(ClusterSecurity::plaintext()), count)?;
+        Self::with_security_and_connection_count(Arc::new(ClusterSecurity::plaintext()), count)
+    }
+
+    pub(super) fn with_security_and_connection_count(
+        security: Arc<ClusterSecurity>,
+        count: std::num::NonZeroUsize,
+    ) -> Result<Self, DirectUnaryClientError> {
+        let owner = TransportRuntime::new(security, count)?;
         Ok(Self {
             handle: Some(owner.handle()),
             shutdown_cancellation: owner.shutdown_cancellation(),
@@ -375,6 +388,13 @@ impl RawTransportClient {
 
     fn route(&self) -> Result<&TransportHandle, DirectUnaryClientError> {
         self.handle.as_ref().ok_or(DirectUnaryClientError::Closed)
+    }
+
+    pub(super) async fn store_rpc_channel(
+        &self,
+        address: &str,
+    ) -> Result<super::StoreRpcChannel, DirectUnaryClientError> {
+        self.route()?.store_rpc_channel(address).await
     }
 
     pub(super) const fn is_owner(&self) -> bool {

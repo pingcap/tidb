@@ -89,10 +89,10 @@
       "id": "N03",
       "status": "partial",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; partially repaired:** executable startup now uses the shared configuration loader and override pass; the second TOML parse, whitelist, presence tracker and manual reconstruction are removed. Recognized fields, CLI precedence, config-check/strict policy and Go's false auto-TLS default are covered. Native deployment defaults and incomplete runtime consumers remain; accepting ssl-ca does not repair A03 certificate enforcement. The TiFlash batch additionally composes cluster CA/client-identity/HTTPS configuration into its shared PD/status HTTP client; native defaults and the other recorded consumers remain partial. The DML/SET batch removes premature float-only GC-trigger and duplicate packet-size scope branches, leaving canonical percentage/range validation and warnings. SET literals and pre-bound bare words use shared scalar policy; complete configuration consumers remain open. The statement-observation batch consumes persistent summary filename/rotation settings at common process startup, validates the sink before publishing workers and switches the shared configuration to v1 on failure. Both store runners share joined shutdown. Native defaults, TLS A03 and other consumers remain partial. All five read-only persistent-summary instance getters now expose live shared configuration, including the ON/OFF fallback state and rotation limits. The cache/Apply batch additionally consumes instance-cache GLOBAL enable/byte-size/reserved limits, enforces the source minimum and exposes typed byte getters. Native defaults, TLS and the other incomplete consumers remain partial. The MPP transport batch now consumes the same process cluster-security Arc, handles ambiguous Rust TLS provider features without overriding an explicit selection, and shares ordinary store endpoint/receive-size defaults. Native defaults, SQL TLS A03 and the other incomplete consumers remain partial.",
-      "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md); `tidb-session/src/sysvar.rs::run_validation_with_lookup`; `variables.rs::check_max_allowed_packet_scope`, `eval_bound_value`; `tidb-server/src/lib.rs::start_statement_observation`; `tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; `tidb-session/src/vars.rs::runtime_instance_value`; `tidb-session/src/vars.rs::publish_instance_plan_cache_settings`; `tidb-pd-client/src/security.rs::client_tls_config`; `tiflash_mpp_scan.rs::connect_mpp_client`; [transport receipt](mpp-transport-batch-repair.md)",
+      "finding": "**P2; partially repaired:** executable startup now uses the shared configuration loader and override pass; the second TOML parse, whitelist, presence tracker and manual reconstruction are removed. Recognized fields, CLI precedence, config-check/strict policy and Go's false auto-TLS default are covered. Native deployment defaults and incomplete runtime consumers remain; accepting ssl-ca does not repair A03 certificate enforcement. The TiFlash batch additionally composes cluster CA/client-identity/HTTPS configuration into its shared PD/status HTTP client; native defaults and the other recorded consumers remain partial. The DML/SET batch removes premature float-only GC-trigger and duplicate packet-size scope branches, leaving canonical percentage/range validation and warnings. SET literals and pre-bound bare words use shared scalar policy; complete configuration consumers remain open. The statement-observation batch consumes persistent summary filename/rotation settings at common process startup, validates the sink before publishing workers and switches the shared configuration to v1 on failure. Both store runners share joined shutdown. Native defaults, TLS A03 and other consumers remain partial. All five read-only persistent-summary instance getters now expose live shared configuration, including the ON/OFF fallback state and rotation limits. The cache/Apply batch additionally consumes instance-cache GLOBAL enable/byte-size/reserved limits, enforces the source minimum and exposes typed byte getters. Native defaults, TLS and the other incomplete consumers remain partial. The MPP transport batch now consumes the same process cluster-security Arc, handles ambiguous Rust TLS provider features without overriding an explicit selection, and shares ordinary store endpoint/receive-size defaults. Native defaults, SQL TLS A03 and the other incomplete consumers remain partial. Actual production bootstrap now passes NodeConfig cluster security to the common PD/store authority, including ordinary RPCs. Full secure cluster startup, native defaults and A03 remain unverified.",
+      "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md); `tidb-session/src/sysvar.rs::run_validation_with_lookup`; `variables.rs::check_max_allowed_packet_scope`, `eval_bound_value`; `tidb-server/src/lib.rs::start_statement_observation`; `tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; `tidb-session/src/vars.rs::runtime_instance_value`; `tidb-session/src/vars.rs::publish_instance_plan_cache_settings`; `tidb-pd-client/src/security.rs::client_tls_config`; `tiflash_mpp_scan.rs::connect_mpp_client`; [transport receipt](mpp-transport-batch-repair.md); `tidb-txnkv/src/rpc/transport_runtime.rs::WorkerCommand::StoreChannel`; `real_tikv_read.rs::connect_with_catalog_and_security`; [shared lifecycle receipt](shared-mpp-lifecycle-repair.md)",
       "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Finish the remaining runtime consumers and deployment defaults before complete acceptance. Deprecated performance.run-auto-analyze uses the shared loader's diagnostics; the live auto-analyze worker reads vardef.RunAutoAnalyze, as Go does.",
-      "review_basis": "Cloud existing-owner transport batch from fe1e7ee0c8e8a516a3cf9771142ea7e78da99da7 against unchanged freshly fetched Go master 93a01d31f6 and native 19a56cc. Five corrected baseline runtime failures and 32 distinct passing Rust cases, root lint, all-target checking and locked server build. Scope and remaining owners: mpp-transport-batch-repair.md and validation JSON."
+      "review_basis": "Cloud connected lifecycle batch from 42a007cf4c, preserving incoming e52af04b8c, against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Five runtime baseline failures, 58 passing Rust cases and final build/check/lint gates; wider owners remain partial. See shared-mpp-lifecycle-validation.json."
     },
     {
       "id": "N06",
@@ -332,10 +332,10 @@
       "id": "T02",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. The native region-metadata circuit breaker now delegates to the shared PD package; that removed duplicate is not part of the remaining routing allegation.",
-      "rust_evidence": "`rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs`",
+      "finding": "TiDB and native client-rust both retain region/cache/recovery/RPC algorithms. `ClientPd` delegates routing back to TiDB, while DistSQL still needs those capabilities. This is confirmed competing ownership, **not by itself a proven runtime defect**. The native region-metadata circuit breaker now delegates to the shared PD package; that removed duplicate is not part of the remaining routing allegation. The MPP private channel/runtime owner is removed: all MPP RPCs now borrow the existing ordinary-store process fleet with shared selection, retirement and shutdown. Broader TiDB/native routing consolidation remains unresolved.",
+      "rust_evidence": "`rust/crates/tidb-txnkv/src/driver/client_bridge.rs::ClientPd`, `rust/crates/tidb-txnkv/src/region`, `rust/third_party/tikv-client-rs/src/region_cache.rs`; `tidb-txnkv/src/rpc/transport_runtime.rs::WorkerCommand::StoreChannel`; `real_tikv_read.rs::connect_with_catalog_and_security`; [shared lifecycle receipt](shared-mpp-lifecycle-repair.md)",
       "go_owner": "Pinned client-go owns storage routing/recovery; TiDB coprocessor code consumes it. Move all consumers before deleting the TiDB owner. Native RetryBackoffer already owns the retry budget and must not be duplicated again.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. ClientPd still delegates to TiDB routing while native client-rust retains its own region/cache/RPC owners. Atomic health publication, owned PD requests and joined shutdown are repaired; those lower-owner repairs do not consolidate this bridge. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud connected lifecycle batch from 42a007cf4c, preserving incoming e52af04b8c, against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Five runtime baseline failures, 58 passing Rust cases and final build/check/lint gates; wider owners remain partial. See shared-mpp-lifecycle-validation.json."
     },
     {
       "id": "T03",
@@ -548,10 +548,10 @@
       "id": "M04",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "**Partially repaired:** MPP uses canonical process PD/region-cache ownership and exact-epoch RetryRegions invalidation. Its cluster TLS, store endpoint/windows, shared Go receive-size policy, 60-second task/dispatch timeout, cancellation during setup, typed SQL KILL boundary and per-receive deadline are now maintained together. Shared process connection pooling, reconnect/backoff/dispatch retry choreography and broader transport recovery remain unresolved; this does not accept complete transport ownership.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs::invalidate_mpp_retry_regions`; `rust/crates/tidb-exec/src/real_tikv_read.rs::ProductionReadProcessAuthority::region_cache_opener`; `rust/crates/tidb-server/src/cluster_session_node/mod.rs::build_tiflash_mpp_source`; `mpp-read-batch-validation.json`; `tidb-pd-client/src/client/mod.rs::security`; `tidb-txnkv/src/rpc/channel_pool.rs::store_endpoint`; `tidb-txnkv/src/rpc/mod.rs::MAX_RECV_MESSAGE_SIZE`; `tiflash_mpp_scan.rs::mpp_setup`, `connect_mpp_client`, `mpp_open_error`; [transport receipt](mpp-transport-batch-repair.md)",
+      "finding": "**Partially repaired:** MPP uses canonical process PD/region-cache ownership and exact-epoch RetryRegions invalidation. Its cluster TLS, store endpoint/windows, shared Go receive-size policy, 60-second task/dispatch timeout, cancellation during setup, typed SQL KILL boundary and per-receive deadline are now maintained together. MPP now borrows the ordinary process connection fleet and shares selection, physical generation retirement and joined close; private channel/runtime ownership is removed. Reconnect/backoff/dispatch retry choreography and broader transport recovery remain unresolved; this does not accept complete transport ownership.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/tiflash_mpp_scan.rs::invalidate_mpp_retry_regions`; `rust/crates/tidb-exec/src/real_tikv_read.rs::ProductionReadProcessAuthority::region_cache_opener`; `rust/crates/tidb-server/src/cluster_session_node/mod.rs::build_tiflash_mpp_source`; `mpp-read-batch-validation.json`; `tidb-txnkv/src/rpc/channel_pool.rs::store_endpoint`; `tidb-txnkv/src/rpc/mod.rs::MAX_RECV_MESSAGE_SIZE`; `tiflash_mpp_scan.rs::mpp_setup`, `connect_mpp_client`, `mpp_open_error`; [transport receipt](mpp-transport-batch-repair.md); `tidb-txnkv/src/rpc/transport_runtime.rs::WorkerCommand::StoreChannel`; `real_tikv_read.rs::connect_with_catalog_and_security`; [shared lifecycle receipt](shared-mpp-lifecycle-repair.md)",
       "go_owner": "`pkg/store/copr/mpp.go::DispatchMPPTask`/`EstablishMPPConns` use the TiKV client security/context/backoff and invalidate stale regions. Reuse the storage transport/security owner; do not add another MPP-only retry/cache implementation.",
-      "review_basis": "Cloud existing-owner transport batch from fe1e7ee0c8e8a516a3cf9771142ea7e78da99da7 against unchanged freshly fetched Go master 93a01d31f6 and native 19a56cc. Five corrected baseline runtime failures and 32 distinct passing Rust cases, root lint, all-target checking and locked server build. Scope and remaining owners: mpp-transport-batch-repair.md and validation JSON."
+      "review_basis": "Cloud connected lifecycle batch from 42a007cf4c, preserving incoming e52af04b8c, against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Five runtime baseline failures, 58 passing Rust cases and final build/check/lint gates; wider owners remain partial. See shared-mpp-lifecycle-validation.json."
     },
     {
       "id": "M05",
@@ -791,16 +791,18 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "fe1e7ee0c8e8a516a3cf9771142ea7e78da99da7",
+    "integration_start": "42a007cf4c0a11ec4dcf5d606dcb3671dd1f8ad0",
+    "incoming_integration": "e52af04b8c965c7bae2b35e91445c78261885dc0",
     "findings": [
       "M04",
-      "N03"
+      "N03",
+      "T02"
     ],
     "statuses_unchanged": true,
-    "receipt": "mpp-transport-batch-repair.md",
-    "validation": "mpp-transport-batch-validation.json",
-    "scope": "Existing-owner MPP transport maintenance across M04/N03; no whole-package transcreation acceptance.",
-    "source_identity": "Source and receipts share one normal local commit; validated source hashes identify the tested files."
+    "receipt": "shared-mpp-lifecycle-repair.md",
+    "validation": "shared-mpp-lifecycle-validation.json",
+    "scope": "Connected existing-owner MPP/process fleet/bootstrap security maintenance; no complete Go package acceptance.",
+    "source_identity": "Source, incoming integration and receipts share one normal hook-gated local merge commit; source hashes identify validation."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -872,6 +874,19 @@
       "validation": "table-policy-batch-validation.json",
       "scope": "Connected existing-owner table-policy maintenance across T01/K03; no transcreated package claim.",
       "source_identity": "Source and receipts share one normal local commit; validated-source hashes identify the tested files."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "fe1e7ee0c8e8a516a3cf9771142ea7e78da99da7",
+      "findings": [
+        "M04",
+        "N03"
+      ],
+      "statuses_unchanged": true,
+      "receipt": "mpp-transport-batch-repair.md",
+      "validation": "mpp-transport-batch-validation.json",
+      "scope": "Existing-owner MPP transport maintenance across M04/N03; no whole-package transcreation acceptance.",
+      "source_identity": "Source and receipts share one normal local commit; validated source hashes identify the tested files."
     }
   ],
   "execution_batches": {

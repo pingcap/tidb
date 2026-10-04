@@ -32,7 +32,7 @@ use super::batch::{
     BatchCommandEntry, BatchPublicationReceipt, BatchStreamEvent, BatchSubmission,
     BatchTransportState,
 };
-use super::channel_pool::ChannelPool;
+use super::channel_pool::{ChannelPool, StoreRpcChannel};
 use super::liveness::check_liveness;
 use super::unary::{prepare_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
 use super::{DirectUnaryClientError, TransportShutdownError};
@@ -40,6 +40,10 @@ use super::{DirectUnaryClientError, TransportShutdownError};
 mod batching;
 
 pub(super) enum WorkerCommand {
+    StoreChannel {
+        address: String,
+        reply: oneshot::Sender<Result<StoreRpcChannel, DirectUnaryClientError>>,
+    },
     UnarySend {
         address: String,
         request: RawUnaryRequest,
@@ -228,6 +232,22 @@ impl PublicationBarrier {
 }
 
 impl TransportHandle {
+    pub(super) async fn store_rpc_channel(
+        &self,
+        address: &str,
+    ) -> Result<StoreRpcChannel, DirectUnaryClientError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(WorkerCommand::StoreChannel {
+                address: address.to_owned(),
+                reply,
+            })
+            .map_err(|_| DirectUnaryClientError::Closed)?;
+        response
+            .await
+            .unwrap_or(Err(DirectUnaryClientError::Closed))
+    }
+
     pub(super) fn unary_send(
         &self,
         address: &str,
@@ -486,6 +506,7 @@ async fn run_worker(
             // its collection timer. Retirement events still name exact channels.
             match &command {
                 WorkerCommand::UnarySend { address, .. }
+                | WorkerCommand::StoreChannel { address, .. }
                 | WorkerCommand::CloseAddress { address, .. }
                 | WorkerCommand::CloseAddressVersion { address, .. }
                 | WorkerCommand::Liveness { address, .. }
@@ -515,6 +536,17 @@ async fn run_worker(
                 _ => {}
             }
             match command {
+                WorkerCommand::StoreChannel { address, reply } => {
+                    let result = if *shutdown.borrow() {
+                        Err(DirectUnaryClientError::Closed)
+                    } else {
+                        let index = select_connection(&mut cursors, &address, connection_count);
+                        let connection = &mut connections[index];
+                        connection.channels.get_or_create(&address, &connection.runtime)
+                            .map(StoreRpcChannel::new)
+                    };
+                    let _ = reply.send(result);
+                }
                 WorkerCommand::UnarySend {
                     address,
                     request,

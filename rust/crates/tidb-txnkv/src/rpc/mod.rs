@@ -23,7 +23,7 @@ pub use async_completion::{
     CompletionRunOutcome, CompletionSpawner, PendingRequest,
 };
 pub use batch::BatchCommandTag;
-pub use channel_pool::store_endpoint;
+pub use channel_pool::StoreRpcChannel;
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, TransportShutdownError,

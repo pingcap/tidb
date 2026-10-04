@@ -117,6 +117,13 @@ impl ConnectionTasks {
         }
     }
 
+    pub(in crate::rpc) fn is_closed(&self) -> bool {
+        self.tasks
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_none()
+    }
+
     pub(in crate::rpc) fn spawn<F>(&self, task: F) -> Option<AbortHandle>
     where
         F: Future<Output = ()> + Send + 'static,

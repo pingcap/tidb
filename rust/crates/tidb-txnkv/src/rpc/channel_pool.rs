@@ -35,10 +35,7 @@ const GRPC_INITIAL_CONN_WINDOW_SIZE: u32 = 1 << 27;
 
 /// Constructs store endpoints with the existing shared TLS and HTTP/2 windows.
 /// MPP streams and ordinary KV channels consume the same defaults.
-pub fn store_endpoint(
-    address: &str,
-    security: &ClusterSecurity,
-) -> Result<Endpoint, TlsConfigError> {
+fn store_endpoint(address: &str, security: &ClusterSecurity) -> Result<Endpoint, TlsConfigError> {
     Ok(tidb_pd_client::secure_endpoint(address, security)?
         .initial_stream_window_size(GRPC_INITIAL_WINDOW_SIZE)
         .initial_connection_window_size(GRPC_INITIAL_CONN_WINDOW_SIZE))
@@ -54,6 +51,40 @@ pub(super) struct VersionedChannel {
 impl VersionedChannel {
     pub(super) const fn physical_channel(&self) -> &PhysicalChannelIdentity {
         &self.physical_channel
+    }
+}
+
+/// Borrowed store RPC channel generation. The process fleet alone closes and
+/// joins its task scope; retaining this capability cannot reopen a retired scope.
+#[derive(Clone)]
+pub struct StoreRpcChannel {
+    selected: VersionedChannel,
+}
+
+impl StoreRpcChannel {
+    pub(super) fn new(selected: VersionedChannel) -> Self {
+        Self { selected }
+    }
+
+    /// Uses the same receive-size policy as unary and BatchCommands RPCs.
+    pub fn client(&self) -> tidb_proto::tikvpb::tikv_client::TikvClient<Channel> {
+        tidb_proto::tikvpb::tikv_client::TikvClient::new(self.selected.channel.clone())
+            .max_decoding_message_size(super::MAX_RECV_MESSAGE_SIZE)
+    }
+
+    /// Identity used for generation-specific recovery, without close authority.
+    pub fn physical_channel(&self) -> &PhysicalChannelIdentity {
+        self.selected.physical_channel()
+    }
+
+    /// Monotonic generation selected by the process fleet.
+    pub fn version(&self) -> u64 {
+        self.selected.physical_channel().version()
+    }
+
+    /// True once the owning pool retires this exact generation.
+    pub fn is_closed(&self) -> bool {
+        self.selected.tasks.is_closed()
     }
 }
 

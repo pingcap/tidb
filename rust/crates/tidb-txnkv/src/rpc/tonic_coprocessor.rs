@@ -120,6 +120,34 @@ impl TonicCoprocessorClient {
         })
     }
 
+    /// Constructs a process transport with explicit immutable cluster security.
+    pub fn with_security(
+        security: std::sync::Arc<tidb_pd_client::ClusterSecurity>,
+    ) -> Result<Self, DirectUnaryClientError> {
+        Ok(Self {
+            transport: RawTransportClient::with_security(security)?,
+        })
+    }
+
+    /// Constructs an explicitly sized process fleet with the shared credentials.
+    pub fn with_security_and_connection_count(
+        security: std::sync::Arc<tidb_pd_client::ClusterSecurity>,
+        count: std::num::NonZeroUsize,
+    ) -> Result<Self, DirectUnaryClientError> {
+        Ok(Self {
+            transport: RawTransportClient::with_security_and_connection_count(security, count)?,
+        })
+    }
+
+    /// Borrows the next channel from the same fleet used by ordinary store RPCs.
+    /// This capability has no process shutdown or independent pool ownership.
+    pub async fn store_rpc_channel(
+        &self,
+        address: &str,
+    ) -> Result<super::StoreRpcChannel, DirectUnaryClientError> {
+        self.transport.store_rpc_channel(address).await
+    }
+
     /// Whether this value retains the unique worker shutdown and join authority.
     #[must_use]
     pub const fn is_transport_owner(&self) -> bool {

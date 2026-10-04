@@ -697,17 +697,38 @@ impl ProductionReadProcessAuthority {
         E: Into<String>,
         F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
     {
+        Self::connect_with_catalog_and_security(
+            pd_endpoints,
+            timeout,
+            Arc::new(tidb_pd_client::ClusterSecurity::plaintext()),
+            choose_table,
+        )
+    }
+
+    /// Bootstraps PD and store traffic from the same captured cluster security.
+    pub fn connect_with_catalog_and_security<I, E, F>(
+        pd_endpoints: I,
+        timeout: Duration,
+        security: Arc<tidb_pd_client::ClusterSecurity>,
+        choose_table: F,
+    ) -> Result<Self, RealTiKvReadError>
+    where
+        I: IntoIterator<Item = E>,
+        E: Into<String>,
+        F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
+    {
         let copr_cache = configured_coprocessor_cache(
             &tidb_config::tikvcfg::get_global_config()
                 .tikv_client
                 .copr_cache,
         )?;
-        let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
+        let pd =
+            PdClient::connect_seeds_with_security(pd_endpoints, timeout, Arc::clone(&security))?;
         let cluster_id = pd.cluster_id();
         let timestamp_source = PdTimestampSource::new(pd.clone());
         let loader = PdRegionLoader::from_client(pd.clone());
         let cache = RegionCache::new(loader);
-        let transport_owner = TonicCoprocessorClient::new()
+        let transport_owner = TonicCoprocessorClient::with_security(security)
             .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         debug_assert!(transport_owner.is_transport_owner());
         let read_authority =
@@ -774,6 +795,14 @@ impl ProductionReadProcessAuthority {
         match &self.lifecycle.pd {
             ProductionPdLifecycle::Running(client) => Some(client.clone()),
             ProductionPdLifecycle::Closed => None,
+        }
+    }
+
+    /// Borrowed store RPC capability; the process retains shutdown/join ownership.
+    pub fn store_rpc_opener(&self) -> Option<TonicCoprocessorClient> {
+        match &self.lifecycle.transport {
+            ProductionTransportLifecycle::Running(client) => Some(client.clone()),
+            ProductionTransportLifecycle::Closed => None,
         }
     }
 

@@ -74,9 +74,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
-    let authority = ProductionReadProcessAuthority::connect_with_catalog(
+    let authority = ProductionReadProcessAuthority::connect_with_catalog_and_security(
         config.pd_endpoints.clone(),
         COPROCESSOR_QUERY_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
         |opener| {
             // tiup's deploy->patch->start flow boots this node against a
             // FRESH keyspace before any Go TiDB ever ran, so `mysql.*` does
