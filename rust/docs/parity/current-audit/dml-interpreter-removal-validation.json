@@ -1,0 +1,155 @@
+{
+  "date": "2026-10-04",
+  "start": "7957cf17dd2a25d7eeed2e7d6af18f051c9235a4",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "advanced": [
+    "E03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 39,
+    "partial": 18
+  },
+  "production_net_lines_removed": 595,
+  "checks": [
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- dml_shared_read_ --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/baseline.log",
+      "sha256": "4fc41256caa04d678310f4ecb89a5352827cc4b1df5c1e81910b082004a30a20",
+      "passed": 1,
+      "failed": 2,
+      "ignored": 0,
+      "per_target_results": [
+        [
+          "1",
+          "2",
+          "0"
+        ]
+      ]
+    },
+    {
+      "command": "First grouped session compile: missing Datum qualification",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/compile-diagnostic.log",
+      "sha256": "76f145048da2d98af68523a5d37b2284a17fe58587384bef06bee9cb0626c417"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_multi_table_dml tests_foreign_key tests_grants::table_scope tests_mem_quota tests_prepared_statements tests_alter --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/migration-regressions.log",
+      "sha256": "2eb4c934d9a88bbff109ea6d4ea461923bf829b5f063b240e66bc500fb584f33",
+      "passed": 187,
+      "failed": 2,
+      "ignored": 0,
+      "per_target_results": [
+        [
+          "187",
+          "2",
+          "0"
+        ]
+      ]
+    },
+    {
+      "command": "cargo test --locked -p tidb-session -p tidb-executor -p tidb-planner --lib -- tests_multi_table_dml tests_foreign_key tests_grants::table_scope tests_mem_quota tests_prepared_statements tests_alter topn::tests topn_chunk_heap::tests plan_builder::from_tests plan_builder::tests --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/grouped-tests.log",
+      "sha256": "c5de310fd256274c4f6d8d73eff963b9d7b05e738338c79d6eac23c0182240d1",
+      "passed": 217,
+      "failed": 0,
+      "ignored": 0,
+      "per_target_results": [
+        [
+          "28",
+          "0",
+          "0"
+        ],
+        [
+          "0",
+          "0",
+          "0"
+        ],
+        [
+          "189",
+          "0",
+          "0"
+        ]
+      ],
+      "note": "The two plan_builder name filters selected zero planner tests; the following direct-binary check corrects that selection without rebuilding."
+    },
+    {
+      "command": "target/debug/build/tidb-planner/2fd3c8c3dba3f16e/out/tidb_planner-2fd3c8c3dba3f16e logical::rule_tests plan_builder::set_opr_tests mem_table --test-threads=1",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/planner-tests.log",
+      "sha256": "19a2a579c202b711f828fdcb9f1bb4dc78c68307961a303d3bb15d36e3f1f5b3",
+      "passed": 98,
+      "failed": 0,
+      "ignored": 0,
+      "per_target_results": [
+        [
+          "98",
+          "0",
+          "0"
+        ]
+      ]
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner -p tidb-executor -p tidb-session --all-targets",
+      "working_directory": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/all-target-check.log",
+      "sha256": "77d7f02d7faaf9db6b1d65e952738e95ec5595cbb7fb7a8fe3bcf4fce76e61d1"
+    },
+    {
+      "command": "make lint",
+      "working_directory": "/workspace/tidb",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/dml-interpreter-removal/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "4fff5229eab4ea21f2c8793403683185e49a81e572f1121c7f17166d2b28685b",
+    "rust/crates/tidb-executor/src/driver/dml.rs": "9ce621c86897f432a2ed531ef4ae942a83cb8ad74e13f9da2490aa81c98ba3f8",
+    "rust/crates/tidb-executor/src/driver/from.rs": "0a18f620bfbc0b441e2ea75a52ae88ab877044c15a12f22966535a73e9b5d9be",
+    "rust/crates/tidb-executor/src/driver/multi_dml.rs": "67616e7c8c0d4b80bb0ec1a04e6c40eaf5831f1d57d452c2751b1e3ed21bf71f",
+    "rust/crates/tidb-executor/src/driver/physical_builder.rs": "a2e831e1582b61e7622d81c89901dbd986b664de13a3b24d00635810ac89deff",
+    "rust/crates/tidb-executor/src/driver/subquery.rs": "02ade01ced29c0a128e41b5db2ecb45475420732ce7477e500ddd7cebb1d1056",
+    "rust/crates/tidb-executor/src/topn.rs": "779d28f94bb515aac5f32ac05ade3b01ec1488422589c7677a6006160efd2433",
+    "rust/crates/tidb-planner/src/plan_builder.rs": "1542fcab2d1174bea8a05b8e1a875dd55d84fcb38e195b30783c025a3e79d04f",
+    "rust/crates/tidb-planner/src/plan_builder/catalog.rs": "da492d63444165747bb714ac17a26804bcec9d517c54128fc4c9df8ae87dee5c",
+    "rust/crates/tidb-planner/src/plan_builder/from.rs": "1e829de53eea8594839b685c0538d6723ba06951ff360c53afc6035802f1fde4",
+    "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "869c43260d68d6030e37c812266efe5bbbe52c20d4ae2949bdb2dd2ccc140ffc"
+  },
+  "removed": [
+    "Matrix-only joined UPDATE/DELETE materialization and source dispatch",
+    "Private nested-loop join, LATERAL rebinding, WHERE, ORDER BY, LIMIT and late row-accounting paths",
+    "Unused derived/view materializers, derived-name/alias helpers and thread-local view-depth guard",
+    "Orphan row_is_selected and qualified_path helpers",
+    "Obsolete TopN RequiredRows shrink and candidate-dropping truncation",
+    "WHERE-subquery auxiliary columns from frozen DML source output"
+  ],
+  "regression_evidence": "Original source: 2 failures/1 control. After migration:187 pass/2 failures, exposing DML auxiliary schema and obsolete TopN candidate loss. Both repaired against live Go without weakening tests. Standalone SELECT diagnostic linked from then-current built libraries confirms TopN candidate loss; this is diagnostic, not a Go runtime oracle.",
+  "commit_gate": {
+    "hook": "hooks/pre-commit",
+    "core_hooks_path": "hooks",
+    "required_command": "cd rust && cargo build --locked -p tidb-server",
+    "mode": "Normal git commit invokes actual hook; must abort on failure. Post-commit exact SHA and result belong in external final-handoff.json. No preliminary locked build."
+  },
+  "limits": [
+    "Complete Go packages remain unaccepted.",
+    "Single-table matrix DML fallback, final row vectors, reconstructed stored handles and full chunk/write lifecycle remain.",
+    "Executable FK plan objects and full planner privilege visits remain open.",
+    "Full Go suites, live multi-node TiKV, benchmarks and fresh-task unpublished commit restoration not verified.",
+    "Prior parser14 and expression3 failures remain explicit; those suites were not rerun.",
+    "No push or dry run. Concurrent remote integration preserved unmerged."
+  ]
+}

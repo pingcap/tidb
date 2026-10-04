@@ -84,12 +84,9 @@ pub(crate) fn bare_columns(expr: &tidb_ast::Expr) -> Vec<Vec<String>> {
     collector.found
 }
 
-/// The stand-in is [`probe_datum`] of the outer column's own type, NOT a bare
-/// NULL, for the reason `build_lateral_join` already states for the `LATERAL`
-/// shape: a NULL erases the type it stood for, so `select t.a from t t1 limit
-/// 1` infers `NULL`, whose chunk column is variable-length, and the first
-/// inner run then appends an 8-byte integer into a zero-width cell and panics.
-/// Both Apply shapes now settle their inner column the one way.
+/// The compatibility scalar-subquery path uses `from::probe_datum` of the
+/// outer column's type. A NULL stand-in would erase that type and could make
+/// an integer result append into a variable-length chunk column.
 ///
 /// `outer` is the scope the correlated columns bind against. Falling back to
 /// `LongLong` matches what the rest of the seed does for an uninferred

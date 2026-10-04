@@ -3955,6 +3955,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.is_for_update_read = true;
         self.in_update_or_delete_stmt = true;
         let mut plan = self.build_table_refs(select.from.as_ref())?;
+        // Go buildUpdate.oldSchemaLen / buildDelete.oldSchema: WHERE may
+        // append an Apply result, which is not a column of a target table.
+        let (source_schema, source_names) = snapshot_schema_and_names(&plan);
         let markers = BTreeMap::new();
         if let Some(where_clause) = &select.where_clause {
             plan = self.build_selection(plan, where_clause, &markers)?;
@@ -3980,8 +3983,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // layout. Keep the original column identities so handle metadata and
         // physical access paths resolve against the same DataSource columns.
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
-        let (schema, names) = snapshot_schema_and_names(&plan);
-        let kept = schema
+        let kept = source_schema
             .columns
             .iter()
             .enumerate()
@@ -4000,7 +4002,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let output_names = kept
             .iter()
-            .filter_map(|(index, _)| names.get(*index).cloned())
+            .filter_map(|(index, _)| source_names.get(*index).cloned())
             .collect::<Vec<_>>();
         let mut projection =
             LogicalProjection::new(self.base(LogicalProjection::TYPE), expressions);

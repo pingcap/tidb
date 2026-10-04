@@ -1,5 +1,7 @@
 # Audit and remove Go/Rust structural mismatches
 
+Shared-read removal: [receipt](parity/current-audit/dml-interpreter-removal-repair.md). 595 net production lines removed across joined DML, unused materializers and obsolete TopN truncation. 315 grouped cases pass; affected all-target checking and lint pass. The normal hook remains mandatory. E03 stays partial;57 unresolved. Earlier checkpoints are historical; no push.
+
 Removal continuation: [receipt](parity/current-audit/dml-removal-batch-repair.md) removes the matrix adapter's competing metadata builders, executable LATERAL probe, source-kind walker and EXPLAIN refusal after migrating callers to the shared logical layout. 144 grouped SQL cases pass. E03 remains partial; 57 unresolved. Normal mandatory hook and no-push policy remain active.
 
 Current DML checkpoint: [living batch plan](dml-owner-batch-execplan.md) and [receipt](parity/current-audit/dml-owner-batch-repair.md) advance A01/E02/E03 together through row-free metadata discovery, resolved write targets and per-table FK plan nodes. Retained FK rollback and single-statement parser defects are repaired in the same batch. Counts remain 86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial); executable FK ownership, physical identity/chunk migration and matrix execution remain open. No whole-package acceptance or push. Earlier checkpoints below are historical.

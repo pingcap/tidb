@@ -19,10 +19,10 @@
 //! stream and write back to several base tables, so each output row has to
 //! carry the identity of the base row every table contributed. Go gets that
 //! from `TblColPosInfo.HandleCols`, a handle column the planner adds to the
-//! join's schema per target table. The read path here does the same thing by
-//! keeping the handle BESIDE the values instead of inside them
-//! ([`SourceRow`]), which is why a multi-table write cannot reuse
-//! `build_from`'s executor tree -- that tree emits values only.
+//! join's schema per target table. The shared physical child carries those
+//! identities through every read operator. At the write boundary [`SourceRow`]
+//! separates them from values. The matrix adapter supplies its snapshot
+//! position as an internal handle.
 //!
 //! The rules below were captured from a real TiDB session (`mockstore`
 //! `session.Execute`, reading affected rows off `StmtCtx`), not inferred:
@@ -87,9 +87,7 @@
 //! for the write phase. Go likewise restores the full child schema for
 //! `UPDATE`/`DELETE` after building the coalesced join condition.
 //!
-//! `LATERAL` derived sources are an Apply: their query is rebound and run for
-//! every left-row snapshot before the ordinary join/write logic consumes the
-//! resulting rows. The derived side remains read-only because it has no base
+//! `LATERAL` derived sources use the shared physical Apply executor. The derived side remains read-only because it has no base
 //! row identity.
 
 use std::collections::BTreeMap;
@@ -158,10 +156,9 @@ impl SourceTable {
 /// outer join NULL-padded that side), then the concatenated column values.
 type SourceRow = (Vec<Option<RowId>>, Vec<Datum>);
 
-/// The joined row source a multi-table write reads.
-struct MultiSource {
+/// Metadata for the joined values a multi-table write reads.
+struct MultiLayout {
     tables: Vec<SourceTable>,
-    rows: Vec<SourceRow>,
     constant_context: crate::StmtContext,
     /// The output naming state of a child `NATURAL`/`USING` join. The row
     /// remains full-width for writes, just as Go resets the join schema for
@@ -170,7 +167,7 @@ struct MultiSource {
     star: Vec<usize>,
 }
 
-impl MultiSource {
+impl MultiLayout {
     fn width(&self) -> usize {
         self.tables.last().map_or(0, SourceTable::end)
     }
@@ -202,13 +199,6 @@ impl MultiSource {
             .collect()
     }
 
-    fn column_names(&self) -> Vec<String> {
-        self.tables
-            .iter()
-            .flat_map(|t| t.columns.iter().map(|(name, _)| name.clone()))
-            .collect()
-    }
-
     /// The table whose columns cover `offset` in the joined row.
     fn table_of_column(&self, offset: usize) -> Option<usize> {
         self.tables
@@ -225,7 +215,7 @@ fn build_multi_layout(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<MultiSource, DriverError> {
+) -> Result<MultiLayout, DriverError> {
     let logical = super::planner_bridge::logical_from_plan(join, catalog, current_db, ctx, true)
         .map_err(super::planner_error_to_driver)?;
     let schema = logical
@@ -244,7 +234,7 @@ fn build_multi_layout(
         current_db: &str,
         ctx: &crate::StmtContext,
         columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
-    ) -> Result<MultiSource, DriverError> {
+    ) -> Result<MultiLayout, DriverError> {
         let (visible, qualifiable_db, origin, columns, default_meta) = match node {
             tidb_ast::JoinNode::Join(join) => {
                 return join_layout(join, catalog, current_db, ctx, columns_for_alias)
@@ -290,7 +280,7 @@ fn build_multi_layout(
                 )
             }
         };
-        Ok(MultiSource {
+        Ok(MultiLayout {
             tables: vec![SourceTable {
                 visible,
                 qualifiable_db,
@@ -299,7 +289,6 @@ fn build_multi_layout(
                 default_meta,
                 offset: 0,
             }],
-            rows: Vec::new(),
             constant_context: ctx.clone(),
             coalesced: Vec::new(),
             star: Vec::new(),
@@ -312,15 +301,14 @@ fn build_multi_layout(
         current_db: &str,
         ctx: &crate::StmtContext,
         columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
-    ) -> Result<MultiSource, DriverError> {
+    ) -> Result<MultiLayout, DriverError> {
         let left = node_layout(&join.left, catalog, current_db, ctx, columns_for_alias)?;
         match &join.right {
-            Some(right) => join_sources(
+            Some(right) => merge_source_layout(
                 left,
                 node_layout(right, catalog, current_db, ctx, columns_for_alias)?,
                 join,
                 ctx,
-                true,
             ),
             None => Ok(left),
         }
@@ -375,220 +363,17 @@ pub fn delete_privilege_tables(
     Ok(resolved)
 }
 
-/// Materialize the matrix adapter using the same already-resolved source
-/// metadata as the physical DML path. Only this adapter owns positional row
-/// identities; schema discovery never opens its row sources.
-fn build_multi_source(
-    join: &tidb_ast::Join,
-    layout: &MultiSource,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<MultiSource, DriverError> {
-    let left = build_multi_node(&join.left, layout, catalog, current_db, ctx)?;
-    let Some(right_node) = &join.right else {
-        return Ok(left);
-    };
-    if let tidb_ast::JoinNode::Derived {
-        subquery,
-        lateral: true,
-        ..
-    } = right_node
-    {
-        let derived = source_table_layout(right_node, layout, current_db)?;
-        return join_lateral_source(left, join, subquery, derived, catalog, current_db, ctx);
-    }
-    let right = build_multi_node(right_node, layout, catalog, current_db, ctx)?;
-    join_sources(left, right, join, ctx, false)
-}
-
-/// Select a leaf from the planner-validated layout. Table aliases, derived
-/// column names, duplicate names and legal LATERAL shapes were resolved there.
-fn source_table_layout(
-    node: &tidb_ast::JoinNode,
-    layout: &MultiSource,
-    current_db: &str,
-) -> Result<SourceTable, DriverError> {
-    let (visible, database) = match node {
-        tidb_ast::JoinNode::Table(table) => {
-            let (database, name) = split_table_path(&table.name, current_db)?;
-            (
-                table.alias.as_deref().unwrap_or(name),
-                table.alias.is_none().then_some(database),
-            )
-        }
-        tidb_ast::JoinNode::Derived { alias, .. } => (
-            alias.as_deref().ok_or(DriverError::DerivedMustHaveAlias)?,
-            None,
-        ),
-        tidb_ast::JoinNode::Join(_) => {
-            return Err(DriverError::unsupported("a join is not a DML source leaf"))
-        }
-    };
-    let mut table = layout
-        .tables
-        .iter()
-        .find(|table| {
-            table.visible.eq_ignore_ascii_case(visible)
-                && match (database, table.qualifiable_db.as_deref()) {
-                    (None, None) => true,
-                    (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
-                    _ => false,
-                }
-        })
-        .cloned()
-        .ok_or_else(|| {
-            DriverError::unsupported("resolved DML source is missing from its layout")
-        })?;
-    table.offset = 0;
-    Ok(table)
-}
-
-fn build_multi_node(
-    node: &tidb_ast::JoinNode,
-    layout: &MultiSource,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<MultiSource, DriverError> {
-    if let tidb_ast::JoinNode::Join(join) = node {
-        return build_multi_source(join, layout, catalog, current_db, ctx);
-    }
-    let table = source_table_layout(node, layout, current_db)?;
-    let rows = match node {
-        tidb_ast::JoinNode::Table(table_ref) => {
-            let (database, name) = split_table_path(&table_ref.name, current_db)?;
-            match catalog.get_in(database, name) {
-                Some(TableEntry::Mem(mem)) => mem
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .map(|(index, row)| (vec![Some(RowId::Mem(index))], row.clone()))
-                    .collect(),
-                Some(TableEntry::Kv(kv)) => (**kv)
-                    .clone()
-                    .scan_rows_with_handles(&ctx.session_zone())
-                    .map_err(|error| super::dml::kv_read_error("row decode failed", error))?
-                    .into_iter()
-                    .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
-                    .collect(),
-                Some(TableEntry::View(view)) => {
-                    super::from::view_source_relation(view, database, name, catalog, ctx)?
-                        .1
-                        .into_iter()
-                        .map(|row| (vec![None], row))
-                        .collect()
-                }
-                _ => {
-                    return Err(DriverError::unsupported(
-                        "resolved DML table has no row source",
-                    ))
-                }
-            }
-        }
-        tidb_ast::JoinNode::Derived { subquery, .. } => {
-            run_query_stmt(subquery, catalog, current_db, ctx)?
-                .1
-                .into_iter()
-                .map(|row| (vec![None], row))
-                .collect()
-        }
-        tidb_ast::JoinNode::Join(_) => unreachable!(),
-    };
-    Ok(MultiSource {
-        tables: vec![table],
-        rows,
-        constant_context: ctx.clone(),
-        coalesced: Vec::new(),
-        star: Vec::new(),
-    })
-}
-
-/// The positional-row adapter retains only correlation binding and actual
-/// per-row execution. All schema and join admission belongs to the planner.
-fn join_lateral_source(
-    left: MultiSource,
-    join: &tidb_ast::Join,
-    subquery: &tidb_ast::QueryStmt,
-    derived: SourceTable,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<MultiSource, DriverError> {
-    let left_scope = left.scope();
-    let mut correlated = Vec::new();
-    collect_correlated_columns_query(
-        subquery,
-        &left_scope,
-        catalog,
-        current_db,
-        &mut correlated,
-        ctx,
-    );
-    let correlated_indices = correlated_path_indices(&correlated, &left_scope)?;
-    let MultiSource {
-        tables: left_tables,
-        rows: left_rows,
-        constant_context,
-        coalesced,
-        star,
-    } = left;
-    let new_left = |rows| MultiSource {
-        tables: left_tables.clone(),
-        rows,
-        constant_context: constant_context.clone(),
-        coalesced: coalesced.clone(),
-        star: star.clone(),
-    };
-    let new_right = |rows| MultiSource {
-        tables: vec![derived.clone()],
-        rows,
-        constant_context: constant_context.clone(),
-        coalesced: Vec::new(),
-        star: Vec::new(),
-    };
-
-    // Build the joined scope once even if the outer relation is empty. Each
-    // row below uses the same physical layout and conditions, but receives a
-    // freshly bound inner relation as Go's Apply does.
-    let mut result = join_sources(new_left(Vec::new()), new_right(Vec::new()), join, ctx, true)?;
-    for (left_ids, left_values) in left_rows {
-        let mut bindings = Vec::with_capacity(correlated.len());
-        for (path, index) in correlated.iter().zip(&correlated_indices) {
-            let value = left_values
-                .get(*index)
-                .cloned()
-                .ok_or(DriverError::unsupported("correlated column out of range"))?;
-            bindings.push((path.clone(), value));
-        }
-        let bound = bind_subquery_columns_query(subquery, &bindings)?;
-        let (_, rows) = run_query_stmt(&bound, catalog, current_db, ctx)?;
-        let right_rows = rows.into_iter().map(|row| (vec![None], row)).collect();
-        let joined = join_sources(
-            new_left(vec![(left_ids, left_values)]),
-            new_right(right_rows),
-            join,
-            ctx,
-            false,
-        )?;
-        result.rows.extend(joined.rows);
-    }
-    Ok(result)
-}
-
-/// Nested-loop joins two sources, keeping both sides' row identities and
-/// NULL-padding the non-preserved side of an outer join.
-fn join_sources(
-    left: MultiSource,
-    right: MultiSource,
+/// Merge naming metadata while retaining the full DML value layout.
+/// Row execution, including outer padding and conditions, belongs to the
+/// shared physical child.
+fn merge_source_layout(
+    left: MultiLayout,
+    right: MultiLayout,
     join: &tidb_ast::Join,
     ctx: &crate::StmtContext,
-    layout_only: bool,
-) -> Result<MultiSource, DriverError> {
+) -> Result<MultiLayout, DriverError> {
     let left_width = left.width();
-    let right_width = right.width();
     let left_tables = left.tables.len();
-    let right_tables = right.tables.len();
     // Capture the child naming state before moving their physical table
     // slots into the full DML row below.
     let left_scope = left.scope();
@@ -602,7 +387,7 @@ fn join_sources(
     }
     // Build the same full physical row that `UPDATE`/`DELETE` use in Go.
     // The scope carries the separate NATURAL/USING display state: it affects
-    // name resolution and supplies the synthesized equality, never the row
+    // name resolution, never the row
     // identities that the write phase needs.
     let left_visible = left_scope.star_columns();
     let right_visible: Vec<(usize, String, FieldType)> = right_scope
@@ -626,9 +411,8 @@ fn join_sources(
             .collect();
     }
 
-    let joined = MultiSource {
+    let joined = MultiLayout {
         tables,
-        rows: Vec::new(),
         constant_context: ctx.clone(),
         coalesced: Vec::new(),
         star: Vec::new(),
@@ -644,152 +428,20 @@ fn join_sources(
             offset: table.offset,
         });
     }
-    let mut coalesced_conditions = Vec::new();
     if join.natural || !join.using.is_empty() {
-        let common = super::from::coalesce_common_columns(
+        super::from::coalesce_common_columns(
             &mut scope,
             left_visible,
             right_visible,
             join.tp,
             &join.using,
         )?;
-        let resolver = ScopeResolver { scope: &scope };
-        for pair in common.into_iter().filter(|_| !layout_only) {
-            let (Some(visible), Some(redundant)) = (
-                scope.qualified_path(pair.visible),
-                scope.qualified_path(pair.redundant),
-            ) else {
-                return Err(DriverError::unsupported(
-                    "a coalesced join column has no table to name it",
-                ));
-            };
-            let equality = tidb_ast::Expr::Binary(
-                tidb_ast::BinaryOp::Eq,
-                Box::new(tidb_ast::Expr::Column(visible)),
-                Box::new(tidb_ast::Expr::Column(redundant)),
-            );
-            coalesced_conditions.push(
-                rewrite_expr_resolved(&equality, &resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-            );
-        }
     }
-    if layout_only {
-        return Ok(MultiSource {
-            coalesced: scope.coalesced,
-            star: scope.star,
-            ..joined
-        });
-    }
-    let field_types = joined.field_types();
-    let mut conditions = match &join.on {
-        Some(expr) => {
-            vec![
-                rewrite_expr_resolved(expr, &ScopeResolver { scope: &scope })
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-            ]
-        }
-        None => Vec::new(),
-    };
-    conditions.append(&mut coalesced_conditions);
-
-    let mut rows = Vec::new();
-    let mut right_matched = vec![false; right.rows.len()];
-    for (left_ids, left_values) in &left.rows {
-        let mut matched = false;
-        for (right_index, (right_ids, right_values)) in right.rows.iter().enumerate() {
-            let mut values = left_values.clone();
-            values.extend_from_slice(right_values);
-            let mut joins = true;
-            for condition in &conditions {
-                let chunk = row_chunk(&values, &field_types)?;
-                let selected = condition
-                    .eval(ctx, chunk.get_row(0))
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                if !datum_is_true(&selected) {
-                    joins = false;
-                    break;
-                }
-            }
-            if !joins {
-                continue;
-            }
-            matched = true;
-            right_matched[right_index] = true;
-            let mut ids = left_ids.clone();
-            ids.extend(right_ids.iter().cloned());
-            rows.push((ids, values));
-        }
-        if !matched && join.tp == tidb_ast::JoinType::Left {
-            let mut values = left_values.clone();
-            values.extend(std::iter::repeat_n(Datum::Null, right_width));
-            let mut ids = left_ids.clone();
-            ids.extend(std::iter::repeat_n(None, right_tables));
-            rows.push((ids, values));
-        }
-    }
-    if join.tp == tidb_ast::JoinType::Right {
-        for (right_index, (right_ids, right_values)) in right.rows.iter().enumerate() {
-            if right_matched[right_index] {
-                continue;
-            }
-            let mut values = vec![Datum::Null; left_width];
-            values.extend_from_slice(right_values);
-            let mut ids = vec![None; left_tables];
-            ids.extend(right_ids.iter().cloned());
-            rows.push((ids, values));
-        }
-    }
-    Ok(MultiSource {
-        rows,
+    Ok(MultiLayout {
         coalesced: scope.coalesced,
         star: scope.star,
         ..joined
     })
-}
-
-/// The joined rows a multi-table write acts on: the `FROM` joined, the
-/// `WHERE` applied, then `ORDER BY`/`LIMIT` (which only an explicitly
-/// `JOIN`ed `UPDATE` may carry -- the parser rejects the other spellings).
-fn selected_rows(
-    source: &mut MultiSource,
-    where_clause: &Option<tidb_ast::Expr>,
-    order_by: &[tidb_ast::OrderItem],
-    limit: &Option<tidb_ast::Limit>,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<SourceRow>, DriverError> {
-    let scope = source.scope();
-    let resolver = ScopeResolver { scope: &scope };
-    let field_types = source.field_types();
-    let column_names = source.column_names();
-    let predicate = match where_clause {
-        Some(expr) => Some(
-            rewrite_expr_resolved(expr, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-        ),
-        None => None,
-    };
-    let mut rows = Vec::new();
-    for row in std::mem::take(&mut source.rows) {
-        if row_is_selected(&row.1, &field_types, &predicate, ctx)? {
-            rows.push(row);
-        }
-    }
-    order_rows_for_dml(
-        &mut rows,
-        order_by,
-        &field_types,
-        &resolver,
-        &column_names,
-        ctx,
-    )?;
-    // Go's `LIMIT` is a plan operator above the join, so it caps the joined
-    // rows the write REACHES -- never the subset whose value ended up
-    // different.
-    if let Some(cap) = dml_row_limit(limit)? {
-        rows.truncate(usize::try_from(cap).unwrap_or(usize::MAX));
-    }
-    Ok(rows)
 }
 
 /// Go's `updatedRowKeys`: per (target position, row identity), whether the
@@ -799,27 +451,6 @@ fn selected_rows(
 type UpdateOnce = BTreeMap<(usize, RowId), bool>;
 
 /// Runs a multi-table `UPDATE`, returning MySQL's affected-row count.
-/// Accounts the JOINED rows a multi-table write holds, against
-/// `tidb_mem_quota_query`.
-///
-/// Go `DeleteExec.composeTblRowMap` prices exactly this row -- the joined one,
-/// `types.EstimatedMemUsage(joinedRow, 1)` -- because a multi-table write's
-/// working set is the join output, not any one table's rows.
-/// `deleteMultiTablesByChunk`/`updateRows` consume it as the chunks arrive;
-/// here the join is already materialized, so it is one pass over what is
-/// held, and it runs before any table is touched.
-fn account_joined_rows(
-    rows: &[SourceRow],
-    label: i64,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let accountant = ctx.statement_memory().write_accountant(label);
-    for (_, values) in rows {
-        accountant.account_row(values).map_err(DriverError::from)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn run_multi_update(
     update: &tidb_ast::UpdateStmt,
     from: &tidb_ast::Join,
@@ -829,18 +460,7 @@ pub(crate) fn run_multi_update(
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let layout = build_multi_layout(from, catalog, current_db, ctx)?;
-    let planned = !layout.tables.iter().any(|table| match &table.origin {
-        SourceOrigin::Base { database, name } => {
-            matches!(catalog.get_in(database, name), Some(TableEntry::Mem(_)))
-        }
-        SourceOrigin::Derived => false,
-    });
-    let mut source = if planned {
-        layout
-    } else {
-        build_multi_source(from, &layout, catalog, current_db, ctx)?
-    };
+    let source = build_multi_layout(from, catalog, current_db, ctx)?;
     let scope = source.scope();
     let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
     let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
@@ -858,7 +478,7 @@ pub(crate) fn run_multi_update(
         })
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
-    let rows = if planned {
+    let rows = {
         let mut fresh = None;
         let plan = match physical_plan {
             Some(plan) => plan,
@@ -881,20 +501,7 @@ pub(crate) fn run_multi_update(
             runtime,
             crate::mem_quota::label::UPDATE,
         )?
-    } else {
-        ctx.notify_before_executor_first_run();
-        selected_rows(
-            &mut source,
-            &update.where_clause,
-            &update.order_by,
-            &update.limit,
-            ctx,
-        )?
     };
-
-    if !planned {
-        account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
-    }
 
     // Go keeps updatedRowKeys per target position, but mergedRowData per
     // base table and handle. Neither map can stand in for the other.
@@ -1063,7 +670,7 @@ struct MultiAssignment {
 
 fn resolve_assignments(
     assignments: &[tidb_ast::Assignment],
-    source: &MultiSource,
+    source: &MultiLayout,
     scope: &FromScope,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<MultiAssignment>, DriverError> {
@@ -1185,20 +792,9 @@ pub(crate) fn run_multi_delete(
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let layout = build_multi_layout(from, catalog, current_db, ctx)?;
-    let planned = !layout.tables.iter().any(|table| match &table.origin {
-        SourceOrigin::Base { database, name } => {
-            matches!(catalog.get_in(database, name), Some(TableEntry::Mem(_)))
-        }
-        SourceOrigin::Derived => false,
-    });
-    let mut source = if planned {
-        layout
-    } else {
-        build_multi_source(from, &layout, catalog, current_db, ctx)?
-    };
+    let source = build_multi_layout(from, catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
-    let rows = if planned {
+    let rows = {
         let mut fresh = None;
         let plan = match physical_plan {
             Some(plan) => plan,
@@ -1221,13 +817,7 @@ pub(crate) fn run_multi_delete(
             runtime,
             crate::mem_quota::label::DELETE,
         )?
-    } else {
-        ctx.notify_before_executor_first_run();
-        selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?
     };
-    if !planned {
-        account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
-    }
 
     // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
     // several join paths -- or named twice in the target list -- is removed
@@ -1312,7 +902,7 @@ pub(crate) fn run_multi_delete(
 /// a column's qualifier, so the two cannot drift.
 fn resolve_delete_targets(
     targets: &[Vec<String>],
-    source: &MultiSource,
+    source: &MultiLayout,
 ) -> Result<Vec<usize>, DriverError> {
     let mut slots = Vec::new();
     for target in targets {
@@ -1476,7 +1066,7 @@ pub(crate) fn multi_dml_physical_plan(
 /// (uncoalesced) join schema, and a NULL handle is an outer join's padded
 /// side (`unmatchedOuterRow`).
 fn planned_source_rows(
-    source: &MultiSource,
+    source: &MultiLayout,
     plan: &mut tidb_planner::physical::PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
@@ -1486,23 +1076,27 @@ fn planned_source_rows(
     struct Slot<'a> {
         width: usize,
         kv: Option<&'a crate::kv_table::KvTable>,
+        row_position: bool,
         stored: usize,
     }
     let mut slots = Vec::with_capacity(source.tables.len());
     for table in &source.tables {
-        let kv = match &table.origin {
-            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
-                Some(TableEntry::Kv(kv)) => Some(&**kv),
-                _ => None,
-            },
+        let entry = match &table.origin {
+            SourceOrigin::Base { database, name } => catalog.get_in(database, name),
             SourceOrigin::Derived => None,
         };
+        let kv = match entry {
+            Some(TableEntry::Kv(kv)) => Some(&**kv),
+            _ => None,
+        };
+        let row_position = matches!(entry, Some(TableEntry::Mem(_)));
         let extra = kv.is_some_and(|kv| {
             kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty()
         });
         slots.push(Slot {
-            width: table.columns.len() + usize::from(extra),
+            width: table.columns.len() + usize::from(extra || row_position),
             kv,
+            row_position,
             stored: table.columns.len(),
         });
     }
@@ -1529,6 +1123,15 @@ fn planned_source_rows(
                 let part = &row[start..start + slot.width];
                 start += slot.width;
                 let id = match slot.kv {
+                    None if slot.row_position => match &part[slot.stored] {
+                        Datum::Null => None,
+                        Datum::UInt(position) => {
+                            Some(RowId::Mem(usize::try_from(*position).map_err(|_| {
+                                DriverError::unsupported("DML row position exceeds address space")
+                            })?))
+                        }
+                        _ => return Err(DriverError::unsupported("invalid DML row position")),
+                    },
                     None => None,
                     Some(kv) => {
                         let handle = if let Some(offset) = kv.pk_handle_offset() {

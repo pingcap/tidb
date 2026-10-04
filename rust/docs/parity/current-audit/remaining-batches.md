@@ -1,5 +1,8 @@
 # Structural execution batches for the remaining findings
 
+The [shared-read removal](dml-interpreter-removal-repair.md) retires the whole matrix joined-DML interpreter and unused materializers, removes obsolete TopN candidate truncation, and freezes the pre-WHERE DML schema: **595 net production lines removed; 315 grouped tests pass**. E03 remains partial; **57 unresolved**. Single-table matrix execution and final write buffering remain. Earlier checkpoints below are historical. No push.
+
+
 The [DML removal continuation](dml-removal-batch-repair.md) removes duplicate base/view/derived metadata construction, executable LATERAL probing, source-kind AST traversal and matrix EXPLAIN refusal. **144 grouped SQL cases pass**. E03 remains partial for physical identity/chunk migration; **57 unresolved** remain. No push.
 
 

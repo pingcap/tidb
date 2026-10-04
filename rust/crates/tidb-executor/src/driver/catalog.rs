@@ -1603,6 +1603,7 @@ impl Catalog {
                     TableEntry::Mem(table) => {
                         let mut source_table = SourceTable {
                             is_memory_table: true,
+                            has_row_position: true,
                             table_id: synthetic_table_id,
                             table_name: entry_name.clone(),
                             db_name: database.name.clone(),

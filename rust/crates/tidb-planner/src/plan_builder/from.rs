@@ -41,26 +41,10 @@
 //! [`check_non_uniq_table_alias`] / [`is_table_alias_duplicate`], which a
 //! survey confirmed were not ported anywhere in the workspace.
 //!
-//! # What is deliberately NOT here
-//!
-//! `tidb-executor`'s `driver/from.rs:2632-4291` `build_join_with_choice` is
-//! 1,659 lines of merge/hash/index-join METHOD SELECTION. That is Go's
-//! `exhaustPhysicalPlans4LogicalJoin`, i.e. PHYSICAL planning, and none of it
-//! belongs to `buildJoin`. What `buildJoin` actually is — left-deep nesting,
-//! the schema/name merge, the `ON`-condition wrap, the hint preference and
-//! `STRAIGHT_JOIN` — is the ~150 lines extracted here. The driver's
-//! `merge_decision`, `index_join_decision`, `join_reorder` and `leaf_demand`
-//! modules are physical planning for the same reason.
-//!
-//! The driver's `build_view_source` (`from.rs:2281`) MATERIALIZES a view's
-//! rows; it is an execution strategy, not this build's. Its `ViewDepthGuard`
-//! (`:2248`) is the RAII form of `checkRecursiveView` and IS harvested — as
-//! [`ViewBuildGuard`], over 6a's already-present
-//! [`PlanBuilder::building_view_stack`] rather than a thread-local depth
-//! counter, because Go keys the guard on the view's NAME (so that two
-//! different views nest freely) and not on a depth. `rename_derived_columns`
-//! (`:1484`) is harvested as the `AS dt(c1, c2)` arm of
-//! [`PlanBuilder::build_derived_source`], including its `ErrViewWrongList`.
+//! Join method selection belongs to physical planning. This builder owns
+//! source schemas, names, conditions, view expansion and derived aliases.
+//! [`ViewBuildGuard`] follows Go's name-based recursion check; the retired
+//! executor materializer's thread-local depth limit is no longer used.
 //!
 //! # Section 3 of [`super`], everywhere
 //!
@@ -751,8 +735,7 @@ fn check_join_aliases(
     }
 }
 
-/// The RAII form of Go `checkRecursiveView`'s returned `func()`, harvested
-/// from `tidb-executor`'s `driver/from.rs:2248` `ViewDepthGuard`.
+/// The RAII form of Go `checkRecursiveView`'s returned `func()`.
 ///
 /// Go returns a closure the caller `defer`s; a `Drop` impl is the same thing
 /// and cannot be forgotten. The stack it pops lives on the builder, so the
@@ -1578,7 +1561,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             None => self.handle_helper.push_empty(),
         }
 
-        let columns: Vec<MemTableColumn> = table
+        let mut columns: Vec<MemTableColumn> = table
             .columns
             .iter()
             .map(|source_column| MemTableColumn {
@@ -1586,6 +1569,25 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 name: source_column.name.clone(),
             })
             .collect();
+        if table.has_row_position && self.in_update_or_delete_stmt {
+            // The matrix adapter has no stored handle. Its physical scan emits
+            // the snapshot position before filtering/reordering, allowing the
+            // ordinary DML child to carry identity through joins and Apply.
+            let mut field_type = FieldType::new(FieldTypeCode::LongLong);
+            field_type.set_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+            let mut position = Column::new(self.column_ids.alloc(), field_type);
+            position.id = super::EXTRA_HANDLE_ID;
+            position.is_hidden = true;
+            schema_columns.push(position);
+            names.push(FieldName {
+                hidden: true,
+                ..FieldName::default()
+            });
+            columns.push(MemTableColumn {
+                id: super::EXTRA_HANDLE_ID,
+                name: String::new(),
+            });
+        }
         let mut mem_table = LogicalMemTable::new(
             self.base(LogicalMemTable::TYPE),
             db_name,

@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `FROM`-clause plan construction: base tables, joins, derived tables,
-//! lateral joins and views.
-//!
-//! Mirrors Go's `PlanBuilder.buildResultSetNode` family (`planner/core/
-//! logical_plan_builder.go`): each `ResultSetNode` shape becomes an executor
-//! plus the [`FromScope`] that names its output columns for the rewriter.
+//! Compatibility name scopes for DML assignments and scalar rewriting.
+//! Logical source construction belongs to `tidb-planner::plan_builder`;
+//! physical row execution belongs to `driver::physical_builder`.
 
 use super::*;
 use tidb_hack::GoToLower;
-pub(crate) type MaterializedRelation = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 
 /// An internal qualifier that parsed SQL can never produce. Plain EXPLAIN
 /// uses it for Go's `ScalarSubQueryExpr`: a typed, non-constant planner value
@@ -126,18 +122,6 @@ impl FromScope {
             .iter()
             .find(|t| (t.offset..t.offset + t.columns.len()).contains(&offset))
             .and_then(|t| t.columns.get(offset - t.offset))
-    }
-
-    /// How a row offset is written when it must be named unambiguously:
-    /// `table.column`, the form a coalesced join's synthesized equality uses
-    /// to reach the side it means.
-    pub(crate) fn qualified_path(&self, offset: usize) -> Option<Vec<String>> {
-        let table = self
-            .tables
-            .iter()
-            .find(|t| (t.offset..t.offset + t.columns.len()).contains(&offset))?;
-        let (name, _) = table.columns.get(offset - table.offset)?;
-        Some(vec![table.name.clone(), name.clone()])
     }
 
     /// Every column an unqualified `*` expands to, in display order (Go's
@@ -392,104 +376,6 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 }
 
-/// A derived table's MATERIALIZED relation: the alias it answers to, its
-/// column list and its rows.
-///
-/// Split out of [`build_derived_source`] because a multi-table write's `FROM`
-/// needs the rows themselves rather than an executor over them (see
-/// `multi_dml`, whose joined row carries a per-table row identity beside the
-/// values). Both callers therefore apply ONE reading of the two rules a
-/// derived table's NAME and SHAPE must satisfy -- Go's
-/// `ErrDerivedMustHaveAlias` (1248) and `ErrDupFieldName` (1060) -- instead of
-/// two that can drift.
-type DerivedSourceRelation<'a> = (&'a str, Vec<(String, FieldType)>, Vec<Vec<Datum>>);
-
-pub(crate) fn derived_source_relation<'a>(
-    subquery: &QueryStmt,
-    alias: Option<&'a str>,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<DerivedSourceRelation<'a>, DriverError> {
-    let alias = alias.filter(|alias| !alias.is_empty());
-    let Some(alias) = alias else {
-        return Err(DriverError::DerivedMustHaveAlias);
-    };
-    let (columns, rows) = super::run_query_stmt(subquery, catalog, current_db, ctx)?;
-    for (index, (name, _)) in columns.iter().enumerate() {
-        if columns[..index]
-            .iter()
-            .any(|(earlier, _)| earlier.eq_ignore_ascii_case(name))
-        {
-            return Err(DriverError::DuplicateColumnName(name.clone()));
-        }
-    }
-    Ok((alias, columns, rows))
-}
-
-/// Applies a derived table's `(c1, c2, ...)` alias column list.
-///
-/// The list renames the subquery's own output columns positionally, and a
-/// length disagreement is Go's `ErrViewWrongList` (1353) -- captured, the same
-/// error a `CREATE VIEW v (a, b) AS SELECT 1` mismatch reports.
-pub(crate) fn rename_derived_columns(
-    columns: &mut [(String, FieldType)],
-    names: &[String],
-) -> Result<(), DriverError> {
-    if names.is_empty() {
-        return Ok(());
-    }
-    if names.len() != columns.len() {
-        return Err(DriverError::ViewWrongList);
-    }
-    for (column, name) in columns.iter_mut().zip(names) {
-        column.0 = name.clone();
-    }
-    Ok(())
-}
-
-/// The names a `SELECT`'s fields give the relation they produce, when they can
-/// be read off the statement alone.
-///
-/// The lateral path needs the names BEFORE it can run anything, and the run it
-/// uses to settle the column TYPES has the correlated columns replaced by
-/// literals -- which would rename `SELECT t.a` to the literal's own text. This
-/// applies the same naming rule the plain select path uses (an alias, else a
-/// column reference's bare name, else the restored expression), and gives up
-/// (`None`) on a `*` field, whose width is not known from the statement.
-pub(crate) fn derived_field_names(select: &tidb_ast::SelectStmt) -> Option<Vec<String>> {
-    select
-        .fields
-        .fields()
-        .iter()
-        .enumerate()
-        .map(|(field_index, field)| match field {
-            SelectField::Expr { expr, alias } => Some(alias.clone().unwrap_or_else(|| {
-                crate::driver::default_field_display_name(&select.fields, field_index, expr)
-            })),
-            _ => None,
-        })
-        .collect()
-}
-
-/// [`derived_field_names`], widened to a `QueryStmt`: a set operation's output
-/// is named after its LEFTMOST `SELECT` term, the same rule Go's `buildSetOpr`
-/// uses when it derives the result schema from the first child.
-pub(crate) fn derived_field_names_query(query: &QueryStmt) -> Option<Vec<String>> {
-    match query {
-        QueryStmt::Select(select) => derived_field_names(select),
-        QueryStmt::SetOpr(set_opr) => {
-            let first = set_opr.terms.first()?;
-            match &first.body {
-                tidb_ast::SetOprTermBody::Select(select) => derived_field_names(select),
-                tidb_ast::SetOprTermBody::Nested(nested) => {
-                    derived_field_names_query(&QueryStmt::SetOpr(nested.clone()))
-                }
-            }
-        }
-    }
-}
-
 /// A type-carrying stand-in value for a column of type `ft`.
 ///
 /// Type inference over the probe run needs a datum of the right KIND, and
@@ -508,72 +394,11 @@ pub(crate) fn probe_datum(ft: &FieldType) -> Datum {
     }
 }
 
-pub(crate) const MAX_VIEW_DEPTH: usize = 32;
-
-thread_local! {
-    static VIEW_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-pub(crate) struct ViewDepthGuard;
-
-impl ViewDepthGuard {
-    /// Enters one view body, refusing to go past [`MAX_VIEW_DEPTH`].
-    pub(crate) fn enter(qualified: &str) -> Result<ViewDepthGuard, DriverError> {
-        VIEW_DEPTH.with(|depth| {
-            if depth.get() >= MAX_VIEW_DEPTH {
-                return Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(
-                    qualified.to_owned(),
-                )));
-            }
-            depth.set(depth.get() + 1);
-            Ok(ViewDepthGuard)
-        })
-    }
-}
-
-impl Drop for ViewDepthGuard {
-    fn drop(&mut self) {
-        VIEW_DEPTH.with(|depth| depth.set(depth.get() - 1));
-    }
-}
-
-/// Runs a view's stored `SELECT` and presents its rows as a `FROM` source.
-///
-/// Go rewrites the reference into a derived table over the view's plan; the
-/// rows here are materialized instead, which is the same result for a reader
-/// (the outer `WHERE`, joins and `ORDER BY` all apply to the view's output
-/// either way) and differs only in that nothing is pushed into the view.
-///
-
-pub(crate) fn view_source_relation(
-    view: &ViewDef,
-    database: &str,
-    name: &str,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-) -> Result<MaterializedRelation, DriverError> {
-    let qualified = format!("{database}.{name}");
-    let _guard = ViewDepthGuard::enter(&qualified)?;
-    let invalid = || DriverError::Schema(SchemaErrorKind::ViewInvalid(qualified.clone()));
-    let (body_columns, rows) =
-        run_select_meta_in(&view.select_sql, catalog, database, ctx).map_err(|_| invalid())?;
-    if body_columns.len() != view.columns.len() {
-        return Err(invalid());
-    }
-    let columns = view
-        .columns
-        .iter()
-        .zip(&body_columns)
-        .map(|((name, _), (_, ft))| (name.clone(), ft.clone()))
-        .collect();
-    Ok((columns, rows))
-}
-
 /// One common column of a `NATURAL`/`USING` join: the row offset that stays
 /// visible under the shared name, and the one that is coalesced away.
-pub(crate) struct CommonColumn {
-    pub(crate) visible: usize,
-    pub(crate) redundant: usize,
+struct CommonColumn {
+    visible: usize,
+    redundant: usize,
 }
 
 /// Go `PlanBuilder.coalesceCommonColumns`, as the naming half of a join.
@@ -582,7 +407,7 @@ pub(crate) struct CommonColumn {
 /// whose `ON` is `l.c = r.c` for every common column `c`, plus a rule about
 /// which names the result answers to. Nothing about the ROW changes -- it is
 /// still the left side's columns followed by the right side's -- so this
-/// returns the common pairs and rewrites only `scope`'s [`FromScope::star`]
+/// rewrites only `scope`'s [`FromScope::star`]
 /// and [`FromScope::coalesced`], and every consumer downstream (`*`, name
 /// resolution, `ONLY_FULL_GROUP_BY`, pruning) reads the scope it always did.
 ///
@@ -604,7 +429,7 @@ pub(crate) fn coalesce_common_columns(
     right_visible: Vec<(usize, String, FieldType)>,
     join_tp: tidb_ast::JoinType,
     using: &[String],
-) -> Result<Vec<CommonColumn>, DriverError> {
+) -> Result<(), DriverError> {
     // The RIGHT-join mirror: from here on "left" means the outer side.
     let (outer, inner) = match join_tp {
         tidb_ast::JoinType::Right => (right_visible, left_visible),
@@ -688,7 +513,7 @@ pub(crate) fn coalesce_common_columns(
         .chain(remaining(&inner, &common))
         .collect();
     scope.coalesced.extend(common.iter().map(|c| c.redundant));
-    Ok(common)
+    Ok(())
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.

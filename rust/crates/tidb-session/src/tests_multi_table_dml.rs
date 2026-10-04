@@ -1735,3 +1735,102 @@ fn dml_removal_matrix_view_using_and_derived_delete_share_layout() {
     assert!(column(&mut session, "SELECT v FROM owner_m").is_empty());
     assert_eq!(column(&mut session, "SELECT other FROM owner_k"), ["7"]);
 }
+
+#[test]
+fn dml_shared_read_matrix_update_lowers_where_subquery() {
+    let mut session = dml_removal_matrix_session();
+    session
+        .run("CREATE TABLE owner_k (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO owner_k VALUES (1,7),(2,9)")
+        .unwrap();
+    assert_eq!(affected(&mut session, "UPDATE owner_m JOIN owner_k ON owner_m.id=owner_k.id SET owner_m.v=owner_k.v WHERE EXISTS (SELECT 1 FROM owner_k k WHERE k.id=owner_m.id)"), 1);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["7"]);
+}
+
+#[test]
+fn dml_shared_read_matrix_delete_lowers_where_subquery() {
+    let mut session = dml_removal_matrix_session();
+    session
+        .run("CREATE TABLE owner_k (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO owner_k VALUES (1),(2)").unwrap();
+    assert_eq!(affected(&mut session, "DELETE owner_m FROM owner_m JOIN owner_k ON owner_m.id=owner_k.id WHERE owner_m.id IN (SELECT id FROM owner_k)"), 1);
+    assert!(column(&mut session, "SELECT * FROM owner_m").is_empty());
+    assert_eq!(
+        column(&mut session, "SELECT id FROM owner_k ORDER BY id"),
+        ["1", "2"]
+    );
+}
+
+#[test]
+fn dml_shared_read_matrix_positions_survive_duplicate_values_and_outer_join() {
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    let mut session = Session::new();
+    session.shared_catalog().lock().unwrap().register(
+        "owner_m",
+        tidb_executor::driver::MemTable {
+            columns: vec![
+                ("id".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                ("v".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+            ],
+            rows: vec![
+                vec![Datum::Int(1), Datum::Int(0)],
+                vec![Datum::Int(1), Datum::Int(0)],
+                vec![Datum::Int(2), Datum::Int(0)],
+            ],
+        },
+    );
+    session
+        .run("CREATE TABLE owner_k (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO owner_k VALUES (1,7),(3,9)")
+        .unwrap();
+    assert_eq!(affected(&mut session, "UPDATE owner_m LEFT JOIN owner_k USING(id) SET owner_m.v=COALESCE(owner_k.v,5) ORDER BY owner_m.id DESC LIMIT 2"), 2);
+    assert_eq!(
+        column(&mut session, "SELECT v FROM owner_m ORDER BY id,v"),
+        ["0", "7", "5"]
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE m FROM owner_m m RIGHT JOIN owner_k k ON m.id=k.id"
+        ),
+        2
+    );
+    assert_eq!(column(&mut session, "SELECT id FROM owner_m"), ["2"]);
+    assert_eq!(
+        column(&mut session, "SELECT id FROM owner_k ORDER BY id"),
+        ["1", "3"]
+    );
+}
+
+#[test]
+fn dml_shared_read_matrix_aliases_and_prepared_reads_keep_identity_private() {
+    let mut session = dml_removal_matrix_session();
+    session.run("PREPARE owner_stmt FROM 'UPDATE owner_m m JOIN owner_m n ON m.id=n.id SET m.v=?,n.v=?'").unwrap();
+    session.run("SET @a=7,@b=9").unwrap();
+    assert_eq!(affected(&mut session, "EXECUTE owner_stmt USING @a,@b"), 2);
+    assert_eq!(column(&mut session, "SELECT * FROM owner_m"), ["1|9"]);
+    assert_eq!(
+        session
+            .run("SELECT _tidb_rowid FROM owner_m")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1054
+    );
+    session.run("SET @a=11,@b=13").unwrap();
+    assert_eq!(affected(&mut session, "EXECUTE owner_stmt USING @a,@b"), 2);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_m"), ["13"]);
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE m,n FROM owner_m m JOIN owner_m n USING(id)"
+        ),
+        1
+    );
+    assert!(column(&mut session, "SELECT * FROM owner_m").is_empty());
+}

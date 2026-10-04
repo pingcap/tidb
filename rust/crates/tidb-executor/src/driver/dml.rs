@@ -3223,8 +3223,8 @@ fn run_update_with_physical(
         return Ok(0);
     }
     // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
-    // it does beneath Go's Update executor. Matrix-backed mock tables have no
-    // physical executor and keep their local expression path.
+    // it does beneath Go's Update executor. Single-table matrix writes still
+    // keep their local expression path; joined writes use the shared child.
     let predicate = if physical_kv_source { None } else { predicate };
     enum SourceRows {
         Mem(Vec<Vec<Datum>>),
@@ -4001,27 +4001,6 @@ fn execute_physical_write_rows(
         runtime.extend(collected);
     }
     Ok(PhysicalWriteRows { rows, field_types })
-}
-
-/// Renames the scan `trace_dml_source` just recorded to the `IndexRangeScan`
-/// (or `IndexFullScan`) the write reads through, matching what the read side's
-/// `commit_index_range_source` prints for the same index and ranges.
-#[allow(clippy::too_many_arguments)]
-/// Whether the `WHERE` predicate (absent = every row) selects this row.
-pub(crate) fn row_is_selected(
-    row: &[Datum],
-    field_types: &[FieldType],
-    predicate: &Option<Expression>,
-    ctx: &crate::StmtContext,
-) -> Result<bool, DriverError> {
-    let Some(predicate) = predicate else {
-        return Ok(true);
-    };
-    let chunk = row_chunk(row, field_types)?;
-    let selected = predicate
-        .eval(ctx, chunk.get_row(0))
-        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-    Ok(datum_is_true(&selected))
 }
 
 fn dml_row_is_selected(

@@ -185,6 +185,10 @@ pub struct SourceTable {
     /// Go `table.Type().IsVirtualTable()`: this table is planned through
     /// `buildMemTable`, not `buildDataSource`.
     pub is_memory_table: bool,
+    /// The executor's matrix adapter identifies a row by its snapshot position.
+    /// Carry that internal identity only in DML inputs; ordinary Go virtual
+    /// tables leave this false and retain their declared schema.
+    pub has_row_position: bool,
     /// Go `TableInfo.ID`.
     pub table_id: i64,
     /// Go `TableInfo.Name.O`.

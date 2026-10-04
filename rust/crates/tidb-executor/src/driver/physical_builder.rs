@@ -1038,10 +1038,14 @@ fn build_mem_table(
         .columns
         .iter()
         .map(|column| {
+            if column.id == tidb_planner::logical::data_source::EXTRA_HANDLE_ID {
+                return Ok(None);
+            }
             table
                 .columns
                 .iter()
                 .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
+                .map(Some)
                 .ok_or_else(|| {
                     DriverError::unsupported(
                         "a physical memory-table output column is absent from its table",
@@ -1052,10 +1056,14 @@ fn build_mem_table(
     let rows = table
         .rows
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(position, row)| {
             offsets
                 .iter()
                 .map(|offset| {
+                    let Some(offset) = offset else {
+                        return Ok(tidb_datatype::Datum::UInt(position as u64));
+                    };
                     row.get(*offset).cloned().ok_or_else(|| {
                         DriverError::unsupported(
                             "a memory-table row is shorter than its declared schema",

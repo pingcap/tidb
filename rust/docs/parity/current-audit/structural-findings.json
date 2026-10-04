@@ -253,10 +253,10 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "**Partially repaired:** joined UPDATE/DELETE now share planner-owned source metadata across physical and matrix adapters. Removed competing base/view/derived metadata builders, executable LATERAL schema probes, duplicate admission rules and source-kind AST walker. Matrix EXPLAIN now uses the same physical planner. Source queries run only for actual row execution. Shared statement accounting and physical row visits remain repaired. The positional matrix interpreter, final row vectors, reconstructed handles and complete Go chunk/write lifecycle remain open.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/multi_dml.rs::build_multi_layout`, `build_multi_source`, `planned_source_rows`; receipts `dml-owner-batch-repair.md`, `dml-removal-batch-repair.md`",
-      "go_owner": "Go pkg/executor/update.go::updateRows and delete.go consume and charge chunks; finalized TblColPosInfos/handle columns originate in the planner. The physical visitor/quota/close boundary is maintained; complete finalized planner metadata, matrix retirement and write streaming remain unaccepted.",
-      "review_basis": "Removal continuation from a8b3a0d7 against the same refreshed Go master. Combined baseline: two runtime failures and one passing control; grouped final SQL run:144 passed,0 failed/ignored. See dml-removal-batch-validation.json. No complete package acceptance."
+      "finding": "**Partially repaired:** both joined UPDATE/DELETE now consume the shared physical read, including matrix snapshot identities. Removed the positional matrix source interpreter, private joins/LATERAL rebinding/selection/sort/limit/late accounting, orphan derived/view materializers and obsolete TopN candidate truncation. DML output freezes the pre-WHERE source schema. Shared planner metadata, physical visits, quota and close remain maintained. Final row vectors, reconstructed stored handles, single-table matrix fallback and complete Go chunk/write lifecycle remain open.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/multi_dml.rs::build_multi_layout`, `planned_source_rows`; `driver/physical_builder.rs::build_mem_table`; `tidb-planner/src/plan_builder.rs::build_dml_source`; `tidb-executor/src/topn.rs::run_one_segment`; receipt `dml-interpreter-removal-repair.md`",
+      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete freezes source schema and supplies TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. sortexec.TopNExec retains whole child chunks before heap trimming. Complete finalized metadata and write streaming remain unaccepted.",
+      "review_basis": "From 7957cf17dd2a25d7 against refreshed Go 93a01d31f6. Original baseline2 failures/1 control; migration187 pass/2 failures; final315 grouped cases pass. See dml-interpreter-removal-validation.json. Internal matrix identity is adapter maintenance, not a Go virtual-table feature or whole-package acceptance."
     },
     {
       "id": "E04",
@@ -793,20 +793,16 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "03065ea1ace65f55cd0e68a0055a3817e62257b5",
-    "incoming_integration": "e52af04b8c965c7bae2b35e91445c78261885dc0",
+    "integration_start": "7957cf17dd2a25d7eeed2e7d6af18f051c9235a4",
     "findings": [
-      "A02",
-      "A03"
+      "E03"
     ],
     "statuses": {
-      "A02": "partial",
-      "A03": "partial"
+      "E03": "partial"
     },
-    "receipt": "admission-policy-batch-repair.md",
-    "validation": "admission-policy-batch-validation.json",
-    "scope": "Connected retained credential and specified verified-certificate admission maintenance; no complete Go package acceptance.",
-    "source_identity": "Sources and receipt share a normal hook-gated local commit; hashes below identify validated source. Actual commit/recovery/draft outcomes are SHA-dependent external receipts."
+    "receipt": "dml-interpreter-removal-repair.md",
+    "validation": "dml-interpreter-removal-validation.json",
+    "scope": "Connected joined-DML interpreter retirement, frozen read schema and shared TopN candidate retention; complete packages remain unaccepted."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -937,6 +933,23 @@
       "validation": "account-tls-policy-batch-validation.json",
       "scope": "Connected durable account policy, inbound TLS verification and startup maintenance; no complete Go package acceptance.",
       "source_identity": "Source and receipts share one normal hook-gated local commit; source hashes identify validation."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "03065ea1ace65f55cd0e68a0055a3817e62257b5",
+      "incoming_integration": "e52af04b8c965c7bae2b35e91445c78261885dc0",
+      "findings": [
+        "A02",
+        "A03"
+      ],
+      "statuses": {
+        "A02": "partial",
+        "A03": "partial"
+      },
+      "receipt": "admission-policy-batch-repair.md",
+      "validation": "admission-policy-batch-validation.json",
+      "scope": "Connected retained credential and specified verified-certificate admission maintenance; no complete Go package acceptance.",
+      "source_identity": "Sources and receipt share a normal hook-gated local commit; hashes below identify validated source. Actual commit/recovery/draft outcomes are SHA-dependent external receipts."
     }
   ],
   "execution_batches": {
