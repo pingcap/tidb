@@ -1009,6 +1009,12 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     tracker: &Arc<ConnectionTracker>,
     runtime: MysqlConnectionRuntime<'_>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
+    if tracker.identity_lost() {
+        return Err(MysqlConnectionError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            "lost connection to PD",
+        )));
+    }
     let mut lease = tracker.begin();
     // Go `server.go:303` + `conn.go:435-439`: the connection gauge enters
     // under the default label and leaves under the session's last group.

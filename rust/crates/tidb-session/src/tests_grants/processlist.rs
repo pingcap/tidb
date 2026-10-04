@@ -694,3 +694,25 @@ fn grant_process_gates_processlist_visibility() {
     boot.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
     assert_eq!(row_text(session.run("show processlist")).len(), 2);
 }
+
+#[test]
+fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
+    use tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST;
+    let registry = process::ProcessRegistry::default();
+    let privileges = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privileges);
+    boot.run("CREATE USER bob").unwrap();
+    let mut bob = authenticated_session(&privileges, "bob", "%");
+    bob.attach_process(
+        2,
+        registry.register(2, "bob".into(), String::new(), String::new(), None),
+    );
+    let id = 0x76543210;
+    GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(id);
+    let denied = bob.run(&format!("KILL {id}"));
+    boot.run("GRANT CONNECTION_ADMIN ON *.* TO bob").unwrap();
+    let allowed = bob.run(&format!("KILL {id}"));
+    GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(id);
+    assert!(matches!(denied, Err(DriverError::KillAccessDenied)));
+    allowed.unwrap();
+}

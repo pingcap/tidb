@@ -324,6 +324,8 @@ pub trait TableStorageStatsProvider: Send + Sync {
 /// chunk bound as the statement that produced its rows.
 #[derive(Clone)]
 pub struct ResultMaterializationAuthority {
+    current_tso: Option<tidb_executor::CurrentTso>,
+    start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     memory: tidb_executor::StatementMemory,
     init_chunk_size: usize,
     max_chunk_size: usize,
@@ -346,7 +348,35 @@ impl ResultMaterializationAuthority {
             memory,
             init_chunk_size,
             max_chunk_size,
+            start_ts_guard: None,
+            current_tso: None,
         }
+    }
+
+    /// Retains the snapshot across transaction completion until result/cursor close.
+    #[must_use]
+    pub fn with_start_ts(mut self, start_ts: u64) -> Self {
+        self.start_ts_guard = (start_ts != 0 && start_ts != u64::MAX)
+            .then(|| Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(start_ts)));
+        self
+    }
+
+    /// Tracks lazy activation as well as an already opened eager snapshot.
+    #[must_use]
+    pub fn with_current_tso(self, current: tidb_executor::CurrentTso) -> Self {
+        let mut authority = self.with_start_ts(current.value() as u64);
+        authority.current_tso = Some(current);
+        authority
+    }
+
+    /// Transfers the lazy activation handle to the cursor materializer.
+    pub fn take_current_tso(&mut self) -> Option<tidb_executor::CurrentTso> {
+        self.current_tso.take()
+    }
+
+    /// Transfers the pin to the connection-owned cursor without releasing it.
+    pub fn take_start_ts_guard(&mut self) -> Option<Arc<tidb_txnkv::StartTsGuard>> {
+        self.start_ts_guard.take()
     }
 
     /// Consumes the authority into its retained memory policy and chunk bounds.
@@ -1111,7 +1141,6 @@ mod bootstrap;
 mod classify;
 pub mod cursor;
 mod dispatch;
-mod observation;
 pub mod embedding;
 mod explain_arm;
 mod gcutil;
@@ -1119,6 +1148,7 @@ mod identity;
 pub mod infoschema;
 mod non_prepared_plan_cache;
 mod noop;
+mod observation;
 mod prepared_ast;
 mod prepared_plan_cache;
 mod prepared_statements;

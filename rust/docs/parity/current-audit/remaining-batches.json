@@ -4,13 +4,13 @@
   "integration_start": "9a5877b1555835de42cb29f410fac999167e8186",
   "counts": {
     "tracked": 86,
-    "unresolved": 57,
-    "repaired": 29,
-    "open": 34,
-    "partial": 23
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 32,
+    "partial": 24
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "Segmentation follows recorded live ownership and repaired deltas. It does not newly behaviorally reproduce all 57 findings.",
+  "evidence_limit": "O01/O09/N04 rechecked in this batch. The other 54 unresolved roots retain earlier evidence; not all findings were freshly reproduced.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -94,14 +94,13 @@
       "id": "B03",
       "title": "Schema, identity and timestamp protection",
       "findings": [
-        "O01",
         "O02",
         "O03",
         "O09",
         "I04",
         "K02"
       ],
-      "count": 6,
+      "count": 5,
       "dependencies": [
         "B01",
         "B04"
@@ -113,10 +112,9 @@
       "completion_boundary": "Versioned schema/upgrade, cluster identity/leases, cached-table leases and all active timestamp producers/reporters. Reporting precedes GC activation; GC also requires B04 durable delete-range work. Safe submilestones may proceed before the final cyclic integration gate.",
       "acceptance": "unaccepted",
       "finding_statuses": {
-        "O01": "open",
         "O02": "open",
         "O03": "open",
-        "O09": "open",
+        "O09": "partial",
         "I04": "open",
         "K02": "open"
       }
@@ -390,18 +388,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "229bda1c3ba0bbe7b17a1056ac4eb66ebc5c34a0",
+    "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
     "findings": [
-      "O11",
-      "O18",
-      "N03"
+      "O01",
+      "O09",
+      "N04"
     ],
     "statuses": {
-      "O11": "partial",
-      "O18": "partial",
-      "N03": "partial"
+      "O01": "repaired",
+      "O09": "partial",
+      "N04": "partial"
     },
-    "receipt": "observation-plan-batch-validation.json",
-    "scope": "Shared physical-plan samples, live binary-plan GLOBAL policy, runtime TopSQL/fast-plan admission and SET labels. Maintenance of existing owners; complete packages remain unaccepted."
+    "receipt": "cluster-lifecycle-batch-validation.json",
+    "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
   }
 }

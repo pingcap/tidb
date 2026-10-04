@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-The [process administration batch](process-administration-batch-validation.json) advances N04/A02/I01/N03 together: KILL consumes canonical configuration and ordered role/SEM policy, while PROCESSLIST consumes the target’s published state. The duplicate ID decoder and fabricated projection values are removed. N04 moves to partial; remote KILL remains unresolved. Current counts: **86 tracked, 29 repaired, 57 unresolved (34 open, 23 partial)**. The other 53 unresolved roots retain earlier evidence; no complete package acceptance or push is claimed.
+The [cluster identity and timestamp batch](cluster-lifecycle-batch-validation.json) repairs O01 and advances O09/N04 together: shared leased identity, configured connection allocation/admission, transaction/cursor timestamp retention, leased minimum reporting and internal auto-analyze KILL authorization. **86 tracked: 30 repaired, 56 unresolved (32 open, 24 partial).** The other 54 unresolved roots retain earlier evidence. Historical schema/DDL protection and remote KILL remain explicit gaps; no complete package acceptance or push is claimed.
 
 The [runtime settings batch](runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence.
 
@@ -8,7 +8,7 @@ The [cluster configuration batch](cluster-config-batch-validation.json) advances
 
 [Harness consolidation](harness-dedup-validation.json) removes 12 standalone targets and five private source copies. All 281 formerly duplicated cases remain registered once; 299 selected cases pass and five established DDL failures remain. Finding statuses are unchanged.
 
-The current register has **86 findings: 29 repaired and 57 unresolved (35 open, 22 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
+The current register has **86 findings: 30 repaired and 56 unresolved (32 open, 24 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
 
 The [remaining empty-harness cleanup](empty-test-cleanup-validation.json) removes 347 empty functions across five crates, one unused marker and stale inventory prose. All 367 surviving functions in affected files remain verbatim; Go obligations stay unverified.
 

@@ -34,7 +34,7 @@ use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindVa
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
-use tidb_util::globalconn::{Allocator, GlobalAllocator};
+use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{
@@ -441,6 +441,8 @@ pub struct QueryResult<'a> {
 /// Typed statement policy retained only when a prepared cursor materializes
 /// this result after execution.
 pub(crate) struct CursorMaterializationAuthority {
+    pub(crate) current_tso: Option<tidb_executor::CurrentTso>,
+    pub(crate) start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     pub(crate) field_types: Vec<tidb_datatype::FieldType>,
     pub(crate) init_chunk_size: usize,
     pub(crate) max_chunk_size: usize,
@@ -752,10 +754,14 @@ impl<'a> QueryResult<'a> {
     pub fn with_cursor_materialization(
         mut self,
         field_types: Vec<tidb_datatype::FieldType>,
-        authority: tidb_session::ResultMaterializationAuthority,
+        mut authority: tidb_session::ResultMaterializationAuthority,
     ) -> Self {
+        let current_tso = authority.take_current_tso();
+        let start_ts_guard = authority.take_start_ts_guard();
         let (memory, init_chunk_size, max_chunk_size) = authority.into_parts();
         self.cursor_materialization = Some(CursorMaterializationAuthority {
+            current_tso,
+            start_ts_guard,
             field_types,
             init_chunk_size,
             max_chunk_size,
@@ -1441,6 +1447,11 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     ) {
     }
 
+    /// Domain's numeric identity; None is the standalone deployment.
+    fn server_identity(&self) -> Option<Arc<tidb_domain::server_id::ServerIdAuthority>> {
+        None
+    }
+
     /// Returns the server's session manager for process memory control.
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
         None
@@ -1451,7 +1462,8 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
 /// for this server retains this authority, including dedicated worker threads.
 pub struct ConnectionTracker {
     pub(crate) command_limiter: crate::mysql_connection::CommandLimiter,
-    connection_ids: GlobalAllocator,
+    connection_ids: Box<dyn Allocator + Send + Sync>,
+    identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     active: AtomicUsize,
     max_active: AtomicUsize,
     accepted: AtomicU64,
@@ -1467,15 +1479,47 @@ impl Default for ConnectionTracker {
 
 impl ConnectionTracker {
     fn with_token_limit(limit: usize) -> Self {
+        let config = tidb_config::config_tree::Config {
+            token_limit: limit,
+            ..Default::default()
+        };
+        Self::with_config(&config, None)
+    }
+
+    fn with_config(
+        config: &tidb_config::config_tree::Config,
+        identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
+    ) -> Self {
+        let identity = identity.filter(|_| config.enable_global_kill);
+        let connection_ids: Box<dyn Allocator + Send + Sync> = if config.enable_global_kill {
+            let owner = identity.clone();
+            Box::new(GlobalAllocator::new(
+                move || {
+                    owner
+                        .as_ref()
+                        .map_or(STANDALONE_SERVER_ID, |owner| owner.id())
+                },
+                config.enable_32bits_connection_id,
+            ))
+        } else {
+            Box::new(SimpleAllocator::new())
+        };
         Self {
-            command_limiter: crate::mysql_connection::CommandLimiter::new(limit),
-            connection_ids: GlobalAllocator::new(|| STANDALONE_SERVER_ID, true),
+            command_limiter: crate::mysql_connection::CommandLimiter::new(config.token_limit),
+            connection_ids,
+            identity,
             active: AtomicUsize::default(),
             max_active: AtomicUsize::default(),
             accepted: AtomicU64::default(),
             completed: AtomicU64::default(),
             failed: AtomicU64::default(),
         }
+    }
+
+    pub(crate) fn identity_lost(&self) -> bool {
+        self.identity
+            .as_ref()
+            .is_some_and(|identity| identity.is_lost())
     }
 }
 
@@ -1561,6 +1605,13 @@ impl Drop for ConnectionLease {
             self.tracker.failed.fetch_add(1, Ordering::AcqRel);
         }
         self.tracker.connection_ids.release(self.id);
+    }
+}
+
+struct IdentitySocketRegistration(Arc<tidb_domain::server_id::ServerIdAuthority>);
+impl Drop for IdentitySocketRegistration {
+    fn drop(&mut self) {
+        self.0.set_connection_killer(None);
     }
 }
 
@@ -1897,13 +1948,15 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             .as_ref()
             .map(|manager| ServerMemoryLimitRunner::start(Arc::clone(manager)));
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
+        let tracker = Arc::new(ConnectionTracker::with_config(
+            &config.global_config,
+            factory.server_identity(),
+        ));
         Ok(Self {
             listener,
             factory,
             users,
-            tracker: Arc::new(ConnectionTracker::with_token_limit(
-                config.global_config.token_limit,
-            )),
+            tracker,
             max_allowed_packet: config.max_allowed_packet,
             tls,
             _tls_rotation: tls_rotation,
@@ -1972,6 +2025,16 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         P: FnMut(&TcpStream, Duration) -> Result<(), SqlNodeError>,
     {
         let active_sockets = Arc::new(ActiveSockets::default());
+        // Includes sockets still in authentication, before ProcessRegistry has
+        // a SQL session. A lost lease must retire those IDs as well.
+        let _identity_registration = self.tracker.identity.as_ref().map(|identity| {
+            let sockets = Arc::clone(&active_sockets);
+            identity.set_connection_killer(Some(Arc::new(move || {
+                let _ = sockets.cancel_queries();
+                let _ = sockets.shutdown_all();
+            })));
+            IdentitySocketRegistration(Arc::clone(identity))
+        });
         // Go pre-spawns nothing: `go s.onConn(clientConn)` runs one goroutine
         // per accepted connection. The warm pool keeps a bounded set of
         // threads for the common small fan-out (and for the deterministic
@@ -2054,6 +2117,10 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 }
                 Err(error) => break Err(SqlNodeError::Listener(error)),
             };
+            if self.tracker.identity_lost() {
+                drop(stream);
+                continue;
+            }
             // Go's capacity test is a COUNT against the configured limit, and
             // a zero limit is UNLIMITED (`server.go`'s `checkConnectionCount`):
             //
@@ -2535,6 +2602,81 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn cluster_lifecycle_batch_disabled_global_kill_uses_simple_ids() {
+        let mut config = test_config();
+        config.global_config.enable_global_kill = false;
+        let users =
+            Arc::new(ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n").unwrap());
+        let node = ConcurrentSqlNode::bind(&config, Arc::new(UnusedFactory), users).unwrap();
+        assert_eq!(node.tracker.connection_ids.next_id(), 1);
+        assert_eq!(node.tracker.connection_ids.next_id(), 2);
+    }
+
+    #[test]
+    fn cluster_lifecycle_batch_64bit_configuration_reaches_allocator() {
+        let mut config = test_config();
+        config.global_config.enable_32bits_connection_id = false;
+        let users =
+            Arc::new(ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n").unwrap());
+        let node = ConcurrentSqlNode::bind(&config, Arc::new(UnusedFactory), users).unwrap();
+        let (id, truncated) =
+            tidb_util::globalconn::parse_conn_id(node.tracker.connection_ids.next_id()).unwrap();
+        assert!(id.is_64bits && !truncated);
+        assert_eq!(id.server_id, 1);
+    }
+
+    #[test]
+    fn cluster_lifecycle_batch_standalone_publishes_its_allocator_identity() {
+        let mut info = crate::serverinfo_etcd::node_server_info(&test_config());
+        let encoded = info.marshal().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(value["server_id"], 1);
+    }
+
+    #[test]
+    fn cluster_lifecycle_batch_unclaimed_identity_closes_before_handshake() {
+        struct LostFactory(Arc<tidb_domain::server_id::ServerIdAuthority>);
+        impl QuerySessionFactory for LostFactory {
+            type Session = UnusedSession;
+            fn open_session(&self, _: SessionContext) -> Result<Self::Session, SqlQueryError> {
+                panic!("unclaimed identity must not authenticate a session")
+            }
+            fn server_identity(&self) -> Option<Arc<tidb_domain::server_id::ServerIdAuthority>> {
+                Some(self.0.clone())
+            }
+        }
+        let client =
+            tidb_pd_client::EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(100))
+                .unwrap();
+        let identity = tidb_domain::server_id::ServerIdAuthority::new(
+            Some(Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(
+                Arc::new(client),
+            ))),
+            true,
+        );
+        let users =
+            Arc::new(ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n").unwrap());
+        let node = ConcurrentSqlNode::bind(&test_config(), Arc::new(LostFactory(identity)), users)
+            .unwrap();
+        let address = node.local_addr().unwrap();
+        let shutdown = node.shutdown_handle();
+        let tracker = node.tracker();
+        let serving = std::thread::spawn(move || node.run());
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let observed = stream.read(&mut [0u8; 1]);
+        shutdown.shutdown();
+        serving.join().unwrap().unwrap();
+        assert!(
+            matches!(observed, Ok(0)),
+            "unexpected handshake/read: {observed:?}"
+        );
+        assert_eq!(tracker.accepted(), 0);
+    }
 
     struct UnusedSession;
 

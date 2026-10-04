@@ -79,6 +79,11 @@ impl Session {
                     ));
                 }
             }
+        } else if registry.is_some()
+            && tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(target)
+            && !self.has_dynamic_privilege("CONNECTION_ADMIN", false)
+        {
+            return Err(DriverError::KillAccessDenied);
         }
 
         let config = tidb_config::config_tree::config::get_global_config();
@@ -111,8 +116,8 @@ impl Session {
                 self.append_warning(crate::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned());
             }
             Ok((_, false)) => {
-                // Remote routing still requires the shared cluster/server-ID
-                // owner (N04/O01); this registry only holds local connections.
+                // Remote routing still requires the remote RPC
+                // dispatch (N04); this registry only holds local connections.
                 registry.kill(target, kill.query);
             }
         }

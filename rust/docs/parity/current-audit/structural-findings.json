@@ -9,10 +9,10 @@
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
     "tracked": 86,
-    "unresolved": 57,
-    "repaired": 29,
-    "open": 34,
-    "partial": 23
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 32,
+    "partial": 24
   },
   "findings": [
     {
@@ -91,7 +91,7 @@
       "id": "N03",
       "status": "partial",
       "group": "Wire and server admission/configuration",
-      "finding": "**P2; partially repaired:** executable startup shares the canonical configuration loader/override pass, CLI precedence, strict/config-check policy and Go auto-TLS default. Shared consumers cover inbound TLS CA/version/material, PD/store/MPP cluster security and transport limits, persistent-summary path/rotation with joined lifecycle, live instance getters and instance-cache limits, canonical SET scalar/range/scope policy and auto-analyze switching. Both production session factories publish ssl_ca/ssl_cert/ssl_key and have_ssl/have_openssl from the same TLS startup owner; SQL reload and new handshakes share its live configuration. Server-info startup now reuses the canonical domain constructor, preserving labels and lease text; the process topology and read transport consume those labels. Duplicate startup projection and internal HTTP TLS construction are removed. Generated RSA size, identity and temp-file settings now reach the same canonical TLS resolution path used by startup/reload/rotation. Internal HTTP clients now share Go’s five-minute timeout constructor and TLS policy; both session factories install the live configuration client, shared across sessions. SHOW CONFIG consumes this live owner instead of captured local settings. HTTP administration now shares process variables and durable GLOBAL writes with SQL. The UTF-8 instance setter publishes canonical configuration; config updates serialize read/modify/publication to preserve concurrent unrelated changes. Live HTTP getters replace startup snapshots. Native deployment defaults, remaining configuration consumers and complete secure startup/platform acceptance remain partial. Historical receipts retain earlier consumer evidence. Statement summaries now consume the live shared GLOBAL tidb_generate_binary_plan switch, including changes made by another existing session. Complete configuration consumers remain partial. KILL now reads live enable-global-kill and compatible-kill-query from the canonical config, preserving KILL TIDB and CONNECTION_ID() local paths. Native defaults and other configuration consumers remain incomplete.",
+      "finding": "**P2; partially repaired:** executable startup shares the canonical configuration loader/override pass, CLI precedence, strict/config-check policy and Go auto-TLS default. Shared consumers cover inbound TLS CA/version/material, PD/store/MPP cluster security and transport limits, persistent-summary path/rotation with joined lifecycle, live instance getters and instance-cache limits, canonical SET scalar/range/scope policy and auto-analyze switching. Both production session factories publish ssl_ca/ssl_cert/ssl_key and have_ssl/have_openssl from the same TLS startup owner; SQL reload and new handshakes share its live configuration. Server-info startup now reuses the canonical domain constructor, preserving labels and lease text; the process topology and read transport consume those labels. Duplicate startup projection and internal HTTP TLS construction are removed. Generated RSA size, identity and temp-file settings now reach the same canonical TLS resolution path used by startup/reload/rotation. Internal HTTP clients now share Go\u2019s five-minute timeout constructor and TLS policy; both session factories install the live configuration client, shared across sessions. SHOW CONFIG consumes this live owner instead of captured local settings. HTTP administration now shares process variables and durable GLOBAL writes with SQL. The UTF-8 instance setter publishes canonical configuration; config updates serialize read/modify/publication to preserve concurrent unrelated changes. Live HTTP getters replace startup snapshots. Native deployment defaults, remaining configuration consumers and complete secure startup/platform acceptance remain partial. Historical receipts retain earlier consumer evidence. Statement summaries now consume the live shared GLOBAL tidb_generate_binary_plan switch, including changes made by another existing session. Complete configuration consumers remain partial. KILL now reads live enable-global-kill and compatible-kill-query from the canonical config, preserving KILL TIDB and CONNECTION_ID() local paths. Native defaults and other configuration consumers remain incomplete.",
       "rust_evidence": "`rust/crates/tidb-config/src/config_tree/load.rs::prepare_config`; `rust/crates/tidb-server/src/node_config.rs`; `main_flags.rs`; [batch receipt](config-statistics-maintenance-repair.md); `tidb-session/src/sysvar.rs::run_validation_with_lookup`; `variables.rs::check_max_allowed_packet_scope`, `eval_bound_value`; `tidb-server/src/lib.rs::start_statement_observation`; `tidb-stmtsummary/src/v2/stmtsummary.rs::setup`; `tidb-session/src/vars.rs::runtime_instance_value`; `tidb-session/src/vars.rs::publish_instance_plan_cache_settings`; `tidb-pd-client/src/security.rs::client_tls_config`; `tiflash_mpp_scan.rs::connect_mpp_client`; [transport receipt](mpp-transport-batch-repair.md); `tidb-txnkv/src/rpc/transport_runtime.rs::WorkerCommand::StoreChannel`; `real_tikv_read.rs::connect_with_catalog_and_security`; [shared lifecycle receipt](shared-mpp-lifecycle-repair.md); `tidb-server/src/mysql_tls.rs::MysqlTlsManager`; `sql_node.rs::ConcurrentSqlNode`; production session factory install_tls_manager methods; `tidb-server/src/serverinfo_etcd.rs::node_server_info`; `tidb-domain/src/serverinfo_syncer.rs::server_info_from_config`; `tidb-exec/src/cluster_http.rs`; [topology validation](cluster-topology-validation.json); `mysql_tls.rs::resolve_server_tls`; [validation](auth-durability-batch-validation.json); `tidb-exec/src/cluster_http.rs::cluster_http_client`; `tidb-server/src/unistore_node.rs`; [configuration validation](cluster-config-batch-validation.json); `tidb-config/src/config_tree/config.rs::update_global`; `tidb-session/src/vars.rs`; [settings validation](runtime-settings-batch-validation.json); `tidb-executor/src/explain.rs::process_plan_info_with_brief`; `tidb-session/src/observation.rs`; `tidb-ast/src/label.rs`; [observed-plan validation](observation-plan-batch-validation.json); `tidb-session/src/process_arm.rs`; `process.rs`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; [process administration validation](process-administration-batch-validation.json)",
       "go_owner": "`cmd/tidb-server/main.go` config/override/startup lifecycle and `pkg/config`. Finish the remaining runtime consumers and deployment defaults before complete acceptance. Deprecated performance.run-auto-analyze uses the shared loader's diagnostics; the live auto-analyze worker reads vardef.RunAutoAnalyze, as Go does.",
       "review_basis": "Cloud process-administration batch from 955859e5860028f125ef6a3250ff7cc1b03fd335 against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Seven baseline Rust cases fail independently; 158 grouped Rust cases pass after the connected repair. Final SQL/build/lint evidence and remaining lifecycle limits are in process-administration-batch-validation.json. Parent status remains partial; no package acceptance."
@@ -298,7 +298,7 @@
       "id": "I01",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "**Partially repaired:** SEQUENCES now exposes Go’s eleven-column schema and current catalog definitions, including name casing, cache/cycle/options and comments, without consuming allocator values. The existing typed ALTER SEQUENCE parser now precedes the generic ALTER fallback, restoring definition updates. CREATE/ALTER/DROP and joined queries use the shared catalog; any table privilege and active roles govern visibility. The obsolete thirteen-column schema and constant empty reader are removed. CLUSTER_CONFIG and SHOW CONFIG now share live eight-component HTTP routing, CONFIG/active-role authorization, typed TYPE/INSTANCE request filtering, canonical flattening/hidden-key policy, Go float/JSON rendering, concurrent joined requests and per-node warning retention. Both stores install the shared client. Captured SHOW configuration and the unsupported live-reader branch are removed. The local HTTP source now reads canonical configuration at request time, so SHOW CONFIG and CLUSTER_CONFIG observe runtime updates instead of startup bytes. CLUSTER_LOG still ignores supplied bounds; other dynamic providers and complete extractor/package obligations remain incomplete. PROCESSLIST now consumes the target registry entry’s published digest, memory/disk trackers, transaction timestamp, resource group, alias and affected rows. It no longer recomputes prepared digests, invents 4096 bytes or copies the observer’s group. Transaction time uses the observer’s time zone. Statement-context reference counting, arbitration/CPU observations and complete provider obligations remain unaccepted.",
+      "finding": "**Partially repaired:** SEQUENCES now exposes Go\u2019s eleven-column schema and current catalog definitions, including name casing, cache/cycle/options and comments, without consuming allocator values. The existing typed ALTER SEQUENCE parser now precedes the generic ALTER fallback, restoring definition updates. CREATE/ALTER/DROP and joined queries use the shared catalog; any table privilege and active roles govern visibility. The obsolete thirteen-column schema and constant empty reader are removed. CLUSTER_CONFIG and SHOW CONFIG now share live eight-component HTTP routing, CONFIG/active-role authorization, typed TYPE/INSTANCE request filtering, canonical flattening/hidden-key policy, Go float/JSON rendering, concurrent joined requests and per-node warning retention. Both stores install the shared client. Captured SHOW configuration and the unsupported live-reader branch are removed. The local HTTP source now reads canonical configuration at request time, so SHOW CONFIG and CLUSTER_CONFIG observe runtime updates instead of startup bytes. CLUSTER_LOG still ignores supplied bounds; other dynamic providers and complete extractor/package obligations remain incomplete. PROCESSLIST now consumes the target registry entry\u2019s published digest, memory/disk trackers, transaction timestamp, resource group, alias and affected rows. It no longer recomputes prepared digests, invents 4096 bytes or copies the observer\u2019s group. Transaction time uses the observer\u2019s time zone. Statement-context reference counting, arbitration/CPU observations and complete provider obligations remain unaccepted.",
       "rust_evidence": "`rust/crates/tidb-session/src/infoschema.rs::sequences_rows`; `rust/crates/tidb-executor/src/driver/infoschema_meta.rs::SEQUENCES_COLUMNS`; `tidb-session/src/dispatch.rs::materialize_information_schema_catalog`; [validation](metadata-policy-batch-validation.json); `tidb-parser/src/statement.rs`; `tidb-exec/src/cluster_config.rs`; `tidb-planner/src/cluster_table_extractor.rs`; `tidb-session/src/lib.rs::cluster_config_table_rows`; `tidb-session/src/show.rs`; [configuration validation](cluster-config-batch-validation.json); `tidb-server/src/http_settings.rs::Settings::read`; [settings validation](runtime-settings-batch-validation.json); `tidb-session/src/process_arm.rs`; `process.rs`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; [process administration validation](process-administration-batch-validation.json)",
       "go_owner": "Go typed config/log, sequence/resource/watch, inspection and TiFlash system-table retrievers own runtime rows, predicate extraction, privileges, errors and lifetime. CLUSTER_CONFIG and SHOW CONFIG follow pkg/executor/memtable_reader.go::fetchClusterConfig and show.go::fetchShowClusterConfigs; complete ClusterTableExtractor semantics and upstream package/test obligations remain unaccepted. Static column definitions/charset/metrics descriptions are not inherently wrong. SEQUENCES follows pkg/infoschema/tables.go::tableSequencesCols and pkg/executor/infoschema_reader.go::setDataFromSequences.",
       "review_basis": "Cloud process-administration batch from 955859e5860028f125ef6a3250ff7cc1b03fd335 against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Seven baseline Rust cases fail independently; 158 grouped Rust cases pass after the connected repair. Final SQL/build/lint evidence and remaining lifecycle limits are in process-administration-batch-validation.json. Parent status remains partial; no package acceptance."
@@ -359,12 +359,12 @@
     },
     {
       "id": "O01",
-      "status": "open",
+      "status": "repaired",
       "group": "Domain and process services",
-      "finding": "Numeric server-ID allocation/lease renewal/loss recovery is absent. Server info defaults to zero and the connection allocator uses standalone ID 1. Independent nodes cannot rely on Go's cluster-wide identity guarantee.",
-      "rust_evidence": "`rust/crates/tidb-server/src/serverinfo_etcd.rs:303`, `rust/crates/tidb-server/src/sql_node.rs:50`, `:1499`",
+      "finding": "**Repaired:** one Domain numeric identity owns atomic leased claims, 32-bit candidate selection/64-bit fallback, refresh, confirmed expiration, prolonged loss, connection retirement, reacquisition/publication and joined shutdown. Global/simple allocation follows configuration; server information and MPP read the same live getter. The real etcd adapter preserves expiration separately from transport loss.",
+      "rust_evidence": "`tidb-domain/src/server_id.rs`; `tidb-server/src/sql_node.rs`; `cluster_session_node/boot.rs`; `serverinfo_etcd.rs`; `tidb-pd-client/src/etcd.rs`; [validation](cluster-lifecycle-batch-validation.json)",
       "go_owner": "`pkg/domain/domain.go::acquireServerID`, `refreshServerIDTTL`, `globalconn` allocator. The already repaired MPP statement IDs must consume this shared identity.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Command admission and connection panic recovery changed sql_node.rs but did not add numeric server-ID leasing; connection allocation still uses standalone identity. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from f4ef95954c11710986ab1d1f359b4b13a12d52a5 against Go 93a01d31f6. Three pre-fix Rust cases and two wire-mode assertions fail. Real etcd lease revocation exposed an additional transport expiration defect, repaired through the same production adapter. Complete Domain package and multi-node TiKV acceptance remain unclaimed."
     },
     {
       "id": "O02",
@@ -431,12 +431,12 @@
     },
     {
       "id": "O09",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "**P1; source-confirmed:** server-info publication does not report the node's minimum active start timestamp to the cluster. Session, cursor, internal-transaction and recent schema timestamps never reach the shared reporting owner.",
-      "rust_evidence": "`rust/crates/tidb-domain/src/serverinfo_syncer.rs:40`, `:629`; Rust production/vendor reference search and boot wiring",
+      "finding": "**P1; partially repaired:** startup now retains a thirty-second reporter under the server-info lifetime. Live user, physical transaction, retained eager/lazy cursor and existing RunInNewTxn timestamps reach the strict-age minimum using current PD time and live GC maximum wait. Reports use the current lease and are removed after joined close. Lazy historical InfoSchema/recent-schema tracking (I04), DDL-queue exclusion and source-specific internal-session diagnostics remain incomplete; no GC worker is enabled.",
+      "rust_evidence": "`tidb-domain/src/serverinfo_syncer.rs::start_min_start_ts_reporter`; `tidb-txnkv/src/inner_txn.rs`; `transaction/client.rs`; `tidb-session/src/stmt_ctx.rs`; `tidb-server/src/cursor_state.rs`; `cluster_session_node/boot.rs`; [validation](cluster-lifecycle-batch-validation.json)",
       "go_owner": "`pkg/domain/infosync/info.go::ReportMinStartTS`/`storeMinStartTS` and server-info synchronization. Restore reporting under the leased owner, including shutdown and transaction/cursor lifetimes. This is independent of O03's missing GC worker: a Go peer's GC also needs Rust-node reporting. Actual premature collection was not reproduced.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. ServerInfoSyncer still explicitly excludes ReportMinStartTS and no live reporter composes session/cursor/internal/schema timestamps. No premature-GC reproduction is claimed. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Existing physical reads now hold real start-TS guards; equal-TS owners retire independently. Cursor pins survive lazy activation and statement completion. Materialized catalog reads are protected by their physical transaction; no synthetic lazy InfoSchema timestamp is invented. Actual premature collection and a Go-peer GC interaction were not reproduced."
     },
     {
       "id": "O14",
@@ -559,7 +559,7 @@
       "id": "M05",
       "status": "open",
       "group": "TiFlash and MPP",
-      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01–F03.",
+      "finding": "**P2; source-confirmed:** disaggregated TiFlash/AutoScaler settings and the compute endpoint enum exist, but no topology-fetch/cache/recovery owner or compute-node dispatch consumer is composed. The live scan source selects ordinary PD TiFlash stores. This remains separate from classic replica placement F01\u2013F03.",
       "rust_evidence": "`rust/crates/tidb-config/src/tiflash.rs`; `rust/crates/tidb-exec/src/tiflash_mpp_scan.rs`",
       "go_owner": "`pkg/util/tiflashcompute`, startup topology initialization and `pkg/store/copr/batch_coprocessor.go::buildBatchCopTasksConsistentHash`: integrate configured topology discovery, fixed-pool cache, recovery and dispatch selection with the complete MPP owner. Do not add unsupported Go provider modes.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Disaggregated settings still have no composed compute topology/cache/dispatch consumer; the live scan selects ordinary PD stores. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
@@ -730,10 +730,10 @@
       "id": "N04",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** local KILL now follows live global/compatible configuration, authorizes known targets before numeric warnings, protects restricted users under SEM, and preserves CONNECTION_ID() and absent-manager execution paths. The duplicate ID decoder is removed in favor of globalconn. Remote server-ID comparison/discovery/TiPB dispatch and internal auto-analyze process authorization remain unresolved; local maintenance does not complete cluster KILL.",
-      "rust_evidence": "`rust/crates/tidb-session/src/process_arm.rs::kill_stmt`; `identity.rs::target_has_dynamic_privilege`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; `tidb-util/src/globalconn/mod.rs::parse_conn_id`; [validation](process-administration-batch-validation.json)",
+      "finding": "**P2; partially repaired:** local KILL now follows live global/compatible configuration, authorizes known targets before numeric warnings, protects restricted users under SEM, and preserves CONNECTION_ID() and absent-manager execution paths. The duplicate ID decoder is removed in favor of globalconn. Internal auto-analyze IDs now require SUPER or CONNECTION_ADMIN before execution/config warnings. Remote server-ID comparison/discovery/TiPB dispatch and actual internal-task kill dispatch remain unresolved; local maintenance does not complete cluster KILL.",
+      "rust_evidence": "`rust/crates/tidb-session/src/process_arm.rs::kill_stmt`; `identity.rs::target_has_dynamic_privilege`; `privilege/registry_ops.rs::has_dynamic_priv_with_default_roles`; `tidb-util/src/globalconn/mod.rs::parse_conn_id`; [validation](process-administration-batch-validation.json); [identity/protection batch](cluster-lifecycle-batch-validation.json)",
       "go_owner": "`pkg/executor/simple.go::executeKillStmt` honors EnableGlobalKill, compares ServerID and invokes `killRemoteConn` with TiPB Kill. Compose configuration, server discovery, authorization and remote dispatch. O01's server-ID lease is a prerequisite, not a substitute. No two-node KILL test was run. Local policy follows planner/core/planbuilder.go KillStmt and appendVisitInfoIsRestrictedUser before executor/simple.go configuration/parsing gates.",
-      "review_basis": "Cloud process-administration batch from 955859e5860028f125ef6a3250ff7cc1b03fd335 against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Seven baseline Rust cases fail independently; 158 grouped Rust cases pass after the connected repair. Final SQL/build/lint evidence and remaining lifecycle limits are in process-administration-batch-validation.json. Parent status remains partial; no package acceptance."
+      "review_basis": "Cloud process-administration batch from 955859e5860028f125ef6a3250ff7cc1b03fd335 against freshly fetched Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Seven baseline Rust cases fail independently; 158 grouped Rust cases pass after the connected repair. Final SQL/build/lint evidence and remaining lifecycle limits are in process-administration-batch-validation.json. Parent status remains partial; no package acceptance. The cluster-lifecycle batch connects the existing global auto-analyze process list to authorization; N04 remains partial."
     },
     {
       "id": "N05",
@@ -793,19 +793,19 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "229bda1c3ba0bbe7b17a1056ac4eb66ebc5c34a0",
+    "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
     "findings": [
-      "O11",
-      "O18",
-      "N03"
+      "O01",
+      "O09",
+      "N04"
     ],
     "statuses": {
-      "O11": "partial",
-      "O18": "partial",
-      "N03": "partial"
+      "O01": "repaired",
+      "O09": "partial",
+      "N04": "partial"
     },
-    "receipt": "observation-plan-batch-validation.json",
-    "scope": "Shared physical-plan samples, live binary-plan GLOBAL policy, runtime TopSQL/fast-plan admission and SET labels. Maintenance of existing owners; complete packages remain unaccepted."
+    "receipt": "cluster-lifecycle-batch-validation.json",
+    "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -1111,10 +1111,26 @@
       },
       "receipt": "runtime-settings-batch-validation.json",
       "scope": "Shared HTTP runtime settings, durable SQL GLOBAL changes, live configuration readers and serialized publication. Complete packages remain unaccepted."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
+      "findings": [
+        "O01",
+        "O09",
+        "N04"
+      ],
+      "statuses": {
+        "O01": "repaired",
+        "O09": "partial",
+        "N04": "partial"
+      },
+      "receipt": "cluster-lifecycle-batch-validation.json",
+      "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
     }
   ],
   "execution_batches": {
     "map": "remaining-batches.json",
-    "description": "Ten structural owner batches, exact one-to-one assignment of 57 unresolved IDs; shared package acceptance and cross-batch gates retained."
+    "description": "Ten structural owner batches, exact one-to-one assignment of 56 unresolved IDs; shared package acceptance and cross-batch gates retained."
   }
 }

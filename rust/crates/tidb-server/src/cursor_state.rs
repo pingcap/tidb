@@ -31,6 +31,8 @@ use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{CursorMaterializationAuthority, QueryResult, SqlQueryError};
 
 pub(crate) struct CursorState {
+    current_tso: Option<tidb_executor::CurrentTso>,
+    _start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     columns: Vec<tidb_protocol::ColumnInfo>,
     field_types: Vec<tidb_datatype::FieldType>,
     init_chunk_size: usize,
@@ -74,6 +76,8 @@ impl CursorState {
         authority: CursorMaterializationAuthority,
     ) -> Result<Self, SqlQueryError> {
         let CursorMaterializationAuthority {
+            current_tso,
+            start_ts_guard,
             field_types,
             init_chunk_size,
             max_chunk_size,
@@ -101,6 +105,8 @@ impl CursorState {
         };
 
         let mut cursor = Self {
+            current_tso,
+            _start_ts_guard: start_ts_guard,
             columns: Vec::new(),
             field_types,
             init_chunk_size: init_chunk_size.max(1).min(max_chunk_size.max(1)),
@@ -130,6 +136,19 @@ impl CursorState {
         Ok(cursor)
     }
 
+    fn retain_activated_snapshot(&mut self) {
+        if self._start_ts_guard.is_none() {
+            if let Some(ts) = self
+                .current_tso
+                .as_ref()
+                .map(|current| current.value() as u64)
+                .filter(|ts| *ts != 0 && *ts != u64::MAX)
+            {
+                self._start_ts_guard = Some(Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts)));
+            }
+        }
+    }
+
     fn materialize_source(&mut self, result: &mut QueryResult<'_>) -> Result<(), SqlQueryError> {
         let mut native = result.source().new_chunk();
         loop {
@@ -138,6 +157,7 @@ impl CursorState {
                     .source()
                     .next_chunk(chunk)
                     .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+                self.retain_activated_snapshot();
                 if chunk.num_rows() == 0 {
                     break;
                 }
@@ -153,6 +173,7 @@ impl CursorState {
                 .source()
                 .next_batch(self.max_chunk_size)
                 .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+            self.retain_activated_snapshot();
             if batch.is_empty() {
                 break;
             }
@@ -317,6 +338,7 @@ mod tests {
     }
 
     struct CountingRows {
+        current_tso: tidb_executor::CurrentTso,
         columns: Vec<tidb_protocol::ColumnInfo>,
         rows: VecDeque<Vec<Datum>>,
         lifecycle: Arc<Mutex<SourceLifecycle>>,
@@ -327,6 +349,7 @@ mod tests {
             &mut self,
             max_rows: usize,
         ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+            self.current_tso.publish(765432109);
             Ok((0..max_rows.max(1))
                 .map_while(|_| self.rows.pop_front())
                 .collect())
@@ -337,6 +360,7 @@ mod tests {
         }
 
         fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+            self.current_tso.clear();
             self.lifecycle.lock().unwrap().finish += 1;
             Ok(())
         }
@@ -379,7 +403,9 @@ mod tests {
         let disk_tracker = Arc::clone(memory.session_disk_tracker());
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let lifecycle = Arc::new(Mutex::new(SourceLifecycle::default()));
+        let current_tso = tidb_executor::CurrentTso::default();
         let source = CountingRows {
+            current_tso: current_tso.clone(),
             columns: select_columns(&[("v".to_owned(), fields[0].clone())]),
             rows: (0..64).map(|value| vec![Datum::Int(value)]).collect(),
             lifecycle: Arc::clone(&lifecycle),
@@ -389,6 +415,8 @@ mod tests {
         let cursor = CursorState::materialize(
             &mut result,
             CursorMaterializationAuthority {
+                current_tso: Some(current_tso),
+                start_ts_guard: None,
                 field_types: fields,
                 init_chunk_size: 2,
                 max_chunk_size: 8,
@@ -396,6 +424,7 @@ mod tests {
             },
         )
         .expect("cursor spill releases memory before CANCEL");
+        assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&765432109));
         assert!(cursor.rows.already_spilled());
         assert_eq!(cursor.fetch_plan(u32::MAX), (64, true));
         assert_eq!(session_tracker.bytes_consumed(), 0);
@@ -406,6 +435,7 @@ mod tests {
         assert_eq!(lifecycle.lock().unwrap().close, 1);
 
         drop(cursor);
+        assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&765432109));
         assert_eq!(session_tracker.bytes_consumed(), 0);
         assert_eq!(disk_tracker.bytes_consumed(), 0);
         assert_eq!(storage.global_tracker().bytes_consumed(), 0);

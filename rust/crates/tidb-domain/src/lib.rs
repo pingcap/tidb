@@ -157,6 +157,7 @@ pub mod plan_replayer;
 pub mod replayer;
 pub mod ru_stats;
 pub mod schema_checker;
+pub mod server_id;
 pub mod serverinfo;
 pub mod serverinfo_syncer;
 pub mod status_endpoint_claim;

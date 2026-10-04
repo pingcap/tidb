@@ -204,28 +204,58 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // etcd still HAS the record; it just publishes nowhere, and
     // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
     // which is Go's `etcdCli == nil` answer.
+    let server_etcd = crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
+        Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
+            as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
+    });
+    // A failed cluster connection is not a standalone deployment.
+    if config.global_config.enable_global_kill && server_etcd.is_none() {
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "cluster server identity requires its configured etcd client",
+        )));
+    }
+    let server_identity = config.global_config.enable_global_kill.then(|| {
+        tidb_domain::server_id::ServerIdAuthority::new(
+            server_etcd.clone(),
+            config.global_config.enable_32bits_connection_id,
+        )
+    });
+    let mut info = crate::serverinfo_etcd::node_server_info(&config);
+    if let Some(identity) = &server_identity {
+        let identity = Arc::clone(identity);
+        info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
+    }
     let server_info = Arc::new(
         tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
-            crate::serverinfo_etcd::node_server_info(&config),
-            crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
-                Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
-                    as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
-            }),
+            info,
+            server_etcd,
             config.report_status,
         ),
     );
-    let server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
+    let mut server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
         Arc::clone(&server_info),
         tidb_domain::serverinfo_syncer::SyncIntervals::default(),
     ) {
         Ok(runner) => Some(runner),
         Err(error) => {
-            // Go logs and carries on: a node that cannot publish itself
-            // still serves SQL, it is just invisible to its peers.
-            eprintln!("{{\"event\":\"server_info_syncer_unavailable\",\"error\":{error:?}}}");
-            None
+            // Go GlobalInfoSyncerInit fails startup if initial leased
+            // publication fails; serving invisibly also hides GC protection.
+            return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+                error,
+            )));
         }
     };
+    let server_id_keeper = server_identity
+        .as_ref()
+        .map(|identity| {
+            tidb_domain::server_id::ServerIdKeeper::start(
+                Arc::clone(identity),
+                Arc::clone(&server_info),
+                Default::default(),
+            )
+        })
+        .transpose()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let discovery = authority
         .pd_client()
         .map(|pd| {
@@ -407,6 +437,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
+    .with_server_identity(server_identity)
     .with_cluster_topology(cluster_topology)
     .with_cluster_config_client(Arc::new(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
@@ -422,6 +453,37 @@ pub(crate) fn run_cluster_session_node_with_spill(
     };
     let factory = factory.with_bindings(bindings);
     factory.attach_login_storage(&users);
+    if let Some(runner) = &mut server_info_runner {
+        let processes = factory.processes();
+        let globals = users.global_vars();
+        let opener = authority.transaction_opener();
+        runner
+            .start_min_start_ts_reporter(move || {
+                use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
+                let mut active = tidb_txnkv::ACTIVE_START_TS.snapshot();
+                active.extend(
+                    processes
+                        .snapshot()
+                        .into_iter()
+                        .map(|process| process.cur_txn_start_ts),
+                );
+                let version =
+                    TimestampFutureWait::wait(PdCapability::timestamp_future(opener.pd())?)?;
+                let max_wait = globals
+                    .get("tidb_gc_max_wait_time")
+                    .map_err(|error| format!("{error:?}"))?
+                    .parse::<u64>()
+                    .map_err(|error| error.to_string())?;
+                Ok(tidb_txnkv::report_min_start_ts(
+                    version,
+                    max_wait,
+                    active,
+                    &tidb_txnkv::GLOBAL_INNER_TXN_START_TS,
+                ))
+            })
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    }
+
     if tidb_config::config_tree::config::get_global_config()
         .instance
         .tidb_enable_stats_owner
@@ -509,8 +571,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
 
     run_with_process_shutdown(
         (
-            // Dropped FIRST: the runner removes this node's published
-            // records before the etcd handles below it go away.
+            // Retained through worker drain; the closure releases leases
+            // after protected sessions and background storage work retire.
+            server_id_keeper,
             server_info_runner,
             replica_read_checker,
             // Dropped beside it: once the registration is gone nobody waits
@@ -533,6 +596,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         ),
         authority,
         move |(
+            server_id_keeper,
             server_info_runner,
             replica_read_checker,
             schema_sync_ack,
@@ -602,6 +666,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
             drop(stats_reloader);
             drop(binding_reloader);
             drop(async_stats_loader);
+            drop(workload_repository);
+            // The status callback retains the factory. Its final drop joins
+            // internal workers and flushes statistics while timestamp and
+            // identity leases still protect those storage transactions.
+            drop(_status_server);
+            drop(server_id_keeper);
+            drop(server_info_runner);
             outcome
         },
     )

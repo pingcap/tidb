@@ -161,8 +161,9 @@ pub use handle::{
 };
 pub use inner_txn::{
     get_min_inner_txn_start_ts, long_running_inner_txn, long_running_inner_txns,
-    print_long_time_internal_txn, InnerTxnStartTsBox, LongRunningInnerTxn,
-    GLOBAL_INNER_TXN_START_TS, TIME_TO_PRINT_LONG_INTERNAL_TXN,
+    print_long_time_internal_txn, report_min_start_ts, ActiveStartTs, InnerTxnStartTsBox,
+    LongRunningInnerTxn, StartTsGuard, ACTIVE_START_TS, GLOBAL_INNER_TXN_START_TS,
+    TIME_TO_PRINT_LONG_INTERNAL_TXN,
 };
 pub use iteration::{next_until, row_key_prefix_filter, walk_mem_buffer, KvIterator, KvRetriever};
 pub use key::{key_range_slice_mem_usage, Entry, Key, KeyRange};

@@ -1032,6 +1032,7 @@ pub struct ClusterSessionFactory {
     /// table empty, which is the honest answer for a node that never
     /// established an identity.
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    server_identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
@@ -1189,6 +1190,7 @@ impl ClusterSessionFactory {
             auto_ids,
             cop_scans: None,
             server_info: None,
+            server_identity: None,
             cluster_topology: None,
             cluster_config: None,
             global_vars,
@@ -1956,8 +1958,17 @@ impl ClusterSessionFactory {
         self
     }
 
-    /// Binds the node's server-info syncer for
-    /// `information_schema.TIDB_SERVERS_INFO`.
+    /// Shares the leased numeric identity with connection allocation and admission.
+    #[must_use]
+    pub fn with_server_identity(
+        mut self,
+        identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
+    ) -> Self {
+        self.server_identity = identity;
+        self
+    }
+
+    /// Binds server information for publication and cluster discovery.
     #[must_use]
     pub fn with_server_info(mut self, syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>) -> Self {
         self.cluster_topology = Some(Arc::new(
@@ -3206,6 +3217,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
         for (name, value) in variables {
             self.global_vars.set_startup(name, value);
         }
+    }
+
+    fn server_identity(&self) -> Option<Arc<tidb_domain::server_id::ServerIdAuthority>> {
+        self.server_identity.clone()
     }
 
     fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {

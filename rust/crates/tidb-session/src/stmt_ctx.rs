@@ -326,7 +326,7 @@ impl Session {
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
         if let Some(authority) = self.statement_result_authority.borrow().as_ref() {
-            return authority.clone();
+            return authority.clone().with_current_tso(self.current_tso());
         }
         let snapshot = self.statement_var_snapshot();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
@@ -338,7 +338,7 @@ impl Session {
         );
         self.statement_result_authority
             .replace(Some(authority.clone()));
-        authority
+        authority.with_current_tso(self.current_tso())
     }
 
     fn build_statement_result_authority(

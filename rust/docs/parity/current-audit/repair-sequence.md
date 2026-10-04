@@ -1,11 +1,11 @@
 # Repair sequence for Go/Rust structural parity
 
-This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **57 unresolved (34 open, twenty-three partial)**; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **56 unresolved (32 open, twenty-four partial)**; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
 
 ## Current structural execution queue
 
 
-Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON for the reconciled ten owner batches and all 57 current unresolved IDs. The historical W01–W12 assignment below preserves source ownership context, including findings now repaired. Do not treat its old counts or residual descriptions as current. Implement a shared lifecycle and its callers as a unit, group regression filters/compatible crate targets, then run required final gates at that batch boundary. Package acceptance remains atomic; no push is authorized.
+Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON for the reconciled ten owner batches and all 56 current unresolved IDs. The historical W01–W12 assignment below preserves source ownership context, including findings now repaired. Do not treat its old counts or residual descriptions as current. Implement a shared lifecycle and its callers as a unit, group regression filters/compatible crate targets, then run required final gates at that batch boundary. Package acceptance remains atomic; no push is authorized.
 
 ## Baseline and scope
 

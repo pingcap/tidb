@@ -17,8 +17,8 @@
 //! This owner keeps the synchronized process-global set, minimum selection,
 //! timestamp conversion, and long-running diagnostic side effect together.
 
-use std::collections::BTreeSet;
-use std::sync::{LazyLock, Mutex};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Duration after which an internal transaction is considered long-running.
@@ -91,6 +91,83 @@ impl InnerTxnStartTsBox {
         }
         minimum
     }
+}
+
+/// Physical transactions and retained cursor snapshots that still own reads.
+/// Reference counts preserve overlapping snapshots opened at the same TSO.
+#[derive(Debug, Default)]
+pub struct ActiveStartTs {
+    timestamps: Arc<Mutex<BTreeMap<u64, usize>>>,
+}
+
+/// Removes a timestamp only when its last actual owner retires.
+#[derive(Debug)]
+pub struct StartTsGuard {
+    timestamps: Arc<Mutex<BTreeMap<u64, usize>>>,
+    start_ts: u64,
+}
+
+impl ActiveStartTs {
+    /// Pins an actual transaction or cursor snapshot until the returned guard drops.
+    #[must_use]
+    pub fn hold(&self, start_ts: u64) -> StartTsGuard {
+        if start_ts != 0 && start_ts != u64::MAX {
+            *self
+                .timestamps
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry(start_ts)
+                .or_default() += 1;
+        }
+        StartTsGuard {
+            timestamps: Arc::clone(&self.timestamps),
+            start_ts,
+        }
+    }
+
+    /// Snapshot before requesting the current PD version, as in ReportMinStartTS.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u64> {
+        self.timestamps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .copied()
+            .collect()
+    }
+}
+
+impl Drop for StartTsGuard {
+    fn drop(&mut self) {
+        let mut timestamps = self.timestamps.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = timestamps.get_mut(&self.start_ts) {
+            *count -= 1;
+            if *count == 0 {
+                timestamps.remove(&self.start_ts);
+            }
+        }
+    }
+}
+
+/// Shared by real storage transactions and cursors that outlive their transaction.
+pub static ACTIVE_START_TS: LazyLock<ActiveStartTs> = LazyLock::new(ActiveStartTs::default);
+
+/// Go ReportMinStartTS range selection. CurrentVersion's logical bits are
+/// discarded; timestamps at either boundary cannot lower the report.
+#[must_use]
+pub fn report_min_start_ts(
+    current_version: u64,
+    max_wait_seconds: u64,
+    active: impl IntoIterator<Item = u64>,
+    inner: &InnerTxnStartTsBox,
+) -> u64 {
+    let now_ms = current_version >> 18;
+    let lower = now_ms.saturating_sub(max_wait_seconds.saturating_mul(1000)) << 18;
+    let minimum = active
+        .into_iter()
+        .filter(|ts| *ts > lower)
+        .fold(now_ms << 18, u64::min);
+    inner.get_min_start_ts(UNIX_EPOCH + Duration::from_millis(now_ms), lower, minimum)
 }
 
 /// One long-running inner transaction observation.
@@ -181,6 +258,43 @@ pub fn get_min_inner_txn_start_ts(
 mod tests {
     use super::*;
     use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn cluster_lifecycle_batch_snapshot_guards_share_tso_and_retire_independently() {
+        let active = ActiveStartTs::default();
+        let first = active.hold(7);
+        let second = active.hold(7);
+        let _zero = active.hold(0);
+        let _latest = active.hold(u64::MAX);
+        assert_eq!(active.snapshot(), vec![7]);
+        drop(first);
+        assert_eq!(active.snapshot(), vec![7]);
+        drop(second);
+        assert!(active.snapshot().is_empty());
+    }
+
+    #[test]
+    fn cluster_lifecycle_batch_minimum_uses_strict_age_bound_and_physical_now() {
+        let now_ms = 1_000_000;
+        let now = now_ms << 18;
+        let lower = (now_ms - 60_000) << 18;
+        let inner = InnerTxnStartTsBox::new();
+        assert_eq!(
+            report_min_start_ts(now + 15, 60, [0, lower, now, now + 1], &inner),
+            now
+        );
+        assert_eq!(
+            report_min_start_ts(now + 15, 60, [lower + 1, now - 1], &inner),
+            lower + 1
+        );
+        inner.store_inner_txn_ts(lower + 2);
+        assert_eq!(
+            report_min_start_ts(now + 15, 60, [now - 1], &inner),
+            lower + 2
+        );
+        inner.delete_inner_txn_ts(lower + 2);
+        assert_eq!(report_min_start_ts(now + 15, 60, [], &inner), now);
+    }
 
     /// Go `oracle.GoTimeToTS`: physical milliseconds in the high bits.
     fn go_time_to_ts(unix_millis: u64) -> u64 {

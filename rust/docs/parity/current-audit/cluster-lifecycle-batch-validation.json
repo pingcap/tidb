@@ -1,0 +1,282 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
+  "findings": [
+    "O01",
+    "O09",
+    "N04"
+  ],
+  "statuses": {
+    "O01": "repaired",
+    "O09": "partial",
+    "N04": "partial"
+  },
+  "receipt": "cluster-lifecycle-batch-validation.json",
+  "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance.",
+  "go_reference": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_unchanged": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 32,
+    "partial": 24
+  },
+  "other_unresolved_roots_freshly_reproduced": false,
+  "source_owners": [
+    "pkg/domain/domain.go acquireServerID/proposeServerID/refreshServerIDTTL/serverIDKeeper/releaseServerID",
+    "pkg/domain/infosync/info.go ReportMinStartTS/storeMinStartTS/RemoveMinStartTS",
+    "pkg/domain/serverinfo/syncer.go ServerInfoSyncLoop",
+    "pkg/kv/txn.go inner transaction timestamps",
+    "pkg/planner/core/planbuilder.go KillStmt"
+  ],
+  "validation": {
+    "grouped_tests": {
+      "passed": 58,
+      "failed": 0,
+      "ignored": 0,
+      "command": "cargo test --locked -p tidb-domain -p tidb-txnkv -p tidb-session -p tidb-server --lib -- server_id::tests:: serverinfo_syncer::tests:: inner_txn::tests:: native_transaction_starts_optimistic_until_the_session_promotes_it cursor_state::tests:: tests_grants::processlist:: sql_node::tests:: cluster_lifecycle_batch --include-ignored --test-threads=1"
+    },
+    "all_targets": {
+      "command": "cargo check --locked -p tidb-domain -p tidb-pd-client -p tidb-txnkv -p tidb-session -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "lint": "passed",
+    "locked_build_and_hook": {
+      "command": "cd rust && cargo build --locked -p tidb-server",
+      "build": "passed",
+      "hook": "Executable hooks/pre-commit selected by core.hooksPath=hooks enforces the same command on the normal commit. Exact execution outcome is retained in /workspace/.cloud-setup/cluster-lifecycle-batch/commit.log and final-handoff.json."
+    },
+    "wire": {
+      "phase": "after",
+      "binary_sha256": "7663fd5ba66b457c1f9dce7df5c8ba48175b671c5660dda7b657b44ea25ca409",
+      "checks": [
+        {
+          "mode": "simple",
+          "ids": [
+            1,
+            2
+          ],
+          "pass": true
+        },
+        {
+          "mode": "simple",
+          "name": "SQL storage remains usable",
+          "pass": true
+        },
+        {
+          "mode": "global32",
+          "ids": [
+            2097154,
+            2097156
+          ],
+          "pass": true
+        },
+        {
+          "mode": "global32",
+          "name": "SQL storage remains usable",
+          "pass": true
+        },
+        {
+          "mode": "global64",
+          "ids": [
+            2199023255555,
+            2199023255557
+          ],
+          "pass": true
+        },
+        {
+          "mode": "global64",
+          "name": "SQL storage remains usable",
+          "pass": true
+        }
+      ],
+      "servers": [
+        {
+          "mode": "simple",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/simple.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "54851",
+            "--report-status=false"
+          ]
+        },
+        {
+          "mode": "global32",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/global32.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "45671",
+            "--report-status=false"
+          ]
+        },
+        {
+          "mode": "global64",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/global64.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "40153",
+            "--report-status=false"
+          ]
+        }
+      ]
+    },
+    "format": "Scoped rustfmt --check (skip_children=true) and git diff --check passed; unrelated existing formatting preserved.",
+    "wire_command": "source /workspace/.cloud-setup/env.sh; PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/cluster-lifecycle-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server"
+  },
+  "baseline": {
+    "rust": "3 assertions failed against the original allocator/publication code; 0 passed, 0 ignored",
+    "wire": {
+      "phase": "before",
+      "binary_sha256": "46e4f71210b77bb33ed98f765b50634e5e2a224dd6e45505c925762f413f92a6",
+      "checks": [
+        {
+          "mode": "simple",
+          "ids": [
+            2097154,
+            2097156
+          ],
+          "pass": false
+        },
+        {
+          "mode": "simple",
+          "name": "SQL storage remains usable",
+          "pass": true
+        },
+        {
+          "mode": "global32",
+          "ids": [
+            2097154,
+            2097156
+          ],
+          "pass": true
+        },
+        {
+          "mode": "global32",
+          "name": "SQL storage remains usable",
+          "pass": true
+        },
+        {
+          "mode": "global64",
+          "ids": [
+            2097154,
+            2097156
+          ],
+          "pass": false
+        },
+        {
+          "mode": "global64",
+          "name": "SQL storage remains usable",
+          "pass": true
+        }
+      ],
+      "servers": [
+        {
+          "mode": "simple",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/simple.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "43661",
+            "--report-status=false"
+          ]
+        },
+        {
+          "mode": "global32",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/global32.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "57465",
+            "--report-status=false"
+          ]
+        },
+        {
+          "mode": "global64",
+          "exit": 0,
+          "command": [
+            "/workspace/tidb/rust/target/debug/tidb-server",
+            "--store",
+            "unistore",
+            "--config",
+            "/workspace/.cloud-setup/cluster-lifecycle-batch/global64.toml",
+            "--auth-file",
+            "/workspace/.cloud-setup/users.tsv",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "49929",
+            "--report-status=false"
+          ]
+        }
+      ]
+    },
+    "real_etcd": "Initial recovery test failed after explicit lease revocation; passed after preserving LeaseExpired. Real two-owner claims, expiration/reacquisition, numeric republication and minimum lease replacement/removal are exercised."
+  },
+  "evidence_boundary": [
+    "No complete Go package acceptance",
+    "No live multi-node TiKV or Go-peer GC validation",
+    "No GC worker activation",
+    "No performance measurement or speedup claim",
+    "N04 internal authorization does not implement remote or internal-task kill dispatch",
+    "O09 retains lazy InfoSchema (I04), DDL queue exclusion and internal-session diagnostic gaps"
+  ],
+  "artifacts": "/workspace/.cloud-setup/cluster-lifecycle-batch",
+  "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_INCREMENTAL=0; RUST_MIN_STACK=33554432; cargo cwd /workspace/tidb/rust",
+  "setup": {
+    "etcd": "Debian trixie signed repository etcd-server 3.5.16-4, installed under /workspace/.cloud-setup/tools",
+    "initial_wire_error": "An unactivated baseline attempt lacked RUST_MIN_STACK and one process overflowed its stack. The activated baseline was rerun: all three server exits are zero; only the two expected ID-mode assertions fail.",
+    "github_api_release_read": "HTTP 403; no credentials extracted or network policy broadened. Signed Debian package used instead."
+  },
+  "publication": "No push or push dry-run. Local commit, recovery bundle and Cloud draft will be recorded in the external final handoff.",
+  "remote_observation": {
+    "integration": "219a0de48ec86ab988c536e587e150543c524948",
+    "state": "Fetched but unmerged; concurrent schema acknowledgement changes preserved",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "native_master": "19a56ccda1e128218cd33c69709038219aced9bc",
+    "authentication": "Read-only ls-remote succeeded for both repositories after user requested login. No write/dry-run probe. Managed login is through Codex GitHub connection settings."
+  }
+}

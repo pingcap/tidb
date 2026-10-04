@@ -103,6 +103,8 @@ pub const SYSVAR_UPDATE_KEY: &str = "/tidb/sysvars";
 /// Why an etcd call or watch could not be completed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EtcdError {
+    /// The server confirmed that a lease no longer exists (TTL is zero).
+    LeaseExpired,
     /// A configured endpoint is not a plaintext URI this client can dial.
     InvalidEndpoint {
         /// The endpoint as configured.
@@ -132,6 +134,7 @@ pub enum EtcdError {
 impl std::fmt::Display for EtcdError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LeaseExpired => formatter.write_str("etcd lease expired"),
             Self::InvalidEndpoint { endpoint, message } => {
                 write!(formatter, "invalid etcd endpoint {endpoint}: {message}")
             }
@@ -181,6 +184,7 @@ enum EtcdCommand {
         reply: mpsc::Sender<Result<bool, EtcdError>>,
     },
     CreateOrGetWithLease {
+        timeout: Duration,
         key: Vec<u8>,
         value: Vec<u8>,
         lease: i64,
@@ -657,10 +661,22 @@ impl EtcdClient {
         value: &[u8],
         lease: i64,
     ) -> Result<EtcdCreateOrGet, EtcdError> {
+        self.create_or_get_with_lease_with_timeout(key, value, lease, self.shared.timeout)
+    }
+
+    /// Creates a leased claim with the owner's operation deadline.
+    pub fn create_or_get_with_lease_with_timeout(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+        timeout: Duration,
+    ) -> Result<EtcdCreateOrGet, EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
             .send(EtcdCommand::CreateOrGetWithLease {
+                timeout,
                 key: key.to_vec(),
                 value: value.to_vec(),
                 lease,
@@ -1099,6 +1115,13 @@ fn run_kv_worker(
                         })
                     },
                 );
+                let result = result.and_then(|ttl| {
+                    if ttl > 0 {
+                        Ok(ttl)
+                    } else {
+                        Err(EtcdError::LeaseExpired)
+                    }
+                });
                 let _ = reply.send(result);
             }
             EtcdCommand::GetPrefix { prefix, reply } => {
@@ -1185,6 +1208,7 @@ fn run_kv_worker(
                 let _ = reply.send(result);
             }
             EtcdCommand::CreateOrGetWithLease {
+                timeout,
                 key,
                 value,
                 lease,
@@ -1520,7 +1544,13 @@ fn across_endpoints<T>(
             Ok(value) => return Ok(value),
             Err(error) => {
                 clients.remove(&cache_key);
-                last = Some(classify_rpc_error(endpoint, error));
+                let error = classify_rpc_error(endpoint, error);
+                // A confirmed missing lease is cluster state, not a failed
+                // endpoint. Do not hide it behind another peer's outage.
+                if error == EtcdError::LeaseExpired {
+                    return Err(error);
+                }
+                last = Some(error);
             }
         }
     }
@@ -1539,6 +1569,12 @@ fn strip_scheme(endpoint: &str) -> &str {
 
 fn classify_rpc_error(endpoint: &str, error: RawEtcdError) -> EtcdError {
     match error {
+        // etcd-client consumes the initial TTL-zero response and exposes it
+        // through this precise variant/message. Preserve it as expiration,
+        // not a transport outage, so claim owners can create a new session.
+        RawEtcdError::LeaseKeepAliveError(message) if message == "lease not found" => {
+            EtcdError::LeaseExpired
+        }
         RawEtcdError::GRpcStatus(status) => EtcdError::Unreachable {
             endpoint: endpoint.to_owned(),
             code: format!("{:?}", status.code()),

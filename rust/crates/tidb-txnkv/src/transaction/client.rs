@@ -34,6 +34,7 @@ pub struct ClientTransaction<C, L, T> {
     sql_staging: bool,
     check_existence: bool,
     start_ts: u64,
+    _start_ts_guard: crate::inner_txn::StartTsGuard,
     authority_id: u64,
     gc_state: Arc<GcStateCache>,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
@@ -166,6 +167,7 @@ where
             check_existence: false,
             marker: std::marker::PhantomData,
             start_ts,
+            _start_ts_guard: crate::inner_txn::ACTIVE_START_TS.hold(start_ts),
             authority_id,
             gc_state,
             snapshot_stats,
@@ -970,10 +972,13 @@ mod tests {
             runtime,
             crate::lock::FixedTimestampSource::new(200),
             Duration::from_secs(1),
-            100,
+            765432108,
             Instant::now(),
         )
         .unwrap();
+        assert!(crate::inner_txn::ACTIVE_START_TS
+            .snapshot()
+            .contains(&765432108));
         // client-go NewTiKVTxn leaves isPessimistic false. TiDB changes the
         // same KVTxn only when its session transaction mode requires locks.
         assert!(!transaction
@@ -989,6 +994,10 @@ mod tests {
             .transaction_mut()
             .inner_mut()
             .is_pessimistic());
+        drop(pessimistic);
+        assert!(!crate::inner_txn::ACTIVE_START_TS
+            .snapshot()
+            .contains(&765432108));
     }
 
     #[test]

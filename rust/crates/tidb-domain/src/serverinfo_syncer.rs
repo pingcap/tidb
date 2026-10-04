@@ -31,15 +31,12 @@
 //! `info.go` is ported whole in [`crate::serverinfo`]: its six constants,
 //! five types, and all six methods (`IsAssumed`, both `Clone`s,
 //! `Marshal`, `Unmarshal`, `ToTopologyInfo`) with the two wire quirks the
-//! model documents. `syncer.go`'s functions are ported here except four,
+//! model documents. `syncer.go`'s functions are ported here except three,
 //! each waiting on a seam this port does not have yet -- named rather
 //! than silently dropped:
 //!
 //! * `NewCrossKSSyncer` -- keyspaces, which arrive with their own track.
 //!   `Keyspace`/`AssumedKeyspace` stay empty for the same reason.
-//! * `ServerInfoSyncLoop`'s `ReportMinStartTS` leg and its
-//!   `MinStartTSReporter` interface, which reach into the session manager
-//!   to report the oldest live statement's timestamp for GC.
 //! * the DDL-owner half of `cleanupStaleServerAndOwnerInfo`
 //!   (`owner.DeleteOwnerKeyByID`), which needs owner election. The
 //!   server-info half -- the stale same-IP+Port record -- is here.
@@ -60,9 +57,8 @@
 //! a process -- and the `/ttl` key beside it, refreshed under the
 //! topology session's lease, is what reports the process alive.
 //!
-//! `ServerInfoSyncLoop`'s min-start-ts reporting needs
-//! `MinStartTSReporter`, which reaches into the session manager, and
-//! waits on that seam; the loops themselves are the boot wiring's job.
+//! `SyncerRunner::start_min_start_ts_reporter` retains the boot-supplied
+//! timestamp producer and publishes under the current server-info lease.
 //!
 //! # Testing
 //!
@@ -93,6 +89,19 @@ pub const SESSION_TTL_SECONDS: i64 = 90;
 /// production implementation is `tidb_pd_client::etcd::EtcdClient`; the
 /// tests below use a fake.
 pub trait EtcdOps: Send + Sync {
+    /// Create-revision-zero transaction used to claim a numeric server ID.
+    fn create_if_absent_with_lease(
+        &self,
+        _key: &str,
+        _value: &[u8],
+        _lease: i64,
+    ) -> Result<bool, String> {
+        Err("leased create transaction is unavailable".to_owned())
+    }
+    /// Lease keepalive retaining the server's TTL-zero expiration signal.
+    fn lease_keep_alive_ttl(&self, lease: i64) -> Result<i64, String> {
+        self.lease_keep_alive_once(lease).map(|()| 1)
+    }
     /// `Lease.LeaseGrant`, answering the granted lease id.
     fn lease_grant(&self, ttl_seconds: i64) -> Result<i64, String>;
     /// One `Lease.LeaseKeepAlive` round.
@@ -101,6 +110,24 @@ pub trait EtcdOps: Send + Sync {
     fn lease_revoke(&self, lease: i64) -> Result<(), String>;
     /// `KV.Put` with a lease attached.
     fn put_with_lease(&self, key: &str, value: &[u8], lease: i64) -> Result<(), String>;
+    /// Go ddl/util.PutKVToEtcd: bounded attempts with the source retry interval.
+    fn put_with_lease_retry(
+        &self,
+        key: &str,
+        value: &[u8],
+        lease: i64,
+        retries: usize,
+    ) -> Result<(), String> {
+        let mut result = Ok(());
+        for _ in 0..retries {
+            result = self.put_with_lease(key, value, lease);
+            if result.is_ok() {
+                return result;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        result
+    }
     /// `KV.Range` over `[prefix, prefix+1)` -- `clientv3.WithPrefix()`.
     fn get_prefix(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String>;
     /// `KV.DeleteRange` of one key.
@@ -187,6 +214,40 @@ impl Syncer {
         }
     }
 
+    /// Go storeMinStartTS: decimal TSO under the current server-info lease.
+    pub fn store_min_start_ts(&self, start_ts: u64) -> Result<(), String> {
+        let Some(etcd) = &self.etcd else {
+            return Ok(());
+        };
+        let key = format!(
+            "/tidb/server/minstartts/{}",
+            self.local_server_info().static_info.id
+        );
+        let value = start_ts.to_string();
+        let lease = self
+            .session_lease()
+            .ok_or("server-info session is unavailable")?;
+        etcd.put_with_lease_retry(
+            &key,
+            value.as_bytes(),
+            lease,
+            crate::serverinfo::KEY_OP_DEFAULT_RETRY_CNT,
+        )
+    }
+
+    /// Go RemoveMinStartTS, after the reporting worker has stopped.
+    pub fn remove_min_start_ts(&self) {
+        if let Some(etcd) = &self.etcd {
+            let key = format!(
+                "/tidb/server/minstartts/{}",
+                self.local_server_info().static_info.id
+            );
+            if let Err(error) = etcd.delete(&key) {
+                tracing::warn!(%error, "remove min start TS failed");
+            }
+        }
+    }
+
     /// The etcd key this node publishes itself under.
     #[must_use]
     pub fn server_info_path(&self) -> &str {
@@ -253,7 +314,12 @@ impl Syncer {
             let mut info = self.info.lock().unwrap_or_else(|e| e.into_inner());
             info.marshal().map_err(|error| error.to_string())?
         };
-        etcd.put_with_lease(&self.server_info_path, &bytes, lease)
+        etcd.put_with_lease_retry(
+            &self.server_info_path,
+            &bytes,
+            lease,
+            crate::serverinfo::KEY_OP_DEFAULT_RETRY_CNT,
+        )
     }
 
     /// Go `Restart`: a fresh session and a republish, which is what a
@@ -717,6 +783,29 @@ impl SyncerRunner {
         })
     }
 
+    /// Installs Go's thirty-second ReportMinStartTS leg after session owners exist.
+    /// The closure snapshots owners before asking storage for its current version.
+    pub fn start_min_start_ts_reporter(
+        &mut self,
+        report: impl Fn() -> Result<u64, String> + Send + 'static,
+    ) -> Result<(), String> {
+        let syncer = Arc::clone(&self.syncer);
+        let stop = Arc::clone(&self.stop);
+        self.threads.push(
+            std::thread::Builder::new()
+                .name("min-start-ts".into())
+                .spawn(move || {
+                    while !sleep_until_stopped(&stop, std::time::Duration::from_secs(30)) {
+                        if let Err(error) = report().and_then(|ts| syncer.store_min_start_ts(ts)) {
+                            tracing::warn!(%error, "update minStartTS failed");
+                        }
+                    }
+                })
+                .map_err(|error| error.to_string())?,
+        );
+        Ok(())
+    }
+
     /// The syncer these loops refresh, for the reads a caller still wants.
     #[must_use]
     pub fn syncer(&self) -> &Arc<Syncer> {
@@ -730,6 +819,7 @@ impl Drop for SyncerRunner {
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
+        self.syncer.remove_min_start_ts();
         self.syncer.remove_server_info();
         self.syncer.remove_topology_info();
     }
@@ -786,6 +876,27 @@ mod tests {
     use crate::serverinfo::StaticInfo;
 
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn cluster_lifecycle_batch_min_start_ts_uses_replaced_lease_and_is_removed() {
+        let etcd = Arc::new(FakeEtcd::default());
+        let mut info = ServerInfo::default();
+        info.static_info.id = "minimum".into();
+        let syncer = Syncer::new_with_status_endpoint_claim(info, Some(etcd.clone()), false);
+        assert!(syncer.store_min_start_ts(123).is_err());
+        syncer.new_session_and_store_server_info().unwrap();
+        syncer.store_min_start_ts(123).unwrap();
+        let key = "/tidb/server/minstartts/minimum";
+        let first = etcd.value(key).unwrap();
+        assert_eq!(first, (b"123".to_vec(), syncer.session_lease().unwrap()));
+        syncer.restart().unwrap();
+        syncer.store_min_start_ts(456).unwrap();
+        let next = etcd.value(key).unwrap();
+        assert_ne!(first.1, next.1);
+        assert_eq!(next, (b"456".to_vec(), syncer.session_lease().unwrap()));
+        syncer.remove_min_start_ts();
+        assert!(etcd.value(key).is_none());
+    }
 
     #[derive(Default)]
     struct FakeEtcd {
