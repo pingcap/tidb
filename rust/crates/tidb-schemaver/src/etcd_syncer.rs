@@ -447,12 +447,16 @@ impl GlobalVerWatcher {
 
     /// Go `Watcher.Watch`: start feeding the global-version channel.
     fn watch(&self, ctx: &Context) {
-        self.rewatch(ctx);
+        self.start_watch(ctx, false);
     }
 
     /// Go `Watcher.Rewatch`: end the old watch, start a fresh one. A new
     /// channel replaces the old, exactly as upstream swaps `watchCh`.
     fn rewatch(&self, ctx: &Context) {
+        self.start_watch(ctx, true);
+    }
+
+    fn start_watch(&self, ctx: &Context, replay_current: bool) {
         if let Some(previous) = self
             .current
             .lock()
@@ -461,7 +465,23 @@ impl GlobalVerWatcher {
         {
             previous.stop.store(true, Ordering::Release);
         }
-        match self.etcd.watch(DDL_GLOBAL_SCHEMA_VERSION, 0, false, false) {
+        // Establish the replacement watch from an authoritative read.  A
+        // watch created at revision 0 can miss a version published between a
+        // failed watch and its replacement; replay the current value and
+        // continue from the read revision, matching Go's range-then-watch
+        // handoff semantics.
+        let (current_value, revision) = if replay_current {
+            self.etcd
+                .get_with_mod_revision(DDL_GLOBAL_SCHEMA_VERSION)
+                .unwrap_or((None, 0))
+        } else {
+            (None, 0)
+        };
+        let start_revision = if revision > 0 { revision + 1 } else { 0 };
+        match self
+            .etcd
+            .watch(DDL_GLOBAL_SCHEMA_VERSION, start_revision, false, false)
+        {
             Ok(stream) => {
                 // A forwarding thread turns the raw stream into Go's watch
                 // channel: plain events for the consumer, ended on error.
@@ -474,6 +494,13 @@ impl GlobalVerWatcher {
                     stop: Arc::clone(&stream.stop),
                 });
                 let watch_ctx = ctx.clone();
+                if let Some(value) = current_value {
+                    let _ = sender.send(WatchEvent {
+                        key: DDL_GLOBAL_SCHEMA_VERSION.to_owned(),
+                        value,
+                        deleted: false,
+                    });
+                }
                 std::thread::Builder::new()
                     .name("ddl-global-ver-watch".to_owned())
                     .spawn(move || {
@@ -1628,6 +1655,23 @@ mod tests {
     }
 
     // ---- Go TestSyncJobSchemaVerLoop ----
+
+    #[test]
+    fn global_watch_replays_version_published_before_rewatch() {
+        let _guard = globals_test_lock();
+        let etcd = FakeEtcd::default();
+        etcd.put_raw(DDL_GLOBAL_SCHEMA_VERSION, "39");
+        let syncer = new_syncer(&etcd);
+        let ctx = Context::background();
+        syncer.init(&ctx).unwrap();
+        syncer.watch_global_schema_ver(&ctx);
+
+        let event = watch_rx_next(&syncer.global_version_ch(), Duration::from_secs(1))
+            .expect("authoritative global version replay");
+        assert_eq!(event.key, DDL_GLOBAL_SCHEMA_VERSION);
+        assert_eq!(event.value, b"39");
+        assert!(!event.deleted);
+    }
 
     #[test]
     fn test_sync_job_schema_ver_loop() {
