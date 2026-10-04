@@ -167,7 +167,36 @@ pub(crate) fn physical_dml_plan(
     fk_spec: &fk_trigger_plan::FkPlanSpec,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     physical_dml_plan_with_cache_mode(
-        operator, source, update, catalog, current_db, ctx, false, fk_spec,
+        operator,
+        source,
+        update,
+        catalog,
+        current_db,
+        ctx,
+        false,
+        std::slice::from_ref(fk_spec),
+    )
+}
+
+/// Multi-table callers carry all resolved table policies into the same DML
+/// allocator and source builder used by single-table writes.
+pub(crate) fn physical_multi_dml_plan(
+    operator: &str,
+    source: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    fk_specs: &[fk_trigger_plan::FkPlanSpec],
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    physical_dml_plan_with_cache_mode(
+        operator,
+        Some(source),
+        None,
+        catalog,
+        current_db,
+        ctx,
+        false,
+        fk_specs,
     )
 }
 
@@ -195,7 +224,7 @@ fn physical_dml_plan_with_cache_mode(
     current_db: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
-    fk_spec: &fk_trigger_plan::FkPlanSpec,
+    fk_specs: &[fk_trigger_plan::FkPlanSpec],
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
@@ -293,11 +322,16 @@ fn physical_dml_plan_with_cache_mode(
         ),
     };
 
-    let base =
-        root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
+    let base = root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
     // Go `BuildOn{Insert,Update,Delete}FKTriggers`, last in the builders.
-    let fk_triggers =
-        fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, fk_spec, &plan_ids);
+    let mut fk_triggers = fk_specs
+        .iter()
+        .flat_map(|spec| {
+            fk_trigger_plan::build_fk_triggers(catalog, ctx, operator, spec, &plan_ids)
+        })
+        .collect::<Vec<_>>();
+    // Go flattens all checks before all cascades, preserving table order.
+    fk_triggers.sort_by_key(|node| node.operator == "Foreign_Key_Cascade");
     let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
         base,
         go_operator: operator.to_owned(),
@@ -2784,7 +2818,7 @@ fn cached_dml_physical_plan(
         current_database,
         ctx,
         true,
-        &fk_spec,
+        std::slice::from_ref(&fk_spec),
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.

@@ -1809,6 +1809,14 @@ impl KvTable {
         self.max_foreign_key_id
     }
 
+    /// Retains IDs consumed by a rolled-back DDL job without publishing its
+    /// constraint, index or row changes. Go dropForeignKey leaves this
+    /// high-water mark intact after onCreateForeignKey enters rollback.
+    pub(crate) fn retain_foreign_key_ids_from(&mut self, staged: &Self) {
+        debug_assert_eq!(self.table_id, staged.table_id);
+        self.max_foreign_key_id = self.max_foreign_key_id.max(staged.max_foreign_key_id);
+    }
+
     /// The name Go gives the NEXT unnamed constraint on this table:
     /// `fk_{MaxForeignKeyID+1}`.
     #[must_use]

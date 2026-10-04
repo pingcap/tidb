@@ -1,5 +1,8 @@
 # Structural execution batches for the remaining findings
 
+The [DML metadata batch](dml-owner-batch-repair.md) advances **A01/E02/E03 together**: metadata-only joined sources, shared write-target authorization and per-table FK plans. Retained failures also repair synchronous FK-ID rollback and strict single-statement parsing. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; executable FK objects, row identities and matrix execution are still open. See the validation receipt for actual grouped checks. No complete package acceptance or push.
+
+
 Latest B05 maintenance: [admission-policy batch](admission-policy-batch-repair.md) repairs retained-password and specified certificate consumers together. Counts stay 57 unresolved; remaining durable login-counter/GRANT/cache and certificate reload/rotation/no-CA/platform owners stay explicit. Other 55 IDs retain earlier evidence.
 
 The current register has **57 unresolved findings: 39 open and 18 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.

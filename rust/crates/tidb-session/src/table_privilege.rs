@@ -15,7 +15,7 @@
 //! The table-scope privileges one statement demands -- Go's `visitInfo`.
 //!
 //! Go collects these while planning and checks them after name resolution.
-//! UPDATE targets below come from the logical planner's resolved output names;
+//! UPDATE and DELETE targets below come from shared resolved source metadata;
 //! SQL spelling alone cannot identify the owner of an unqualified column.
 //! Other statement collectors still use the AST and remain a parity boundary.
 
@@ -199,55 +199,6 @@ fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Resolves a multi-table `DELETE` target, which is written as a
-/// bare name that may be either a table or one of the join's ALIASES.
-///
-/// Returns `None` when the name matches no source in the statement's own
-/// join: Go resolves it through the plan's output names, and a name this
-/// function cannot place is one that would need that resolution.
-fn resolve_target(
-    target: &[String],
-    sources: &[(String, String, Option<String>)],
-    current_db: &str,
-) -> Option<(String, String)> {
-    let (schema, name) = match target {
-        [name] => (None, name.as_str()),
-        [schema, name] => (Some(schema.as_str()), name.as_str()),
-        _ => return None,
-    };
-    // An alias hides the table it renames, so it is matched first and only
-    // for the unqualified spelling (`db.alias` is not a thing).
-    if schema.is_none() {
-        if let Some((source_db, source_table, _)) = sources.iter().find(|(_, _, alias)| {
-            alias
-                .as_deref()
-                .is_some_and(|alias| alias.eq_ignore_ascii_case(name))
-        }) {
-            return Some((source_db.clone(), source_table.clone()));
-        }
-    }
-    let schema = schema.unwrap_or(current_db);
-    sources
-        .iter()
-        .find(|(source_db, source_table, alias)| {
-            alias.is_none()
-                && source_db.eq_ignore_ascii_case(schema)
-                && source_table.eq_ignore_ascii_case(name)
-        })
-        .map(|(source_db, source_table, _)| (source_db.clone(), source_table.clone()))
-}
-
-/// The `(schema, table, alias)` of every `TableRef` in `stmt`, for target
-/// resolution.
-fn aliased_sources(stmt: &Stmt, current_db: &str) -> Vec<(String, String, Option<String>)> {
-    crate::binding::collect_table_refs(stmt)
-        .into_iter()
-        .filter_map(|(path, alias)| {
-            split_path(&path, current_db).map(|(schema, table)| (schema, table, alias))
-        })
-        .collect()
-}
-
 /// Go's `visitInfo` for one statement, in the order its builder appends it.
 ///
 /// An empty list means the statement demands no TABLE-scope privilege here:
@@ -257,8 +208,8 @@ fn aliased_sources(stmt: &Stmt, current_db: &str) -> Vec<(String, String, Option
 pub(crate) fn required_table_privileges(
     stmt: &Stmt,
     current_db: &str,
-    resolve_update: impl FnOnce(
-        &tidb_ast::UpdateStmt,
+    resolve_write: impl FnOnce(
+        &tidb_ast::DmlStmt,
     ) -> Result<Vec<(String, String)>, tidb_executor::DriverError>,
 ) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
@@ -315,7 +266,7 @@ pub(crate) fn required_table_privileges(
             // 6490) then demands `UpdatePriv` on each assignment's table --
             // with no `authErr`, which is why a denied `UPDATE` reports 8121
             // rather than 1142.
-            DmlStmt::Update(update) => {
+            DmlStmt::Update(_) => {
                 for (schema, table) in read_tables(stmt, current_db) {
                     requests.push(TablePrivilegeRequest::new(
                         &schema,
@@ -323,7 +274,7 @@ pub(crate) fn required_table_privileges(
                         GlobalPriv::Select,
                     ));
                 }
-                for (schema, table) in resolve_update(update)? {
+                for (schema, table) in resolve_write(dml)? {
                     requests.push(TablePrivilegeRequest::unnamed(
                         &schema,
                         &table,
@@ -343,30 +294,17 @@ pub(crate) fn required_table_privileges(
                         GlobalPriv::Select,
                     ));
                 }
-                match &delete.kind {
-                    tidb_ast::DeleteKind::Single(table_ref) => {
-                        if let Some((schema, table)) = split_path(&table_ref.name, current_db) {
-                            requests.push(TablePrivilegeRequest::new(
-                                &schema,
-                                &table,
-                                GlobalPriv::Delete,
-                            ));
-                        }
-                    }
-                    tidb_ast::DeleteKind::Multi { targets, .. } => {
-                        let sources = aliased_sources(stmt, current_db);
-                        for target in targets {
-                            if let Some((schema, table)) =
-                                resolve_target(target, &sources, current_db)
-                            {
-                                requests.push(TablePrivilegeRequest::new(
-                                    &schema,
-                                    &table,
-                                    GlobalPriv::Delete,
-                                ));
-                            }
-                        }
-                    }
+                // Go buildDelete removes its final source SELECT visit
+                // when neither a WHERE nor ORDER clause needs it.
+                if delete.where_clause.is_none() && delete.order_by.is_empty() {
+                    requests.pop();
+                }
+                for (schema, table) in resolve_write(dml)? {
+                    requests.push(TablePrivilegeRequest::new(
+                        &schema,
+                        &table,
+                        GlobalPriv::Delete,
+                    ));
                 }
             }
             // Every other DML form is refused as unsupported before it

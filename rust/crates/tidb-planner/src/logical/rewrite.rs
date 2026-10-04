@@ -2666,10 +2666,21 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     self.stash.push(PendingTopN::Nothing);
                     return Descend::Children(vec![None; child_count.max(1)]);
                 };
-                if op
-                    .exprs
-                    .iter()
-                    .any(tidb_expr::evaluator::has_get_set_var_func)
+                // A source-less correlated SELECT can have a zero-column
+                // Selection over TableDual. Keep the limit above its output
+                // projection: pushing it below would create a schema-owning
+                // Limit with zero columns, violating ColumnPruner's invariant.
+                // The projection is the owner that produces those values.
+                let child_has_no_columns = op
+                    .base
+                    .children()
+                    .first()
+                    .is_some_and(|child| child.schema().is_none_or(Schema::is_empty));
+                if child_has_no_columns
+                    || op
+                        .exprs
+                        .iter()
+                        .any(tidb_expr::evaluator::has_get_set_var_func)
                 {
                     self.stash.push(PendingTopN::Reattach(incoming));
                     return Descend::Children(vec![None; child_count]);

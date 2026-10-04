@@ -339,7 +339,7 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
-        crate::table_privilege::required_table_privileges(stmt, &self.current_db, |update| {
+        crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
             let mut ctx = self.statement_context_for_stmt(stmt, false);
             if preparing {
                 // Go initializes each PREPARE marker to NULL before building
@@ -351,8 +351,8 @@ impl Session {
             }
             let resolve = |catalog: &tidb_executor::Catalog| {
                 if self.local_temporary_tables.is_empty() {
-                    return tidb_executor::driver::update_privilege_tables(
-                        update,
+                    return tidb_executor::driver::write_privilege_tables(
+                        dml,
                         catalog,
                         &self.current_db,
                         &ctx,
@@ -362,12 +362,7 @@ impl Session {
                 // executor, including a temporary table shadowing a base table.
                 let mut catalog = catalog.clone();
                 catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
-                tidb_executor::driver::update_privilege_tables(
-                    update,
-                    &catalog,
-                    &self.current_db,
-                    &ctx,
-                )
+                tidb_executor::driver::write_privilege_tables(dml, &catalog, &self.current_db, &ctx)
             };
             match &self.txn {
                 Some(txn) => resolve(&txn.working),

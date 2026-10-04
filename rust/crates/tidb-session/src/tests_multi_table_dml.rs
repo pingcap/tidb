@@ -1160,7 +1160,7 @@ fn a_syntax_error_carries_gos_sentence_and_position() {
     );
 
     // No Debug formatting may reach the wire.
-    for sql in ["SELECT * FROM", "SELECT 1; SELECT 2"] {
+    for sql in ["SELECT * FROM", "SELECT 1 SELECT 2"] {
         let wire = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(wire.code, 1064, "{sql}");
         assert!(
@@ -1170,6 +1170,14 @@ fn a_syntax_error_carries_gos_sentence_and_position() {
         );
         assert!(wire.message.starts_with(PREFIX), "{sql}: {}", wire.message);
     }
+    // Go Parser.ParseOneStmt parses the entire list, then rejects its
+    // cardinality with ErrSyntax (1149), not a positional ErrParse (1064).
+    let wire = session
+        .run("SELECT 1; SELECT 2")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(wire.code, 1149);
+    assert_eq!(wire.message, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use");
 }
 
 /// Go `conn.go:1874`: a COM_QUERY text that parses to zero statements —
@@ -1517,4 +1525,135 @@ fn shared_update_record_odku_ignore_keeps_earlier_writes() {
         ["1|11", "2|20", "3|30"]
     );
     session.run("ADMIN CHECK TABLE od_ignore").unwrap();
+}
+
+#[test]
+fn dml_owner_derived_update_executes_source_once() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE owner_t (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO owner_t VALUES (1,0)").unwrap();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    assert_eq!(affected(&mut session, "UPDATE owner_t JOIN (SELECT NEXTVAL(owner_seq) AS n LIMIT 1) d ON TRUE SET owner_t.v=d.n"), 1);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_t"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT LASTVAL(owner_seq)"), ["1"]);
+}
+
+#[test]
+fn dml_owner_derived_delete_executes_source_once() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE owner_t (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO owner_t VALUES (1)").unwrap();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    assert_eq!(affected(&mut session, "DELETE owner_t FROM owner_t JOIN (SELECT NEXTVAL(owner_seq) AS n LIMIT 1) d ON owner_t.id=d.n"), 1);
+    assert_eq!(column(&mut session, "SELECT LASTVAL(owner_seq)"), ["1"]);
+}
+
+#[test]
+fn dml_owner_lateral_update_does_not_execute_a_schema_probe() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE owner_t (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO owner_t VALUES (1,0)").unwrap();
+    session.run("CREATE SEQUENCE owner_seq").unwrap();
+    assert_eq!(affected(&mut session, "UPDATE owner_t JOIN LATERAL (SELECT NEXTVAL(owner_seq) AS n WHERE owner_t.id=1 LIMIT 1) d ON TRUE SET owner_t.v=d.n"), 1);
+    assert_eq!(column(&mut session, "SELECT v FROM owner_t"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT LASTVAL(owner_seq)"), ["1"]);
+}
+
+#[test]
+fn dml_owner_explain_resolves_update_and_delete_targets() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE owner_t (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE owner_u (id INT PRIMARY KEY)")
+        .unwrap();
+    for (sql, code) in [
+        (
+            "EXPLAIN UPDATE owner_t JOIN owner_u ON owner_t.id=owner_u.id SET missing=1",
+            1054,
+        ),
+        (
+            "EXPLAIN UPDATE owner_t JOIN (SELECT id FROM owner_u) d ON owner_t.id=d.id SET d.id=2",
+            1288,
+        ),
+        (
+            "EXPLAIN DELETE missing FROM owner_t JOIN owner_u ON owner_t.id=owner_u.id",
+            1109,
+        ),
+        (
+            "EXPLAIN DELETE d FROM owner_t JOIN (SELECT id FROM owner_u) d ON owner_t.id=d.id",
+            1288,
+        ),
+    ] {
+        assert_eq!(
+            session.run(sql).unwrap_err().to_mysql_error().code,
+            code,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn dml_owner_multi_table_fk_plans_follow_resolved_targets() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE owner_p (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE owner_c (id INT PRIMARY KEY, pid INT, v INT, CONSTRAINT owner_fk FOREIGN KEY(pid) REFERENCES owner_p(id) ON DELETE CASCADE ON UPDATE CASCADE)").unwrap();
+    let update = column(
+        &mut session,
+        "EXPLAIN UPDATE owner_c c JOIN owner_p p ON c.pid=p.id SET c.pid=2",
+    );
+    assert!(
+        update
+            .iter()
+            .any(|row| row.contains("Foreign_Key_Check") && row.contains("owner_fk")),
+        "{update:?}"
+    );
+    let delete = column(
+        &mut session,
+        "EXPLAIN DELETE p FROM owner_p p JOIN owner_c c ON p.id=c.pid",
+    );
+    assert!(
+        delete
+            .iter()
+            .any(|row| row.contains("Foreign_Key_Cascade") && row.contains("owner_fk")),
+        "{delete:?}"
+    );
+    let untouched = column(
+        &mut session,
+        "EXPLAIN UPDATE owner_c c JOIN owner_p p ON c.pid=p.id SET c.v=2",
+    );
+    assert!(
+        !untouched.iter().any(|row| row.contains("Foreign_Key_")),
+        "{untouched:?}"
+    );
+    let aliases = column(
+        &mut session,
+        "EXPLAIN UPDATE owner_c c JOIN OWNER_C d ON c.id=d.id SET c.pid=2,d.pid=3",
+    );
+    assert_eq!(
+        aliases
+            .iter()
+            .filter(|row| row.contains("Foreign_Key_Check"))
+            .count(),
+        1,
+        "aliases share one table FK policy: {aliases:?}"
+    );
+    session.run("SET foreign_key_checks=0").unwrap();
+    let disabled = column(
+        &mut session,
+        "EXPLAIN DELETE p FROM owner_p p JOIN owner_c c ON p.id=c.pid",
+    );
+    assert!(
+        !disabled.iter().any(|row| row.contains("Foreign_Key_")),
+        "{disabled:?}"
+    );
 }

@@ -818,7 +818,7 @@ impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtConte
     }
 }
 
-fn logical_from_plan(
+pub(super) fn logical_from_plan(
     join: &tidb_ast::Join,
     catalog: &Catalog,
     current_database: &str,
@@ -854,6 +854,22 @@ pub fn update_privilege_tables(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, String)>, super::DriverError> {
+    let mut tables = Vec::new();
+    for (database, table, _) in update_target_columns(update, catalog, current_db, ctx)? {
+        let target = (database, table);
+        if !tables.contains(&target) {
+            tables.push(target);
+        }
+    }
+    Ok(tables)
+}
+
+pub(super) fn update_target_columns(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, String, String)>, super::DriverError> {
     use super::{split_table_path, DriverError};
     use tidb_ast::{JoinNode, UpdateKind};
     use tidb_datatype::QualifiedColumnName;
@@ -862,7 +878,12 @@ pub fn update_privilege_tables(
     let from = match &update.kind {
         UpdateKind::Single(table) => {
             let (database, name) = split_table_path(&table.name, current_db)?;
-            return Ok(vec![(database.to_owned(), name.to_owned())]);
+            return Ok(update
+                .assignments
+                .iter()
+                .filter_map(|assignment| assignment.col.last())
+                .map(|column| (database.to_owned(), name.to_owned(), column.clone()))
+                .collect());
         }
         UpdateKind::Multi { from, .. } => from,
     };
@@ -924,7 +945,11 @@ pub fn update_privilege_tables(
                 catalog.get_in(database, original),
                 Some(TableEntry::Mem(_) | TableEntry::Kv(_))
             ) {
-                target = Some((database.to_owned(), original.to_owned()));
+                target = Some((
+                    database.to_owned(),
+                    original.to_owned(),
+                    name.column.original.clone(),
+                ));
             }
             break;
         }

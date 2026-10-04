@@ -849,6 +849,29 @@ impl Catalog {
             .map(Arc::make_mut)
     }
 
+    /// Go FK rollback removes staged schema changes but preserves allocated
+    /// constraint IDs. Match physical identities, including a staged rename.
+    pub(crate) fn retain_foreign_key_ids_from(&mut self, staged: &Self) {
+        let staged_tables = staged
+            .databases
+            .values()
+            .flat_map(|db| db.tables.values())
+            .filter_map(|entry| match &**entry {
+                TableEntry::Kv(table) => Some((table.table_id, table)),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for database in Arc::make_mut(&mut self.databases).values_mut() {
+            for entry in Arc::make_mut(database).tables.values_mut() {
+                if let TableEntry::Kv(table) = Arc::make_mut(entry) {
+                    if let Some(staged_table) = staged_tables.get(&table.table_id) {
+                        Arc::make_mut(table).retain_foreign_key_ids_from(staged_table);
+                    }
+                }
+            }
+        }
+    }
+
     /// Sets the Go-compatible maximum index length for this catalog's DDL.
     pub fn set_max_index_length(&mut self, max_index_length: i64) {
         self.max_index_length = max_index_length;

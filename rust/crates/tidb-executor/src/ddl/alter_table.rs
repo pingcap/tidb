@@ -140,7 +140,12 @@ pub fn run_alter_table_in(
     // execute only after every action succeeds, never restore shared counters.
     let mut staged = catalog.clone();
     let mut allocators = PreparedAllocatorChanges::default();
-    run_alter_table_in_inner(alter, &mut staged, current_db, ctx, &mut allocators)?;
+    if let Err(error) =
+        run_alter_table_in_inner(alter, &mut staged, current_db, ctx, &mut allocators)
+    {
+        catalog.retain_foreign_key_ids_from(&staged);
+        return Err(error);
+    }
     allocators.execute()?;
     *catalog = staged;
     Ok(())

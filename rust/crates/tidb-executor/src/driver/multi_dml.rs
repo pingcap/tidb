@@ -217,6 +217,164 @@ impl MultiSource {
     }
 }
 
+/// Resolve source shape through the logical planner without opening any row
+/// source. Derived queries and lateral Apply inputs participate in name/type
+/// resolution, but execute only when the retained physical child is opened.
+fn build_multi_layout(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<MultiSource, DriverError> {
+    let logical = super::planner_bridge::logical_from_plan(join, catalog, current_db, ctx, true)
+        .map_err(super::planner_error_to_driver)?;
+    let schema = logical
+        .schema()
+        .ok_or_else(|| DriverError::unsupported("DML source has no schema"))?;
+    let names = logical.output_names();
+    if schema.columns.len() != names.len() {
+        return Err(DriverError::unsupported(
+            "DML source names and schema differ",
+        ));
+    }
+
+    fn node_layout(
+        node: &tidb_ast::JoinNode,
+        catalog: &Catalog,
+        current_db: &str,
+        ctx: &crate::StmtContext,
+        columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
+    ) -> Result<MultiSource, DriverError> {
+        let (visible, qualifiable_db, origin, columns, default_meta) = match node {
+            tidb_ast::JoinNode::Join(join) => {
+                return join_layout(join, catalog, current_db, ctx, columns_for_alias)
+            }
+            tidb_ast::JoinNode::Table(table) => {
+                let (database, name) = split_table_path(&table.name, current_db)?;
+                let entry = catalog.get_in(database, name).ok_or_else(|| {
+                    DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                        "{database}.{name}"
+                    )))
+                })?;
+                let origin = match entry {
+                    TableEntry::Mem(_) | TableEntry::Kv(_) => SourceOrigin::Base {
+                        database: database.to_owned(),
+                        name: name.to_owned(),
+                    },
+                    TableEntry::View(_) => SourceOrigin::Derived,
+                    TableEntry::Sequence(_) => {
+                        return Err(DriverError::unsupported(
+                            "a sequence is not supported in multi-table DML",
+                        ))
+                    }
+                };
+                (
+                    table.alias.clone().unwrap_or_else(|| name.to_owned()),
+                    table.alias.is_none().then(|| database.to_owned()),
+                    origin,
+                    entry.column_list(),
+                    super::dml::column_metadata(entry),
+                )
+            }
+            tidb_ast::JoinNode::Derived { alias, .. } => {
+                let alias = alias
+                    .as_deref()
+                    .filter(|alias| !alias.is_empty())
+                    .ok_or(DriverError::DerivedMustHaveAlias)?;
+                (
+                    alias.to_owned(),
+                    None,
+                    SourceOrigin::Derived,
+                    columns_for_alias(alias)?,
+                    Vec::new(),
+                )
+            }
+        };
+        Ok(MultiSource {
+            tables: vec![SourceTable {
+                visible,
+                qualifiable_db,
+                origin,
+                columns,
+                default_meta,
+                offset: 0,
+            }],
+            rows: Vec::new(),
+            constant_context: ctx.clone(),
+            coalesced: Vec::new(),
+            star: Vec::new(),
+        })
+    }
+
+    fn join_layout(
+        join: &tidb_ast::Join,
+        catalog: &Catalog,
+        current_db: &str,
+        ctx: &crate::StmtContext,
+        columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
+    ) -> Result<MultiSource, DriverError> {
+        let left = node_layout(&join.left, catalog, current_db, ctx, columns_for_alias)?;
+        match &join.right {
+            Some(right) => join_sources(
+                left,
+                node_layout(right, catalog, current_db, ctx, columns_for_alias)?,
+                join,
+                ctx,
+                true,
+            ),
+            None => Ok(left),
+        }
+    }
+
+    let columns_for_alias = |alias: &str| {
+        schema
+            .columns
+            .iter()
+            .zip(names)
+            .filter(|(_, name)| name.names.table.original.eq_ignore_ascii_case(alias))
+            .map(|(column, name)| {
+                Ok((
+                    name.names.column.original.clone(),
+                    column.ret_type.clone().ok_or_else(|| {
+                        DriverError::unsupported("derived DML column has no type")
+                    })?,
+                ))
+            })
+            .collect::<Result<Vec<_>, DriverError>>()
+    };
+    join_layout(join, catalog, current_db, ctx, &columns_for_alias)
+}
+
+/// DELETE permissions use the same resolved outer targets as execution and
+/// FK planning. Names that occur only inside derived queries cannot name a
+/// writable outer target.
+pub fn delete_privilege_tables(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, String)>, DriverError> {
+    let tidb_ast::DeleteKind::Multi { targets, from, .. } = &delete.kind else {
+        let tidb_ast::DeleteKind::Single(table) = &delete.kind else {
+            unreachable!()
+        };
+        let (database, name) = split_table_path(&table.name, current_db)?;
+        return Ok(vec![(database.to_owned(), name.to_owned())]);
+    };
+    let source = build_multi_layout(from, catalog, current_db, ctx)?;
+    let mut resolved = Vec::new();
+    for slot in resolve_delete_targets(targets, &source)? {
+        let SourceOrigin::Base { database, name } = &source.tables[slot].origin else {
+            unreachable!()
+        };
+        let table = (database.clone(), name.clone());
+        if !resolved.contains(&table) {
+            resolved.push(table);
+        }
+    }
+    Ok(resolved)
+}
+
 /// Reads every base table of `join` into one joined row set, each row
 /// carrying its per-table row identity.
 fn build_multi_source(
@@ -224,9 +382,8 @@ fn build_multi_source(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
-    let left = build_multi_node(&join.left, catalog, current_db, ctx, layout_only)?;
+    let left = build_multi_node(&join.left, catalog, current_db, ctx)?;
     let Some(right_node) = &join.right else {
         // The single-relation wrapper the parser always produces.
         return Ok(left);
@@ -249,8 +406,8 @@ fn build_multi_source(
             ctx,
         );
     }
-    let right = build_multi_node(right_node, catalog, current_db, ctx, layout_only)?;
-    join_sources(left, right, join, ctx)
+    let right = build_multi_node(right_node, catalog, current_db, ctx)?;
+    join_sources(left, right, join, ctx, false)
 }
 
 fn build_multi_node(
@@ -258,15 +415,12 @@ fn build_multi_node(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
     match node {
         tidb_ast::JoinNode::Table(table_ref) => {
-            scan_base_table(table_ref, catalog, current_db, ctx, layout_only)
+            scan_base_table(table_ref, catalog, current_db, ctx)
         }
-        tidb_ast::JoinNode::Join(join) => {
-            build_multi_source(join, catalog, current_db, ctx, layout_only)
-        }
+        tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
         tidb_ast::JoinNode::Derived {
             subquery,
             alias,
@@ -468,7 +622,7 @@ fn join_lateral_source(
     // Build the joined scope once even if the outer relation is empty. Each
     // row below uses the same physical layout and conditions, but receives a
     // freshly bound inner relation as Go's Apply does.
-    let mut result = join_sources(new_left(Vec::new()), new_right(Vec::new()), join, ctx)?;
+    let mut result = join_sources(new_left(Vec::new()), new_right(Vec::new()), join, ctx, true)?;
     for (left_ids, left_values) in left_rows {
         let mut bindings = Vec::with_capacity(correlated.len());
         for (path, index) in correlated.iter().zip(&correlated_indices) {
@@ -486,6 +640,7 @@ fn join_lateral_source(
             new_right(right_rows),
             join,
             ctx,
+            false,
         )?;
         result.rows.extend(joined.rows);
     }
@@ -498,7 +653,6 @@ fn scan_base_table(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog.get_in(database, name).ok_or_else(|| {
@@ -515,8 +669,6 @@ fn scan_base_table(
             .enumerate()
             .map(|(index, row)| (vec![Some(RowId::Mem(index))], row.clone()))
             .collect(),
-        // The planned read supplies the rows; only the layout is needed.
-        TableEntry::Kv(_) if layout_only => Vec::new(),
         TableEntry::Kv(kv) => (**kv)
             .clone()
             .scan_rows_with_handles(&ctx.session_zone())
@@ -593,6 +745,7 @@ fn join_sources(
     right: MultiSource,
     join: &tidb_ast::Join,
     ctx: &crate::StmtContext,
+    layout_only: bool,
 ) -> Result<MultiSource, DriverError> {
     let left_width = left.width();
     let right_width = right.width();
@@ -663,7 +816,7 @@ fn join_sources(
             &join.using,
         )?;
         let resolver = ScopeResolver { scope: &scope };
-        for pair in common {
+        for pair in common.into_iter().filter(|_| !layout_only) {
             let (Some(visible), Some(redundant)) = (
                 scope.qualified_path(pair.visible),
                 scope.qualified_path(pair.redundant),
@@ -682,6 +835,13 @@ fn join_sources(
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
             );
         }
+    }
+    if layout_only {
+        return Ok(MultiSource {
+            coalesced: scope.coalesced,
+            star: scope.star,
+            ..joined
+        });
     }
     let field_types = joined.field_types();
     let mut conditions = match &join.on {
@@ -832,7 +992,11 @@ pub(crate) fn run_multi_update(
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let planned = !join_reads_mem_table(from, catalog, current_db);
-    let mut source = build_multi_source(from, catalog, current_db, ctx, planned)?;
+    let mut source = if planned {
+        build_multi_layout(from, catalog, current_db, ctx)?
+    } else {
+        build_multi_source(from, catalog, current_db, ctx)?
+    };
     let scope = source.scope();
     let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
     let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
@@ -856,11 +1020,7 @@ pub(crate) fn run_multi_update(
             Some(plan) => plan,
             None => super::dml::dml_select_plan_mut(
                 fresh.insert(multi_dml_physical_plan(
-                    "Update",
-                    from,
-                    update.where_clause.as_ref(),
-                    &update.order_by,
-                    update.limit.as_ref(),
+                    MultiDmlRef::Update(update),
                     catalog,
                     current_db,
                     ctx,
@@ -1182,7 +1342,11 @@ pub(crate) fn run_multi_delete(
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let planned = !join_reads_mem_table(from, catalog, current_db);
-    let mut source = build_multi_source(from, catalog, current_db, ctx, planned)?;
+    let mut source = if planned {
+        build_multi_layout(from, catalog, current_db, ctx)?
+    } else {
+        build_multi_source(from, catalog, current_db, ctx)?
+    };
     let target_slots = resolve_delete_targets(targets, &source)?;
     let rows = if planned {
         let mut fresh = None;
@@ -1190,11 +1354,7 @@ pub(crate) fn run_multi_delete(
             Some(plan) => plan,
             None => super::dml::dml_select_plan_mut(
                 fresh.insert(multi_dml_physical_plan(
-                    "Delete",
-                    from,
-                    delete.where_clause.as_ref(),
-                    &[],
-                    None,
+                    MultiDmlRef::Delete(delete),
                     catalog,
                     current_db,
                     ctx,
@@ -1398,28 +1558,76 @@ pub(crate) fn multi_dml_select(
     }))
 }
 
-/// Go `buildUpdate`/`buildDelete` → `DoOptimize`: the multi-table write's
-/// read plan, a `PhysicalDmlRoot` whose `SelectPlan` is the optimized join.
+/// Plan all writable targets before executing any source. Aliases of one
+/// physical table contribute to one FK policy, as Go's tblID2UpdateColumns
+/// and per-table FK maps do.
 pub(crate) fn multi_dml_physical_plan(
-    operator: &str,
-    from: &tidb_ast::Join,
-    where_clause: Option<&tidb_ast::Expr>,
-    order_by: &[tidb_ast::OrderItem],
-    limit: Option<&tidb_ast::Limit>,
+    dml: MultiDmlRef<'_>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
-    let select = multi_dml_select(from, where_clause, order_by, limit);
-    super::dml::physical_dml_plan(
-        operator,
-        Some(&select),
-        None,
-        catalog,
-        current_db,
-        ctx,
-        &super::fk_trigger_plan::FkPlanSpec::default(),
-    )
+    use super::fk_trigger_plan::FkPlanSpec;
+    let mut specs: BTreeMap<(i64, String, String), FkPlanSpec> = BTreeMap::new();
+    let mut add_target = |database: String, table: String, column: Option<String>| {
+        let identity = match catalog.get_in(&database, &table) {
+            Some(TableEntry::Kv(table)) => (table.table_id, String::new(), String::new()),
+            _ => (0, database.to_ascii_lowercase(), table.to_ascii_lowercase()),
+        };
+        let spec = specs.entry(identity).or_insert_with(|| FkPlanSpec {
+            database,
+            table,
+            ..FkPlanSpec::default()
+        });
+        if let Some(column) = column {
+            if !spec
+                .updated_cols
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&column))
+            {
+                spec.updated_cols.push(column);
+            }
+        }
+    };
+    let (operator, select) = match dml {
+        MultiDmlRef::Update(update) => {
+            let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
+                return Err(DriverError::unsupported(
+                    "multi-table UPDATE plan requires a join",
+                ));
+            };
+            for (database, table, column) in
+                super::planner_bridge::update_target_columns(update, catalog, current_db, ctx)?
+            {
+                add_target(database, table, Some(column));
+            }
+            (
+                "Update",
+                multi_dml_select(
+                    from,
+                    update.where_clause.as_ref(),
+                    &update.order_by,
+                    update.limit.as_ref(),
+                ),
+            )
+        }
+        MultiDmlRef::Delete(delete) => {
+            let tidb_ast::DeleteKind::Multi { from, .. } = &delete.kind else {
+                return Err(DriverError::unsupported(
+                    "multi-table DELETE plan requires a join",
+                ));
+            };
+            for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
+                add_target(database, table, None);
+            }
+            (
+                "Delete",
+                multi_dml_select(from, delete.where_clause.as_ref(), &[], None),
+            )
+        }
+    };
+    let specs: Vec<_> = specs.into_values().collect();
+    super::dml::physical_multi_dml_plan(operator, &select, catalog, current_db, ctx, &specs)
 }
 
 /// Runs the planned read (the `SelectPlan` under the DML root) of a
@@ -1555,17 +1763,7 @@ pub(crate) fn multi_dml_explain_plan(
                     "EXPLAIN of a multi-table UPDATE over an in-memory table",
                 ));
             }
-            multi_dml_physical_plan(
-                "Update",
-                from,
-                update.where_clause.as_ref(),
-                &update.order_by,
-                update.limit.as_ref(),
-                catalog,
-                current_db,
-                ctx,
-            )
-            .map(Some)
+            multi_dml_physical_plan(MultiDmlRef::Update(update), catalog, current_db, ctx).map(Some)
         }
         MultiDmlRef::Delete(delete) => {
             let tidb_ast::DeleteKind::Multi { from, .. } = &delete.kind else {
@@ -1576,17 +1774,7 @@ pub(crate) fn multi_dml_explain_plan(
                     "EXPLAIN of a multi-table DELETE over an in-memory table",
                 ));
             }
-            multi_dml_physical_plan(
-                "Delete",
-                from,
-                delete.where_clause.as_ref(),
-                &[],
-                None,
-                catalog,
-                current_db,
-                ctx,
-            )
-            .map(Some)
+            multi_dml_physical_plan(MultiDmlRef::Delete(delete), catalog, current_db, ctx).map(Some)
         }
     }
 }

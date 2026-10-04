@@ -311,6 +311,14 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             p.parse_statement()?;
             saw_semicolon = p.is_op(";");
         }
+        // Go ParseOneStmt validates all trailing statements before checking
+        // list cardinality. Never silently discard a valid second statement.
+        return Err(ParseError {
+            message: "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use".to_owned(),
+            offset: p.peek().end_offset,
+            near_offset: p.peek().offset,
+            errno: Some(1149),
+        });
     }
     Ok(stmt)
 }

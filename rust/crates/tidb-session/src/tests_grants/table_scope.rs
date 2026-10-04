@@ -501,3 +501,37 @@ fn a_prepared_statement_keeps_the_database_current_at_prepare() {
         "a statement prepared under `other` names other.t, which bob may not read"
     );
 }
+
+#[test]
+fn dml_owner_delete_resolution_excludes_nested_query_aliases() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT SELECT ON test.* TO 'bob'@'%'").unwrap();
+    let sql = "DELETE shadow FROM (SELECT * FROM t AS shadow) d JOIN u ON d.a=u.a WHERE d.a=1";
+    assert_eq!(denied(&mut bob, sql).0, 1109);
+    assert_eq!(denied(&mut bob, &format!("EXPLAIN {sql}")).0, 1109);
+    assert_eq!(
+        denied(&mut bob, &format!("PREPARE bad_owner FROM '{sql}'")).0,
+        1109
+    );
+}
+
+#[test]
+fn dml_owner_unqualified_delete_needs_only_delete_privilege() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("GRANT DELETE ON test.t TO 'bob'@'%'").unwrap();
+    bob.run("DELETE FROM t").unwrap();
+    boot.run("INSERT INTO t VALUES (2,20)").unwrap();
+    bob.run("PREPARE owner_delete FROM 'DELETE FROM t'")
+        .unwrap();
+    bob.run("EXECUTE owner_delete").unwrap();
+    boot.run("INSERT INTO t VALUES (3,30)").unwrap();
+    assert_eq!(
+        denied(&mut bob, "DELETE FROM t WHERE a=3"),
+        table_denied("SELECT", "t")
+    );
+    boot.run("REVOKE DELETE ON test.t FROM 'bob'@'%'").unwrap();
+    assert_eq!(
+        denied(&mut bob, "EXECUTE owner_delete"),
+        table_denied("DELETE", "t")
+    );
+}

@@ -1,5 +1,8 @@
 # Structural parity audit: current evidence
 
+The [DML metadata batch](dml-owner-batch-repair.md) advances **A01/E02/E03 together**: metadata-only joined sources, shared write-target authorization and per-table FK plans. Retained failures also repair synchronous FK-ID rollback and strict single-statement parsing. **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)** remain; executable FK objects, row identities and matrix execution are still open. See the validation receipt for actual grouped checks. No complete package acceptance or push.
+
+
 The [transport/expression cleanup](transport-expression-empty-test-removal.md) removes **80 empty ignored tests and five pure placeholder modules**, with **102 candidate rows relocated** to the [obligation ledger](transport-expression-empty-test-obligations.json). All retained executable test code is byte-for-byte unchanged. Counts remain **86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial)**. This cleanup closes no finding and accepts no whole Go package. Three original expression failures remain explicit; the local HTTP fixture passes outside the socket sandbox. No push.
 
 
