@@ -185,6 +185,9 @@ fn reset_memory_boundary_and_fallible_domain_are_explicit() {
     // MemAwareMap bucket accounting is intentionally not claimed by Rust's
     // HashMap-backed DISTINCT set.
     assert_eq!(VarianceState::ordinary_partial_state_size(), 24);
+    let mut ordinary = state(AggregateKind::VarPop, false, &[Some(1.0), Some(5.0)]);
+    ordinary.reset();
+    assert_eq!(ordinary.result(), None);
     let mut distinct = state(
         AggregateKind::VarPop,
         true,

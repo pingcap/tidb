@@ -220,8 +220,6 @@ pub mod stats_load_result;
 pub mod stats_watch;
 pub mod status_registry;
 mod status_result;
-pub mod stddevpop;
-pub mod stddevsamp;
 /// `stmtctx.go`'s per-statement first-value-wins keyed cache.
 pub mod stmt_cache;
 pub mod storage_class;
@@ -242,8 +240,6 @@ pub mod txn_running_state;
 pub mod txn_summary;
 pub mod upgrade_versions;
 pub use tidb_executor::used_stats;
-pub mod varpop;
-pub mod varsamp;
 pub mod warning_publication;
 pub mod wide_scan_selection;
 mod window;

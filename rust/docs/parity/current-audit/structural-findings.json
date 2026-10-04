@@ -809,8 +809,8 @@
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
-    "receipt": "test-harness-retirement-validation.json",
-    "scope": "Six link targets retired; 57 behavioral cases consolidated. Three source/doc-only assertions and two canned DDL scripts removed. Six stale catalog totals corrected. 74 selected cases pass; original standalone planner fixtures retain one pass and three reproduced failures. No finding closed."
+    "receipt": "test-harness-retirement-validation.json#canonical_variance_continuation",
+    "scope": "Four variance facades, their state/finalizer adapters, nine redundant adapter tests and three shell snippet self-tests removed. Existing live suite owns coverage; ordinary reset preserved. 14 retained aggregate cases pass. Finding statuses unchanged."
   },
   "test_cleanup_history": [
     {
@@ -885,6 +885,11 @@
       "date": "2026-10-04",
       "receipt": "harness-dedup-validation.json",
       "scope": "12 standalone targets retired, including 11 duplicate registrations for 281 retained cases; five private source copies removed. 299 pass; five established DDL failures retained. No finding closed."
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "test-harness-retirement-validation.json",
+      "scope": "Six link targets retired; 57 behavioral cases consolidated. Three source/doc-only assertions and two canned DDL scripts removed. Six stale catalog totals corrected. 74 selected cases pass; original standalone planner fixtures retain one pass and three reproduced failures. No finding closed."
     }
   ],
   "repair_history": [

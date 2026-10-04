@@ -150,5 +150,104 @@
     "No complete Go package or structural finding is closed; 86 tracked,29 repaired,57 unresolved remains unchanged.",
     "Full Go suites, full Rust suites, live multi-node TiKV and existing unrelated DDL failures were not rerun.",
     "No push or dry run; fresh-task restoration remains unverified."
-  ]
+  ],
+  "canonical_variance_continuation": {
+    "parent": "e66d8d43dd1b45d059abda6f35469d7c1c48fa33",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "removed": [
+      {
+        "path": "rust/crates/tidb-exec/tests/stddevpop_source.rs",
+        "sha256": "51ba2c272fe12b8675123d0a74caf0dffbb3332a9e33a020a4eee2e9f6af9c7b",
+        "tests": [
+          "stddevpop_merge_vectors_match_source",
+          "stddevpop_empty_and_single_result_match_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/stddevpop.rs",
+        "sha256": "b2e19f4f8b826671f3865e25cebd7f42c56d9cf9bb2e2f96ae3d6d00ffdbfd89"
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/stddevsamp_source.rs",
+        "sha256": "120f59b21181ba87ab37f107ab0bf7782cd983a118ce229b448bae36036bd85e",
+        "tests": [
+          "stddevsamp_merge_vectors_match_source",
+          "stddevsamp_threshold_and_nan_match_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/stddevsamp.rs",
+        "sha256": "dc36462014e46625d5d742b5345a7522c73d8b2f3b2c12cd6cc61ac4d2c6f582"
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/varsamp_source.rs",
+        "sha256": "5b1bc7113cdac47d3525c4e0a3441d5e4455ed3592545ad278128e1c5b07dee7",
+        "tests": [
+          "varsamp_merge_vectors_match_source",
+          "varsamp_threshold_and_sign_match_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/varsamp.rs",
+        "sha256": "c4d1aa6e21bb579fe2b7403f095ebcfc612752a96c5ae4cd78afb358fe5d8f1b"
+      },
+      {
+        "path": "rust/crates/tidb-exec/tests/varpop_source.rs",
+        "sha256": "d98ed8c7e3886fa47600ac3857727b69e205f0a3c74ce3d293415147d6f5b08d",
+        "tests": [
+          "varpop_update_and_final_vectors_match_source",
+          "varpop_partial_merge_and_zero_count_branches_match_source",
+          "varpop_reset_and_partial_state_size_match_source"
+        ]
+      },
+      {
+        "path": "rust/crates/tidb-exec/src/varpop.rs",
+        "sha256": "f079e6991e4e78c83c1ecf040b6aa6a7143f694b466280c7219984db8a746e7a"
+      },
+      {
+        "path": "rust/scripts/test-access-path-readiness.sh",
+        "sha256": "f988f496d99c0ee8181c9182b89564be8f50610537bb2b372d4d3794b40fc4d0"
+      },
+      {
+        "path": "rust/scripts/test-access-path-stats-counts.sh",
+        "sha256": "67e6ebd0b64335cf2c93b7dfef473f3aeeae4e7e58e5cfce62499de4062cae3d"
+      },
+      {
+        "path": "rust/scripts/test-convergence-global-grant.sh",
+        "sha256": "4841204bb70408b73e96dc49b79ad8a14e12e56c9cfdba5f5f6fa310082dfaef"
+      }
+    ],
+    "coverage": "Nine adapter tests retired. Six retained live variance tests cover four Go aggregate kinds, NULL/sample thresholds, partial merges, DISTINCT, reset, memory and SQL metadata. Ordinary reset assertion migrated. Three synthetic negative-intermediate assertions retired with test-only finalizer APIs. Eight core aggregate cases also pass. No known failing regression removed.",
+    "canonical_production_body": "byte-identical; compatibility suffix only removed",
+    "tests_passed": 14,
+    "tests_failed": 0,
+    "tests_ignored": 0,
+    "intermediate_validation": "Initial private migration had nine passes; superseded, not final retained coverage.",
+    "commands": [
+      "cd rust && cargo test --locked -p tidb-exec --test all -- variance_live_aggregate_source core_aggregate_runtime_source --test-threads=1",
+      "cd rust && cargo check --locked -p tidb-exec --all-targets",
+      "make lint",
+      "bash -n rust/scripts/{run-realtikv-access-path,run-realtikv-convergence,cluster-session-readiness,access-path-stats-counts}.sh",
+      "bash rust/scripts/test-optimistic-2pc-paths.sh",
+      "bash rust/scripts/test-prepared-write-paths.sh",
+      "rustfmt --check --edition 2021 rust/crates/tidb-exec/src/aggregate/runtime/variance.rs rust/crates/tidb-exec/tests/variance_live_aggregate_source.rs",
+      "git diff --check"
+    ],
+    "all_targets": "passed",
+    "lint": "passed",
+    "safety_script_checks": "both passed; foreign and traversal paths rejected",
+    "mandatory_hook": "Normal commit must run cd rust && cargo build --locked -p tidb-server; final result in external final-handoff.json",
+    "logs": "/workspace/.cloud-setup/variance-cleanup",
+    "hashes": {
+      "final-tests.log": "3ef761016b4bc1d54cb220e1ad74f1dc7e2e6aa523b3ef860cb07424b2517480",
+      "final-all-targets.log": "03ee2aa8862529545b1c7906a59a1c1251ec27aaadd786fc0f49431d58513fa1",
+      "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "pruned.json": "cb5ca97d5fb614291788088eb567b33dae991d6d5eefbd6586f8e17eaeee8594"
+    },
+    "limitations": [
+      "No complete package/finding closure, measured speedup or new binary reduction.",
+      "No full Rust/Go suites or live multi-node checks; existing planner/DDL failures remain enabled and were not rerun.",
+      "No push/dry run; fresh-task restore and publication remain unverified."
+    ]
+  }
 }

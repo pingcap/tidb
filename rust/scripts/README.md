@@ -31,6 +31,18 @@ The source-name transaction guard, kvcache documentation-path test binary and
 two mocked DDL-runner self-checks are retired. The Go LRU contract, ordinary
 transaction tests and maintained live DDL runners remain the validation owners.
 
+The VAR_POP/VAR_SAMP/STDDEV_POP/STDDEV_SAMP compatibility modules and
+adapter APIs are retired. Their nine adapter tests are retired: the existing
+live-aggregate suite covers the Go vectors through the canonical runtime:
+
+```bash
+cargo test --locked -p tidb-exec --test all -- variance_live_aggregate_source --test-threads=1
+```
+
+The shell snippet self-tests for access-path readiness/statistics and grant
+convergence are retired. Use the live runners that call those shared helpers;
+cleanup-path safety, MySQL authentication and protobuf sync tests remain.
+
 Use the pinned toolchain and existing profile/cache. Heavy Cloud links use one
 build job; do not force an unrelated release build just to run a focused check.
 
