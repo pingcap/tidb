@@ -1243,6 +1243,49 @@ c1	s
 1	10
 1	20
 2	30
+drop table if exists tj4, tj5;
+create table tj4(c1 int, c2 int);
+create table tj5(c1 int, c2 int, key idx(c1, c2));
+insert into tj4 values(1, 15);
+insert into tj5 values(1, 10), (1, 20);
+set @@sql_mode='';
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+id	task	access object	operator info
+Projection	root		planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj4.c2, planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj5.c2, Column
+└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj5.c1)], other cond:gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)
+  ├─HashAgg(Build)	root		group by:planner__core__indexjoin.tj5.c1, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.tj5.c1)->planner__core__indexjoin.tj5.c1, funcs:firstrow(Column)->planner__core__indexjoin.tj5.c2
+  │ └─IndexReader	root		index:HashAgg
+  │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.tj5.c1, funcs:count(1)->Column, funcs:firstrow(planner__core__indexjoin.tj5.c2)->Column
+  │     └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.tj5.c2))
+  │       └─IndexFullScan	cop[tikv]	table:tj5, index:idx(c1, c2)	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
+      └─TableFullScan	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
+select /*+ INL_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
+c1	cnt
+select /*+ HASH_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
+c1	cnt
+set @@sql_mode=default;
+explain format='plan_tree' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+id	task	access object	operator info
+Projection	root		planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj4.c2, planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj5.c2, Column
+└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.tj4.c1, inner key:planner__core__indexjoin.tj5.c1, equal cond:eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj5.c1), other cond:gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
+  │   └─TableFullScan	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj5.c2, funcs:count(1)->Column, funcs:firstrow(planner__core__indexjoin.tj5.c1)->planner__core__indexjoin.tj5.c1, funcs:firstrow(planner__core__indexjoin.tj5.c2)->planner__core__indexjoin.tj5.c2
+    └─IndexReader	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.tj5.c1)), not(isnull(planner__core__indexjoin.tj5.c2))
+        └─IndexRangeScan	cop[tikv]	table:tj5, index:idx(c1, c2)	range: decided by [eq(planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj4.c1) gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)], keep order:true, stats:pseudo
+select /*+ INL_JOIN(a_t) */ tj4.c1, a_t.c2, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.c2;
+c1	c2	cnt
+1	20	1
+select /*+ HASH_JOIN(a_t) */ tj4.c1, a_t.c2, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.c2;
+c1	c2	cnt
+1	20	1
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 CREATE TABLE `td89f296a` (
 `col_64` tinyint DEFAULT NULL,
