@@ -687,10 +687,8 @@ impl SysVarDef {
         // and the two range guards are dead (an `&&` over contradictory
         // predicates) plus a runtime-tuner comparison whose tuner reads 0
         // until startup sets it, so neither can reject here.
-        // go `ValidateSnapshot` parses the value as a datetime and answers
-        // ErrTruncatedWrongValue (1292) for anything unparseable — an
-        // invalid `SET tidb_snapshot` leaves the previous (empty) value.
-        if self.name == "tidb_snapshot" && !value.is_empty() {
+        // Go parseTSFromNumberOrTime accepts an unsigned TSO before datetime parsing.
+        if self.name == "tidb_snapshot" && !value.is_empty() && value.parse::<u64>().is_err() {
             let zone = tidb_datatype::SessionTimeZone::utc();
             if tidb_datatype::parse_datetime(value, &zone, false, false).is_err() {
                 return Err(ValidationError::SqlError(SqlError::new_f(
@@ -785,6 +783,27 @@ impl SysVarDef {
         original: &str,
         lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
+        if let Some(lookup) = lookup {
+            let conflict = match self.name {
+                "tidb_snapshot" if !validated.value.is_empty() => lookup("tidb_read_staleness")
+                    .filter(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
+                    .map(|_| "tidb_read_staleness should be clear before setting tidb_snapshot"),
+                "tidb_read_staleness" if validated.value.parse::<i64>().is_ok_and(|v| v != 0) => {
+                    lookup("tidb_snapshot")
+                        .filter(|v| !v.is_empty() && v.parse::<u64>() != Ok(0))
+                        .map(|_| "tidb_snapshot should be clear before setting tidb_read_staleness")
+                }
+                _ => None,
+            };
+            if let Some(message) = conflict {
+                return Err(ValidationError::SqlError(SqlError::new_f(
+                    tidb_error::mysql::errcode::ErrUnknown,
+                    "%s",
+                    &[],
+                    &[FormatArg::from(message)],
+                )));
+            }
+        }
         // Go's `timestamp` validation (`sysvar.go`, the `vardef.Timestamp`
         // entry): `tidbOptFloat64(originalValue)` above `math.MaxInt32` is
         // `ErrWrongValueForVar`. The type check alone would have clamped it to

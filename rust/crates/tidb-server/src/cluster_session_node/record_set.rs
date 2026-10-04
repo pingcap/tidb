@@ -47,6 +47,12 @@ impl ClusterServerSession {
         read_ts: &transactions::StatementReadTs,
         resource_group: &str,
     ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
+        if let Some(ts) = self.session.historical_read_ts() {
+            return self
+                .transactions
+                .open_snapshot_at(ts, resource_group)
+                .map_err(SqlQueryError::unknown);
+        }
         if let Some(transaction) = &self.explicit {
             let locking = shape == StatementReadShape::LockingRead || !prelock_keys.is_empty();
             return match retry_read_ts {
@@ -84,7 +90,7 @@ impl ClusterServerSession {
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
         }
-        let autocommit = self.explicit.is_none();
+        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
         if autocommit {
             // Go PrepareTxnCtx creates a fresh TxnCtx before the next statement.
             self.session.current_tso().clear();
@@ -134,7 +140,7 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
-        if statement.autocommit {
+        if statement.autocommit && self.session.historical_read_ts().is_none() {
             if let Some(observer) = self.session.transaction_observer() {
                 observer.finished();
             }
@@ -166,7 +172,10 @@ impl ClusterServerSession {
     ) -> Result<QueryResult<'a>, SqlQueryError> {
         // Only a replayable locking/write statement drains before returning.
         // Its retained chunks escape after the existing lock/retry loop succeeds.
-        self.prepare_statement_context(resource_group)?;
+        self.prepare_statement_context(
+            resource_group,
+            shape != StatementReadShape::AutocommitWrite,
+        )?;
         let buffers_rows = shape == StatementReadShape::LockingRead
             && self
                 .explicit

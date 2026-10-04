@@ -1,0 +1,482 @@
+{
+  "date": "2026-10-04",
+  "scope": {
+    "date": "2026-10-04",
+    "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+    "findings": [
+      "S04",
+      "I04",
+      "O09",
+      "N03"
+    ],
+    "statuses": {
+      "S04": "partial",
+      "I04": "partial",
+      "O09": "partial",
+      "N03": "partial"
+    },
+    "receipt": "historical-read-batch-validation.json",
+    "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
+  },
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "remote_integration_preserved_unmerged": "86e41faa92c1a7bb244e6793d90d88c8ce49f44b",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 30,
+    "partial": 26
+  },
+  "source_evidence": [
+    {
+      "path": "pkg/sessiontxn/staleread/provider.go",
+      "sha256": "432b10ff69841162b7f6cbb370f33a2efc29a7b1bad532d6d942172813406421"
+    },
+    {
+      "path": "pkg/sessiontxn/staleread/processor.go",
+      "sha256": "b67bb4276418bc1a62839ef9bebc443e98b7ad95c6eab122d68a9cfa28c5e8ec"
+    },
+    {
+      "path": "pkg/sessiontxn/staleread/util.go",
+      "sha256": "8a13cb4309a61108632799fc66ab573e6d8ec5e7bcc889bc7f5002088f307d29"
+    },
+    {
+      "path": "pkg/sessiontxn/txn_context_test.go",
+      "sha256": "aecd9e070e7a6c35af4f2e3a4375d764e92b47e7323a1ab01b062c2878fd16e1"
+    },
+    {
+      "path": "pkg/sessionctx/variable/varsutil.go",
+      "sha256": "420c025a6c6ad35ba76929c00dd5257ee6b34a57830fd292f6409f4d29dd13e8"
+    },
+    {
+      "path": "pkg/executor/set.go",
+      "sha256": "88e1af9d91e146a3e1abda147faa15f761f12b99bc56f1f4595cce3131a60e70"
+    },
+    {
+      "path": "pkg/session/session.go",
+      "sha256": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3"
+    },
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    },
+    {
+      "path": "pkg/domain/domain.go",
+      "sha256": "990c426f07898dd18bed7b2de86b6751c19f677527a0a068f80ef893934cffe8"
+    },
+    {
+      "path": "pkg/infoschema/cache.go",
+      "sha256": "1ba13eb6314991c8214525958666419e854aab0b1eb879e0899e05fc16d0bc16"
+    },
+    {
+      "path": "pkg/domain/infosync/info.go",
+      "sha256": "e5de2dcd47afb7bb9b6a9035dd26574eb80d6f582f1804a6d0eb6e510a6b5bcb"
+    }
+  ],
+  "baseline": {
+    "initial_wire": {
+      "phase": "before",
+      "binary_sha256": "f5cbb979fba0da9f99999be250e826bb2024a0ad26d1b7999996680266627114",
+      "checks": [
+        {
+          "name": "AS OF reads historical data and schema",
+          "pass": false,
+          "error": [
+            1146,
+            "Table 'historical_batch.t' doesn't exist"
+          ]
+        }
+      ],
+      "error": "(1292, \"Incorrect datetime value: '469540054402596864'\")",
+      "exit": 0
+    },
+    "expanded_wire": {
+      "phase": "before-expanded",
+      "binary_sha256": "f5cbb979fba0da9f99999be250e826bb2024a0ad26d1b7999996680266627114",
+      "checks": [
+        {
+          "name": "AS OF reads historical data and schema",
+          "pass": false,
+          "error": [
+            1146,
+            "Table 'historical_batch.t' doesn't exist"
+          ]
+        },
+        {
+          "name": "snapshot variable reads historical data and schema",
+          "pass": false,
+          "error": [
+            1105,
+            "reading at @@tidb_snapshot is not supported yet"
+          ]
+        },
+        {
+          "name": "unpin restores current data and schema",
+          "pass": true,
+          "rows": [
+            [
+              1,
+              20,
+              7
+            ]
+          ]
+        },
+        {
+          "name": "read staleness admits ordinary query",
+          "pass": false,
+          "error": [
+            1105,
+            "reading at @@tidb_read_staleness is not supported yet"
+          ]
+        },
+        {
+          "name": "explicit stale transaction uses same historical image",
+          "pass": false,
+          "error": [
+            1105,
+            "START TRANSACTION ... AS OF TIMESTAMP is not supported yet"
+          ]
+        }
+      ],
+      "exit": 0
+    }
+  },
+  "after_wire": {
+    "phase": "after",
+    "binary_sha256": "d8bb173ad392795c1f4d7c20242ee8fb65e853d5f9baae318a00450d2ad75add",
+    "checks": [
+      {
+        "name": "AS OF reads historical data and schema",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "snapshot variable reads historical data and schema",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "datetime snapshot remains pinned across timezone change",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "unpin restores current data and schema",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "read staleness admits ordinary query",
+        "pass": true
+      },
+      {
+        "name": "explicit stale transaction uses same historical image",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "post-rollback reads current rows",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "prepared execution reads historical schema",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "future timestamp rejected",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot set read timestamp to a future time, readTS: 469540786447056896, currentTS: 469540524578570240"
+        ]
+      },
+      {
+        "name": "stale writes rejected",
+        "pass": true,
+        "error": [
+          1105,
+          "only support read-only statement during read-only staleness transactions"
+        ]
+      },
+      {
+        "name": "stale locking reads rejected",
+        "pass": true,
+        "error": [
+          1105,
+          "select lock hasn't been supported in stale read yet"
+        ]
+      },
+      {
+        "name": "stale explained writes rejected",
+        "pass": true,
+        "error": [
+          1105,
+          "only support read-only statement during read-only staleness transactions"
+        ]
+      },
+      {
+        "name": "staleness selects historical schema and data",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "stale implicit transaction keeps historical image",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "write-started transaction ignores staleness",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            21,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "current rows survive historical failures",
+        "pass": true,
+        "rows": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      }
+    ],
+    "exit": 0
+  },
+  "validation_environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_INCREMENTAL=0; RUST_MIN_STACK=33554432",
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-exec -p tidb-session -p tidb-server --lib -- historical_read_batch catalog_watch::tests:: tests_core::transactions:: cluster_session_node::tests::transactions:: cluster_session_node::tests::prepared_transactions:: cluster_session_node::tests::autocommit_transactions:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/historical-read-batch/acceptance-tests.log",
+      "log_sha256": "b03cd9617c02d8c91335af4d61bb386f886ab083727a7eadea410cc67ba15224",
+      "passed_by_crate": {
+        "tidb-exec": 10,
+        "tidb-server": 66,
+        "tidb-session": 13
+      }
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/historical-read-batch/check.log",
+      "log_sha256": "14dedfa9f0464dee8913df1e3099ccbaa229daf799fff1202e3df762d4d90f01"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/historical-read-batch/locked-build.log",
+      "log_sha256": "16f81f903b3bf8e36d01e2dbd74c3f2627e5b764f15afde000b3f7cd7f1f06f7"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/historical-read-batch/lint.log",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/historical-read-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/historical-read-batch/after-wire.log",
+      "log_sha256": "179e7ae6e37ffafd1dc3f09014fd125ab5c6718225b931f06cb04628dd2d652e"
+    }
+  ],
+  "distinct_rust_cases": 89,
+  "intermediate_runs": [
+    {
+      "log": "grouped-tests.log",
+      "sha256": "dd43bf69d73464133f3d518abe0451970f666e001e88672ee777571947615750",
+      "result_lines": [
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.04s",
+        "test result: FAILED. 64 passed; 2 failed; 0 ignored; 0 measured; 476 filtered out; finished in 4.89s"
+      ]
+    },
+    {
+      "log": "grouped-final.log",
+      "sha256": "5a7fc2560d5462e4cbaebab5ec1e68fd5c6409a968eed0ab3d5f9c9045088d88",
+      "result_lines": [
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 405 filtered out; finished in 0.04s",
+        "test result: FAILED. 65 passed; 1 failed; 0 ignored; 0 measured; 476 filtered out; finished in 5.27s"
+      ]
+    },
+    {
+      "log": "serving-tests.log",
+      "sha256": "2ff71caa41862af588ea77aae9975befae00ccf0f34914ce5e3ae30ed0ac8132",
+      "result_lines": [
+        "test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 5.17s",
+        "test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 2001 filtered out; finished in 0.52s"
+      ]
+    },
+    {
+      "log": "frozen-tests.log",
+      "sha256": "fdf2e76a0df1265a58979e550e8136ee5abed11c4d878e5c3f8d0ce0fcbc6232",
+      "result_lines": [
+        "test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 4.87s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 2001 filtered out; finished in 0.45s"
+      ]
+    }
+  ],
+  "diagnosed_failures": [
+    "Initial all-target check called nonexistent QuerySession.query; fixture now uses execute.",
+    "Old missing-storage refusal wording changed; no-half-transaction assertions retained.",
+    "Datetime-formatted TSO lost logical bits; direct numeric snapshot input is the Go contract and now supported.",
+    "Standalone AS OF old-table assertion expected internal retained-history text; existing Go-aligned name resolution returns UnknownTable.",
+    "A dependency edit during an earlier compile required a frozen-source rerun; final acceptance uses frozen source.",
+    "Wrong-working-directory Cargo attempt final-tests.log stopped with SIGTERM; not a validation pass."
+  ],
+  "removals": [
+    "Duplicate open_stale_transaction call removed.",
+    "Obsolete production blanket snapshot/staleness refusal removed; standalone no-provider guard retained.",
+    "Stale refusal/history assertions corrected in existing suites; no useful regression disabled and no new harness target."
+  ],
+  "limits": [
+    "No complete upstream package acceptance or full Go/Rust suites.",
+    "No live multi-node TiKV, SafeTS topology, TLS matrix, GC interaction or measured performance validation.",
+    "InfoCache timestamp/empty-diff algorithms, lazy InfoSchema V2 and byte-cache resizing remain incomplete; version capacity applies at lookup.",
+    "Snapshot schema/GC/future validation currently occurs on first read, whereas Go SetExecutor validates and loads at SET. Full snapshot/staleness provider transition matrix remains incomplete: snapshot-in-existing-ordinary-transaction fails closed; tx_read_ts/external timestamp and autocommit-off AS OF remain unaccepted.",
+    "Native future-TS validation currently requests a current timestamp per open; oracle-cache performance parity is not claimed.",
+    "Other 52 unresolved roots retain earlier evidence; this is not a fresh reproduction of all 56.",
+    "No push or push dry run. Remote integration is preserved unmerged."
+  ],
+  "commit_hook": "Required actual hook runs at normal local commit; its outcome and commit identity are recorded in the external final-handoff.json, not preclaimed here.",
+  "no_push": true,
+  "rust_source_evidence": [
+    {
+      "path": "rust/crates/tidb-exec/src/catalog_watch.rs",
+      "sha256": "0582c60a48b28677aaa75f5d2ee8a18740e42dfa451ef3032c5b642375d52aaf"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/cluster_table_storage.rs",
+      "sha256": "c4c68ec6d30f3f63376721a4e4044cc56b09c1afe5065a2a9e28ad0f5f8cc14e"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_catalog.rs",
+      "sha256": "70ad8a9ca1809dc064671ac4af90a072fa966589ebbbc75c56ed2895dfc42985"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "sha256": "60c7e464cfb188caf23abec65e4d11cf91b3a4d11b90cf24df2a11f46e0b3426"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/record_set.rs",
+      "sha256": "c2dbf8cd5f3d2de44278605dd1c681e8737cad6e85da5d40b0c17b118aa03c40"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/transactions.rs",
+      "sha256": "23ed61f3402cd4682fe1c59b777928c98eb8f1346622251dd7d02f859b4a5a91"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs",
+      "sha256": "a34f856c935afedc0411b656749faddd287ba33a09d3f5853db9e60a5925c21d"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/transactions.rs",
+      "sha256": "c6cc3cdb77cebdcc3339c2d7ae0376f8c48960ab22a892dff276ec97ffd3a33e"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/dispatch.rs",
+      "sha256": "7a61af835d675ff11ae73dd618fac1397f687328263298ca469b191e06052f83"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "2e5af083b0d40162e685e68abe1a5ef502cbe519381ea5d07f2cd456f6a8e158"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/prepared_ast.rs",
+      "sha256": "961f14de34979c18fdf1e2a9388c42f5cf169a2b9730a5f0f84ee57dbcc33074"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/sysvar.rs",
+      "sha256": "c72140d022706952fd0f2c9068128eabfa69228471a9e88ef2eaa1dd9585ea0a"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_core/transactions.rs",
+      "sha256": "da76907c9279c6554343b33e04f09c3c3dca5e0bc05764a578d161677183f1a0"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/txn.rs",
+      "sha256": "0ddc27c596f14bbb4aa0b6e5fd13b08d2151c32428c46e0687221266da62c50d"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/vars.rs",
+      "sha256": "d51a4ed8773a9c31059e085efaca678707b8bea6d0adca011053aca06f6f006d"
+    }
+  ],
+  "git_read_access": {
+    "tidb": {
+      "operation": "git ls-remote origin refs/heads/master refs/heads/hparser-integration",
+      "exit_code": 0,
+      "master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+      "hparser-integration": "86e41faa92c1a7bb244e6793d90d88c8ce49f44b"
+    },
+    "native": {
+      "operation": "git ls-remote origin refs/heads/master",
+      "exit_code": 0,
+      "master": "19a56ccda1e128218cd33c69709038219aced9bc"
+    },
+    "push_or_dry_run": false,
+    "historical_diagnostic": "remote: Permission to pingcap/tidb.git denied to ngaut. HTTP403",
+    "permission_cause": "Account role versus GitHub-app installation scope undetermined; not reprobed."
+  }
+}

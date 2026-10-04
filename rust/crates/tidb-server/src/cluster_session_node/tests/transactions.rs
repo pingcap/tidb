@@ -1089,14 +1089,14 @@ fn an_unsupported_transaction_control_leaves_the_session_untouched() {
 /// leaves the session outside any transaction rather than inside one this
 /// node never opened.
 #[test]
-fn an_unsupported_begin_opens_no_half_transaction() {
+fn missing_historical_storage_opens_no_half_transaction() {
     let (mut session, cluster) = open_session();
     let opened_before = cluster.opened.load(Ordering::Acquire);
     let error = session
         .control_transaction("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .expect_err("a historical read this node cannot serve is refused");
     assert!(
-        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        format!("{error:?}").contains("historical snapshots are unavailable"),
         "got {error:?}"
     );
     assert!(!session.session.in_transaction());

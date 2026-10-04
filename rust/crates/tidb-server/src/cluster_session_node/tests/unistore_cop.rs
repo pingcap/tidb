@@ -10083,3 +10083,135 @@ fn login_durability_batch_expiry_and_missing_row_do_not_publish_success() {
         before
     );
 }
+
+#[test]
+fn historical_read_batch_schema_data_and_timestamp_lifetime() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(914)).unwrap();
+    rows(&mut session, "CREATE DATABASE history_batch");
+    rows(&mut session, "USE history_batch");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO t VALUES (1,10)");
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT * FROM t");
+    let ts: u64 = displayed(rows(&mut session, "SELECT @@tidb_current_ts"))[0][0]
+        .parse()
+        .unwrap();
+    session.control_transaction("COMMIT").unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
+    rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT * FROM t AS OF TIMESTAMP {ts}")
+        )),
+        vec![vec!["1", "10"]]
+    );
+    assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
+    session
+        .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+        .unwrap();
+    assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    assert!(
+        tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
+        "transaction protects time between reads"
+    );
+    assert!(session.execute_write("UPDATE t SET v=30").is_err());
+    assert!(session.execute("SELECT * FROM t FOR UPDATE").is_err());
+    assert!(session
+        .execute("EXPLAIN ANALYZE UPDATE t SET v=30")
+        .is_err());
+    session.control_transaction("ROLLBACK").unwrap();
+    assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "20", "7"]]
+    );
+    let future = ts + (1_000_000 << 18);
+    assert!(session
+        .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {future}"))
+        .is_err());
+    assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&future));
+    rows(&mut session, &format!("SET tidb_snapshot='{ts}'"));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    assert!(session.execute_write("UPDATE t SET v=30").is_err());
+    assert!(session
+        .execute("EXPLAIN ANALYZE UPDATE t SET v=30")
+        .is_err());
+    assert!(session
+        .execute_write("ALTER TABLE t ADD COLUMN forbidden INT")
+        .is_err());
+    assert!(session
+        .execute_write("CREATE DATABASE forbidden_history")
+        .is_err());
+    rows(&mut session, "SET autocommit=0");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    assert!(
+        session.session.historical_read_ts().is_none(),
+        "SnapshotTS is a statement pin"
+    );
+    rows(&mut session, "SET autocommit=1");
+    rows(&mut session, "SET tidb_snapshot='' ");
+    rows(
+        &mut session,
+        &format!("SET timestamp={:.3}", (ts >> 18) as f64 / 1000.0 + 1.001),
+    );
+    rows(&mut session, "SET tidb_read_staleness=-1");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    rows(&mut session, "SET autocommit=0");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    let held = session.session.historical_read_ts().unwrap();
+    assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
+    session.control_transaction("ROLLBACK").unwrap();
+    assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
+    rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
+    assert!(
+        session.session.historical_read_ts().is_none(),
+        "a write starts an ordinary transaction"
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+    rows(&mut session, "SET autocommit=1");
+    rows(&mut session, "SET timestamp=0, tidb_read_staleness=0");
+    rows(
+        &mut session,
+        &format!("PREPARE history_query FROM 'SELECT * FROM t AS OF TIMESTAMP {ts}'"),
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE history_query")),
+        vec![vec!["1", "10"]]
+    );
+    rows(&mut session, "DEALLOCATE PREPARE history_query");
+    session
+        .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+        .unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    assert!(
+        !tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
+        "rollback without a read retires the metadata snapshot"
+    );
+    session
+        .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+        .unwrap();
+    drop(session);
+    assert!(
+        !tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
+        "disconnect retires the historical owner"
+    );
+}

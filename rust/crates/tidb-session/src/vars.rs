@@ -2125,6 +2125,8 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.TimeZone`, resolved once by the time-zone
     /// `SetSession` hook rather than reparsed by every statement.
     time_zone: tidb_executor::SessionTimeZone,
+    /// Go SnapshotTS: resolved by SET in that session's location, not on each read.
+    snapshot_ts: u64,
     /// Go's typed `SessionVars.SelectLimit`, maintained by the
     /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
     /// default and any smaller value caps top-level SELECT/set results.
@@ -2262,6 +2264,7 @@ impl Default for SessionVars {
             max_keys_read: 0,
             max_execution_time: 0,
             time_zone: resolve_session_time_zone_value("SYSTEM"),
+            snapshot_ts: 0,
             select_limit: u64::MAX,
             selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             multi_statement_mode: 0,
@@ -2294,6 +2297,11 @@ impl Default for SessionVars {
 }
 
 impl SessionVars {
+    /// The snapshot selected by SET tidb_snapshot; zero clears the pin.
+    pub fn snapshot_ts(&self) -> u64 {
+        self.snapshot_ts
+    }
+
     /// Go `SessionVars.InMViewMaintenance` read: whether the session is
     /// executing internal MV build/refresh statements.
     #[must_use]
@@ -3230,6 +3238,41 @@ impl SessionVars {
         } else {
             None
         };
+        let parsed_snapshot_ts = if key == "tidb_snapshot" {
+            let value = &validated.value;
+            Some(if value.is_empty() {
+                0
+            } else if let Ok(ts) = value.parse::<u64>() {
+                ts
+            } else {
+                let invalid = || {
+                    VarError::SqlError(tidb_error::mysql::SqlError::new_f(
+                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                        "Incorrect datetime value: '%s'",
+                        &[],
+                        &[tidb_error::mysql::FormatArg::from(value.as_str())],
+                    ))
+                };
+                let time = tidb_datatype::parse_time(
+                    value,
+                    tidb_datatype::TimeType::Timestamp,
+                    6,
+                    false,
+                    false,
+                    false,
+                    &self.time_zone,
+                )
+                .map_err(|_| invalid())?;
+                let instant = time
+                    .time
+                    .core_time()
+                    .to_datetime(&self.time_zone)
+                    .map_err(|_| invalid())?;
+                (instant.timestamp_millis() as u64) << 18
+            })
+        } else {
+            None
+        };
         if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE
             && !validated.value.eq_ignore_ascii_case("standard")
             && !validated.value.eq_ignore_ascii_case("bulk")
@@ -3277,6 +3320,9 @@ impl SessionVars {
                 .insert(other.to_owned(), validated.value.clone());
         }
         self.systems.insert(key.clone(), validated.value.clone());
+        if let Some(ts) = parsed_snapshot_ts {
+            self.snapshot_ts = ts;
+        }
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);

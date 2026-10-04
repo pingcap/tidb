@@ -1,16 +1,16 @@
 {
   "date": "2026-10-04",
   "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
-  "integration_start": "9a5877b1555835de42cb29f410fac999167e8186",
+  "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
   "counts": {
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 32,
-    "partial": 24
+    "open": 30,
+    "partial": 26
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "E03/T01/K03 rechecked in this batch; the other 53 unresolved roots retain earlier evidence.",
+  "evidence_limit": "S04/I04/O09/N03 rechecked in this batch; the other 52 unresolved roots retain earlier evidence.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -77,23 +77,25 @@
         "K01": "open",
         "K03": "partial",
         "S03": "open",
-        "S04": "open"
+        "S04": "partial"
       },
       "latest_maintenance": {
         "date": "2026-10-04",
-        "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
+        "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
         "findings": [
-          "E03",
-          "T01",
-          "K03"
+          "S04",
+          "I04",
+          "O09",
+          "N03"
         ],
         "statuses": {
-          "E03": "partial",
-          "T01": "partial",
-          "K03": "partial"
+          "S04": "partial",
+          "I04": "partial",
+          "O09": "partial",
+          "N03": "partial"
         },
-        "receipt": "table-mutation-batch-validation.json",
-        "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
+        "receipt": "historical-read-batch-validation.json",
+        "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
       }
     },
     {
@@ -121,8 +123,26 @@
         "O02": "open",
         "O03": "open",
         "O09": "partial",
-        "I04": "open",
+        "I04": "partial",
         "K02": "open"
+      },
+      "latest_maintenance": {
+        "date": "2026-10-04",
+        "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+        "findings": [
+          "S04",
+          "I04",
+          "O09",
+          "N03"
+        ],
+        "statuses": {
+          "S04": "partial",
+          "I04": "partial",
+          "O09": "partial",
+          "N03": "partial"
+        },
+        "receipt": "historical-read-batch-validation.json",
+        "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
       }
     },
     {
@@ -197,13 +217,22 @@
         "N05": "partial"
       },
       "latest_maintenance": {
-        "receipt": "runtime-settings-batch-validation.json",
-        "advanced_findings": [
-          "N05",
+        "date": "2026-10-04",
+        "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+        "findings": [
+          "S04",
+          "I04",
+          "O09",
           "N03"
         ],
-        "complete_package_acceptance": false,
-        "remaining": "Historical checkpoint; transaction-summary controls are now connected by transaction-observation-batch-validation.json. Broader administrative/HTTP/TLS/shutdown owners and native/config defaults remain."
+        "statuses": {
+          "S04": "partial",
+          "I04": "partial",
+          "O09": "partial",
+          "N03": "partial"
+        },
+        "receipt": "historical-read-batch-validation.json",
+        "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
       },
       "observation_plan_checkpoint": {
         "date": "2026-10-04",
@@ -411,18 +440,20 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "0faf5c205ea7caf399b48bac482bb9b6e98f7696",
+    "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
     "findings": [
-      "I01",
-      "N03",
-      "N05"
+      "S04",
+      "I04",
+      "O09",
+      "N03"
     ],
     "statuses": {
-      "I01": "partial",
-      "N03": "partial",
-      "N05": "partial"
+      "S04": "partial",
+      "I04": "partial",
+      "O09": "partial",
+      "N03": "partial"
     },
-    "receipt": "transaction-observation-batch-validation.json",
-    "scope": "Connected transaction history, physical completion, SQL providers and startup/runtime controls; complete parent packages remain unaccepted."
+    "receipt": "historical-read-batch-validation.json",
+    "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
   }
 }

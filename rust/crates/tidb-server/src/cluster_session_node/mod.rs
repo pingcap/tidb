@@ -3285,6 +3285,48 @@ impl ClusterSessionFactory {
         };
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        {
+            let transactions = Arc::clone(&self.transactions);
+            let historical_catalog = Arc::clone(&self.catalog);
+            let historical_storage = storage.clone();
+            let historical_slot = Arc::clone(&slot);
+            let auto_ids = Arc::clone(&self.auto_ids);
+            let globals = self.global_vars.clone();
+            session.set_historical_read_provider(Arc::new(move |ts, resource_group| {
+                let hold = Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts));
+                let snapshot = transactions
+                    .open_snapshot_at(ts, resource_group)
+                    .map_err(tidb_executor::DriverError::unsupported)?;
+                let mut metadata = SnapshotMetaSnapshot::new(snapshot);
+                let capacity = globals
+                    .get("tidb_schema_version_cache_limit")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(16);
+                let loaded = historical_catalog
+                    .historical_at(&mut metadata, capacity)
+                    .map_err(|error| tidb_executor::DriverError::unsupported(error.to_string()))?;
+                let built = cluster_session_catalog_with_templates(
+                    &loaded,
+                    &historical_storage,
+                    None,
+                    auto_ids.as_ref(),
+                    &historical_storage,
+                    None,
+                );
+                // Metadata and data retain exactly the same snapshot owner.
+                drop(
+                    historical_slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .bind(metadata.into_snapshot()),
+                );
+                Ok(tidb_session::HistoricalRead {
+                    catalog: built.catalog,
+                    timestamp_hold: hold,
+                })
+            }));
+        }
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
         if let Some(syncer) = &self.global_config_syncer {
@@ -4529,7 +4571,15 @@ impl ClusterServerSession {
         _sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
-        let control = classify_transaction_control_stmt(stmt);
+        let control = match stmt {
+            Stmt::Session(statement) => match statement.as_ref() {
+                tidb_ast::SessionStmt::Begin(begin) if begin.as_of.is_some() => {
+                    Some(TransactionControl::Begin { mode: begin.mode })
+                }
+                _ => classify_transaction_control_stmt(stmt),
+            },
+            _ => classify_transaction_control_stmt(stmt),
+        };
         if control.is_some() {
             self.session.restore_statement_variables();
         }
@@ -4769,13 +4819,30 @@ impl ClusterServerSession {
         resource_group: &str,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.prepare_statement_context(resource_group)?;
+        self.prepare_statement_context(
+            resource_group,
+            shape != StatementReadShape::AutocommitWrite,
+        )?;
         let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
         self.with_bound_statement(shape, &prelock_keys, resource_group, true, run)
     }
 
-    fn prepare_statement_context(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
+    fn prepare_statement_context(
+        &mut self,
+        resource_group: &str,
+        read_only: bool,
+    ) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
+        if read_only && self.explicit.is_none() && !self.session.in_transaction() {
+            let vars = self.session.vars();
+            if vars.snapshot_ts() != 0
+                || vars
+                    .get_system("tidb_read_staleness")
+                    .is_ok_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
+            {
+                return Ok(());
+            }
+        }
         self.begin_if_autocommit_off(resource_group)
     }
 
@@ -4942,7 +5009,7 @@ impl ClusterServerSession {
         retrying: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        let autocommit = self.explicit.is_none();
+        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
         if autocommit {
             self.session.current_tso().clear();
         }
@@ -5489,6 +5556,14 @@ impl ClusterServerSession {
     }
 
     fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
+        if let Some(ts) = self.session.historical_read_ts() {
+            self.session.current_tso().publish(ts);
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.activated(ts);
+            }
+            return Ok(());
+        }
+
         // Go `newProviderWithRequest`: `BEGIN <mode>` wins, a bare `BEGIN`
         // falls back to `@@tidb_txn_mode` -- whose default is PESSIMISTIC
         // (`vardef.DefTiDBTxnMode`). The session resolved the keyword half at
@@ -5684,10 +5759,14 @@ impl ClusterServerSession {
     /// find writes the previous statement already published, so the buffer is
     /// empty and nothing is spent.
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
+        self.finish_snapshot()?;
         self.savepoints.clear();
         self.session.current_tso().clear();
         self.transaction_pin = None;
         let Some(mut transaction) = self.explicit.take() else {
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.finished();
+            }
             // No transaction and no statement read: the buffer can only hold
             // what a previous statement already published, so there is nothing
             // to publish and no timestamp to publish it at.
@@ -5795,6 +5874,7 @@ impl ClusterServerSession {
     /// Drops the explicit transaction without publishing anything, along with
     /// every write it staged.
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
+        self.finish_snapshot()?;
         self.session.clear_table_delta();
         self.savepoints.clear();
         self.session.current_tso().clear();
@@ -5823,7 +5903,12 @@ impl ClusterServerSession {
                     .observe(txn_statement_count);
                 result.map_err(SqlQueryError::unknown)
             }
-            None => Ok(()),
+            None => {
+                if let Some(observer) = self.session.transaction_observer() {
+                    observer.finished();
+                }
+                Ok(())
+            }
         };
         // Rollback needs the native buffer's lock flags to release every key.
         self.buffer.reset();
@@ -6842,6 +6927,9 @@ impl ClusterServerSession {
         // reach the cluster catalog authority.
         let parsed = self.session.parse_statement(sql).map_err(map_error)?;
         self.session
+            .validate_snapshot_statement(&parsed)
+            .map_err(map_error)?;
+        self.session
             .require_statement_table_privileges(&parsed)
             .map_err(map_error)?;
         if self.explicit.is_some() || self.session.in_transaction() {
@@ -7393,7 +7481,10 @@ impl QuerySession for ClusterServerSession {
                 .statement_resource_group_sql(statement.sql())
                 .map_err(map_error)?,
         };
-        self.prepare_statement_context(&resource_group)?;
+        self.prepare_statement_context(
+            &resource_group,
+            effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))),
+        )?;
         let cache_allowed = effective.is_some_and(|template| {
             self.session
                 .prepared_plan_cache_allowed_for_statement(template)

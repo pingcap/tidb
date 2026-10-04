@@ -331,6 +331,21 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
 }
 
 impl StatementSnapshot {
+    /// Opens a validated historical read through the ordinary snapshot owner.
+    pub fn open_at<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        start_ts: u64,
+        timeout: Duration,
+    ) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+        let transaction = opener.begin_read_only_at(start_ts)?;
+        Ok(StatementSnapshot {
+            transaction: Some(transaction),
+            start_ts,
+            timeout,
+            cancellation: UnaryCancellation::new(),
+        })
+    }
+
     /// Starts fetching one ordinary read-only transaction's PD timestamp
     /// without opening the transaction itself.
     pub fn prepare<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(

@@ -31,6 +31,16 @@ use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode, TxnErrorKind};
 use tidb_util::stringutil::go_to_lower;
 
+/// A persisted schema image and the storage authority's retained timestamp guard.
+pub struct HistoricalRead {
+    pub catalog: Catalog,
+    pub timestamp_hold: std::sync::Arc<dyn Send + Sync>,
+}
+
+/// Domain/storage callback shared by explicit and one-statement historical reads.
+pub type HistoricalReadProvider =
+    dyn Fn(u64, &str) -> Result<HistoricalRead, DriverError> + Send + Sync;
+
 /// An open transaction's state.
 ///
 /// Go stages a transaction's writes in a `kv.MemBuffer` over a read snapshot
@@ -53,6 +63,7 @@ pub(crate) struct Transaction {
     /// `Some(ts)` for `START TRANSACTION READ ONLY AS OF TIMESTAMP`: the
     /// working copy is a historical snapshot and COMMIT publishes nothing.
     stale_read_ts: Option<u64>,
+    _historical_hold: Option<std::sync::Arc<dyn Send + Sync>>,
     /// The mode this transaction opened in, resolved from the `BEGIN` keyword
     /// and `@@tidb_txn_mode` exactly as Go resolves it.
     ///
@@ -113,6 +124,7 @@ impl Transaction {
             base_version: catalog.version(),
             start_ts,
             stale_read_ts: None,
+            _historical_hold: None,
             mode,
             read_committed,
             savepoints: Vec::new(),
@@ -449,11 +461,29 @@ impl Session {
         Ok(tso)
     }
 
+    /// Installs the existing store/Domain authority for historical schema and rows.
+    pub fn set_historical_read_provider(
+        &mut self,
+        provider: std::sync::Arc<HistoricalReadProvider>,
+    ) {
+        self.historical_read_provider = Some(provider);
+    }
+
+    /// Timestamp retained by the current read-only historical transaction.
+    pub fn historical_read_ts(&self) -> Option<u64> {
+        self.txn.as_ref().and_then(|txn| txn.stale_read_ts)
+    }
+
     /// `START TRANSACTION READ ONLY AS OF TIMESTAMP <resolved ts>`: the Go
     /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
     /// the as-of timestamp and whose reads all see the store as of it.
     pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
-        let snapshot = {
+        let mut historical_hold = None;
+        let snapshot = if let Some(provider) = &self.historical_read_provider {
+            let read = provider(ts, self.current_resource_group())?;
+            historical_hold = Some(read.timestamp_hold);
+            read.catalog
+        } else {
             let shared = self.lock_catalog()?;
             shared.state_as_of(ts).ok_or_else(|| {
                 // No retained commit is that old. Go's analogue is the GC
@@ -473,12 +503,18 @@ impl Session {
             working: snapshot,
             start_ts: ts,
             stale_read_ts: Some(ts),
+            _historical_hold: historical_hold,
             mode: SessionTxnMode::Optimistic,
             read_committed: false,
             savepoints: Vec::new(),
             local_temporary_at_open,
         });
         self.current_tso().publish(ts);
+        if self.historical_read_provider.is_some() {
+            if let Some(observer) = self.transaction_observer() {
+                observer.activated(ts);
+            }
+        }
         if let Some(process) = &self.process {
             process.registry().transaction_started(process.id(), ts);
         }
@@ -568,10 +604,7 @@ impl Session {
                 }
                 // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` opens
                 // the transaction AT that timestamp, so every statement in it
-                // reads history. This tier's store keeps none, and answering
-                // from the present under a historical name is undetectable --
-                // the same reason a table reference's `AS OF TIMESTAMP` and a
-                // pinned `tidb_snapshot` are refused.
+                // reads history through the installed store/schema owner.
                 if let Some(expr) = &begin.as_of {
                     // Go `StalenessTxnContextProvider`: the expression
                     // resolves through `CalculateAsOfTsExpr`'s rules and the

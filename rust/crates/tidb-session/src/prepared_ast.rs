@@ -129,6 +129,9 @@ impl Session {
     pub(crate) fn prepared_plan_cache_environment(
         &self,
     ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
+        if self.historical_read_ts().is_some() {
+            return None;
+        }
         let vars_generation = self.vars.generation();
         let blacklist_generation = self.pushdown_blacklists.generation();
         let in_transaction = self.in_transaction();
@@ -151,7 +154,7 @@ impl Session {
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
         let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
-            && !snapshot.is_ok_and(|value| !value.is_empty())
+            && !snapshot.is_ok_and(|value| !value.is_empty() && value.parse::<u64>() != Ok(0))
             && !read_staleness
                 .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
         .then(|| {

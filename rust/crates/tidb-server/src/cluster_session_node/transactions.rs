@@ -123,6 +123,15 @@ pub trait ClusterTransactions: Send + Sync {
     /// installed; ordinary statements use [`Self::prepare_snapshot`].
     fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String>;
 
+    /// The caller needs both schema and data at this historical timestamp.
+    fn open_snapshot_at(
+        &self,
+        _read_ts: u64,
+        _resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        Err("historical snapshots are unavailable from this storage owner".into())
+    }
+
     /// Opens one autocommit statement's read snapshot at `u64::MAX` -- the
     /// latest committed version -- spending no PD timestamp.
     ///
@@ -1166,6 +1175,28 @@ where
                 Box::new(RealPendingSnapshot(snapshot)) as Box<dyn PendingClusterSnapshot>
             })
             .map_err(|error| error.to_string())
+    }
+
+    fn open_snapshot_at(
+        &self,
+        read_ts: u64,
+        resource_group: &str,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        // Validate against this store's timestamp authority before opening any history.
+        // Native reads retain their ordinary GC visibility check.
+        let current = self.open_snapshot(resource_group)?;
+        let current_ts = current.start_ts();
+        drop(current);
+        if read_ts > current_ts {
+            return Err(format!("cannot set read timestamp to a future time, readTS: {read_ts}, currentTS: {current_ts}"));
+        }
+        StatementSnapshot::open_at(
+            self.opener_for_resource_group(resource_group),
+            read_ts,
+            self.timeout,
+        )
+        .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
+        .map_err(|error| error.to_string())
     }
 
     fn open_snapshot(&self, resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {

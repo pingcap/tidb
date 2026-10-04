@@ -360,6 +360,7 @@ impl Session {
         &mut self,
         stmt: &Stmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
+        self.validate_snapshot_statement(stmt)?;
         let local_temporary_create = matches!(
             stmt,
             Stmt::Ddl(ddl)
@@ -1865,10 +1866,13 @@ impl Session {
             }
             return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(cause)));
         }
-        self.open_stale_transaction(ts)?;
         match self.execute_parsed_statement_inner("", stripped, None, None, None) {
             Ok(PendingExecution::Query(mut query)) => {
-                query.transaction_end = QueryTransactionEnd::StaleRead;
+                query.transaction_end = if self.is_autocommit() || self.vars.snapshot_ts() != 0 {
+                    QueryTransactionEnd::StaleRead
+                } else {
+                    QueryTransactionEnd::None
+                };
                 Ok(PendingExecution::Query(query))
             }
             outcome => {
@@ -1998,11 +2002,61 @@ impl Session {
         // three consumers below share this one walk instead of each cloning
         // and re-walking the statement.
         let scan = crate::binding::scan_statement_tables(&mut stmt);
+        self.validate_snapshot_statement(&stmt)?;
+        if self.vars.snapshot_ts() != 0
+            && self.in_transaction()
+            && self.historical_read_ts() != Some(self.vars.snapshot_ts())
+            && matches!(&stmt, Stmt::Query(_))
+        {
+            // SnapshotTS overrides an ordinary transaction's reads in Go. Until
+            // that provider transition is composed, never return current rows.
+            return Err(DriverError::unsupported(
+                "snapshot reads inside an existing transaction are unavailable",
+            ));
+        }
         self.record_mdl_related_tables(&stmt, &scan.names);
         // A statement whose table references carry `AS OF TIMESTAMP` runs
         // against the store's history -- Go's stale statement
         // (`StalenessTxnContextProvider` for one statement). Intercepted at
         // this one funnel so text and prepared spellings share the rules.
+        if self.historical_read_ts().is_some() {
+            struct Locked(bool);
+            impl tidb_ast::Visitor for Locked {
+                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                    if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
+                        self.0 |= select.lock.is_some();
+                    }
+                    false
+                }
+                fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+                    true
+                }
+            }
+            let mut locked = Locked(false);
+            tidb_ast::Visitable::accept(&mut stmt, &mut locked);
+            if locked.0 {
+                return Err(DriverError::unsupported(
+                    "select lock hasn't been supported in stale read yet",
+                ));
+            }
+        }
+        let read_only_checked = matches!(&stmt, Stmt::Dml(_) | Stmt::Query(_))
+            || matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
+        if self.historical_read_ts().is_some() && read_only_checked && !stmt.is_read_only(true) {
+            return Err(DriverError::unsupported(
+                "only support read-only statement during read-only staleness transactions",
+            ));
+        }
+        if !self.in_transaction() && matches!(&stmt, Stmt::Query(_)) && !scan.has_as_of {
+            if let Some(ts) = self.configured_historical_read_ts()? {
+                return self.run_statement_as_of(ts, stmt);
+            }
+        }
+        if scan.has_as_of && self.in_transaction() {
+            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
+                "as of timestamp can't be set in transaction.".into(),
+            )));
+        }
         if scan.has_as_of && !self.in_transaction() {
             if let Some(output) = self.execute_as_of_statement(&stmt)? {
                 return Ok(output);
@@ -2250,11 +2304,9 @@ impl Session {
             }
             Ok(None) => {}
         }
-        // A pinned historical read must not silently answer from the present.
-        // The check sits BELOW the `SET` and transaction-control doors so the
-        // session can always pin, unpin, and roll back; every statement that
-        // would READ or WRITE is above it and is refused.
-        self.refuse_pinned_historical_read()?;
+        // SET and transaction control must remain available to unpin or roll back.
+        // Snapshot writes are rejected; sessions without a storage provider fail closed.
+        self.refuse_pinned_historical_read(&stmt)?;
         // SQL-level prepared statements are answered before variable binding,
         // because a `USING` entry is a variable whose VALUE this statement
         // must read itself (Go's `usingParam.Eval`) rather than one to
@@ -3094,24 +3146,58 @@ fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
 }
 
 impl Session {
-    /// Refuses every statement that would read or write while the session has
-    /// pinned a historical timestamp.
-    ///
-    /// Go answers such a statement from the PAST: `tidb_snapshot` makes the
-    /// session read at that timestamp (`SnapshotTS`), and a negative
-    /// `tidb_read_staleness` reads `now() - staleness`
-    /// (`CalculateAsOfTsExpr`). Both need MVCC history and a timestamp oracle,
-    /// which this tier's store has neither of -- so the honest answer is the
-    /// same refusal the bounded planners already give a stale read
-    /// (`tidb-planner`'s `UnsupportedReadOnlyFeature::StaleRead`), not the
-    /// CURRENT rows under a historical name. Answering from the present is
-    /// the one outcome a client cannot detect.
-    ///
-    /// `tidb_read_staleness` is Go's `int` seconds, at most 0; `tidb_snapshot`
-    /// is Go's timestamp string, empty when nothing is pinned.
-    fn refuse_pinned_historical_read(&mut self) -> Result<(), DriverError> {
+    /// Shared snapshot write admission for ordinary and routed DDL execution.
+    pub fn validate_snapshot_statement(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        let checked = matches!(stmt, Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Query(_))
+            || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
+        if self.vars.snapshot_ts() != 0 && checked && !stmt.is_read_only(true) {
+            return Err(DriverError::unsupported(
+                "can not execute write statement when 'tidb_snapshot' is set",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Selects one statement timestamp before historical schema and row reads.
+    /// Explicit transactions retain their selected timestamp in Transaction.
+    fn configured_historical_read_ts(&mut self) -> Result<Option<u64>, DriverError> {
+        if self.historical_read_provider.is_none() {
+            return Ok(None);
+        }
+        let snapshot = self.vars.snapshot_ts();
+        if snapshot != 0 {
+            return Ok(Some(snapshot));
+        }
+        let seconds = self
+            .vars
+            .get_system("tidb_read_staleness")
+            .unwrap_or_default()
+            .parse::<i64>()
+            .unwrap_or(0);
+        if seconds == 0 {
+            return Ok(None);
+        }
+        // This store has no published SafeTS; Go's zero SafeTS selects the lower bound.
+        let now = self.eval_value(&tidb_ast::Expr::Func {
+            name: "NOW".into(),
+            args: vec![tidb_ast::Expr::Int("6".into())],
+            origin_position: 0,
+        })?;
+        let ts = self.resolve_as_of_ts(&tidb_ast::Expr::String(
+            now.sql_string().unwrap_or_default(),
+        ))?;
+        Ok(Some(
+            ((ts >> 18).saturating_sub(seconds.unsigned_abs().saturating_mul(1000))) << 18,
+        ))
+    }
+
+    fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+        if self.historical_read_provider.is_some() {
+            return self.validate_snapshot_statement(stmt);
+        }
+
         if let Ok(snapshot) = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT) {
-            if !snapshot.is_empty() {
+            if !snapshot.is_empty() && snapshot.parse::<u64>() != Ok(0) {
                 return Err(DriverError::unsupported(
                     "reading at @@tidb_snapshot is not supported yet",
                 ));

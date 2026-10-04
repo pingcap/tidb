@@ -223,6 +223,11 @@ pub struct SnapshotMetaSnapshot {
 }
 
 impl SnapshotMetaSnapshot {
+    /// Returns the same snapshot after reading metadata, so rows share its timestamp.
+    pub fn into_snapshot(self) -> Box<dyn ClusterSnapshot> {
+        self.snapshot
+    }
+
     /// Binds one read handle.
     #[must_use]
     pub fn new(snapshot: Box<dyn ClusterSnapshot>) -> Self {

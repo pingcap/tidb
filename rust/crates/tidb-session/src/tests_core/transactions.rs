@@ -443,13 +443,16 @@ fn as_of_timestamp_reads_the_stores_history() {
             "{sql} must refuse with Go's cause, got {error:?}"
         );
     }
-    // Valid instant, but older than anything the ring retains: refuse, never
-    // answer from the present.
+    // Go resolves names in the historical schema: a table created later
+    // does not exist there. Never answer from the present.
     let error = session
         .run("SELECT a FROM t AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .unwrap_err();
     assert!(
-        format!("{error:?}").contains("retained history"),
+        matches!(
+            error,
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(_))
+        ),
         "got {error:?}"
     );
 }
@@ -532,4 +535,47 @@ fn start_transaction_as_of_timestamp_pins_the_transaction() {
         "got {error:?}"
     );
     assert!(!session.in_transaction());
+}
+
+#[test]
+fn historical_read_batch_snapshot_numeric_and_exclusive_settings_follow_go() {
+    let mut session = Session::new();
+    session
+        .run("SET tidb_snapshot='469540215700324352'")
+        .unwrap();
+    assert_eq!(
+        session.vars().get_system("tidb_snapshot").unwrap(),
+        "469540215700324352"
+    );
+    assert!(session
+        .run("SET tidb_read_staleness=-1")
+        .unwrap_err()
+        .to_string()
+        .contains("tidb_snapshot should be clear"));
+    session.run("SET tidb_snapshot='0'").unwrap();
+    session.run("SELECT 1").unwrap();
+    session.run("SET tidb_read_staleness=-1").unwrap();
+    assert!(session.run("SET tidb_snapshot='0'").is_err());
+    assert!(session
+        .run("SET tidb_snapshot='469540215700324352'")
+        .unwrap_err()
+        .to_string()
+        .contains("tidb_read_staleness should be clear"));
+    session.run("SET tidb_read_staleness=0").unwrap();
+    session.run("SET time_zone='+00:00'").unwrap();
+    session
+        .run("SET tidb_snapshot='2020-01-01 00:00:00'")
+        .unwrap();
+    let expected = 1_577_836_800_000_u64 << 18;
+    assert_eq!(session.vars().snapshot_ts(), expected);
+    session.run("SET time_zone='+08:00'").unwrap();
+    assert_eq!(session.vars().snapshot_ts(), expected);
+    assert!(session.run("SET tidb_snapshot='invalid'").is_err());
+    assert_eq!(session.vars().snapshot_ts(), expected);
+    assert_eq!(
+        session.vars().get_system("tidb_snapshot").unwrap(),
+        "2020-01-01 00:00:00"
+    );
+    session.run("SET tidb_snapshot=DEFAULT").unwrap();
+    assert_eq!(session.vars().snapshot_ts(), 0);
 }

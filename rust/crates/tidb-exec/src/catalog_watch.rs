@@ -99,6 +99,7 @@ use crate::cluster_catalog::ClusterCatalog;
 /// never has to wait for readers.
 pub struct SharedCatalog {
     published: RwLock<Arc<ClusterCatalog>>,
+    historical: Mutex<std::collections::BTreeMap<i64, Arc<ClusterCatalog>>>,
 }
 
 impl SharedCatalog {
@@ -107,6 +108,7 @@ impl SharedCatalog {
     pub fn new(catalog: ClusterCatalog) -> Self {
         Self {
             published: RwLock::new(Arc::new(catalog)),
+            historical: Mutex::default(),
         }
     }
 
@@ -118,6 +120,43 @@ impl SharedCatalog {
             Ok(guard) => Arc::clone(&guard),
             Err(poisoned) => Arc::clone(&poisoned.into_inner()),
         }
+    }
+
+    /// Resolves a schema version from the caller's actual historical snapshot.
+    /// Old reads never replace the latest publication; the newest versions are retained.
+    pub fn historical_at<S: crate::cluster_catalog::MetaSnapshot>(
+        &self,
+        snapshot: &mut S,
+        capacity: usize,
+    ) -> Result<Arc<ClusterCatalog>, crate::cluster_catalog::ClusterCatalogError> {
+        let version = crate::cluster_catalog::read_schema_version(snapshot)?;
+        let found = {
+            let mut versions = self
+                .historical
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let latest = self.load();
+            versions.insert(latest.schema_version, latest);
+            let found = versions.get(&version).cloned();
+            while versions.len() > capacity {
+                versions.pop_first();
+            }
+            found
+        };
+        if let Some(found) = found {
+            return Ok(found);
+        }
+        // No shared cache lock spans storage RPCs.
+        let loaded = Arc::new(crate::cluster_catalog::load_cluster_catalog(snapshot)?);
+        let mut versions = self
+            .historical
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let found = versions.entry(version).or_insert(loaded).clone();
+        while versions.len() > capacity {
+            versions.pop_first();
+        }
+        Ok(found)
     }
 
     /// Replaces the published catalog atomically.
@@ -430,6 +469,82 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn historical_read_batch_version_cache_preserves_latest_and_live_capacity() {
+        struct Snapshot {
+            version: i64,
+            scans: usize,
+        }
+        impl crate::cluster_catalog::MetaSnapshot for Snapshot {
+            fn get(
+                &mut self,
+                _: &[u8],
+            ) -> Result<Option<Vec<u8>>, crate::cluster_catalog::ClusterCatalogError> {
+                Ok(Some(self.version.to_string().into_bytes()))
+            }
+            fn scan_prefix(
+                &mut self,
+                _: &[u8],
+            ) -> Result<
+                crate::cluster_catalog::MetaPairs,
+                crate::cluster_catalog::ClusterCatalogError,
+            > {
+                self.scans += 1;
+                Ok(Vec::new())
+            }
+        }
+        let shared = SharedCatalog::new(catalog_at(10));
+        let mut snapshot = Snapshot {
+            version: 7,
+            scans: 0,
+        };
+        let old = shared.historical_at(&mut snapshot, 3).unwrap();
+        assert_eq!(old.schema_version, 7);
+        assert!(snapshot.scans > 0);
+        snapshot.scans = 0;
+        assert!(Arc::ptr_eq(
+            &old,
+            &shared.historical_at(&mut snapshot, 3).unwrap()
+        ));
+        assert_eq!(snapshot.scans, 0);
+        snapshot.version = 8;
+        shared.historical_at(&mut snapshot, 3).unwrap();
+        snapshot.version = 9;
+        shared.historical_at(&mut snapshot, 2).unwrap();
+        assert_eq!(
+            shared
+                .historical
+                .lock()
+                .unwrap()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![9, 10]
+        );
+        assert_eq!(shared.load().schema_version, 10);
+        assert_eq!(
+            old.schema_version, 7,
+            "eviction does not invalidate an active reader"
+        );
+        snapshot.version = 7;
+        snapshot.scans = 0;
+        shared.historical_at(&mut snapshot, 2).unwrap();
+        assert!(
+            snapshot.scans > 0,
+            "evicted schema reloads from its own snapshot"
+        );
+        shared.store(catalog_at(11));
+        snapshot.version = 11;
+        assert_eq!(
+            shared
+                .historical_at(&mut snapshot, 2)
+                .unwrap()
+                .schema_version,
+            11
+        );
+        assert_eq!(shared.historical.lock().unwrap().len(), 2);
+    }
 
     fn catalog_at(version: i64) -> ClusterCatalog {
         ClusterCatalog {
