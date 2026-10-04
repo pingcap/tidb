@@ -99,32 +99,6 @@ impl MysqlServerTls {
         Ok(tls)
     }
 
-    /// Generates an in-memory self-signed certificate, mirroring Go's
-    /// `createTLSCertificates` fallback under `auto-tls`.
-    ///
-    /// Go writes the pair to `TempStoragePath`; this node keeps it in memory
-    /// under the shared reload/rotation owner. RSA-key-size and temporary
-    /// file publication remain separate Go parity obligations.
-    pub fn self_signed() -> Result<Self, MysqlTlsError> {
-        let now = std::time::SystemTime::now();
-        let mut params =
-            rcgen::CertificateParams::new(vec!["localhost".to_owned(), "127.0.0.1".to_owned()])
-                .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
-        // Go CreateCertificates makes a 90-day certificate, renewed at 30 days.
-        params.not_before = now.into();
-        params.not_after = (now + Duration::from_secs(90 * 24 * 60 * 60)).into();
-        let pair = rcgen::KeyPair::generate()
-            .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
-        let certificate = params
-            .self_signed(&pair)
-            .map_err(|error| MysqlTlsError::Generation(error.to_string()))?
-            .der()
-            .clone();
-        let key = PrivateKeyDer::try_from(pair.serialize_der())
-            .map_err(|error| MysqlTlsError::Generation(error.to_string()))?;
-        Self::from_material(vec![certificate], key, "auto-generated self-signed")
-    }
-
     fn from_material(
         certs: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
@@ -261,57 +235,89 @@ impl MysqlServerTls {
     }
 }
 
-/// Resolves the MySQL port's TLS material from the node's options.
-///
-/// A configured cert/key pair wins; otherwise `auto_tls` decides between an
-/// in-memory self-signed pair and no TLS at all. `Ok(None)` means the port
-/// stays plaintext and `CLIENT_SSL` must not be advertised.
+/// Resolve all inbound TLS settings from the same canonical startup configuration.
 pub fn resolve_server_tls(
-    cert: Option<&Path>,
-    key: Option<&Path>,
-    auto_tls: bool,
+    config: &crate::NodeConfig,
 ) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
-    match (cert, key) {
-        (Some(cert), Some(key)) => MysqlServerTls::from_pem_files(cert, key).map(Some),
-        (None, None) => {
-            if auto_tls {
-                MysqlServerTls::self_signed().map(Some)
-            } else {
-                Ok(None)
-            }
+    let generated;
+    let (cert, key, origin) = match (config.ssl_cert.as_deref(), config.ssl_key.as_deref()) {
+        (Some(cert), Some(key)) => (cert, key, "configured --ssl-cert/--ssl-key"),
+        _ if config.auto_tls => {
+            generated = (
+                config.spill_storage.path.join("cert.pem"),
+                config.spill_storage.path.join("key.pem"),
+            );
+            create_certificates(
+                &generated.0,
+                &generated.1,
+                config.global_config.security.rsa_key_size,
+            )?;
+            (
+                generated.0.as_path(),
+                generated.1.as_path(),
+                "auto-generated self-signed",
+            )
         }
-        (Some(_), None) | (None, Some(_)) => {
-            if auto_tls {
-                MysqlServerTls::self_signed().map(Some)
-            } else {
-                Ok(None)
-            }
-        }
-    }
-}
-
-/// Resolves configured inbound CA and minimum protocol together with material.
-pub fn resolve_server_tls_with_policy(
-    cert: Option<&Path>,
-    key: Option<&Path>,
-    auto_tls: bool,
-    ca: Option<&Path>,
-    min_version: &str,
-) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
-    let Some(tls) = resolve_server_tls(cert, key, auto_tls)? else {
-        return Ok(None);
+        _ => return Ok(None),
     };
     let mut tls = MysqlServerTls::from_material_with_policy(
-        tls.certificates,
-        tls.key.clone_key(),
-        tls.origin,
-        ca,
-        min_version,
+        read_certificates(cert)?,
+        read_private_key(key)?,
+        origin,
+        config.ssl_ca.as_deref(),
+        &config.min_tls_version,
     )?;
-    if let (Some(cert), Some(key)) = (cert, key) {
-        tls.watch_certificate_files((cert.to_owned(), key.to_owned()))?;
-    }
+    tls.watch_certificate_files((cert.to_owned(), key.to_owned()))?;
     Ok(Some(tls))
+}
+
+/// Go util.CreateCertificates: RSA, serial 1, the OS hostname and a 90-day lifetime.
+/// The process spill owner creates the directory before opening the TLS listener.
+fn create_certificates(cert: &Path, key: &Path, rsa_bits: i64) -> Result<(), MysqlTlsError> {
+    let generation = |error: &dyn std::fmt::Display| MysqlTlsError::Generation(error.to_string());
+    // Go crypto/rsa rejects keys below 1024 bits. Rustls' supported signing
+    // algorithms additionally validate the generated key when it is loaded.
+    let rsa_bits = u32::try_from(rsa_bits)
+        .ok()
+        .filter(|bits| *bits >= 1024)
+        .ok_or_else(|| {
+            MysqlTlsError::Generation("RSA key size must be at least 1024 bits".into())
+        })?;
+    let rsa = openssl::rsa::Rsa::generate(rsa_bits).map_err(|e| generation(&e))?;
+    let private = openssl::pkey::PKey::from_rsa(rsa)
+        .map_err(|e| generation(&e))?
+        .private_key_to_pkcs8()
+        .map_err(|e| generation(&e))?;
+    let pair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+        &rustls::pki_types::PrivatePkcs8KeyDer::from(private),
+        &rcgen::PKCS_RSA_SHA256,
+    )
+    .map_err(|e| generation(&e))?;
+    let hostname = tidb_util::sem::operating_system_hostname()
+        .ok_or_else(|| MysqlTlsError::Generation("could not read the OS hostname".into()))?;
+    let mut params = rcgen::CertificateParams::new(vec![hostname]).map_err(|e| generation(&e))?;
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        "TiDB_Server_Auto_Generated_Server_Certificate",
+    );
+    params.serial_number = Some(1_u64.into());
+    let now = std::time::SystemTime::now();
+    params.not_before = now.into();
+    params.not_after = (now + Duration::from_secs(90 * 24 * 60 * 60)).into();
+    let certificate = params.self_signed(&pair).map_err(|e| generation(&e))?;
+    fs::write(cert, certificate.pem()).map_err(|e| generation(&e))?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(key).map_err(|e| generation(&e))?;
+    file.write_all(pair.serialize_pem().as_bytes())
+        .map_err(|e| generation(&e))?;
+    Ok(())
 }
 
 /// Go GetCertificate reloads a key pair per handshake and retains the last
@@ -420,30 +426,15 @@ impl rustls::server::danger::ClientCertVerifier for RequestClientCert {
 
 /// One process configuration, shared by SQL reload and each new connection.
 pub(crate) struct MysqlTlsManager {
-    cert: Option<PathBuf>,
-    key: Option<PathBuf>,
-    ca: Option<PathBuf>,
-    auto_tls: bool,
-    min_version: String,
+    config: crate::NodeConfig,
     current: std::sync::RwLock<Option<MysqlServerTls>>,
 }
 
 impl MysqlTlsManager {
     pub(crate) fn new(config: &crate::NodeConfig) -> Result<Arc<Self>, MysqlTlsError> {
-        let current = resolve_server_tls_with_policy(
-            config.ssl_cert.as_deref(),
-            config.ssl_key.as_deref(),
-            config.auto_tls,
-            config.ssl_ca.as_deref(),
-            &config.min_tls_version,
-        )?;
         Ok(Arc::new(Self {
-            cert: config.ssl_cert.clone(),
-            key: config.ssl_key.clone(),
-            ca: config.ssl_ca.clone(),
-            auto_tls: config.auto_tls,
-            min_version: config.min_tls_version.clone(),
-            current: std::sync::RwLock::new(current),
+            config: config.clone(),
+            current: std::sync::RwLock::new(resolve_server_tls(config)?),
         }))
     }
 
@@ -461,19 +452,22 @@ impl MysqlTlsManager {
         vec![
             (
                 "ssl_ca",
-                self.ca
+                self.config
+                    .ssl_ca
                     .as_ref()
                     .map_or_else(String::new, |p| p.display().to_string()),
             ),
             (
                 "ssl_cert",
-                self.cert
+                self.config
+                    .ssl_cert
                     .as_ref()
                     .map_or_else(String::new, |p| p.display().to_string()),
             ),
             (
                 "ssl_key",
-                self.key
+                self.config
+                    .ssl_key
                     .as_ref()
                     .map_or_else(String::new, |p| p.display().to_string()),
             ),
@@ -483,17 +477,11 @@ impl MysqlTlsManager {
     }
 
     fn load(&self) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
-        resolve_server_tls_with_policy(
-            self.cert.as_deref(),
-            self.key.as_deref(),
-            self.auto_tls,
-            self.ca.as_deref(),
-            &self.min_version,
-        )
+        resolve_server_tls(&self.config)
     }
 
     pub(crate) fn automatic(&self) -> bool {
-        self.auto_tls && (self.cert.is_none() || self.key.is_none())
+        self.config.auto_tls && (self.config.ssl_cert.is_none() || self.config.ssl_key.is_none())
     }
 
     fn rotate(&self) {
@@ -970,6 +958,89 @@ mod tiflash_cluster_http_tests {
 mod account_tls_batch_tests {
     use super::*;
 
+    fn generated_config() -> crate::NodeConfig {
+        let mut config =
+            crate::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
+                .unwrap();
+        config.auto_tls = true;
+        config.global_config.security.rsa_key_size = 2048;
+        config.spill_storage.path = std::env::temp_dir().join(format!(
+            "tidb-generated-tls-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&config.spill_storage.path).unwrap();
+        config
+    }
+
+    #[test]
+    fn generated_tls_uses_go_identity_size_and_private_file_policy() {
+        let config = generated_config();
+        let manager = MysqlTlsManager::new(&config).unwrap();
+        let path = &config.spill_storage.path;
+        let certificate =
+            openssl::x509::X509::from_pem(&fs::read(path.join("cert.pem")).unwrap()).unwrap();
+        assert_eq!(
+            certificate.public_key().unwrap().rsa().unwrap().size() * 8,
+            2048
+        );
+        assert_eq!(
+            certificate
+                .serial_number()
+                .to_bn()
+                .unwrap()
+                .to_dec_str()
+                .unwrap()
+                .to_string(),
+            "1"
+        );
+        let cn = certificate
+            .subject_name()
+            .entries_by_nid(openssl::nid::Nid::COMMONNAME)
+            .next()
+            .unwrap();
+        assert_eq!(
+            cn.data().as_slice(),
+            b"TiDB_Server_Auto_Generated_Server_Certificate"
+        );
+        let names = certificate.subject_alt_names().unwrap();
+        assert_eq!(names.len(), 1);
+        assert_eq!(
+            names[0].dnsname(),
+            tidb_util::sem::operating_system_hostname().as_deref()
+        );
+        let key = fs::read_to_string(path.join("key.pem")).unwrap();
+        assert!(key.starts_with("-----BEGIN PRIVATE KEY-----"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path.join("key.pem"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(
+            manager
+                .variables()
+                .into_iter()
+                .find(|(name, _)| *name == "ssl_cert")
+                .unwrap()
+                .1,
+            ""
+        );
+        let mut config = config.clone();
+        config.global_config.security.rsa_key_size = -1;
+        assert!(resolve_server_tls(&config).is_err());
+        config.global_config.security.rsa_key_size = 2048;
+        config.spill_storage.path = path.join("missing");
+        assert!(resolve_server_tls(&config).is_err());
+        fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn tls_owner_sql_reload_uses_shared_process_and_preserves_failed_configuration() {
         let ca = std::env::temp_dir().join(format!(
@@ -978,10 +1049,7 @@ mod account_tls_batch_tests {
             std::thread::current().id()
         ));
         fs::write(&ca, "").unwrap();
-        let mut config =
-            crate::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
-                .unwrap();
-        config.auto_tls = true;
+        let mut config = generated_config();
         config.ssl_ca = Some(ca.clone());
         let manager = MysqlTlsManager::new(&config).unwrap();
         let processes = tidb_session::process::ProcessRegistry::default();
@@ -1010,7 +1078,9 @@ mod account_tls_batch_tests {
 
     #[test]
     fn tls_owner_automatic_certificates_renew_and_worker_retires() {
-        let initial = MysqlServerTls::self_signed().unwrap();
+        let config = generated_config();
+        let manager = MysqlTlsManager::new(&config).unwrap();
+        let initial = manager.current().unwrap();
         let (_, cert) =
             x509_parser::parse_x509_certificate(initial.certificates[0].as_ref()).unwrap();
         assert_eq!(
@@ -1018,16 +1088,8 @@ mod account_tls_batch_tests {
             90 * 24 * 60 * 60
         );
         let old = initial.certificates[0].clone();
-        let manager = Arc::new(MysqlTlsManager {
-            cert: None,
-            key: None,
-            ca: None,
-            auto_tls: true,
-            min_version: String::new(),
-            current: std::sync::RwLock::new(Some(initial)),
-        });
         let runner = TlsRotation::with_interval(manager.clone(), Duration::from_millis(10));
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while manager.current().unwrap().certificates[0] == old {
             assert!(
                 std::time::Instant::now() < deadline,
@@ -1043,27 +1105,22 @@ mod account_tls_batch_tests {
 
     #[test]
     fn account_tls_batch_partial_pair_uses_go_auto_tls_fallback() {
-        assert!(
-            resolve_server_tls(Some(Path::new("unused.pem")), None, false)
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            resolve_server_tls(None, Some(Path::new("unused.pem")), true)
-                .unwrap()
-                .is_some()
-        );
+        let mut config = generated_config();
+        config.ssl_cert = Some(PathBuf::from("unused.pem"));
+        config.auto_tls = false;
+        assert!(resolve_server_tls(&config).unwrap().is_none());
+        config.auto_tls = true;
+        assert!(resolve_server_tls(&config).unwrap().is_some());
+        fs::remove_dir_all(&config.spill_storage.path).unwrap();
     }
 
     #[test]
     fn account_tls_batch_configured_ca_is_loaded_before_serving() {
-        let result = resolve_server_tls_with_policy(
-            None,
-            None,
-            true,
-            Some(Path::new("/nonexistent-tidb-ca.pem")),
-            "TLSv1.3",
-        );
+        let mut config = generated_config();
+        config.ssl_ca = Some(PathBuf::from("/nonexistent-tidb-ca.pem"));
+        config.min_tls_version = "TLSv1.3".into();
+        let result = resolve_server_tls(&config);
+        fs::remove_dir_all(&config.spill_storage.path).unwrap();
         assert!(
             result.is_err(),
             "CA read failure must prevent configured TLS startup"

@@ -133,15 +133,16 @@ fn set_hostname_default(value: String) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
 }
 
+/// Read the OS hostname independently of the SQL hostname default.
 #[cfg(unix)]
-fn operating_system_hostname() -> Option<String> {
+pub fn operating_system_hostname() -> Option<String> {
     let system = rustix::system::uname();
     let hostname = system.nodename().to_string_lossy();
     (!hostname.is_empty()).then(|| hostname.into_owned())
 }
 
 #[cfg(windows)]
-fn operating_system_hostname() -> Option<String> {
+pub fn operating_system_hostname() -> Option<String> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_MORE_DATA};
     use windows_sys::Win32::System::SystemInformation::{
         ComputerNamePhysicalDnsHostname, GetComputerNameExW,
@@ -176,7 +177,7 @@ fn operating_system_hostname() -> Option<String> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn operating_system_hostname() -> Option<String> {
+pub fn operating_system_hostname() -> Option<String> {
     None
 }
 

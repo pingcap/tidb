@@ -9916,3 +9916,170 @@ fn binding_maintenance_preserves_usage_and_collects_tombstones_without_writes() 
         [["1"]]
     );
 }
+
+#[test]
+fn login_durability_batch_serializes_counters_and_preserves_attributes() {
+    use crate::configured_user_store::AuthenticationFailure;
+    let (stack, users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(688)).unwrap();
+    rows(&mut session, "CREATE USER 'durable_login'@'%' FAILED_LOGIN_ATTEMPTS 100 PASSWORD_LOCK_TIME 1 ATTRIBUTE '{\"keep\": \"metadata\"}'");
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let users = users.clone();
+        workers.push(std::thread::spawn(move || {
+            assert_eq!(
+                users.authenticate_native(
+                    "durable_login",
+                    "127.0.0.1",
+                    b"01234567890123456789",
+                    b"wrong"
+                ),
+                Err(AuthenticationFailure::AccessDenied)
+            );
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT user_attributes FROM mysql.user WHERE User='durable_login' AND Host='%'",
+    ))
+    .remove(0)
+    .remove(0);
+    let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
+    assert_eq!(attributes["Password_locking"]["failed_login_count"], 8);
+    assert_eq!(attributes["metadata"]["keep"], "metadata");
+    assert!(attributes["Password_locking"]
+        .get("auto_locked_last_changed")
+        .is_none());
+    users
+        .authenticate_native("durable_login", "127.0.0.1", b"01234567890123456789", b"")
+        .unwrap();
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT user_attributes FROM mysql.user WHERE User='durable_login' AND Host='%'",
+    ))
+    .remove(0)
+    .remove(0);
+    let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
+    assert_eq!(attributes["Password_locking"]["failed_login_count"], 0);
+    assert_eq!(attributes["metadata"]["keep"], "metadata");
+    assert!(attributes["Password_locking"]["auto_locked_last_changed"].is_string());
+}
+
+#[test]
+fn login_durability_batch_locks_unlocks_and_checks_stale_cache() {
+    use crate::configured_user_store::AuthenticationFailure;
+    let (stack, users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(689)).unwrap();
+    rows(
+        &mut session,
+        "CREATE USER 'durable_lock'@'%' FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1",
+    );
+    assert!(matches!(
+        users.authenticate_native(
+            "durable_lock",
+            "127.0.0.1",
+            b"01234567890123456789",
+            b"wrong"
+        ),
+        Err(AuthenticationFailure::AutoLocked(_))
+    ));
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT user_attributes FROM mysql.user WHERE User='durable_lock' AND Host='%'",
+    ))
+    .remove(0)
+    .remove(0);
+    let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
+    assert_eq!(attributes["Password_locking"]["auto_account_locked"], "Y");
+    let locked = users
+        .accounts()
+        .password_locking("durable_lock", "%")
+        .unwrap();
+    let mut stale = locked;
+    stale.auto_account_locked = false;
+    users
+        .accounts()
+        .publish_password_locking("durable_lock", "%", stale);
+    assert!(
+        matches!(
+            users.authenticate_native("durable_lock", "127.0.0.1", b"01234567890123456789", b""),
+            Err(AuthenticationFailure::AutoLocked(_))
+        ),
+        "successful password must read the authoritative locked row"
+    );
+    rows(&mut session, "UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(user_attributes, '{\"Password_locking\": {\"failed_login_attempts\": 0}}') WHERE User='durable_lock' AND Host='%'");
+    assert!(
+        matches!(
+            users.authenticate_native("durable_lock", "127.0.0.1", b"01234567890123456789", b""),
+            Err(AuthenticationFailure::AutoLocked(_))
+        ),
+        "authoritative lock wins even if tracking was concurrently disabled"
+    );
+    rows(&mut session, "UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(user_attributes, '{\"Password_locking\": {\"failed_login_attempts\": 1}}') WHERE User='durable_lock' AND Host='%'");
+    users
+        .accounts()
+        .publish_password_locking("durable_lock", "%", locked);
+    users.accounts().clock().advance(24 * 60 * 60 + 1);
+    users
+        .authenticate_native("durable_lock", "127.0.0.1", b"01234567890123456789", b"")
+        .unwrap();
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT user_attributes FROM mysql.user WHERE User='durable_lock' AND Host='%'",
+    ))
+    .remove(0)
+    .remove(0);
+    let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
+    assert_eq!(attributes["Password_locking"]["auto_account_locked"], "N");
+    assert_eq!(attributes["Password_locking"]["failed_login_count"], 0);
+}
+
+#[test]
+fn login_durability_batch_expiry_and_missing_row_do_not_publish_success() {
+    use crate::configured_user_store::AuthenticationFailure;
+    let (stack, users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(690)).unwrap();
+    rows(&mut session, "CREATE USER 'durable_expiry'@'%' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1 PASSWORD EXPIRE");
+    assert_eq!(
+        users.authenticate_native(
+            "durable_expiry",
+            "127.0.0.1",
+            b"01234567890123456789",
+            b"wrong"
+        ),
+        Err(AuthenticationFailure::AccessDenied)
+    );
+    assert_eq!(
+        users.authenticate_native("durable_expiry", "127.0.0.1", b"01234567890123456789", b""),
+        Err(AuthenticationFailure::PasswordExpired)
+    );
+    let attributes = displayed(rows(
+        &mut session,
+        "SELECT user_attributes FROM mysql.user WHERE User='durable_expiry' AND Host='%'",
+    ))
+    .remove(0)
+    .remove(0);
+    let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
+    assert_eq!(attributes["Password_locking"]["failed_login_count"], 1);
+    rows(
+        &mut session,
+        "DELETE FROM mysql.user WHERE User='durable_expiry' AND Host='%'",
+    );
+    let before = users.accounts().password_locking("durable_expiry", "%");
+    assert!(matches!(
+        users.authenticate_native(
+            "durable_expiry",
+            "127.0.0.1",
+            b"01234567890123456789",
+            b"wrong"
+        ),
+        Err(AuthenticationFailure::Storage(_))
+    ));
+    assert_eq!(
+        users.accounts().password_locking("durable_expiry", "%"),
+        before
+    );
+}

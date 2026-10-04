@@ -117,6 +117,8 @@ pub trait ClusterAccountWriter: Send + Sync {
     /// Reads the cluster's accounts and hands back the scratch table one
     /// statement is to be applied to.
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String>;
+    /// Announce a committed automatic lock/unlock; counter-only writes stay local.
+    fn notify_login_lock_change(&self, _user: &str, _host: &str) {}
 }
 
 /// One account statement in flight: the cluster read that opened it, waiting
@@ -188,6 +190,10 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn notify_login_lock_change(&self, user: &str, host: &str) {
+        notify_privilege_update(self.notifier.as_deref(), &[format!("'{user}'@'{host}'")]);
+    }
+
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
         let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
         let (catalog, scratch) = {

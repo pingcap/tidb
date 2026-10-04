@@ -155,7 +155,7 @@ pub use cluster_session_node::{
     run_cluster_session_node, ClusterServerSession, ClusterSessionFactory,
 };
 pub use configured_user_store::{
-    AuthenticatedIdentity, ConfiguredUserStore, ConfiguredUserStoreError,
+    AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,
 };
 pub use distinct_result_set::DistinctResultSetSource;
 pub use handshake::{

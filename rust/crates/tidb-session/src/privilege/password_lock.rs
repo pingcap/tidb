@@ -83,6 +83,92 @@ impl AccountLockout {
     }
 }
 
+/// The three Go login tracking operations, shared by cached and durable accounts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginPolicyAction {
+    /// Check the lock window before checking credentials.
+    Verify,
+    /// Record one wrong password after credential verification.
+    Failure,
+    /// Clear consecutive failures after successful connection verification.
+    Success,
+}
+
+impl LoginPolicyAction {
+    /// Apply one transition. A threshold failure changes state AND returns 3955;
+    /// callers must commit that state before returning the error.
+    pub fn apply(
+        self,
+        locking: &mut PasswordLocking,
+        user: &str,
+        host: &str,
+        now: i64,
+    ) -> Result<(), AccountLockout> {
+        match self {
+            Self::Verify => {
+                if !locking.auto_account_locked {
+                    return Ok(());
+                }
+                if locking.password_lock_time_days == -1 {
+                    return Err(lockout(user, host, locking, "unlimited".into()));
+                }
+                let elapsed = now - locking.auto_locked_last_changed;
+                if elapsed > locking.password_lock_time_days * SECONDS_PER_DAY {
+                    locking.auto_account_locked = false;
+                    locking.failed_login_count = 0;
+                    locking.auto_locked_last_changed = now;
+                    return Ok(());
+                }
+                let remaining = (locking.password_lock_time_days as f64
+                    - elapsed as f64 / SECONDS_PER_DAY as f64)
+                    .ceil() as i64;
+                Err(lockout(user, host, locking, remaining.to_string()))
+            }
+            Self::Failure | Self::Success => {
+                if locking.auto_account_locked {
+                    return Err(lockout(user, host, locking, locking.lock_days_text()));
+                }
+                if self == Self::Success {
+                    if locking.failed_login_count != 0 {
+                        locking.failed_login_count = 0;
+                        locking.auto_locked_last_changed = now;
+                    }
+                    return Ok(());
+                }
+                if !locking.tracking_enabled() {
+                    return Ok(());
+                }
+                locking.failed_login_count = locking.failed_login_count.wrapping_add(1);
+                if locking.failed_login_count < locking.failed_login_attempts {
+                    return Ok(());
+                }
+                locking.auto_account_locked = true;
+                locking.auto_locked_last_changed = now;
+                Err(lockout(user, host, locking, locking.lock_days_text()))
+            }
+        }
+    }
+
+    /// Go BuildPasswordLockingJSON is a merge patch; an ordinary wrong password
+    /// leaves the previous lock epoch and every unrelated attribute untouched.
+    pub fn patch(self, before: &PasswordLocking, after: &PasswordLocking) -> serde_json::Value {
+        let mut fields = serde_json::json!({
+            "failed_login_count": after.failed_login_count,
+            "failed_login_attempts": after.failed_login_attempts,
+            "password_lock_time_days": after.password_lock_time_days,
+            "auto_account_locked": if after.auto_account_locked { "Y" } else { "N" },
+        });
+        if self != Self::Failure
+            || before.auto_locked_last_changed != after.auto_locked_last_changed
+        {
+            fields["auto_locked_last_changed"] =
+                tidb_exec::account_policy::locking_epoch_text(after.auto_locked_last_changed)
+                    .into();
+        }
+        serde_json::json!({"Password_locking": fields})
+    }
+}
+
 /// Go's error 1862 (`ErrMustChangePasswordLogin`): the account's password has
 /// expired and the server is not in sandbox mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

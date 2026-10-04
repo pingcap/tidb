@@ -810,6 +810,13 @@ impl PrivilegeRegistry {
         }
     }
 
+    /// Publish a committed login lock transition without replacing unrelated account state.
+    pub fn publish_password_locking(&self, user: &str, host: &str, locking: PasswordLocking) {
+        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            record.password_locking = Some(locking);
+        }
+    }
+
     /// Go's `pkg/session.verifyAccountAutoLock`, run BEFORE the password is
     /// compared: an account still inside its `PASSWORD_LOCK_TIME` window
     /// reports 3955 no matter which password arrived, and an account whose
@@ -820,34 +827,17 @@ impl PrivilegeRegistry {
     /// [`AccountLockout`] when the account is auto-locked and its lock window
     /// has not elapsed.
     pub fn verify_account_auto_lock(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
-        let now = self.clock.now_unix();
         let mut guard = self.lock();
-        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+        let Some(locking) = guard
+            .get_mut(&(user.to_owned(), host.to_owned()))
+            .and_then(|record| record.password_locking.as_mut())
+        else {
             return Ok(());
         };
-        let Some(locking) = record.password_locking.as_mut() else {
-            return Ok(());
-        };
-        if !locking.tracking_enabled() || !locking.auto_account_locked {
+        if !locking.tracking_enabled() {
             return Ok(());
         }
-        if locking.password_lock_time_days == -1 {
-            return Err(lockout(user, host, locking, "unlimited".to_owned()));
-        }
-        let elapsed = now - locking.auto_locked_last_changed;
-        if elapsed > locking.password_lock_time_days * SECONDS_PER_DAY {
-            locking.auto_account_locked = false;
-            locking.failed_login_count = 0;
-            locking.auto_locked_last_changed = now;
-            return Ok(());
-        }
-        // Go: `ceil(lockTime - d/86400)` -- a lock that has just been taken
-        // still reports its full length remaining (captured: a freshly locked
-        // 3-day account says "3 day(s) remaining").
-        let remaining = (locking.password_lock_time_days as f64
-            - elapsed as f64 / SECONDS_PER_DAY as f64)
-            .ceil() as i64;
-        Err(lockout(user, host, locking, remaining.to_string()))
+        LoginPolicyAction::Verify.apply(locking, user, host, self.clock.now_unix())
     }
 
     /// Go's `pkg/session.authFailedTracking` -> `userAutoAccountLocked` ->
@@ -861,29 +851,14 @@ impl PrivilegeRegistry {
     /// [`AccountLockout`] when this attempt locked the account (or found it
     /// already locked behind a stale cache).
     pub fn record_failed_login(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
-        let now = self.clock.now_unix();
         let mut guard = self.lock();
-        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+        let Some(locking) = guard
+            .get_mut(&(user.to_owned(), host.to_owned()))
+            .and_then(|record| record.password_locking.as_mut())
+        else {
             return Ok(());
         };
-        let Some(locking) = record.password_locking.as_mut() else {
-            return Ok(());
-        };
-        if !locking.tracking_enabled() {
-            return Ok(());
-        }
-        if locking.auto_account_locked {
-            let lock_days = locking.lock_days_text();
-            return Err(lockout(user, host, locking, lock_days));
-        }
-        locking.failed_login_count += 1;
-        if locking.failed_login_count < locking.failed_login_attempts {
-            return Ok(());
-        }
-        locking.auto_account_locked = true;
-        locking.auto_locked_last_changed = now;
-        let lock_days = locking.lock_days_text();
-        Err(lockout(user, host, locking, lock_days))
+        LoginPolicyAction::Failure.apply(locking, user, host, self.clock.now_unix())
     }
 
     /// Go's `pkg/session.authSuccessClearCount`: the password was right, so
@@ -896,18 +871,13 @@ impl PrivilegeRegistry {
     /// [`AccountLockout`] when the account is auto-locked.
     pub fn clear_failed_login_count(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
         let mut guard = self.lock();
-        let Some(record) = guard.get_mut(&(user.to_owned(), host.to_owned())) else {
+        let Some(locking) = guard
+            .get_mut(&(user.to_owned(), host.to_owned()))
+            .and_then(|record| record.password_locking.as_mut())
+        else {
             return Ok(());
         };
-        let Some(locking) = record.password_locking.as_mut() else {
-            return Ok(());
-        };
-        if locking.auto_account_locked {
-            let lock_days = locking.lock_days_text();
-            return Err(lockout(user, host, locking, lock_days));
-        }
-        locking.failed_login_count = 0;
-        Ok(())
+        LoginPolicyAction::Success.apply(locking, user, host, self.clock.now_unix())
     }
 
     /// Go's `UserPrivileges.CheckPasswordExpired`, run after the password

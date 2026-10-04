@@ -655,6 +655,7 @@ pub(crate) fn unistore_cluster_session_stack(
         None => factory,
     };
     let factory = factory.with_bindings(bindings);
+    factory.attach_login_storage(&users);
 
     let stats_maintenance =
         crate::cluster_session_node::stats_maintenance::StatsMaintenanceWorker::start(

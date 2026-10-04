@@ -12,27 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// aggregate-test: standalone
-
 #![allow(dead_code, missing_docs)]
-
-#[path = "../src/auth_identity.rs"]
-mod auth_identity;
-#[path = "../src/configured_user_store.rs"]
-mod configured_user_store;
-#[path = "../src/native_password.rs"]
-mod native_password;
-#[path = "../src/secure_transport.rs"]
-mod secure_transport;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use configured_user_store::{AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError};
-use secure_transport::TransportKind;
 use sha1::{Digest, Sha1};
+use tidb_server::TransportKind;
+use tidb_server::{AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError};
 
 const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 const SOURCE_SALT: [u8; 20] = [
@@ -152,7 +141,10 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
 #[test]
 fn persisted_secure_transport_is_effective_immediately_in_skip_grant_mode() {
     let _restore_transport = RestoreRequireSecureTransport::snapshot();
-    let store = ConfiguredUserStore::empty_for_skip_grant_table();
+    let store = ConfiguredUserStore::from_accounts(
+        tidb_session::privilege::PrivilegeRegistry::bootstrapped_from([]),
+    )
+    .with_skip_grant_table(true);
     store
         .global_vars()
         .load_from_cluster([("require_secure_transport".to_owned(), "ON".to_owned())]);
@@ -332,10 +324,7 @@ fn consecutive_wrong_passwords_auto_lock_the_account_and_unlock_clears_it() {
             .map(|identity| identity.username().to_owned())
     };
 
-    assert_eq!(
-        attempt(&wrong),
-        Err(configured_user_store::AuthenticationFailure::AccessDenied)
-    );
+    assert_eq!(attempt(&wrong), Err(AuthenticationFailure::AccessDenied));
     let locking = accounts.password_locking("bob", "%").expect("counter");
     assert_eq!(locking.failed_login_count, 1);
     assert!(!locking.auto_account_locked);
@@ -344,7 +333,7 @@ fn consecutive_wrong_passwords_auto_lock_the_account_and_unlock_clears_it() {
                     (3 day(s) remaining) due to 2 consecutive failed logins.";
     for response in [&wrong, &wrong, &right] {
         match attempt(response) {
-            Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => {
+            Err(AuthenticationFailure::AutoLocked(lockout)) => {
                 assert_eq!(lockout.message(), expected);
             }
             other => panic!("expected 3955, got {other:?}"),
@@ -370,7 +359,7 @@ fn consecutive_wrong_passwords_auto_lock_the_account_and_unlock_clears_it() {
 fn an_unbounded_lock_time_reports_unlimited_in_both_day_slots() {
     let (store, _right, wrong) = lockout_store(1, -1);
     match store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong) {
-        Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => assert_eq!(
+        Err(AuthenticationFailure::AutoLocked(lockout)) => assert_eq!(
             lockout.message(),
             "Access denied for user 'bob'@'%'. Account is blocked for unlimited day(s) \
              (unlimited day(s) remaining) due to 1 consecutive failed logins."
@@ -389,7 +378,7 @@ fn a_zero_in_either_option_disables_tracking_entirely() {
         for _ in 0..3 {
             assert_eq!(
                 store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &wrong),
-                Err(configured_user_store::AuthenticationFailure::AccessDenied),
+                Err(AuthenticationFailure::AccessDenied),
                 "{attempts}/{lock_days}"
             );
         }
@@ -418,7 +407,7 @@ fn the_lock_expires_on_its_own_and_the_remaining_days_count_down() {
     for (advance_days, remaining) in [(1, "2"), (1, "1")] {
         clock.advance(advance_days * 24 * 60 * 60);
         match store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &right) {
-            Err(configured_user_store::AuthenticationFailure::AutoLocked(lockout)) => {
+            Err(AuthenticationFailure::AutoLocked(lockout)) => {
                 assert_eq!(lockout.remaining_days, remaining);
             }
             other => panic!("expected 3955, got {other:?}"),
@@ -483,10 +472,7 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
     assert!(!login().expect("unexpired login").in_sandbox_mode());
 
     accounts.set_password_expire("bob", "%", PasswordExpireSetting::Now);
-    assert_eq!(
-        login(),
-        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
-    );
+    assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
     accounts.set_sandbox_mode_enabled(true);
     assert!(login().expect("sandboxed login").in_sandbox_mode());
     accounts.set_sandbox_mode_enabled(false);
@@ -499,10 +485,7 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
     accounts.set_password_expire("bob", "%", PasswordExpireSetting::Interval(2));
     assert!(login().is_ok());
     accounts.clock().advance(3 * 24 * 60 * 60);
-    assert_eq!(
-        login(),
-        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
-    );
+    assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
 
     // `PASSWORD EXPIRE NEVER` opts the account out for good, and so does the
     // NULL lifetime this tier always resolves against an unset
@@ -547,10 +530,7 @@ fn default_password_lifetime_ages_out_a_password_expire_default_account() {
     assert!(login().is_ok());
 
     accounts.clock().advance(2 * 24 * 60 * 60);
-    assert_eq!(
-        login(),
-        Err(configured_user_store::AuthenticationFailure::PasswordExpired)
-    );
+    assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
 
     // Restoring the global to its default (`SET GLOBAL
     // default_password_lifetime = DEFAULT`) stops the aging again.
@@ -623,7 +603,7 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
         for response in [&[][..], &right[..], plugin.as_bytes()] {
             assert_eq!(
                 store.authenticate_native(plugin, "127.0.0.1", &SOURCE_SALT, response),
-                Err(configured_user_store::AuthenticationFailure::AccessDenied),
+                Err(AuthenticationFailure::AccessDenied),
                 "{plugin} must never authenticate over a network connection"
             );
         }
@@ -637,7 +617,7 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     assert!(accounts.create_user_with_plugin("sha2", "%", sha2, "caching_sha2_password"));
     assert_eq!(
         store.authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &right),
-        Err(configured_user_store::AuthenticationFailure::AccessDenied)
+        Err(AuthenticationFailure::AccessDenied)
     );
     assert!(accounts.set_auth_string_and_plugin("sha2", "%", "", "caching_sha2_password"));
     assert!(store

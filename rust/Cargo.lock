@@ -3982,6 +3982,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "fail",
+ "openssl",
  "prometheus 0.14.0",
  "prost 0.14.4",
  "rand 0.10.2",

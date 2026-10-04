@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-04",
+  "start": "8d792a3297f9e6b0d513e6a34c0e473875e5ef47",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "concurrent_remote_preserved_unmerged": "0a61ca9b586add9697a10f9bf8264931e3281a95",
+  "advanced": [
+    "A02",
+    "A03",
+    "N03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 57,
+    "repaired": 29,
+    "open": 36,
+    "partial": 21
+  },
+  "source_sha256": {
+    "rust/crates/tidb-server/src/cluster_account_seam.rs": "65876a15c48d1a80ed8a869b16780099c394e1cdfc71dae5407e6228ddb1f909",
+    "rust/crates/tidb-server/src/cluster_session_node/boot.rs": "e3470b740ac742b783b55797c5125906926a245113ebc95afa5867e3f28148ff",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "90692dd9f6d53b2c55ea16ff58ca7bf9d044f205bac466565a47109bc374d59e",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs": "1b3f3a077c2a408084b34e25799dbefc2b7b7bd4fbd9c0ac6cfdc30363580d22",
+    "rust/crates/tidb-server/src/configured_user_store.rs": "33bf19f9e14fca802999a52f861e368828732a42eefdefb325f130924139823f",
+    "rust/crates/tidb-server/src/lib.rs": "1387633aff6827131e71065095f5d23c558db44a0ff8f5b8b0c96a58408846b5",
+    "rust/crates/tidb-server/src/mysql_connection.rs": "0e72328a209d60fcee426b76025c66f636253f971cd4b8308c15e7ae8cfa699a",
+    "rust/crates/tidb-server/src/mysql_tls.rs": "67e379202dca29ff064caaf0b86f7fd7869842c767c679f2ba6a5917b16a9db0",
+    "rust/crates/tidb-server/src/unistore_node.rs": "2db4b17e4ec8ead63ac28653398d9d9a66c95d68b415a050f1e5c6646684333c",
+    "rust/crates/tidb-session/src/privilege/password_lock.rs": "cd5b6a7c23032b4ca5275c8656eb3ffc832e1537eb9946140121acdbbaa07730",
+    "rust/crates/tidb-session/src/privilege/registry_ops.rs": "afd3d3afca8aeccc7a17c586d68deee4f49bdd9acc282d6eb5a18ad3aea95cbb",
+    "rust/crates/tidb-util/src/sem.rs": "900854e4d7063f658ebedc6ba03f1f0ca757735ce9d7929c95ccd870b52c6e12",
+    "rust/crates/tidb-server/src/cluster_session_node/login_policy.rs": "6d7c2cc76daeb9698733a6257c6f2d1d2510128b9ef10dfec48d49789a7292bd"
+  },
+  "commands": {
+    "rust": "cargo test --locked --no-fail-fast -p tidb-session -p tidb-server --lib --test all -- tests_grants mysql_tls tls_owner generated_tls login_durability_batch configured_user_store --test-threads=1",
+    "check": "cargo check --locked -p tidb-util -p tidb-session -p tidb-server --all-targets",
+    "lint": "make lint",
+    "wire": "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/auth-durability-batch/wire.py PHASE BINARY",
+    "hook": "Actual hooks/pre-commit: cd rust && cargo build --locked -p tidb-server"
+  },
+  "results": {
+    "grouped_rust_passed": 164,
+    "server_unit": 20,
+    "server_aggregate": 26,
+    "session_unit": 118,
+    "session_aggregate_selected": 0,
+    "before_wire_failed": 7,
+    "before_wire_passed": 5,
+    "after_wire_passed": 18,
+    "after_wire_failed": 0,
+    "all_targets": "passed, exit 0",
+    "lint": "passed, exit 0",
+    "actual_hook": "pending external final-handoff.json",
+    "final_wire": "pending external final-handoff.json"
+  },
+  "logs": [
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/before-wire.log",
+      "sha256": "f18ca80051608d39106bdbe04a0cb702e5a958e27e775185aac9064e6bd4cddc"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/before-expanded-wire.log",
+      "sha256": "7e297416b533eae174e9b206e32f32f04feff3f33c049396fe827a2b6bbce213"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/before-corrected-wire.log",
+      "sha256": "fc392f9af3759b701118333cbc9e83128ce8caa4ad37a259d55f5131a12749be"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/grouped-tests.log",
+      "sha256": "af2c97351d85eabd4b972977d9eb212a500dd936adabab726fdd18536052eb20"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/grouped-tests-retry.log",
+      "sha256": "afbd0bcbed744c8c0bd1d75edb2ac3519ae865ef2e9ee1a2fa54b5962c58aa94"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/grouped-tests-final.log",
+      "sha256": "7bf6db8b524e0a6ee3a099757c0b5004905bd2c85e5a766321522460d7946bef"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/grouped-tests-run.log",
+      "sha256": "b0ba12e118fdb21548081b4995c211d97069b631706de275185db7b3dbbad4a2"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/grouped-tests-after-prune.log",
+      "sha256": "ee17be31436df88a6ed1e62e4406a52fa132ba3fa6a89a5007860b78c89d0b52"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/after-first-wire.log",
+      "sha256": "7acde380c550ee0030688af3e42cb331b7a3888926eac480aba9566c74b968f8"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/after-corrected-wire.log",
+      "sha256": "bd57873f96a448135f7d7f8e1f5b83e9331ecea8af4e11bcf5336ce8f332110e"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/all-targets.log",
+      "sha256": "1b0375a2e613617b25667e56ce591ae0e2d3e26bcaa5ca8c9f66f8de33546850"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/lint.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    {
+      "log": "/workspace/.cloud-setup/auth-durability-batch/commit-hook-disk-failure.log",
+      "sha256": "2b9cb3646497a6402661e90786af3f5fb027f4135730d427ec42c6f91875b763",
+      "result": "first normal commit aborted: cluster-session-smoke linker SIGBUS under disk pressure; no hook bypass"
+    }
+  ],
+  "removals": [
+    "MysqlServerTls::self_signed in-memory generation and split resolver policy path",
+    "Four private production-source includes and standalone configured_user_store_source executable target;19 behavioral tests retained in aggregate",
+    "Three separate locking algorithms replaced by shared LoginPolicyAction"
+  ],
+  "limits": [
+    "Existing-owner maintenance; no complete upstream package accepted",
+    "Other54 unresolved findings retain historical evidence",
+    "No full Go/Rust suite, multi-node TiKV, platform or workload performance verification",
+    "Ring provider rejects some Go RSA sizes, including1024 bits",
+    "Wire harness uses SIGINT and observes exit130; this is not graceful shutdown proof",
+    "No push or dry run; fresh-task environment restoration unverified"
+  ],
+  "pruning_journal": "/workspace/.cloud-setup/auth-durability-batch/pruned-artifacts.json",
+  "post_commit_handoff": "/workspace/.cloud-setup/auth-durability-batch/final-handoff.json"
+}

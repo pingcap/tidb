@@ -417,6 +417,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         None => factory,
     };
     let factory = factory.with_bindings(bindings);
+    factory.attach_login_storage(&users);
     if tidb_config::config_tree::config::get_global_config()
         .instance
         .tidb_enable_stats_owner

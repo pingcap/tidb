@@ -1405,6 +1405,24 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::AuthenticationRejected,
             });
         }
+        Err(AuthenticationFailure::Storage(error)) => {
+            if !error.is_result_undetermined() {
+                write_error(
+                    &mut output,
+                    response_sequence,
+                    error.code,
+                    error.state,
+                    error.message,
+                    protocol_41,
+                )?;
+            }
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
         Err(AuthenticationFailure::AccessDenied) => {
             write_error(
                 &mut output,

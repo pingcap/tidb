@@ -2617,3 +2617,9 @@ The [observation ExecPlan](statement-observation-batch-execplan.md) advances O18
 
 The [shared MPP lifecycle batch](parity/current-audit/shared-mpp-lifecycle-repair.md) advances **M04/N03/T02 together**: one process fleet, generation retirement/joined close, and actual PD/store security bootstrap. Five runtime baseline failures and 58 distinct passing Rust cases validate this maintenance. **86 tracked, 29 repaired, 57 unresolved (40 open, 17 partial)** remain; other 54 IDs retain previous evidence. No whole-package acceptance or push.
 
+
+
+## Authentication durability checkpoint, 2026-10-04
+
+
+The [authentication durability plan](auth-durability-batch-execplan.md) advances A02/A03/N03 through shared login policy, pooled pessimistic SQL persistence and post-commit lock publication, plus canonical generated TLS material and renewal. Seven corrected real-server checks fail before repair;164 grouped Rust cases and18 MySQL/unistore assertions pass after repair. The duplicated configured-account source harness and in-memory-only TLS resolution paths are removed after caller migration. Counts remain86 tracked,29 repaired,57 unresolved(36 open,21 partial); parent package and mixed-node/platform obligations remain. [Exact validation](parity/current-audit/auth-durability-batch-validation.json) preserves failures and boundaries. No push.

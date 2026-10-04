@@ -31,6 +31,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 use tidb_session::privilege::{
     check_hashing_password, login_plugin_verification, AccountLockout, LoginPluginVerification,
@@ -119,6 +120,8 @@ pub enum AuthenticationFailure {
     /// account is looked up, so it is the one failure that does not depend
     /// on who the client claims to be. Errno 3159.
     SecureTransportRequired,
+    /// Authoritative login tracking could not complete its storage transaction.
+    Storage(crate::sql_node::SqlQueryError),
 }
 
 impl AuthenticatedIdentity {
@@ -193,6 +196,7 @@ impl AuthenticatedIdentity {
 /// and the session factory's `CREATE USER`/`GRANT` executor be one store.
 #[derive(Clone)]
 pub struct ConfiguredUserStore {
+    login_storage: Arc<std::sync::RwLock<Option<Arc<dyn LoginPolicyStorage>>>>,
     accounts: PrivilegeRegistry,
     /// The shared `SET GLOBAL`-scope sysvar table, so a `default_password_lifetime`
     /// a session sets is what this login path reads back for the NEXT login
@@ -205,7 +209,64 @@ pub struct ConfiguredUserStore {
     identity_policy: IdentityLookupPolicy,
 }
 
+pub(crate) trait LoginPolicyStorage: Send + Sync {
+    fn apply(
+        &self,
+        user: &str,
+        host: &str,
+        action: tidb_session::privilege::LoginPolicyAction,
+    ) -> Result<(), AuthenticationFailure>;
+}
+
 impl ConfiguredUserStore {
+    pub(crate) fn attach_login_storage(&self, storage: Arc<dyn LoginPolicyStorage>) {
+        *self
+            .login_storage
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(storage);
+    }
+
+    fn apply_login_policy(
+        &self,
+        user: &str,
+        host: &str,
+        action: tidb_session::privilege::LoginPolicyAction,
+    ) -> Result<(), AuthenticationFailure> {
+        use tidb_session::privilege::LoginPolicyAction;
+        let Some(mut cached) = self
+            .accounts
+            .password_locking(user, host)
+            .filter(|policy| policy.tracking_enabled())
+        else {
+            return Ok(());
+        };
+        let storage = self
+            .login_storage
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(storage) = storage {
+            // Go consults the cache before opening the unlock transaction. The
+            // post-password operations always read the authoritative locked row.
+            if action == LoginPolicyAction::Verify {
+                let was_locked = cached.auto_account_locked;
+                action
+                    .apply(&mut cached, user, host, self.accounts.clock().now_unix())
+                    .map_err(AuthenticationFailure::AutoLocked)?;
+                if !was_locked {
+                    return Ok(());
+                }
+            }
+            return storage.apply(user, host, action);
+        }
+        match action {
+            LoginPolicyAction::Verify => self.accounts.verify_account_auto_lock(user, host),
+            LoginPolicyAction::Failure => self.accounts.record_failed_login(user, host),
+            LoginPolicyAction::Success => self.accounts.clear_failed_login_count(user, host),
+        }
+        .map_err(AuthenticationFailure::AutoLocked)
+    }
+
     /// Opens and parses one strict TSV auth file.
     ///
     /// Each record is
@@ -291,6 +352,7 @@ impl ConfiguredUserStore {
             accounts: PrivilegeRegistry::bootstrapped_from(provisioned),
             global_vars: GlobalSysvars::new(),
             identity_policy: IdentityLookupPolicy::default(),
+            login_storage: Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -307,6 +369,7 @@ impl ConfiguredUserStore {
             accounts,
             global_vars: GlobalSysvars::new(),
             identity_policy: IdentityLookupPolicy::default(),
+            login_storage: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -541,9 +604,11 @@ impl ConfiguredUserStore {
         // auto-unlocks an account whose `PASSWORD_LOCK_TIME` has run out, so
         // the very next correct password works.
         if let Some(identity) = identity.as_ref() {
-            self.accounts
-                .verify_account_auto_lock(identity.username(), identity.host())
-                .map_err(AuthenticationFailure::AutoLocked)?;
+            self.apply_login_policy(
+                identity.username(),
+                identity.host(),
+                tidb_session::privilege::LoginPolicyAction::Verify,
+            )?;
         }
         // A ROLE is a `mysql.user` row with `account_locked = 'Y'` and an
         // empty password, so without this it would be the most loginable
@@ -638,14 +703,13 @@ impl ConfiguredUserStore {
             // Go bumps the counter only when the failure was a WRONG
             // PASSWORD (`info.FailedDueToWrongPassword`), which by this point
             // is the only way to get here.
-            self.accounts
-                .record_failed_login(identity.username(), identity.host())
-                .map_err(AuthenticationFailure::AutoLocked)?;
+            self.apply_login_policy(
+                identity.username(),
+                identity.host(),
+                tidb_session::privilege::LoginPolicyAction::Failure,
+            )?;
             return Err(AuthenticationFailure::AccessDenied);
         }
-        self.accounts
-            .clear_failed_login_count(identity.username(), identity.host())
-            .map_err(AuthenticationFailure::AutoLocked)?;
         // Go reads the global `default_password_lifetime` for an account
         // whose own `Password_lifetime` is NULL. `default_password_lifetime`
         // is TypeInt (see `sysvar.rs`), so a value the registry's own
@@ -666,6 +730,11 @@ impl ConfiguredUserStore {
                 default_password_lifetime,
             )
             .map_err(|_| AuthenticationFailure::PasswordExpired)?;
+        self.apply_login_policy(
+            identity.username(),
+            identity.host(),
+            tidb_session::privilege::LoginPolicyAction::Success,
+        )?;
         Ok(AuthenticatedIdentity {
             identity,
             in_sandbox_mode,

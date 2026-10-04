@@ -347,12 +347,12 @@
     }
   ],
   "latest_evidence": {
-    "receipt": "metadata-policy-batch-validation.json",
+    "receipt": "auth-durability-batch-validation.json",
     "findings": [
-      "I01",
-      "I02",
-      "I03"
+      "A02",
+      "A03",
+      "N03"
     ],
-    "boundary": "I01/I02 remain partial; I03 fanout stays open. Shared sequence metadata, restored ALTER routing, SEM policy and local status identity. Other54 unresolved IDs retain prior evidence."
+    "boundary": "All three remain partial. Durable login transitions and canonical generated TLS are repaired at existing owners; broader privilege/config/platform acceptance remains. Other54 unresolved IDs retain prior evidence."
   }
 }

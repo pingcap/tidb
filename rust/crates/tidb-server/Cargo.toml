@@ -22,6 +22,7 @@ tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 ctrlc.workspace = true
 signal-hook.workspace = true
+openssl = "0.10.81"
 rcgen.workspace = true
 rustix.workspace = true
 rustls.workspace = true
@@ -102,10 +103,6 @@ path = "tests/all.rs"
 [[test]]
 name = "auth_session_source"
 path = "tests/auth_session_source.rs"
-
-[[test]]
-name = "configured_user_store_source"
-path = "tests/configured_user_store_source.rs"
 
 [features]
 # Production TiKV ships jemalloc, and this node statement path is

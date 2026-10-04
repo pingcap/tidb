@@ -28,12 +28,24 @@ use std::sync::Arc;
 
 use tidb_server::{resolve_server_tls, ClientStream, MysqlServerTls};
 
+fn tls_config(cert: Option<&Path>, key: Option<&Path>, auto_tls: bool) -> tidb_server::NodeConfig {
+    let mut config =
+        tidb_server::NodeConfig::parse(["tidb-server", "--store", "unistore", "--load-privileges"])
+            .unwrap();
+    config.ssl_cert = cert.map(Path::to_owned);
+    config.ssl_key = key.map(Path::to_owned);
+    config.auto_tls = auto_tls;
+    config.spill_storage.path = temporary_directory("generated-tls");
+    config
+}
+
 /// `pkg/server/server.go` advertises `CLIENT_SSL` only when
 /// `LoadTLSCertificates` returned a config; the resolution below is what
 /// decides that, so each branch is named.
 #[test]
 fn no_material_and_no_auto_tls_leaves_the_port_plaintext() {
-    let resolved = resolve_server_tls(None, None, false).expect("plaintext is a valid outcome");
+    let resolved =
+        resolve_server_tls(&tls_config(None, None, false)).expect("plaintext is a valid outcome");
     assert!(
         resolved.is_none(),
         "without material and without auto-tls the port must not offer TLS"
@@ -42,7 +54,8 @@ fn no_material_and_no_auto_tls_leaves_the_port_plaintext() {
 
 #[test]
 fn auto_tls_generates_material_when_none_is_configured() {
-    let resolved = resolve_server_tls(None, None, true).expect("self-signed generation");
+    let resolved =
+        resolve_server_tls(&tls_config(None, None, true)).expect("self-signed generation");
     let tls = resolved.expect("auto-tls must produce material");
     assert_eq!(tls.origin(), "auto-generated self-signed");
 }
@@ -51,10 +64,10 @@ fn auto_tls_generates_material_when_none_is_configured() {
 fn a_half_configured_pair_follows_go_auto_tls_fallback() {
     let cert = PathBuf::from("/nonexistent/cert.pem");
     let key = PathBuf::from("/nonexistent/key.pem");
-    assert!(resolve_server_tls(Some(&cert), None, true)
+    assert!(resolve_server_tls(&tls_config(Some(&cert), None, true))
         .unwrap()
         .is_some());
-    assert!(resolve_server_tls(None, Some(&key), false)
+    assert!(resolve_server_tls(&tls_config(None, Some(&key), false))
         .unwrap()
         .is_none());
 }
@@ -63,7 +76,7 @@ fn a_half_configured_pair_follows_go_auto_tls_fallback() {
 fn configured_pem_material_is_loaded_and_wins_over_auto_tls() {
     let directory = temporary_directory("tls-material");
     let (cert_path, key_path) = write_self_signed_pem(&directory);
-    let tls = resolve_server_tls(Some(&cert_path), Some(&key_path), true)
+    let tls = resolve_server_tls(&tls_config(Some(&cert_path), Some(&key_path), true))
         .expect("configured PEM material loads")
         .expect("configured material is always TLS");
     assert_eq!(tls.origin(), "configured --ssl-cert/--ssl-key");
@@ -75,7 +88,7 @@ fn a_missing_certificate_file_is_reported_rather_than_ignored() {
     let directory = temporary_directory("tls-missing");
     let (_cert_path, key_path) = write_self_signed_pem(&directory);
     let missing = directory.join("absent.pem");
-    let error = resolve_server_tls(Some(&missing), Some(&key_path), true)
+    let error = resolve_server_tls(&tls_config(Some(&missing), Some(&key_path), true))
         .expect_err("a configured certificate that does not exist is a startup failure");
     assert!(
         error.to_string().contains("absent.pem"),
