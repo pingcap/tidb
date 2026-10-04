@@ -40,7 +40,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 
-static ENABLE_MDL: AtomicBool = AtomicBool::new(false);
+// Go's `vardef.DefTiDBEnableMDL` defaults to true.  Keep the process flag at
+// that effective value from the first instruction: startup may begin the
+// schema-ack loop before the persisted global-variable image has been
+// published, and a false transient makes a Rust peer report on the legacy
+// per-node key while a Go owner waits on the MDL per-job key.
+static ENABLE_MDL: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_MDL);
 
 static DDL_ERROR_COUNT_LIMIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT);
 

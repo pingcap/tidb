@@ -175,6 +175,18 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
+    // Publish the effective startup value immediately before the schema-ack
+    // worker is created.  The sysvar reloader can perform an initial empty
+    // snapshot while bootstrap tables are still converging; leaving the
+    // process flag at false in that window makes this peer use the legacy
+    // per-node schema-version key even though Go's effective default is ON.
+    let mdl_enabled = users
+        .global_vars()
+        .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
+        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
+            value.eq_ignore_ascii_case("ON") || value == "1"
+        });
+    tidb_vardef::set_enable_mdl(mdl_enabled);
     let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
         authority.transaction_opener(),
         Arc::clone(&catalog),

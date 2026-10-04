@@ -210,9 +210,25 @@ where
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     initialize_cluster_system_tz_with_read(|| Ok(variables.system_tz))?;
+    // Go's InitMDLVariable publishes the persisted metadata-lock setting to
+    // the process before Domain starts its schema-ack loop.  Keep this
+    // explicit at the same startup boundary: the SQL registry may report the
+    // default ON while the syncer would otherwise still observe its atomic
+    // flag's initial false value and use the MDL-off etcd key layout.
+    publish_startup_mdl_state(&variables.sysvars);
     let fresh = tidb_session::GlobalSysvars::from_cluster_rows(variables.sysvars);
     users.global_vars().replace_from(&fresh);
     Ok(())
+}
+
+fn publish_startup_mdl_state(sysvars: &[(String, String)]) {
+    let enabled = sysvars
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL))
+        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |(_, value)| {
+            value.eq_ignore_ascii_case("ON") || value == "1"
+        });
+    tidb_vardef::set_enable_mdl(enabled);
 }
 
 fn initialize_cluster_system_tz_with_read(
@@ -504,6 +520,29 @@ mod tests {
             tidb_util::timeutil::get_system_tz().expect("system_tz is initialized"),
             "Asia/Shanghai"
         );
+    }
+
+    #[test]
+    fn startup_mdl_state_matches_the_persisted_global_variable() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+
+        publish_startup_mdl_state(&[(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_MDL.to_owned(),
+            "OFF".to_owned(),
+        )]);
+        assert!(!tidb_vardef::is_mdl_enabled(false));
+
+        publish_startup_mdl_state(&[(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_MDL.to_owned(),
+            "ON".to_owned(),
+        )]);
+        assert!(tidb_vardef::is_mdl_enabled(false));
+
+        // An absent row has Go's DefTiDBEnableMDL default.
+        publish_startup_mdl_state(&[]);
+        assert!(tidb_vardef::is_mdl_enabled(false));
     }
 
     #[test]

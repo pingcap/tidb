@@ -562,6 +562,9 @@ pub struct EtcdSyncer {
     global_ver_watcher: GlobalVerWatcher,
     all_server_info: Mutex<Option<AllServerInfo>>,
     job_node_versions: Mutex<HashMap<i64, Arc<NodeVersions>>>,
+    // Serializes the authoritative range replay with watch event updates.
+    // Go has one writer for this mirror; Rust also reconciles it from waits.
+    job_schema_ver_update_lock: Mutex<()>,
     job_node_ver_prefix: String,
 }
 
@@ -576,6 +579,7 @@ pub fn new_etcd_syncer(etcd: Arc<dyn EtcdWatchOps>, id: &str) -> EtcdSyncer {
         session: Mutex::new(None),
         all_server_info: Mutex::new(None),
         job_node_versions: Mutex::new(HashMap::new()),
+        job_schema_ver_update_lock: Mutex::new(()),
         job_node_ver_prefix: format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/"),
     }
 }
@@ -926,6 +930,13 @@ impl EtcdSyncer {
 
     /// Go `syncJobSchemaVer`: one full mirror pass plus an event tail.
     fn sync_job_schema_ver(&self, ctx: &Context) {
+        // Keep the authoritative range read and replay atomic with respect to
+        // watch updates. Otherwise a watch PUT can land after the read but
+        // before the lock, then be erased by replaying the older snapshot.
+        let update_guard = self
+            .job_schema_ver_update_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (entries, revision) = match self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix) {
             Ok(result) => result,
             Err(_error) => {
@@ -945,8 +956,9 @@ impl EtcdSyncer {
             });
         }
         for (key, value) in &entries {
-            self.handle_job_schema_ver_kv(key, value, false);
+            self.handle_job_schema_ver_kv_inner(key, value, false);
         }
+        drop(update_guard);
 
         let stream = match self
             .etcd
@@ -994,6 +1006,13 @@ impl EtcdSyncer {
     /// the same source-of-truth (the per-job etcd keys) and prevents a missed
     /// PUT from blocking a DDL job indefinitely.
     fn reconcile_job_schema_versions(&self) {
+        // The range read must be covered by the same writer lock as replay.
+        // Taking the lock only after the read permits a concurrent watch PUT
+        // to be overwritten by this stale snapshot.
+        let _update_guard = self
+            .job_schema_ver_update_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Ok((entries, _revision)) = self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix)
         else {
             return;
@@ -1009,12 +1028,20 @@ impl EtcdSyncer {
             });
         }
         for (key, value) in entries {
-            self.handle_job_schema_ver_kv(&key, &value, false);
+            self.handle_job_schema_ver_kv_inner(&key, &value, false);
         }
     }
 
     /// Go `handleJobSchemaVerKV`.
     fn handle_job_schema_ver_kv(&self, key: &str, value: &[u8], deleted: bool) {
+        let _update_guard = self
+            .job_schema_ver_update_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.handle_job_schema_ver_kv_inner(key, value, deleted);
+    }
+
+    fn handle_job_schema_ver_kv_inner(&self, key: &str, value: &[u8], deleted: bool) {
         let event_type = if deleted { "DELETE" } else { "PUT" };
         let Some((job_id, tidb_id, schema_ver)) =
             decode_job_version_event(key, value, deleted, &self.job_node_ver_prefix)
@@ -1844,14 +1871,10 @@ mod tests {
         // event yet.
         etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/8/node-a"), "7");
 
-        let started = std::time::Instant::now();
+        let wait_ctx = Context::with_timeout(&Context::background(), Duration::from_millis(500));
         let result = syncer
-            .wait_version_synced(&Context::background(), 8, 7, false)
+            .wait_version_synced(&wait_ctx, 8, 7, false)
             .expect("the authoritative ack should satisfy the first wait");
-        assert!(
-            started.elapsed() < Duration::from_millis(500),
-            "the first wait should use the authoritative ack immediately"
-        );
         assert_eq!(
             result,
             SyncSummary {
