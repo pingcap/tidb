@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-This historical allocation for the [living ExecPlan](../../full-structural-parity-execplan.md) began on 2026-10-01 with **77 unresolved findings**. The current register has **56 unresolved (32 open, twenty-four partial)**; the original table below preserves the workstream assignment. A workstream groups related responsibilities; it is **not** a package acceptance unit or an instruction to port only the named functions. The [register](structural-findings.json) remains the finding/status authority and contains the precise Go and Rust evidence.
+The [table mutation batch](table-mutation-batch-validation.json) repairs connected E03/T01/K03 contracts: partition moves allocate fresh hidden handles and preserve the source row; pessimistic UPDATE carries deferred duplicate checks and hints; numeric/string column conversion preserves typed error precedence and ordered warnings across ordinary/generated INSERT, UPDATE and ODKU. All three parent findings remain partial. **86 tracked: 30 repaired, 56 unresolved (32 open, 24 partial).** The other 53 unresolved roots retain prior evidence, not fresh reproduction. Full package and multi-node/performance acceptance remain unverified. No push.
 
 ## Current structural execution queue
 

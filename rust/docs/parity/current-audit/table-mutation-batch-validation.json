@@ -1,0 +1,335 @@
+{
+  "date": "2026-10-04",
+  "scope": "Connected E03/T01/K03 table mutation maintenance; no complete package acceptance",
+  "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 32,
+    "partial": 24
+  },
+  "reviewed_findings": [
+    "E03",
+    "T01",
+    "K03"
+  ],
+  "other_unresolved_roots": {
+    "count": 53,
+    "evidence": "carried, not freshly reproduced"
+  },
+  "changes": [
+    "Pessimistic UPDATE destination checks share deferred uniqueness flags and duplicate hints; optimistic UPDATE and IGNORE remain eager.",
+    "Retained old rows identify source partitions; heap moves allocate fresh hidden row IDs through the shared allocator, preserving other partitions with repeated hidden handles.",
+    "Ordinary and generated INSERT/UPDATE/ODKU consume contextual numeric/string conversion diagnostics with source ordering and caller-specific error/warning completion.",
+    "Corrected two stale generated-column test expectations from Go; retained rollback, stored-value and index assertions. Removed stale divergence prose and contradictory audit counts."
+  ],
+  "source_contracts": [
+    "pkg/executor/update.go optimizeDupKeyCheckForUpdate; pkg/executor/write.go updateRecord",
+    "pkg/executor/insert.go errorHandler completes ODKU warnings and returns raw errors",
+    "pkg/executor/update.go handleUpdateError decorates returned overflow only",
+    "pkg/table/tables/partition.go partitionedTableUpdateRecord removes and AddRecords heap rows",
+    "pkg/table/column.go castColumnValue consumes Datum.ConvertTo and retitles bare ErrTruncated",
+    "pkg/table/tables/index.go and tables.go retain uniqueness and assertion flags"
+  ],
+  "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; all Cargo commands run from /workspace/tidb/rust",
+  "validation": [
+    {
+      "cwd": "rust",
+      "command": "cargo test --locked -p tidb-executor --lib -- table_mutation_batch --test-threads=1",
+      "phase": "before",
+      "passed": 0,
+      "failed": 5,
+      "ignored": 0,
+      "log": "before-tests.log"
+    },
+    {
+      "cwd": "rust",
+      "command": "cargo test --locked -p tidb-executor --lib -- table_mutation_batch cluster_storage::tests:: driver::write_cast:: kv_table::tests:: generated_column::tests:: --test-threads=1",
+      "phase": "after",
+      "passed": 59,
+      "failed": 0,
+      "ignored": 0,
+      "log": "final-executor.log"
+    },
+    {
+      "cwd": "rust",
+      "command": "cargo test --locked -p tidb-session --lib -- tests_generated tests_read_cast tests_cast_int_truncation --test-threads=1",
+      "phase": "after",
+      "passed": 38,
+      "failed": 1,
+      "ignored": 0,
+      "log": "session-lib.log"
+    },
+    {
+      "cwd": "rust",
+      "command": "cargo test --locked -p tidb-session --test all -- generated_column_write_source partition_row_movement_source partition_qualified_update_source expression_index_write_source bit_write_partition_update_source --test-threads=1",
+      "phase": "after",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0,
+      "log": "session-integration-final.log"
+    },
+    {
+      "cwd": "rust",
+      "command": "cargo check --locked -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+      "exit": 0,
+      "log": "check.log"
+    },
+    {
+      "cwd": ".",
+      "command": "make lint",
+      "exit": 0,
+      "log": "lint.log"
+    },
+    {
+      "cwd": "rust",
+      "command": "cargo build --locked -p tidb-server",
+      "exit": 0,
+      "log": "locked-build.log"
+    },
+    {
+      "cwd": ".",
+      "command": "git diff --check",
+      "exit": 0
+    },
+    {
+      "cwd": ".",
+      "command": "rustfmt --edition 2021 --config skip_children=true --emit stdout (stdin per changed Rust file; compare changed hunks against HEAD)",
+      "result": "no formatting differences intersect changed hunks",
+      "log": "format.json"
+    },
+    {
+      "cwd": "rust",
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/table-mutation-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+      "exit": 0,
+      "passed": 5,
+      "failed": 0,
+      "log": "after-wire.json"
+    }
+  ],
+  "distinct_final_rust": {
+    "passed": 115,
+    "failed": 1,
+    "ignored": 0
+  },
+  "retained_failure": {
+    "test": "tests_read_cast::a_cast_reads_a_zero_in_date_back_intact_and_warns_on_the_rest",
+    "expected": "Incorrect datetime value: '0000-00-00'",
+    "actual": "Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+    "basis": "unchanged baseline binary and final binary produce the same warning in real MySQL control; failure remains enabled"
+  },
+  "wire_before": {
+    "phase": "before-final-control",
+    "binary_sha256": "7663fd5ba66b457c1f9dce7df5c8ba48175b671c5660dda7b657b44ea25ca409",
+    "checks": [
+      {
+        "name": "partition move allocates a new hidden handle",
+        "error": null,
+        "ids": [
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ],
+        "pass": false
+      },
+      {
+        "name": "partition move preserves both rows",
+        "rows": [
+          [
+            0,
+            20
+          ],
+          [
+            1,
+            20
+          ]
+        ],
+        "pass": false
+      },
+      {
+        "name": "same-partition update preserves other repeated handle",
+        "rows": [
+          [
+            0,
+            10
+          ],
+          [
+            3,
+            30
+          ]
+        ],
+        "pass": true
+      },
+      {
+        "name": "insert keeps parse and range warnings",
+        "warnings": [
+          [
+            "Warning",
+            1366,
+            "Incorrect tinyint value: '128tail' for column 'a' at row 1"
+          ]
+        ],
+        "pass": false
+      },
+      {
+        "name": "clamped value remains 127",
+        "rows": [
+          [
+            127
+          ]
+        ],
+        "pass": true
+      }
+    ],
+    "zero_date_control": [
+      [
+        "Warning",
+        1292,
+        "Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+      ]
+    ],
+    "exit": 0
+  },
+  "wire_after": {
+    "phase": "after",
+    "binary_sha256": "c95527c68ef4099bdb976cb3006c9e107bb5ac8e26bfd3a764827e8dc5bf99f4",
+    "checks": [
+      {
+        "name": "partition move allocates a new hidden handle",
+        "error": null,
+        "ids": [
+          [
+            2
+          ]
+        ],
+        "pass": true
+      },
+      {
+        "name": "partition move preserves both rows",
+        "rows": [
+          [
+            0,
+            10
+          ],
+          [
+            0,
+            20
+          ]
+        ],
+        "pass": true
+      },
+      {
+        "name": "same-partition update preserves other repeated handle",
+        "rows": [
+          [
+            0,
+            10
+          ],
+          [
+            3,
+            30
+          ]
+        ],
+        "pass": true
+      },
+      {
+        "name": "insert keeps parse and range warnings",
+        "warnings": [
+          [
+            "Warning",
+            1366,
+            "Incorrect tinyint value: '128tail' for column 'a' at row 1"
+          ],
+          [
+            "Warning",
+            1264,
+            "Out of range value for column 'a' at row 1"
+          ]
+        ],
+        "pass": true
+      },
+      {
+        "name": "clamped value remains 127",
+        "rows": [
+          [
+            127
+          ]
+        ],
+        "pass": true
+      }
+    ],
+    "zero_date_control": [
+      [
+        "Warning",
+        1292,
+        "Incorrect datetime value: '0000-00-00 00:00:00.000000'"
+      ]
+    ],
+    "exit": 0
+  },
+  "superseded_runs": [
+    "before.log wrong-cwd compilation stopped; identified wrong-profile outputs pruned with hashes",
+    "before-correct-cwd.log fixture type error corrected before baseline run",
+    "before-wire.json unsupported variable fixture corrected",
+    "before-fixed-fixture-wire.json collision expectation corrected to Go fresh hidden-ID allocation before final source validation",
+    "session-integration.log 16 pass/2 stale expectations; corrected from Go source and final run 18 pass"
+  ],
+  "artifact_directory": "/workspace/.cloud-setup/table-mutation-batch",
+  "artifact_hashes": {
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "before-source-corrected-server.log": "c5915f9489fdf018361263753e51dae86d6674157d30fa4aae6b94a496df3d04",
+    "before-source-corrected-wire.json": "87eead72e37336c15eea7b8a45e2a23744c2546dd766052ff008cf0ebde1d69e",
+    "session-integration-final.log": "53e26eb8bdaafefe93dae77bf97f438e16fc9365b82513f9fea04d0dcfbc6172",
+    "before-final-control-wire.log": "33dad59bd9615f6578c86156b7d9f0c128e2fb8716a3495b4c4b6ba04c5ce768",
+    "before.log": "7d9a351efbd2ecc633dd2811ec63d3fb68b0cdf89ee2e677a5a7431ece2cb7ee",
+    "before-fixed-fixture-server.log": "a3ac0384dbf3fb2a99d6ffc247382cb1cf1f314609d9ff7b90a7901ac6664c2a",
+    "before-wire.json": "d76a3ffa57c5d6c32fe82a5919e233940e5cf3b05c7b176fabca2b8428f087d3",
+    "before-source-corrected-wire.log": "87eead72e37336c15eea7b8a45e2a23744c2546dd766052ff008cf0ebde1d69e",
+    "before-correct-cwd.log": "38ab2cf900cf63b3ff035026536c3fef7d75bbf6c8bd2d8ea6556fe59307e675",
+    "retired-artifacts.json": "4ef1c5521e06e461317c8a8031c949c1b1bbe5ba2f508c8966ecd4079f08bc40",
+    "after-wire.json": "72c809932c4bcde1c5a06a0aec50f1acec28098a45dceb8728ae6fbac8763648",
+    "after-server.log": "a5acf3f6396ec3e685c8247dfebaa7872fe412ec996d836bdd28ed82c83297ee",
+    "before-server.log": "b612a7d9853f73a058cf67447f9ef5245718838ac4539d6c0b642c49d71663b6",
+    "final-executor.log": "c326c6d3089ebd149d38eb52506ee0369e88276671feea13f2ff172491095d81",
+    "locked-build.log": "792f3f420a9def0ecc26e0ccc1226a042d41f3feb58b2df06879b4001bf764a8",
+    "after-wire.log": "72c809932c4bcde1c5a06a0aec50f1acec28098a45dceb8728ae6fbac8763648",
+    "before-final-control-server.log": "8c7be7dbe06570c777db28605a32104bae3029d5f88ceb626eb421a57dc1fd09",
+    "before-fixed-fixture-wire.json": "0e9d4cc0c45f3158e342de8d6c83ed3acd96deb3c5fb111a76b40fae72e1ba1f",
+    "before-wire.log": "d76a3ffa57c5d6c32fe82a5919e233940e5cf3b05c7b176fabca2b8428f087d3",
+    "session-integration.log": "e6f4b2b25d617969065a815e69ffa2e00a1e8f92189e78a2944e1f4eda443669",
+    "before-final-control-wire.json": "33dad59bd9615f6578c86156b7d9f0c128e2fb8716a3495b4c4b6ba04c5ce768",
+    "session-lib.log": "0e1bed29cc1c3809abcbe576b651f84237fbd15ec082902b02b8d6a188a4c60c",
+    "format.json": "90187f89e88e7fd681e05ae760b5fc5607ccb5e8334b400db7c9f44ff9a77600",
+    "before-wire-fixed-fixture.log": "0e9d4cc0c45f3158e342de8d6c83ed3acd96deb3c5fb111a76b40fae72e1ba1f",
+    "before-tests.log": "1263ea58f78f8df87808f26293667717f2a16aee54df705c248c4e4492846366",
+    "wire.py": "ef4db258f356190d9a1cefa4608a04a8dfd807489e96569ddb3da8839bbefacf",
+    "grouped.log": "a76a104a2f48b69967c8d9a0ab87eba3777ce7dc2f54e9dd7572cde0449891e8",
+    "check.log": "c29a4e5c2e508e7417d1a15f976b85aa35fcb5e08ee89c11887c30cd21f5510d",
+    "check.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "wrong-cwd-artifacts.json": "6553b24b163edd4594895ee6bb48877cd086c2afecf302d831ca03ae4b49857d"
+  },
+  "publication": {
+    "push": false,
+    "dry_run": false,
+    "commit_hook": "Required normal precommit locked build; final outcome recorded outside this commit in /workspace/.cloud-setup/table-mutation-batch/final-handoff.json"
+  },
+  "read_access": {
+    "tidb": "managed HTTPS ls-remote succeeded after reconnect",
+    "client_rust": "managed HTTPS ls-remote succeeded after reconnect",
+    "write_permission": "untested; metadata does not verify Git write permission"
+  },
+  "limits": [
+    "E03/T01/K03 remain partial; 56 unresolved parent findings remain.",
+    "Temporal/JSON/binary-literal conversion adapters and complete table/planner owners remain incomplete.",
+    "Explicit pessimistic constraint_check_in_place_pessimistic=OFF prewrite policy remains incomplete.",
+    "No full Go/Rust suite, live multi-node TiKV, whole-package acceptance or measured performance claim.",
+    "Concurrent remote integration 219a0de48ec86ab988c536e587e150543c524948 remains unmerged and preserved.",
+    "Cloud publication and fresh-task restoration of local-only commits remain unverified."
+  ]
+}

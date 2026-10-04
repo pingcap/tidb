@@ -1,14 +1,6 @@
 # Structural execution batches for the remaining findings
 
-The [cluster identity and timestamp batch](cluster-lifecycle-batch-validation.json) repairs O01 and advances O09/N04 together: shared leased identity, configured connection allocation/admission, transaction/cursor timestamp retention, leased minimum reporting and internal auto-analyze KILL authorization. **86 tracked: 30 repaired, 56 unresolved (32 open, 24 partial).** The other 54 unresolved roots retain earlier evidence. Historical schema/DDL protection and remote KILL remain explicit gaps; no complete package acceptance or push is claimed.
-
-The [runtime settings batch](runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence.
-
-The [cluster configuration batch](cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence.
-
-The [metadata policy batch](metadata-policy-batch-validation.json) connects I01 live sequence metadata and I02 shared cluster redaction, and corrects I03 local instance ownership. I01/I02 remain partial; I03 remote fanout remains open. Other54 unresolved IDs retain earlier evidence.
-
-The current register has **57 unresolved findings: 34 open and 23 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.
+The [table mutation batch](table-mutation-batch-validation.json) repairs connected E03/T01/K03 contracts: partition moves allocate fresh hidden handles and preserve the source row; pessimistic UPDATE carries deferred duplicate checks and hints; numeric/string column conversion preserves typed error precedence and ordered warnings across ordinary/generated INSERT, UPDATE and ODKU. All three parent findings remain partial. **86 tracked: 30 repaired, 56 unresolved (32 open, 24 partial).** The other 53 unresolved roots retain prior evidence, not fresh reproduction. Full package and multi-node/performance acceptance remain unverified. No push.
 
 A batch groups a shared production lifecycle. Complete Go packages remain the atomic acceptance unit, including original tests, support, generated/platform/build variants and fixtures. Broad shared packages such as Domain, planner and executor retain one inventory and receipt across contributing batches. Dependencies below are integration gates; they do not prevent implementing independent prerequisite packages.
 
@@ -16,7 +8,7 @@ A batch groups a shared production lifecycle. Complete Go packages remain the at
 | --- | --- | --- | ---: |
 | B01 | Native PD and shared transport | P03, P06, T02, M04 | 4 |
 | B02 | Shared SQL session, planner and table execution | A01, E02, E03, T01, K01, K03, S03, S04 | 8 |
-| B03 | Schema, identity and timestamp protection | O01, O02, O03, O09, I04, K02 | 6 |
+| B03 | Schema, identity and timestamp protection | O02, O03, O09, I04, K02 | 5 |
 | B04 | Durable DDL and placement recovery | D01, D02, D03, D05, D08, D09, D10, D11, F01, F02, O14 | 11 |
 | B05 | Account security, wire bytes and administration | A02, A03, N01, N03, N04, N05 | 6 |
 | B06 | Typed expression and optimizer execution | Q01, X01, E04 | 3 |
@@ -115,4 +107,4 @@ Integration dependencies: B02, B06.
 
 ## Current evidence boundary
 
-The current batch rechecks O01/O09/N04. Exact validation and source identities are in its receipt. It does not freshly reproduce the other 54 unresolved findings or accept any whole package. The machine-readable map is [remaining-batches.json](remaining-batches.json); the status authority is [structural-findings.json](structural-findings.json).
+The current batch rechecks E03/T01/K03. Exact validation and source identities are in its receipt. It does not freshly reproduce the other 53 unresolved roots or accept any complete Go package.

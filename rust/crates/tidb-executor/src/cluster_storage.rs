@@ -1419,6 +1419,207 @@ impl StorageIterator for MergedIterator {
 mod tests {
     use super::*;
 
+    fn mutation_batch_table(store: ClusterTableStorage) -> crate::kv_table::KvTable {
+        use crate::kv_table::{KvColumn, KvIndex, KvTable};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        let mut table = KvTable::with_storage(
+            42,
+            ["id", "v"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| KvColumn {
+                    name: name.to_string(),
+                    id: i as i64 + 1,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                })
+                .collect(),
+            Box::new(store),
+        );
+        table.set_pk_handle_offset(0);
+        table.add_index(
+            KvIndex {
+                id: 1,
+                name: "u".into(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![1],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        table
+    }
+
+    #[test]
+    fn table_mutation_batch_pessimistic_update_defers_destination_check() {
+        use crate::kv_table::TableHandle;
+        use tidb_datatype::Datum;
+        for (pessimistic, ignore, expected_reads) in
+            [(true, false, 0), (false, false, 1), (true, true, 1)]
+        {
+            let (store, snapshot, buffer) = storage(&[]);
+            let mut table = mutation_batch_table(store);
+            let old = [Datum::Int(1), Datum::Int(10)];
+            let new = [Datum::Int(1), Datum::Int(20)];
+            let ctx = crate::StmtContext::for_dml(false, true, ignore)
+                .with_pessimistic_transaction(pessimistic);
+            table
+                .insert_row_with_row_id_checked(&old, None, 0, &ctx, false)
+                .unwrap();
+            for key in buffer.staged_keys() {
+                snapshot
+                    .lock()
+                    .unwrap()
+                    .data
+                    .insert(key.clone().into_bytes(), buffer.get(&key).unwrap().unwrap());
+            }
+            buffer.reset();
+            snapshot.lock().unwrap().gets.clear();
+            table
+                .update_row_with_old_context(&TableHandle::Int(1), Some(&old), &new, &ctx)
+                .unwrap();
+            assert_eq!(
+                snapshot.lock().unwrap().gets.len(),
+                expected_reads,
+                "pessimistic={pessimistic}, ignore={ignore}"
+            );
+            let new_index = buffer
+                .staged_keys()
+                .into_iter()
+                .find(|key| key.as_bytes()[10] == b'i' && buffer.get(key).unwrap().is_some())
+                .unwrap();
+            let flags = buffer
+                .state()
+                .memdb
+                .read(|db| db.get_flags_readonly(new_index.as_bytes()).unwrap());
+            assert_eq!(flags.has_presume_key_not_exists(), pessimistic && !ignore);
+            assert!(flags.has_assert_not_exist());
+        }
+    }
+
+    #[test]
+    fn table_mutation_batch_moved_primary_defers_check_with_duplicate_hint() {
+        use crate::kv_table::TableHandle;
+        use tidb_datatype::Datum;
+        let (store, snapshot, buffer) = storage(&[]);
+        let mut table = mutation_batch_table(store);
+        let old = [Datum::Int(1), Datum::Null];
+        let new = [Datum::Int(2), Datum::Null];
+        let ctx = crate::StmtContext::default().with_pessimistic_transaction(true);
+        table
+            .insert_row_with_row_id_checked(&old, None, 0, &ctx, false)
+            .unwrap();
+        for key in buffer.staged_keys() {
+            snapshot
+                .lock()
+                .unwrap()
+                .data
+                .insert(key.clone().into_bytes(), buffer.get(&key).unwrap().unwrap());
+        }
+        buffer.reset();
+        snapshot.lock().unwrap().gets.clear();
+        table
+            .update_row_with_old_context(&TableHandle::Int(1), Some(&old), &new, &ctx)
+            .unwrap();
+        assert!(snapshot.lock().unwrap().gets.is_empty());
+        let key = Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+            42,
+            &tidb_codec::table_key::RecordHandle::Int(2),
+        ));
+        assert!(buffer.state().memdb.read(|db| db
+            .get_flags_readonly(key.as_bytes())
+            .unwrap()
+            .has_presume_key_not_exists()));
+        assert_eq!(
+            buffer.duplicate_key_hint_for(key.as_bytes()).unwrap().value,
+            "2"
+        );
+    }
+
+    #[test]
+    fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
+        use crate::kv_table::{KvColumn, KvTable, TableHandle};
+        use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::expression::{Column, Expression};
+        let (store, _, buffer) = storage(&[]);
+        let mut table = KvTable::with_storage(
+            42,
+            ["v", "payload"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| KvColumn {
+                    name: name.to_string(),
+                    id: i as i64 + 1,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    comment: String::new(),
+                    generated: None,
+                })
+                .collect(),
+            Box::new(store),
+        );
+        let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        column.index = 0;
+        table.set_partition(PartitionSpec {
+            kind: PartitionKind::Hash,
+            expr_text: "v".into(),
+            expr: Expression::Column(column),
+            dependencies: vec!["v".into()],
+            definitions: [43, 44]
+                .into_iter()
+                .map(|id| PartitionDef {
+                    id,
+                    name: id.to_string(),
+                    less_than: vec![],
+                    in_values: vec![],
+                    comment: String::new(),
+                    placement_policy: None,
+                })
+                .collect(),
+            overlapping_dropping_partition_indices: vec![],
+            is_empty_columns: false,
+        });
+        let ctx = crate::StmtContext::default();
+        let first = [Datum::Int(0), Datum::Int(10)];
+        let second = [Datum::Int(1), Datum::Int(20)];
+        for row in [&first, &second] {
+            table
+                .insert_row_with_row_id_checked(row, Some(1), 0, &ctx, false)
+                .unwrap();
+        }
+        let key = |id, handle| {
+            Key::from_bytes(tidb_codec::table_key::encode_row_key_with_handle(
+                id,
+                &tidb_codec::table_key::RecordHandle::Int(handle),
+            ))
+        };
+        let original_first = buffer.get(&key(43, 1));
+        let new = [Datum::Int(0), Datum::Int(20)];
+        table
+            .update_row_with_old_context(&TableHandle::Int(1), Some(&second), &new, &ctx)
+            .unwrap();
+        assert_eq!(buffer.get(&key(43, 1)), original_first);
+        assert_eq!(buffer.get(&key(44, 1)), Some(None));
+        assert!(buffer
+            .staged_keys()
+            .iter()
+            .any(|k| tidb_codec::decode_table_id(k.as_bytes()) == 43
+                && *k != key(43, 1)
+                && buffer.get(k).unwrap().is_some()));
+    }
+
     #[test]
     fn table_writes_preserve_go_assertions_through_the_native_buffer() {
         use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};

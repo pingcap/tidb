@@ -567,7 +567,10 @@ impl KvTable {
         handle: &TableHandle,
         physical_id: i64,
         zone: &SessionTimeZone,
+        lazy_dup_check: bool,
+        pessimistic: bool,
     ) -> Result<(), KvTableError> {
+        debug_assert!(!lazy_dup_check || pessimistic);
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
             // A clustered PRIMARY's key IS the record handle; updating the row
@@ -596,7 +599,7 @@ impl KvTable {
                             &key,
                             &duplicate_value_text(&self.index_values(index, new_row)),
                             &self.qualified_key(&index.name),
-                            false,
+                            lazy_dup_check,
                         )?;
                     }
                     self.store
@@ -669,7 +672,7 @@ impl KvTable {
                     &key,
                     &duplicate_value_text(&self.index_values(index, new_row)),
                     &self.qualified_key(&index.name),
-                    false,
+                    lazy_dup_check,
                 )?;
             }
             self.store

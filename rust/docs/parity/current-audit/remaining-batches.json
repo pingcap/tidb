@@ -10,7 +10,7 @@
     "partial": 24
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "O01/O09/N04 rechecked in this batch. The other 54 unresolved roots retain earlier evidence; not all findings were freshly reproduced.",
+  "evidence_limit": "E03/T01/K03 rechecked in this batch; the other 53 unresolved roots retain earlier evidence.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -80,14 +80,20 @@
         "S04": "open"
       },
       "latest_maintenance": {
-        "receipt": "dml-trigger-owner-batch-repair.md",
-        "preceding_receipt": "dml-interpreter-removal-repair.md",
-        "advanced_findings": [
-          "E02",
-          "E03"
+        "date": "2026-10-04",
+        "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
+        "findings": [
+          "E03",
+          "T01",
+          "K03"
         ],
-        "complete_package_acceptance": false,
-        "remaining": "Final row vectors, stored-handle reconstruction, complete chunk/write streaming, indexed FK lookup/locking and physical cascade substatements remain; both matrix interpreters and render-only FK policy duplication are removed."
+        "statuses": {
+          "E03": "partial",
+          "T01": "partial",
+          "K03": "partial"
+        },
+        "receipt": "table-mutation-batch-validation.json",
+        "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
       }
     },
     {
@@ -388,18 +394,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-04",
-    "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
+    "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
     "findings": [
-      "O01",
-      "O09",
-      "N04"
+      "E03",
+      "T01",
+      "K03"
     ],
     "statuses": {
-      "O01": "repaired",
-      "O09": "partial",
-      "N04": "partial"
+      "E03": "partial",
+      "T01": "partial",
+      "K03": "partial"
     },
-    "receipt": "cluster-lifecycle-batch-validation.json",
-    "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
+    "receipt": "table-mutation-batch-validation.json",
+    "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
   }
 }

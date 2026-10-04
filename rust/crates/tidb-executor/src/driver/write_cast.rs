@@ -85,6 +85,17 @@ pub(crate) fn materialize_generated_for_write(
                 ctx,
             ),
             GeneratedWrite::OnDuplicate { row_index, .. } => {
+                if contextual_cast_supported(&value, &column.field_type) {
+                    return cast_value_shaped(
+                        value,
+                        &column.field_type,
+                        &column.name,
+                        row_index,
+                        ctx,
+                        CastShape::GeneratedOnDuplicate,
+                        false,
+                    );
+                }
                 // Go updateRecord passes rawVal to the ODKU error handler,
                 // whereas ordinary ODKU assignments pass the converted value.
                 let source = value.clone();
@@ -126,15 +137,8 @@ impl From<crate::generated_column::GenerationError> for DriverError {
     }
 }
 
-/// Whether a conversion event is one TiDB reports nothing for.
-///
-/// Rounding a NUMBER into a narrower decimal is the case: captured, both
-/// `INSERT INTO t(d DECIMAL(10,3)) VALUES (1.23456)` and
-/// `ALTER TABLE t ADD COLUMN e DECIMAL(6,2) DEFAULT 3.14159` are accepted in
-/// silence, storing 1.235 and 3.14. Go reaches that through
-/// `ProduceDecWithSpecifiedTp`, whose rounding notice never becomes a
-/// statement error. A STRING source is a different case -- it may not be a
-/// number at all -- so it is never silent.
+/// A legacy scalar event that is not itself fatal. Contextual conversions
+/// deliver decimal rounding warnings through their own ordered warning sink.
 pub(crate) fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversionEvent) -> bool {
     matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
 }
@@ -146,26 +150,6 @@ pub(crate) fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversion
 /// converted (clamped or truncated) value is stored and the same message is a
 /// warning, which is what `sql_mode = ''` produces in TiDB.
 ///
-/// DIVERGENCE, one shape, captured with `gorunmsg` on `t(a BIGINT)`:
-/// a string whose numeric prefix is followed by garbage. Under STRICT mode
-///
-/// ```text
-/// insert into t values ('123..34')   TiDB  [types:1264] Out of range value for column 'a' at row 1
-///                                    here  [table:1366] Incorrect bigint value: '123..34' for column 'a' at row 1
-/// ```
-///
-/// The stored value and the NON-strict warning both already agree
-/// (`123`, and 1366 with that exact text), and so does the read path --
-/// `CAST('123..34' AS SIGNED)` is `123` with 1292
-/// `Truncated incorrect INTEGER value: '123..34'` on both sides. Only the
-/// strict WRITE's error identity differs: Go's `StrToInt` raises
-/// `ErrOverflow`, which `completeInsertErr` re-titles as 1264, while the
-/// conversion here reports a `ScalarConversionEvent::Truncated` and this
-/// function maps that to the "Incorrect <type> value" form.
-///
-/// Distinguishing them needs `tidb_datatype`'s conversion to carry Go's error
-/// IDENTITY beside its event -- the same seam
-/// [`cast_value_for_assignment`]'s strict arm needs.
 pub(crate) fn cast_value_for_column(
     value: Datum,
     field_type: &FieldType,
@@ -223,7 +207,8 @@ pub(crate) fn cast_table_value_with_flags(
     let legacy_enum_set = matches!(
         field_type.code(),
         tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
-    ) && !ctx.new_collation_enabled() && tidb_datatype::new_collation_enabled();
+    ) && !ctx.new_collation_enabled()
+        && tidb_datatype::new_collation_enabled();
     let legacy_type;
     let conversion_type = if legacy_enum_set {
         legacy_type = field_type.clone().with_collation_name("binary");
@@ -291,6 +276,10 @@ pub(crate) enum CastShape {
     /// `handleUpdateError`: `table.CastValue`'s own error, except for
     /// `ErrDataTooLong` and `ErrOverflow`, which keep the decorated form.
     UpdateAssignment,
+    /// ODKU preserves raw errors but completes warnings using the converted value.
+    OnDuplicateAssignment,
+    /// Generated ODKU diagnostics name the original generated value.
+    GeneratedOnDuplicate,
 }
 
 fn cast_value_shaped(
@@ -400,6 +389,19 @@ fn cast_value_with_flags(
             field_type.collation(),
         ));
     }
+    if contextual_cast_supported(&value, field_type) {
+        return cast_contextual_value(
+            &value,
+            &source,
+            field_type,
+            column,
+            row_index,
+            ctx,
+            shape,
+            force_ignore_truncate,
+            flags,
+        );
+    }
     // Go `table.CastValue` passes `sctx.GetSessionVars().StmtCtx.TypeCtx()`,
     // whose location is the session's. A TIMESTAMP column's admissible range
     // is expressed in wall-clock time, so it MOVES with that zone.
@@ -495,10 +497,8 @@ fn cast_value_with_flags(
     // (oracle: 99999.99999 -> DECIMAL(10,4) and 1.23456 -> DECIMAL(10,3)
     // both store the rounded value beside the 1366, while a value that fits
     // the scale exactly -- 1.5 -> DECIMAL(10,4) -- stays unremarked).
-    let decimal_rounded = matches!(
-        event,
-        tidb_datatype::ScalarConversionEvent::RoundedToScale
-    ) && field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal;
+    let decimal_rounded = matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
+        && field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal;
     if decimal_rounded {
         if shape == CastShape::RawTable {
             let error = DriverError::TruncatedIncorrectValue {
@@ -589,6 +589,179 @@ fn cast_value_with_flags(
     let reported = error.to_mysql_error();
     ctx.append_warning_parts(reported.code, &reported.message);
     Ok(converted.value)
+}
+
+// Temporal, JSON and binary-literal diagnostic producers still use their
+// existing adapters. These source kinds have complete contextual numeric and
+// string diagnostics in the shared datatype owner.
+fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
+    use tidb_datatype::FieldTypeCode as T;
+    matches!(
+        value,
+        Datum::Int(_)
+            | Datum::UInt(_)
+            | Datum::Real(_)
+            | Datum::Float32(_)
+            | Datum::Decimal(_)
+            | Datum::String(_)
+            | Datum::Bytes(_)
+            | Datum::Enum(..)
+            | Datum::Set(..)
+    ) && matches!(
+        field.code(),
+        T::Tiny
+            | T::Short
+            | T::Int24
+            | T::Long
+            | T::LongLong
+            | T::Float
+            | T::Double
+            | T::NewDecimal
+            | T::String
+            | T::Varchar
+            | T::VarString
+            | T::Blob
+            | T::TinyBlob
+            | T::MediumBlob
+            | T::LongBlob
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cast_contextual_value(
+    value: &Datum,
+    source: &Datum,
+    field: &FieldType,
+    column: &str,
+    row: usize,
+    ctx: &crate::StmtContext,
+    shape: CastShape,
+    force_ignore: bool,
+    flags: tidb_datatype::ConversionFlags,
+) -> Result<Datum, DriverError> {
+    use tidb_error::terror::TerrorError;
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<TerrorError>>);
+    impl tidb_datatype::ConversionWarningAppender for Warnings {
+        fn append_conversion_warning(&self, warning: TerrorError) {
+            self.0.borrow_mut().push(warning);
+        }
+    }
+    let warnings = Warnings::default();
+    let zone = ctx.session_zone();
+    let context = tidb_datatype::ConversionContext::new(
+        flags,
+        tidb_datatype::ConversionLocation::from_time_zone(&zone),
+        &warnings,
+    );
+    let result = value.convert_to_in_context(field, &context, &zone);
+    let warning_source = match (&result, shape) {
+        (Ok(converted), CastShape::OnDuplicateAssignment) => &converted.value,
+        _ => source,
+    };
+    let warning_shape = match shape {
+        CastShape::OnDuplicateAssignment | CastShape::GeneratedOnDuplicate => CastShape::InsertRow,
+        CastShape::UpdateAssignment => CastShape::RawTable,
+        other => other,
+    };
+    // Conversion stages may emit several warnings before the final error.
+    // Preserve their order and let only the INSERT caller complete their text.
+    for warning in warnings.0.into_inner() {
+        let reported = complete_typed_cast(
+            warning.to_sql_error(),
+            warning_source,
+            field,
+            column,
+            row,
+            warning_shape,
+        )
+        .to_mysql_error();
+        ctx.append_warning_parts(reported.code, &reported.message);
+    }
+    let converted = result.map_err(|error| {
+        json_write_error(&error).unwrap_or_else(|| {
+            shape.name(
+                DriverError::IncorrectValue {
+                    type_name: tidb_datatype::type_str(field.code()).to_owned(),
+                    value: datum_error_text(source),
+                    column: column.to_owned(),
+                    row: row + 1,
+                },
+                source,
+                field,
+            )
+        })
+    })?;
+    if let Some(error) = converted.error {
+        let mut raw = error.to_sql_error();
+        // castColumnValue retitles only bare ErrTruncated, after ConvertTo.
+        if raw.code == 1265 {
+            raw.code = 1292;
+            raw.message = format!(
+                "Truncated incorrect {} value: '{}'",
+                field.compact_str(false),
+                datum_error_text(source)
+            );
+        }
+        if !flags.ignore_truncate_err() {
+            if flags.truncate_as_warning() {
+                let reported = complete_typed_cast(
+                    raw,
+                    if shape == CastShape::OnDuplicateAssignment {
+                        &converted.value
+                    } else {
+                        source
+                    },
+                    field,
+                    column,
+                    row,
+                    warning_shape,
+                )
+                .to_mysql_error();
+                ctx.append_warning_parts(reported.code, &reported.message);
+            } else if !force_ignore {
+                return Err(complete_typed_cast(raw, source, field, column, row, shape));
+            }
+        }
+    }
+    Ok(truncate_char_trailing_spaces(converted.value, field))
+}
+
+fn complete_typed_cast(
+    error: tidb_error::mysql::SqlError,
+    source: &Datum,
+    field: &FieldType,
+    column: &str,
+    row: usize,
+    shape: CastShape,
+) -> DriverError {
+    let insert = shape == CastShape::InsertRow;
+    let update = shape == CastShape::UpdateAssignment;
+    match error.code {
+        1690 if insert || update => DriverError::DataOutOfRange {
+            column: column.to_owned(),
+            row: row + 1,
+        },
+        1264 if insert => DriverError::DataOutOfRange {
+            column: column.to_owned(),
+            row: row + 1,
+        },
+        1406 if insert || update => DriverError::DataTooLong {
+            column: column.to_owned(),
+            row: row + 1,
+        },
+        1265 if insert => DriverError::DataTruncatedAtRow {
+            column: column.to_owned(),
+            row: row + 1,
+        },
+        1292 if insert => DriverError::IncorrectValue {
+            type_name: tidb_datatype::type_str(field.code()).to_owned(),
+            value: datum_error_text(source),
+            column: column.to_owned(),
+            row: row + 1,
+        },
+        _ => DriverError::Mysql(crate::MysqlError::new(error.code, error.message)),
+    }
 }
 
 /// Runs the exact charset conversion Go performs before producing a string
@@ -753,7 +926,9 @@ impl CastShape {
     /// makes it fatal.
     fn name(self, error: DriverError, source: &Datum, field_type: &FieldType) -> DriverError {
         match self {
-            Self::RawTable => raw_assignment_error(error, source, field_type),
+            Self::RawTable | Self::OnDuplicateAssignment | Self::GeneratedOnDuplicate => {
+                raw_assignment_error(error, source, field_type)
+            }
             Self::InsertRow => error,
             Self::UpdateAssignment => match error {
                 // Go's `handleUpdateError` re-titles exactly these two.
@@ -839,6 +1014,17 @@ pub(crate) fn cast_value_for_assignment(
     row_index: usize,
     ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
+    if contextual_cast_supported(&value, field_type) {
+        return cast_value_shaped(
+            value,
+            field_type,
+            column,
+            row_index,
+            ctx,
+            CastShape::OnDuplicateAssignment,
+            false,
+        );
+    }
     if value.is_null() {
         return cast_value_for_column(value, field_type, column, row_index, ctx, false);
     }
@@ -970,6 +1156,60 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
 mod source_tests {
     use super::*;
     use tidb_datatype::{BinaryLiteral, Collation, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn table_mutation_batch_raw_integer_keeps_overflow_identity() {
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        for (input, subject) in [
+            ("9223372036854775808", "9223372036854775808"),
+            ("1.9tail", "1.9"),
+        ] {
+            let error = cast_table_value(
+                Datum::new_string(input),
+                &FieldType::new(FieldTypeCode::LongLong),
+                "a",
+                &ctx,
+                false,
+            )
+            .unwrap_err()
+            .to_mysql_error();
+            assert_eq!(error.code, 1690, "{input}");
+            assert_eq!(
+                error.message,
+                format!("BIGINT value is out of range in '{subject}'")
+            );
+        }
+    }
+
+    #[test]
+    fn table_mutation_batch_raw_conversion_preserves_warning_order() {
+        let ctx = crate::StmtContext::for_query();
+        let field = FieldType::new(FieldTypeCode::Tiny);
+        let result =
+            cast_table_value(Datum::new_string("128tail"), &field, "a", &ctx, false).unwrap();
+        assert_eq!(result, Datum::Int(127));
+        let warnings = ctx.take_warnings();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(
+            (warnings[0].1, warnings[0].2.as_str()),
+            (1292, "Truncated incorrect DOUBLE value: '128tail'")
+        );
+        assert_eq!(warnings[1].1, 1690);
+    }
+
+    #[test]
+    fn table_mutation_batch_varchar_space_truncation_warns() {
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let field = FieldType::new(FieldTypeCode::Varchar).with_flen(2);
+        let value = cast_table_value(Datum::new_string("ab  "), &field, "a", &ctx, false).unwrap();
+        assert_eq!(datum_error_text(&value), "ab");
+        let warnings = ctx.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            (warnings[0].1, warnings[0].2.as_str()),
+            (1265, "Data truncated, field len 2, data len 4")
+        );
+    }
 
     fn assert_strict_cast(
         input: Datum,

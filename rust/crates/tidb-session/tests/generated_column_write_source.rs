@@ -112,7 +112,9 @@ fn generated_write_policy_warns_once_before_index_storage() {
             "1000|127"
         );
         session.run("update t set a=1001").unwrap();
-        assert_eq!(warning_codes(&mut session), [1264]);
+        // table.CastValue warns before handleUpdateError, which decorates
+        // returned errors only. The raw types.ErrOverflow warning stays 1690.
+        assert_eq!(warning_codes(&mut session), [1690]);
         assert_eq!(rows(&mut session, "select a,b from t"), "1001|127");
     }
 }
@@ -197,11 +199,17 @@ fn generated_write_policy_odku_and_joined_update() {
         let error = session
             .run(statement)
             .expect_err("all update producers share generated casting");
-        assert_eq!(error.to_mysql_error().code, 1264);
+        // Go insert.go's ODKU handler rewrites warnings but returns the raw
+        // error; update.go's handleUpdateError decorates returned overflow.
+        let odku = statement.starts_with("insert");
+        assert_eq!(error.to_mysql_error().code, if odku { 1690 } else { 1264 });
         assert_eq!(rows(&mut session, "select a,b from t"), "7|7");
         session.run("set sql_mode = ''").unwrap();
         session.run(statement).unwrap();
-        assert_eq!(warning_codes(&mut session), [1264]);
+        assert_eq!(
+            warning_codes(&mut session),
+            [if odku { 1264 } else { 1690 }]
+        );
         assert_eq!(
             rows(
                 &mut session,

@@ -3413,8 +3413,8 @@ impl KvTable {
     /// statement's staged writes ONLY -- Go `GetLocal` -- and a miss stages
     /// the row presumed absent (`kv.SetPresumeKeyNotExists`), deferring the
     /// verdict to the commit's constraint check. The record key carries the
-    /// mark; unique secondary entries keep their own eager check, matching
-    /// nothing Go waives for them here.
+    /// mark; distinct secondary entries use the same policy. Each deferred
+    /// key retains its own absence check and duplicate diagnostic.
     pub fn insert_row_with_row_id_checked(
         &mut self,
         row: &[Datum],
@@ -3788,39 +3788,60 @@ impl KvTable {
         // it was scanned under, because its handle is an allocated `_tidb_rowid`
         // that the row's values do not determine.
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        let new_handle = if clustered {
+        let mut new_handle = if clustered {
             self.handle_of_row(row, &zone, 0)?
         } else {
             handle.clone()
         };
-        // Moving onto an occupied handle is a primary-key duplicate, reported
-        // exactly as `INSERT` reports one: `Duplicate entry '2' for key
-        // 't.PRIMARY'`. Checked before anything is written, so the rejected
-        // statement leaves the table untouched.
-        if new_handle != *handle && self.row_exists(&new_handle)? {
-            return Err(KvTableError::DuplicateEntry {
-                value: clustered_key_text(self, row),
-                key: self.qualified_key("PRIMARY"),
-            });
-        }
         let new_physical_id = self.record_physical_id(row, ctx)?;
-        let old_key = if new_handle == *handle {
-            if let Some(old) = old_row {
-                let old_physical_id = self.record_physical_id(old, ctx)?;
-                if old_physical_id == new_physical_id {
-                    Some(Key::from_bytes(encode_row_key_with_handle(
-                        old_physical_id,
-                        &handle.record_handle(),
-                    )))
-                } else {
-                    self.stored_record_key(handle)?
-                }
-            } else {
-                self.stored_record_key(handle)?
-            }
+        // The retained input row identifies its physical partition even when
+        // another partition contains the same hidden row handle.
+        let old_key = if let Some(old) = old_row {
+            Some(Key::from_bytes(encode_row_key_with_handle(
+                self.record_physical_id(old, ctx)?,
+                &handle.record_handle(),
+            )))
         } else {
             self.stored_record_key(handle)?
         };
+        if !clustered
+            && old_key
+                .as_ref()
+                .is_some_and(|key| tidb_codec::decode_table_id(key.as_bytes()) != new_physical_id)
+        {
+            // Go partitionedTableUpdateRecord removes then AddRecords a heap
+            // row crossing partitions, allocating a fresh hidden row ID.
+            let shard = if self.shard_row_id_bits > 0 {
+                stats_ctx.map_or(0, |ctx| ctx.next_row_id_shard(1) as i64)
+            } else {
+                0
+            };
+            new_handle = self.handle_of_row(row, &zone, shard)?;
+        }
+        let destination_key = Key::from_bytes(encode_row_key_with_handle(
+            new_physical_id,
+            &new_handle.record_handle(),
+        ));
+        let pessimistic = stats_ctx.is_some_and(crate::StmtContext::pessimistic_transaction);
+        // Go optimizeDupKeyCheckForUpdate keeps optimistic UPDATE and IGNORE
+        // eager; pessimistic writes check absence while acquiring their locks.
+        let lazy_dup_check = pessimistic && !stats_ctx.is_some_and(crate::StmtContext::ignore_err);
+        if old_key.as_ref() != Some(&destination_key) {
+            let duplicate_value = if clustered {
+                clustered_key_text(self, row)
+            } else {
+                match &new_handle {
+                    TableHandle::Int(value) => value.to_string(),
+                    TableHandle::Common(_) => unreachable!("heap table has an integer handle"),
+                }
+            };
+            self.check_insert_key(
+                &destination_key,
+                &duplicate_value,
+                &self.qualified_key("PRIMARY"),
+                lazy_dup_check,
+            )?;
+        }
         let old_physical_id = old_key.as_ref().map_or(self.table_id, |key| {
             tidb_codec::decode_table_id(key.as_bytes())
         });
@@ -3843,9 +3864,15 @@ impl KvTable {
                     // its own current bytes. Go skips those rewrites
                     // (`SkipWriteUntouchedIndices`, see
                     // `rewrite_changed_index_entries`); this port does too.
-                    if let Err(error) =
-                        self.rewrite_changed_index_entries(old, row, handle, new_physical_id, &zone)
-                    {
+                    if let Err(error) = self.rewrite_changed_index_entries(
+                        old,
+                        row,
+                        handle,
+                        new_physical_id,
+                        &zone,
+                        lazy_dup_check,
+                        pessimistic,
+                    ) {
                         // Cluster sessions restore their native statement
                         // checkpoint; only the in-process backend needs repair.
                         if !self.store.has_external_statement_rollback() {
@@ -3869,8 +3896,8 @@ impl KvTable {
                         &new_handle,
                         new_physical_id,
                         &zone,
-                        false,
-                        false,
+                        lazy_dup_check,
+                        pessimistic,
                     ) {
                         if !self.store.has_external_statement_rollback() {
                             self.write_index_entries(
@@ -3891,8 +3918,8 @@ impl KvTable {
                         &new_handle,
                         new_physical_id,
                         &zone,
-                        false,
-                        false,
+                        lazy_dup_check,
+                        pessimistic,
                     )?;
                 }
             }

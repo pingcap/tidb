@@ -3583,17 +3583,15 @@ impl StmtContext {
     /// the strict mode's 1264 was already right -- a silently wrong VALUE
     /// with a correct-looking error path beside it.
     ///
-    /// `WithIgnoreInvalidDateErr` and `WithIgnoreZeroInDate` come from
-    /// [`crate::zero_date::write_date_flags`], which needs the mode bits
-    /// [`Self::date_modes`] carries. NOT MODELLED, and named rather than
-    /// guessed: `WithTruncateAsWarning`, which is applied a level up instead
-    /// -- `cast_value_for_column` reads [`Self::strict`] to decide whether a
-    /// conversion event is an error or a warning.
+    /// Date-mode flags and the statement's truncation level reach the datatype
+    /// conversion itself, preserving its value/error precedence and warnings.
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
         crate::zero_date::write_date_flags(
             self.conversion_flags()
-                .with_allow_negative_to_unsigned(false),
+                .with_allow_negative_to_unsigned(false)
+                .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
+                .with_truncate_as_warning(self.truncate == ErrorLevel::Warn),
             self.date_modes,
             self.strict,
         )

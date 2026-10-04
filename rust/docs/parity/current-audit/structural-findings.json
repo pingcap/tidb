@@ -253,10 +253,10 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "**Partially repaired:** single and joined UPDATE/DELETE consume retained physical reads. Writable matrix tables, their synthetic snapshot-position handles, alternate mutation branches and dead interpreter helpers are removed. All writable fixtures use ordinary table storage; virtual/materialized sources remain read-only. Final write-row vectors, reconstructed stored handles, complete planner handle metadata and Go chunk/write streaming remain open.",
-      "rust_evidence": "`driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; shared TableHandle writers in `driver/dml/{update_record,delete_record}.rs`; `matrix-write-removal-validation.json`",
-      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete supplies schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. Go infoschemaTable/VirtualTable reject mutation and buildMemTable has no invented row positions. Final buffering/handle reconstruction and full write streaming remain.",
-      "review_basis": "Cloud removal from 35fcc5d8538014d65fb40b3d662afb22557411a9 against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Six original matrix writes mutate; removal regression passes. Grouped checks and unchanged driver baseline failures are recorded in matrix-write-removal-validation.json. No complete package or virtual-table SQL error-ordering acceptance; other56 unresolved IDs retain earlier evidence."
+      "finding": "**Partially repaired:** single/joined UPDATE and DELETE consume retained physical reads; writable matrix tables and synthetic row handles remain removed. UPDATE now locates the old physical partition from its retained row, checks the actual destination key, and allocates a fresh hidden handle when a heap row crosses partitions, as Go AddRecord does. Repeated hidden IDs in separate partitions no longer corrupt the other row during that move. Complete retained handle metadata, partial/hidden-column input reconstruction, final write-row buffers and chunk/write streaming remain unresolved.",
+      "rust_evidence": "`driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; shared TableHandle writers in `driver/dml/{update_record,delete_record}.rs`; `matrix-write-removal-validation.json`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json)",
+      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete supplies schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. Go infoschemaTable/VirtualTable reject mutation and buildMemTable has no invented row positions. Final buffering/handle reconstruction and full write streaming remain. Go tables/partition.go::partitionedTableUpdateRecord derives from/to from row data and calls AddRecord with a fresh hidden ID on a heap partition move.",
+      "review_basis": "Cloud table mutation batch from 529c38ddd4f046a408bfe8d2082a62dcf672f505 against refreshed Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five grouped Rust regressions and three source-corrected real-wire assertions fail before fixes. See table-mutation-batch-validation.json for final checks, baseline failures and limitations. Existing-owner maintenance; no complete package acceptance."
     },
     {
       "id": "E04",
@@ -325,10 +325,10 @@
       "id": "T01",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "**Partially repaired:** all callers use independent BufferMutation flags. Existing optimistic configured writes and allocated/snapshot-checked system records retain their prior Go assertion selection. System-index distinct unique inserts/moves now request commit-time duplicate checks with AssertUnknown; nonunique and unique-NULL entries use AssertUnknown without that flag. Public index deletes assert existence; non-public assertions are suppressed and unchanged keys are retained. Full transaction-view duplicate/error/state/temp/global policy and pessimistic constraint checks remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-exec/src/table_write_policy.rs::insert_index`; `system_row_write.rs::index_entries/rewrite_row`; `tidb-txnkv/src/transaction/mutation.rs`; receipt `table-policy-batch-repair.md`",
-      "go_owner": "Go pkg/table/tables/{tables,index}.go owns independent duplicate flags/assertions: optimistic lazy unique keys use AssertUnknown plus PresumeKeyNotExists; handle-qualified non-distinct entries omit the flag, and public deletion asserts existence. Complete transaction-view/state/temp/global and pessimistic owners remain unaccepted.",
-      "review_basis": "Cloud table-policy batch from 9a5877b155 against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Six independent contracts fail before/pass after; 57 distinct Rust cases and required lint/check/locked build pass. Existing-owner maintenance only; both findings remain partial. See table-policy-batch-repair.md and its validation JSON."
+      "finding": "**Partially repaired:** independent mutation flags, system-index absence checks and public assertions retain their earlier repairs. Pessimistic UPDATE/ODKU now defer changed unique-index and record-key absence checks to the existing transaction locking boundary, retaining duplicate hints and AssertNotExist. Optimistic UPDATE and IGNORE remain eager, independently of the INSERT-only constraint switch. Local tombstones and transaction rollback stay with the shared buffer. Explicit pessimistic prewrite-check configuration, non-public/temp/global-index transitions and complete package obligations remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-exec/src/table_write_policy.rs::insert_index`; `system_row_write.rs::index_entries/rewrite_row`; `tidb-txnkv/src/transaction/mutation.rs`; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json)",
+      "go_owner": "Go pkg/table/tables/{tables,index}.go owns independent duplicate flags/assertions: optimistic lazy unique keys use AssertUnknown plus PresumeKeyNotExists; handle-qualified non-distinct entries omit the flag, and public deletion asserts existence. Complete transaction-view/state/temp/global and pessimistic owners remain unaccepted. Go executor/update.go::optimizeDupKeyCheckForUpdate keeps optimistic/IGNORE eager; table/index.go and tables.go preserve local tombstones and deferred absence flags.",
+      "review_basis": "Cloud table mutation batch from 529c38ddd4f046a408bfe8d2082a62dcf672f505 against refreshed Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five grouped Rust regressions and three source-corrected real-wire assertions fail before fixes. See table-mutation-batch-validation.json for final checks, baseline failures and limitations. Existing-owner maintenance; no complete package acceptance."
     },
     {
       "id": "T02",
@@ -676,10 +676,10 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; partial repair:** generated writes, reads and ANALYZE share the column-cast owner and typed delivery. RowDecoder now carries its captured table/task collation mode into that owner. Legacy ENUM/SET matching on a new-collation process is binary while declared output/catalog collation is preserved; full and projected stored-row cursors share the repair. Lower datatype error/value identities, generated-expression diagnostics and broader generic ANALYZE build/storage adapters remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`",
-      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open.",
-      "review_basis": "Cloud table-policy batch from 9a5877b155 against freshly fetched unchanged Go master 93a01d31f6 and native 19a56cc. Six independent contracts fail before/pass after; 57 distinct Rust cases and required lint/check/locked build pass. Existing-owner maintenance only; both findings remain partial. See table-policy-batch-repair.md and its validation JSON."
+      "finding": "**P1; partially repaired:** generated writes, reads and ANALYZE share column conversion and typed delivery; decoder-specific legacy ENUM/SET policy remains preserved. Supported numeric/string conversions now consume the existing contextual datatype owner, retaining multiple ordered warnings, raw overflow identity and per-stage precedence. INSERT completes errors/warnings, UPDATE completes returned overflow/width errors but preserves raw warnings, and ODKU keeps raw errors while naming ordinary warnings with converted values and generated warnings with original values. VARCHAR trailing-space truncation follows the shared datatype warning. Temporal/JSON/binary-literal and other unported diagnostics, generated-expression context, broader ANALYZE adapters and full package obligations remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json)",
+      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open. Go table/column.go::castColumnValue consumes Datum.ConvertTo and HandleTruncate; executor/insert_common.go::completeInsertErr, insert.go::doDupRowUpdate and update.go::handleUpdateError separately complete errors and warnings.",
+      "review_basis": "Cloud table mutation batch from 529c38ddd4f046a408bfe8d2082a62dcf672f505 against refreshed Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five grouped Rust regressions and three source-corrected real-wire assertions fail before fixes. See table-mutation-batch-validation.json for final checks, baseline failures and limitations. Existing-owner maintenance; no complete package acceptance."
     },
     {
       "id": "I04",
@@ -793,19 +793,19 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-04",
-    "integration_start": "f4ef95954c11710986ab1d1f359b4b13a12d52a5",
+    "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
     "findings": [
-      "O01",
-      "O09",
-      "N04"
+      "E03",
+      "T01",
+      "K03"
     ],
     "statuses": {
-      "O01": "repaired",
-      "O09": "partial",
-      "N04": "partial"
+      "E03": "partial",
+      "T01": "partial",
+      "K03": "partial"
     },
-    "receipt": "cluster-lifecycle-batch-validation.json",
-    "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
+    "receipt": "table-mutation-batch-validation.json",
+    "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
   },
   "latest_test_cleanup": {
     "date": "2026-10-04",
@@ -1127,6 +1127,22 @@
       },
       "receipt": "cluster-lifecycle-batch-validation.json",
       "scope": "Shared numeric identity, connection admission, physical transaction/cursor protection and leased minimum reporting; auto-analyze KILL authorization. Finding repair is not complete Go package acceptance."
+    },
+    {
+      "date": "2026-10-04",
+      "integration_start": "529c38ddd4f046a408bfe8d2082a62dcf672f505",
+      "findings": [
+        "E03",
+        "T01",
+        "K03"
+      ],
+      "statuses": {
+        "E03": "partial",
+        "T01": "partial",
+        "K03": "partial"
+      },
+      "receipt": "table-mutation-batch-validation.json",
+      "scope": "Connected physical mutation identity, deferred uniqueness and shared typed conversion diagnostics; parent packages remain unaccepted."
     }
   ],
   "execution_batches": {
