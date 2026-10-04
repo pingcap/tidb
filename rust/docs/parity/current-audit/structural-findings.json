@@ -816,7 +816,8 @@
     "production_behavior_changed": false,
     "finding_statuses_changed": false,
     "receipt": "planner-empty-module-removal.md",
-    "obligation_ledger": "planner-empty-module-obligations.json"
+    "obligation_ledger": "planner-empty-module-obligations.json",
+    "source_commit": "a1d57eefff46b4a1899337a5f5aa3e1cfc327705"
   },
   "test_cleanup_history": [
     {

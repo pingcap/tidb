@@ -16,7 +16,7 @@ Retire every remaining planner test module proven to contain only comments and i
 - [x] Capture the aggregate baseline of 1251 entries.
 - [x] Archive full historical source/contracts and current Go identities, relocate dangling audit rows and delete the verified modules.
 - [x] Prove exact harness set difference and unchanged retained sources; run retained regressions, all-target checking, lint and locked server build.
-- [ ] Commit through the actual build hook and refresh verified recovery/startup handoff without pushing.
+- [x] Commit through the actual build hook and refresh verified recovery/startup handoff without pushing.
 
 ## Context and Orientation
 
@@ -64,4 +64,4 @@ No production API, dependency, lockfile, native client or Go source changes. The
 ## Outcomes & Retrospective
 
 
-All 64 pure modules and 612 empty entries are removed; 674 candidate rows moved into the ledger. Exact harness set difference and complete archived Go/source identities verify. All 72 retained planner test files are byte-identical to the parent; no strictly pure placeholder module remains. The retained aggregate passes 277 tests with 362 ignored. All 357 distinct retained regressions, all-target checking, lint and locked build pass. Local hook commit/recovery/draft delivery is in progress. Cloud logs/scripts belong under `/workspace/.cloud-setup/planner-empty-module-removal`. Full Go suites/fixtures, failpoints, multi-node TiKV, performance and complete package acceptance remain unverified.
+All 64 pure modules and 612 empty entries are removed; 674 candidate rows moved into the ledger. Exact harness set difference and complete archived Go/source identities verify. All 72 retained planner test files are byte-identical to the parent; no strictly pure placeholder module remains. The retained aggregate passes 277 tests with 362 ignored. All 355 distinct retained regressions, all-target checking, lint and locked build pass. Source committed through the actual locked build hook; final receipt, verified recovery bundle and exact draft readback follow as delivery checks. Cloud logs/scripts belong under `/workspace/.cloud-setup/planner-empty-module-removal`. Full Go suites/fixtures, failpoints, multi-node TiKV, performance and complete package acceptance remain unverified.

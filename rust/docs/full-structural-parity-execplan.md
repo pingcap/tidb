@@ -2,7 +2,7 @@
 
 ## Exhaustive pure-placeholder cleanup checkpoint (2026-10-04)
 
-The [batch plan](planner-empty-module-removal-execplan.md) and [receipt](parity/current-audit/planner-empty-module-removal.md) remove the remaining 64 strictly pure modules containing 612 ignored empty tests. All 72 retained test files are byte-identical; all 612 current Go identities and 674 relocated candidate rows are archived. The exact harness change is 1251 to 639; 357 meaningful Rust tests, lint, all-target checking and locked build pass. Counts remain 29 repaired and 57 unresolved (40 open, 17 partial). Complete upstream obligations remain unverified. No push.
+The [batch plan](planner-empty-module-removal-execplan.md) and [receipt](parity/current-audit/planner-empty-module-removal.md) remove the remaining 64 strictly pure modules containing 612 ignored empty tests. All 72 retained test files are byte-identical; all 612 current Go identities and 674 relocated candidate rows are archived. The exact harness change is 1251 to 639; 355 meaningful Rust tests, lint, all-target checking and locked build pass. Counts remain 29 repaired and 57 unresolved (40 open, 17 partial). Complete upstream obligations remain unverified. No push.
 
 ## Empty planner test cleanup checkpoint (2026-10-04)
 

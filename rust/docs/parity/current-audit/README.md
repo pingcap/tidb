@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-The [exhaustive planner cleanup](planner-empty-module-removal.md) removes **612 ignored empty tests across 64 pure-placeholder modules**. All 72 retained test files are unchanged; no pure-placeholder module remains. All contracts/current Go identities and 674 relocated candidate rows remain in the [unverified ledger](planner-empty-module-obligations.json). The retained aggregate passes 277 tests with 362 ignored; 357 distinct Rust cases pass overall. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** No production behavior or finding status changed.
+The [exhaustive planner cleanup](planner-empty-module-removal.md) removes **612 ignored empty tests across 64 pure-placeholder modules**. All 72 retained test files are unchanged; no pure-placeholder module remains. All contracts/current Go identities and 674 relocated candidate rows remain in the [unverified ledger](planner-empty-module-obligations.json). The retained aggregate passes 277 tests with 362 ignored; 355 distinct Rust cases pass overall. **Counts remain 29 repaired, 57 unresolved (40 open, 17 partial), 86 tracked.** No production behavior or finding status changed.
 
 The preceding 55-entry cleanup below is historical.
 

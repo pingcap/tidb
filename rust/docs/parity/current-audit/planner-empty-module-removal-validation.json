@@ -91,7 +91,7 @@
     "aggregate_tests_passed": 277,
     "aggregate_tests_ignored": 362
   },
-  "passing_test_cases": 357,
+  "passing_test_cases": 355,
   "counts": {
     "tracked": 86,
     "repaired": 29,
@@ -110,5 +110,17 @@
   "push": {
     "authorized": false,
     "attempted": false
+  },
+  "passing_test_executions": 357,
+  "deduplication": "Two physical plan-cache tests occur in both lib filters; 355 unique (target, name) cases.",
+  "source_commit": "a1d57eefff46b4a1899337a5f5aa3e1cfc327705",
+  "actual_precommit_hook": {
+    "command": "TERM=xterm git commit -m \"test: retire remaining empty planner test modules\"",
+    "hooks_path": "hooks",
+    "locked_build": "cd rust && cargo build --locked -p tidb-server",
+    "status": "passed",
+    "exit_code": 0,
+    "log": "/workspace/.cloud-setup/planner-empty-module-removal/source-commit-hook.log",
+    "sha256": "486873fe6a3643426d7061e8816282aa12d1235cfd7b45704310892d125d8bbd"
   }
 }
