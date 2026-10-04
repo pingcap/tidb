@@ -784,11 +784,78 @@ func (la *LogicalAggregation) pushDownPredicatesByAggFuncs(cond *expression.Scal
 	}
 	if schemaCol != nil {
 		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
-		condsToPush = append(condsToPush, newFunc)
-	} else {
-		ret = append(ret, cond)
+		if la.canPushFirstRowPredicate(newFunc) {
+			condsToPush = append(condsToPush, newFunc)
+			return condsToPush, ret
+		}
 	}
+	ret = append(ret, cond)
 	return condsToPush, ret
+}
+
+// canPushFirstRowPredicate checks whether a predicate on firstrow() outputs, already substituted
+// to the aggregation's input, can be evaluated below the aggregation. Filtering input rows is
+// only safe when it cannot change any aggregate result, which holds when:
+//  1. every aggregate is firstrow(), so any qualifying row is a valid pick for the group;
+//  2. the predicate only depends on GROUP BY expressions, so it is constant within a group; or
+//  3. the predicate's columns are functionally determined by the GROUP BY columns (e.g. the
+//     GROUP BY columns contain a primary key), so it is constant within a group as well.
+//
+// Otherwise, e.g. `SELECT c1, c2, COUNT(*) ... GROUP BY c1 HAVING c2 IS NOT NULL` in non-strict
+// GROUP BY mode, pushing the predicate would drop rows before COUNT(*) is computed.
+func (la *LogicalAggregation) canPushFirstRowPredicate(cond expression.Expression) bool {
+	allFirstRow := true
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Name != ast.AggFuncFirstRow {
+			allFirstRow = false
+			break
+		}
+	}
+	if allFirstRow {
+		return true
+	}
+	if la.exprDeterminedByGroupBy(cond) {
+		return true
+	}
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) == 0 {
+		return false
+	}
+	determinants := intset.NewFastIntSet()
+	for _, col := range groupByCols {
+		determinants.Insert(int(col.UniqueID))
+	}
+	dependents := intset.NewFastIntSet()
+	for _, col := range expression.ExtractColumns(cond) {
+		dependents.Insert(int(col.UniqueID))
+	}
+	return la.Children()[0].ExtractFD().InClosure(determinants, dependents)
+}
+
+// exprDeterminedByGroupBy checks whether expr is built only from GROUP BY items and constants.
+func (la *LogicalAggregation) exprDeterminedByGroupBy(expr expression.Expression) bool {
+	evalCtx := la.SCtx().GetExprCtx().GetEvalCtx()
+	for _, item := range la.GroupByItems {
+		if expr.Equal(evalCtx, item) {
+			return true
+		}
+	}
+	switch x := expr.(type) {
+	case *expression.Constant:
+		return true
+	case *expression.ScalarFunction:
+		if expression.IsMutableEffectsExpr(x) {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !la.exprDeterminedByGroupBy(arg) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildSelfKeyInfo builds the key information for the aggregation itself.

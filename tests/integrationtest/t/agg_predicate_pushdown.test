@@ -92,3 +92,33 @@ WHERE t1.tran_id = 1540776
     FROM t t0
     WHERE t0.tran_id = t1.tran_id
   );
+
+# Issue #71738: a predicate on a firstrow() output must not be pushed below an aggregation
+# that also computes other aggregates, unless it is constant within each group.
+drop table if exists t1, t2;
+create table t1(c1 int, c2 int);
+create table t2(id int primary key, c1 int, c2 int, key idx(c1, c2));
+insert into t1 values (1, 5);
+insert into t2 values (1, 1, null), (2, 1, 20);
+set @@sql_mode='';
+
+# UNSAFE: c2 is not a grouping key and count(*) depends on every row -> keep the filter above the aggregation
+explain format='plan_tree' select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 where a.c2 is not null;
+select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 where a.c2 is not null;
+explain format='plan_tree' select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 and a.c2 > t1.c2;
+select t1.c1, a.cnt from t1 join (select c1, c2, count(*) cnt from t2 group by c1) a on t1.c1 = a.c1 and a.c2 > t1.c2;
+
+# SAFE: all aggregates are firstrow() -> pushed down
+explain format='plan_tree' select c1, c2 from (select c1, c2 from t2 group by c1) a where a.c2 is not null;
+select c1, c2 from (select c1, c2 from t2 group by c1) a where a.c2 is not null;
+
+# SAFE: the GROUP BY column (primary key) functionally determines c2 -> pushed down
+explain format='plan_tree' select id, c2, cnt from (select id, c2, count(*) cnt from t2 group by id) a where a.c2 is not null;
+select id, c2, cnt from (select id, c2, count(*) cnt from t2 group by id) a where a.c2 is not null;
+
+# SAFE: the predicate only depends on the GROUP BY expression -> pushed down
+explain format='plan_tree' select d, cnt from (select c1 + 1 d, count(*) cnt from t2 group by c1 + 1) a where a.d > 1;
+select d, cnt from (select c1 + 1 d, count(*) cnt from t2 group by c1 + 1) a where a.d > 1;
+
+set @@sql_mode=default;
+drop table t1, t2;
