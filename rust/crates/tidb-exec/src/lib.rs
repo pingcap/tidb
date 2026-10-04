@@ -67,6 +67,7 @@ pub mod catalog_watch;
 pub mod charset_variable_groups;
 pub mod chunk_alloc_status;
 pub mod cluster_account_write;
+pub mod cluster_config;
 pub mod cluster_discovery;
 mod cluster_http;
 pub mod cluster_analyze;

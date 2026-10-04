@@ -1033,6 +1033,7 @@ pub struct ClusterSessionFactory {
     /// established an identity.
     server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
+    cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -1189,6 +1190,7 @@ impl ClusterSessionFactory {
             cop_scans: None,
             server_info: None,
             cluster_topology: None,
+            cluster_config: None,
             global_vars,
             boot_skipped,
             statistics_view: Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
@@ -1965,7 +1967,17 @@ impl ClusterSessionFactory {
         self
     }
 
-    /// Shares live component discovery and adaptive policy with every SQL session.
+    /// Shares the internal HTTP configuration retriever with every SQL session.
+    #[must_use]
+    pub fn with_cluster_config_client(
+        mut self,
+        client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
+    ) -> Self {
+        self.cluster_config = Some(client);
+        self
+    }
+
+    /// Shares topology with every session.
     #[must_use]
     pub fn with_cluster_topology(
         mut self,
@@ -3288,6 +3300,9 @@ impl ClusterSessionFactory {
         )));
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
+        }
+        if let Some(client) = &self.cluster_config {
+            session.set_cluster_config_client(Arc::clone(client));
         }
         if let Some(topology) = &self.cluster_topology {
             session.set_cluster_topology(Arc::clone(topology));

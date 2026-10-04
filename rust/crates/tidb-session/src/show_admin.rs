@@ -151,58 +151,6 @@ pub(crate) fn master_status_output(position: i64) -> StmtOutput {
 /// whose arm in Go is literally `// empty result`.
 ///
 /// `None` means the kind is some other inspection, which the caller handles.
-/// go `ShowConfigExec` over the flattened config: every top-level config
-/// key with its value — scalars verbatim, sections as their compact JSON —
-/// one `(Type, Instance, Name, Value)` row per key, sorted by name. The
-/// instance column names this server's own advertise address.
-pub(crate) fn config_dump_output() -> StmtOutput {
-    let config = tidb_config::config_tree::config::get_global_config();
-    // go's instance column is the advertise address with the SQL port; the
-    // unistore node's config tree leaves the advertise address empty, so the
-    // host falls back to the loopback the node actually listens on.
-    let host = if config.advertise_address.is_empty() {
-        if config.host.is_empty() {
-            "127.0.0.1".to_owned()
-        } else {
-            config.host.clone()
-        }
-    } else {
-        config.advertise_address.clone()
-    };
-    let instance = format!("{}:{}", host, config.port);
-    let value = serde_json::to_value(config.as_ref()).unwrap_or(serde_json::Value::Null);
-    let mut items: Vec<(String, String)> = Vec::new();
-    if let serde_json::Value::Object(map) = &value {
-        for (name, item) in map {
-            let rendered = match item {
-                serde_json::Value::String(text) => text.clone(),
-                serde_json::Value::Null => String::new(),
-                other => other.to_string(),
-            };
-            items.push((name.clone(), rendered));
-        }
-    }
-    items.sort_by(|a, b| a.0.cmp(&b.0));
-    let columns = vec![
-        ("Type".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-        ("Instance".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-        ("Name".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-        ("Value".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-    ];
-    let rows = items
-        .into_iter()
-        .map(|(name, rendered)| {
-            vec![
-                Datum::new_string("tidb".to_owned()),
-                Datum::new_string(instance.clone()),
-                Datum::new_string(name),
-                Datum::new_string(rendered),
-            ]
-        })
-        .collect();
-    StmtOutput::Rows { columns, rows }
-}
-
 pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<StmtOutput> {
     match kind {
         tidb_ast::ShowInspectionKind::Plugins => Some(crate::show::text_columns_output(&[

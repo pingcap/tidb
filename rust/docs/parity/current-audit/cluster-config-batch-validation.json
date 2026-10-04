@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-04",
+  "parent": "3923a01d3edba6a4220bfef97297c032f6ca8224",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_rust": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "findings": {
+    "I01": "partial",
+    "I02": "partial",
+    "N03": "partial"
+  },
+  "implementation": [
+    "Live eight-component HTTP configuration routing shared by CLUSTER_CONFIG and SHOW CONFIG, with CONFIG and active-role checks",
+    "Typed TYPE/INSTANCE EQ/IN/OR/AND scan routing, contradiction skip, SQL predicates retained",
+    "Concurrent joined requests, source ordering, partial warnings, hidden keys, flattening and Go number/JSON rendering",
+    "Bounded joined per-component address resolution",
+    "Shared five-minute internal HTTP timeout/TLS constructor, client shared across sessions in both production factories"
+  ],
+  "removed": [
+    "Captured local SHOW CONFIG implementation and its sole caller",
+    "Unsupported live CLUSTER_CONFIG branch after all production factory paths are wired"
+  ],
+  "before": [
+    {
+      "crate": "tidb-domain",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-domain/40bcc1ed24d162eb/out/tidb_domain-40bcc1ed24d162eb",
+        "cluster_resolution_overlaps",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "summary": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 165 filtered out; finished in 0.80s"
+    },
+    {
+      "crate": "tidb-session",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-session/0c25b5a3accc68aa/out/tidb_session-0c25b5a3accc68aa",
+        "cluster_config_checks_config_privilege",
+        "cluster_config_contradictory_types",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "summary": "FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1993 filtered out; finished in 0.10s"
+    }
+  ],
+  "after": {
+    "distinct_rust_passed": 34,
+    "domain": {
+      "crate": "tidb-domain",
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-domain/40bcc1ed24d162eb/out/tidb_domain-40bcc1ed24d162eb",
+        "resolution_tests",
+        "serverinfo_syncer",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": "ok. 18 passed; 0 failed; 0 ignored; 0 measured; 148 filtered out; finished in 0.33s"
+    },
+    "session": {
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-session/0c25b5a3accc68aa/out/tidb_session-0c25b5a3accc68aa",
+        "tests_domain_serverinfo_syncer_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "ok. 14 passed; 0 failed; 3 ignored; 0 measured; 1979 filtered out; finished in 0.93s"
+      ]
+    },
+    "http": {
+      "command": [
+        "/workspace/tidb/rust/target/debug/build/tidb-exec/a2887d144c588a7f/out/all-a2887d144c588a7f",
+        "cluster_config_source",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "output_summary": [
+        "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 848 filtered out; finished in 0.03s"
+      ]
+    },
+    "ignored": "Two pre-existing parity gaps retained; one ignored SEM subprocess helper runs through parent and is not counted separately."
+  },
+  "wire_before": {
+    "assertions_failed": 7,
+    "binary_sha256": "041e154c828072742a79515b6effca0ee3cf785293eec7306284ad2cc8f520b1",
+    "receipt": "/workspace/.cloud-setup/cluster-config-batch/before-wire.json"
+  },
+  "checks": {
+    "all_targets": "passed: cargo check --locked -p tidb-session -p tidb-exec -p tidb-domain -p tidb-planner -p tidb-server --all-targets",
+    "lint": "passed: make lint",
+    "final_hook_and_wire": "Final after-wire result and mandatory actual hook build recorded after commit in external final-handoff.json."
+  },
+  "limits": [
+    "All three parent findings remain partial; other54 unresolved IDs not freshly revalidated",
+    "Full Go packages/test/fixture/platform obligations not accepted; no full Go suite run",
+    "Lower/upper and parameter-marker routing fall back to ordinary SQL predicates; complete extractor/CTE/join matrix not verified",
+    "No live multi-node TiKV, internal HTTPS end-to-end, or performance acceptance",
+    "No push or push dry run; fresh-task restoration unverified"
+  ],
+  "counts": {
+    "tracked": 86,
+    "repaired": 29,
+    "unresolved": 57,
+    "open": 36,
+    "partial": 21
+  },
+  "external_evidence": "/workspace/.cloud-setup/cluster-config-batch",
+  "log_sha256": {
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "tidb-domain-before.log": "a1989a0e36ead4305d2d71388b72598caac0b1ee2e7ee8053dda86cc25ac2e94",
+    "http-tests.log": "503ed7afcd242291ef28142a9daa0441e361015fe3597ab0692a9c8e575be3ef",
+    "tidb-session-after.log": "d7f0b5cccc33f1234eb328dbb916bd4b17ad9c7f7fc09595251979c894ae2116",
+    "tidb-domain-after.log": "06d68f813a40272a24aecdad3e7a50b4a016c89943878fc1a6bb8dc34ac36115",
+    "before-server.log": "a9ab9e3927f2bba61a3c93d77144d1bdae5da2bdd6bc3fc507eea960ef347212",
+    "tidb-session-before.log": "de427057bc9777e52696e460dc42b7a33c197035aef01ebfb7f302c003520adb",
+    "before-build.log": "9b6934f3c9e56bf6f035f7974afcbfdf9c656cd7da208854eca3dac490a34f0b",
+    "before-wire.log": "962572a979813210b8ebeae586221be205023a68da4d600380c6f9be1182581b",
+    "session-final.log": "ff730f463505eb9e7c98d39a2a8bee8043c849bb3d69855ad05a799de166ee2d",
+    "final-session-build.log": "01c387158e010bafcf54c91a8303d25df91333c6cec5fc3b1fd757d5c24dba6b",
+    "http-build.log": "d13ba5844e3962445f78d18499d909771f306e37dcc8943208c550d8d918a456",
+    "fetch.log": "795351e2a1c6eebfbc180faf010b3a7c0295ee1722d8f86ce007f02a4da472ee",
+    "after-build.log": "6868622805793843e67faa15dfae7dfbb07595707b02bfd081c0753eebcb2fba",
+    "check.log": "c7e964559383831d891b411fb671b82e4e91b8bd0ba56af23114814c632513c7"
+  }
+}

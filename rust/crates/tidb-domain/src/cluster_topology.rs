@@ -180,10 +180,20 @@ impl ClusterTopology {
                     .map_or(info.json_server_id, |get| get()),
             });
         }
+        resolve_servers(&mut servers)?;
         if let Some(discovery) = &self.discovery {
-            servers.extend(discovery.pd_servers(warnings)?);
-            servers.extend(discovery.stores()?.into_iter().map(|store| store.server));
+            let mut nodes = discovery.pd_servers(warnings)?;
+            resolve_servers(&mut nodes)?;
+            servers.extend(nodes);
+            let mut nodes: Vec<_> = discovery
+                .stores()?
+                .into_iter()
+                .map(|store| store.server)
+                .collect();
+            resolve_servers(&mut nodes)?;
+            servers.extend(nodes);
         }
+        let proxy_start = servers.len();
         for (key, value) in self.syncer.topology_entries("/topology/tiproxy")? {
             if !key.ends_with("/info") {
                 continue;
@@ -201,6 +211,8 @@ impl ClusterTopology {
                 ..ClusterServer::default()
             });
         }
+        resolve_servers(&mut servers[proxy_start..])?;
+        let cdc_start = servers.len();
         for (key, value) in self.syncer.topology_entries("/topology/ticdc")? {
             if key.split('/').count() < 3 {
                 continue;
@@ -222,12 +234,13 @@ impl ClusterTopology {
                 ..ClusterServer::default()
             });
         }
+        resolve_servers(&mut servers[cdc_start..])?;
         if let Some(discovery) = &self.discovery {
-            servers.extend(discovery.microservice_servers("tso", warnings)?);
-            servers.extend(discovery.microservice_servers("scheduling", warnings)?);
-        }
-        for server in &mut servers {
-            resolve_loopback(server);
+            for service in ["tso", "scheduling"] {
+                let mut nodes = discovery.microservice_servers(service, warnings)?;
+                resolve_servers(&mut nodes)?;
+                servers.extend(nodes);
+            }
         }
         Ok(servers)
     }
@@ -271,5 +284,81 @@ fn resolve_loopback(server: &mut ClusterServer) {
         server.address = std::net::SocketAddr::new(status.ip(), address.port()).to_string();
     } else if !local(address.ip()) && local(status.ip()) {
         server.status_address = std::net::SocketAddr::new(address.ip(), status.port()).to_string();
+    }
+}
+
+fn resolve_servers(servers: &mut [ClusterServer]) -> Result<(), String> {
+    resolve_servers_with(
+        servers,
+        std::thread::available_parallelism().map_or(1, usize::from),
+        &resolve_loopback,
+    )
+}
+
+// The resolver callback keeps the concurrency contract testable without DNS timing.
+fn resolve_servers_with(
+    servers: &mut [ClusterServer],
+    workers: usize,
+    resolve: &(impl Fn(&mut ClusterServer) + Sync),
+) -> Result<(), String> {
+    if servers.is_empty() {
+        return Ok(());
+    }
+    let chunk_size = servers.len().div_ceil(workers.max(1).min(servers.len()));
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = servers
+            .chunks_mut(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    for server in chunk {
+                        resolve(server);
+                    }
+                })
+            })
+            .collect();
+        let mut failed = false;
+        for handle in handles {
+            failed |= handle.join().is_err();
+        }
+        if failed {
+            Err("cluster address resolution worker panicked".into())
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
+
+    #[test]
+    fn cluster_resolution_overlaps_with_a_bounded_joined_worker_set() {
+        let state = Mutex::new((0usize, 0usize));
+        let ready = Condvar::new();
+        let mut servers = vec![ClusterServer::default(); 8];
+        resolve_servers_with(&mut servers, 2, &|server| {
+            let mut state = state.lock().unwrap();
+            state.0 += 1;
+            state.1 = state.1.max(state.0);
+            ready.notify_all();
+            let (mut state, _) = ready
+                .wait_timeout_while(state, Duration::from_millis(100), |s| s.1 < 2)
+                .unwrap();
+            state.0 -= 1;
+            server.version = "resolved".into();
+        })
+        .unwrap();
+        assert_eq!(
+            state.lock().unwrap().1,
+            2,
+            "Go bounds concurrent resolution by available workers"
+        );
+        assert!(
+            servers.iter().all(|s| s.version == "resolved"),
+            "all workers joined before publication"
+        );
     }
 }

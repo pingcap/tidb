@@ -408,6 +408,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_cop_scans(cop_scans)
     .with_server_info(Arc::clone(&server_info))
     .with_cluster_topology(cluster_topology)
+    .with_cluster_config_client(Arc::new(
+        tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
+    ))
     .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
     .with_schema_validator(Arc::clone(&schema_validator))

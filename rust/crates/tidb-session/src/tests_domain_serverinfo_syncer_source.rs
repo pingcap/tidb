@@ -206,8 +206,8 @@ fn cluster_metadata_config_refuses_captured_runtime_rows() {
         mock_server_info("local", "192.0.2.10", 4000),
         None,
     )));
-    // Go supports these reads through live HTTP retrieval. Until that owner
-    // exists, Rust must not answer with a different server's captured settings.
+    // A session without its process HTTP owner must never substitute a
+    // captured configuration image. Production factories install that owner.
     for sql in [
         "SELECT * FROM information_schema.cluster_config",
         "SELECT COUNT(*) FROM information_schema.cluster_config WHERE TYPE = 'tidb'",
@@ -215,7 +215,7 @@ fn cluster_metadata_config_refuses_captured_runtime_rows() {
     ] {
         session.parse(sql).unwrap();
         let error = session.run(sql).expect_err("live config retrieval is unavailable");
-        assert_eq!(error.to_string(), "CLUSTER_CONFIG live retrieval is not supported yet");
+        assert_eq!(error.to_string(), "CLUSTER_CONFIG live retrieval is not installed");
         assert!(session.warnings().iter().all(|warning| !warning.message.contains("store1")));
     }
     session
@@ -223,7 +223,7 @@ fn cluster_metadata_config_refuses_captured_runtime_rows() {
         .unwrap();
     assert_eq!(
         session.run("EXECUTE cfg").unwrap_err().to_string(),
-        "CLUSTER_CONFIG live retrieval is not supported yet"
+        "CLUSTER_CONFIG live retrieval is not installed"
     );
     session.run("DEALLOCATE PREPARE cfg").unwrap();
 }
@@ -825,4 +825,166 @@ fn cluster_metadata_sem_child() {
         tidb_datatype::Datum::Bytes(b"[2001:db8::7]:4000".to_vec())
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn cluster_config_checks_config_privilege_before_discovery() {
+    use crate::{tests_support::*, *};
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut bootstrap = bootstrap_session(&registry);
+    bootstrap.run("CREATE USER 'config_reader'@'%'").unwrap();
+    let mut reader = authenticated_session(&registry, "config_reader", "%");
+    let error = reader
+        .run("SELECT * FROM information_schema.cluster_config")
+        .unwrap_err();
+    assert!(matches!(error, DriverError::SpecificAccessDenied(ref name) if name == "CONFIG"));
+}
+
+#[test]
+fn cluster_config_contradictory_types_skip_retrieval() {
+    use crate::{tests_support::row_text, Session};
+    let mut session = Session::new();
+    assert_eq!(row_text(session.run(
+        "SELECT count(*) FROM information_schema.cluster_config WHERE type='tidb' AND type='tikv'"
+    )), [["0"]]);
+}
+
+#[test]
+fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
+    use crate::{tests_support::*, *};
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::time::Duration;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let requests = Arc::new(AtomicUsize::new(0));
+    struct ServerGuard(Arc<AtomicBool>, Option<std::thread::JoinHandle<()>>);
+    impl Drop for ServerGuard {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+            self.1.take().unwrap().join().unwrap();
+        }
+    }
+    let stopping = stop.clone();
+    let calls = requests.clone();
+    let server = std::thread::spawn(move || {
+        while !stopping.load(Ordering::Acquire) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(pair) => pair,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                if request.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /config HTTP/1.1\r\n"));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("pd-allow-follower-handle: true"));
+            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let body = format!(
+                r#"{{"key":"live-{call}","nested":{{"enabled":true}},"performance":{{"INDEX-USAGE-SYNC-LEASE":"hidden"}},"enable-batch-dml":true}}"#
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let _server = ServerGuard(stop, Some(server));
+    let mut info = mock_server_info("live-config", "127.0.0.1", 4000);
+    info.static_info.status_port = usize::from(address.port());
+    let syncer = Arc::new(Syncer::new(info, None));
+    let client =
+        Arc::new(tidb_exec::cluster_config::ClusterConfigClient::new(&Default::default()).unwrap());
+    let mut session = Session::new();
+    session.set_server_info_syncer(syncer.clone());
+    session.set_cluster_config_client(client.clone());
+    assert_eq!(row_text(session.run("SELECT type, `key`, value FROM information_schema.cluster_config WHERE type='tidb' ORDER BY `key`")),
+        [["tidb", "key", "live-1"], ["tidb", "nested.enabled", "true"]]);
+    for predicate in [
+        "type='tikv'",
+        "type IN ('pd','tso')",
+        "instance='unselected:4000'",
+        "type='tidb' AND type='tikv'",
+    ] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT count(*) FROM information_schema.cluster_config WHERE {predicate}"
+            ))),
+            [["0"]]
+        );
+    }
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        1,
+        "excluded nodes receive no HTTP request"
+    );
+    session.run("PREPARE cfg FROM 'SELECT value FROM information_schema.cluster_config WHERE type=\"tidb\" AND `key`=\"key\"'").unwrap();
+    assert_eq!(row_text(session.run("EXECUTE cfg")), [["live-2"]]);
+    assert_eq!(row_text(session.run("EXECUTE cfg")), [["live-3"]]);
+    session.run("DEALLOCATE PREPARE cfg").unwrap();
+    assert_eq!(row_text(session.run("SELECT c.value FROM information_schema.cluster_config c JOIN information_schema.cluster_info i ON c.instance=i.instance WHERE c.`key`='key'")), [["live-4"]]);
+
+    let registry = privilege::PrivilegeRegistry::default();
+    let mut bootstrap = bootstrap_session(&registry);
+    bootstrap.run("CREATE USER 'http_reader'@'%'").unwrap();
+    bootstrap.run("CREATE ROLE 'config_role'@'%'").unwrap();
+    bootstrap
+        .run("GRANT CONFIG ON *.* TO 'config_role'@'%'")
+        .unwrap();
+    bootstrap
+        .run("GRANT 'config_role'@'%' TO 'http_reader'@'%'")
+        .unwrap();
+    let mut reader = authenticated_session(&registry, "http_reader", "%");
+    reader.set_server_info_syncer(syncer);
+    reader.set_cluster_config_client(client);
+    assert!(matches!(
+        reader.run("SELECT * FROM information_schema.cluster_config"),
+        Err(DriverError::SpecificAccessDenied(_))
+    ));
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        4,
+        "privilege failure precedes HTTP"
+    );
+    reader.run("SET ROLE ALL").unwrap();
+    assert_eq!(
+        row_text(
+            reader.run("SELECT value FROM information_schema.cluster_config WHERE `key`='key'")
+        ),
+        [["live-5"]]
+    );
+    assert_eq!(
+        row_text(reader.run("SHOW CONFIG WHERE Name='key'")),
+        [["tidb", "127.0.0.1:4000", "key", "live-6"]]
+    );
+    assert!(row_text(reader.run("SHOW CONFIG LIKE 'pd'")).is_empty());
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        7,
+        "SHOW filters run after shared live retrieval, as Go does"
+    );
+    reader.run("SET ROLE NONE").unwrap();
+    assert!(matches!(
+        reader.run("SHOW CONFIG"),
+        Err(DriverError::SpecificAccessDenied(_))
+    ));
 }

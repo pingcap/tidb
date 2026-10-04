@@ -39,3 +39,36 @@ Implementation and grouped validation pass for this maintenance boundary. SQL pr
 Preserve exact destinations and no-push constraint. Do not bypass hooks. After validation update unpublished bundle and reusable Cloud draft. Fresh-task restoration remains unverified.
 
 Final post-gate evidence: /workspace/.cloud-setup/cluster-topology-batch/final-handoff.json. The committed receipt records80 distinct Rust passes, nonzero selections, exact logs/source hashes, ignored obligations and recovered test-fixture mistakes. The actual hook gate is mandatory; no push is authorized.
+
+## Continuation: cluster configuration and bounded discovery
+
+
+Starting at 3923a01d3edba6a4220bfef97297c032f6ca8224, repair I01 live
+CLUSTER_CONFIG, I02 bounded address resolution and N03's internal HTTP
+consumer together. Refreshed Go master remains93a01d31f6. Retain the seven
+retrievers and process PD owner; do not touch incoming schema-sync changes.
+
+Milestone one captures grouped failures for CONFIG authorization,
+contradictory-filter request skipping and concurrent/joined address resolution.
+Milestone two composes HTTP routing, shared TLS, status/JSON error warnings,
+canonical flattening/hidden settings, stable rows and typed planner filters.
+Wire the retriever into the production session factory used by both stores.
+Keep remaining log/fanout/provider/package obligations explicit.
+
+- [x] Capture three grouped Rust failures and seven real MySQL failures.
+- [x] Implement connected retriever, filtering, workers and both factory paths; remove captured SHOW CONFIG.
+- [x] 34 distinct Rust cases pass; affected all-target checks and lint pass.
+- [x] Update both registers and validation receipt. Final hook, after-wire and recovery outcomes are owned by the external final handoff; no push.
+
+Commands run in rust/ after sourcing /workspace/.cloud-setup/env.sh.
+Build selected session/domain tests together, run filters in the produced
+harnesses, then group affected exec/session/domain/server checks. Reuse the
+existing aggregate integration harness for HTTP cases; no standalone target.
+Record commands and exact results under /workspace/.cloud-setup/cluster-config-batch/.
+Restore individual files from the parent above if needed, preserving concurrent
+changes. Original upstream inventories and fixtures remain unaccepted; no
+whole-package or performance claim follows from this maintenance batch.
+
+Discovery: SHOW CONFIG had a second captured configuration implementation; it now uses the same live retriever and CONFIG gate. The existing internal HTTP builder lacked Go’s five-minute timeout; all its consumers now receive it. HTTP node pools remain distinct from discovery pools, sharing policy rather than claiming one universal pool.
+
+Remaining: lower/upper and parameter-marker request extraction, the complete CTE/join/extractor matrix, CLUSTER_LOG bounds and other providers, full upstream source/generated/platform/test/fixture acceptance, live multi-node TiKV, TLS HTTP end-to-end and performance. Ordinary SQL predicates remain active when extraction falls back. Two pre-existing ignored parity obligations remain; the third ignored harness entry is a subprocess helper executed by its parent. No finding or package is closed. Final post-gate evidence: /workspace/.cloud-setup/cluster-config-batch/final-handoff.json.

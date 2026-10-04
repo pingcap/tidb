@@ -1,5 +1,7 @@
 # Structural parity audit: current evidence
 
+The [cluster configuration batch](cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence.
+
 [Harness consolidation](harness-dedup-validation.json) removes 12 standalone targets and five private source copies. All 281 formerly duplicated cases remain registered once; 299 selected cases pass and five established DDL failures remain. Finding statuses are unchanged.
 
 The current register has **86 findings: 29 repaired and 57 unresolved (36 open, 21 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.

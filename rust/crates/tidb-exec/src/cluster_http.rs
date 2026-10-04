@@ -17,7 +17,8 @@
 pub(crate) fn cluster_http_client(
     security: &tidb_pd_client::ClusterSecurity,
 ) -> Result<reqwest::blocking::Client, String> {
-    let mut builder = reqwest::blocking::Client::builder();
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5 * 60));
     if security.is_tls_enabled() {
         let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
         let roots =

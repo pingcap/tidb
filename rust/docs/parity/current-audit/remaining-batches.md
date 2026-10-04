@@ -1,5 +1,7 @@
 # Structural execution batches for the remaining findings
 
+The [cluster configuration batch](cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence.
+
 The [metadata policy batch](metadata-policy-batch-validation.json) connects I01 live sequence metadata and I02 shared cluster redaction, and corrects I03 local instance ownership. I01/I02 remain partial; I03 remote fanout remains open. Other54 unresolved IDs retain earlier evidence.
 
 The current register has **57 unresolved findings: 36 open and 21 partial**, plus 29 repaired. Every unresolved ID is assigned exactly once below. Go master is `93a01d31f6da205ae4bf376825293903a6899fdb`. This replaces symptom-by-symptom scheduling; it does not freshly reproduce every recorded finding or certify any package.

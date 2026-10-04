@@ -638,6 +638,7 @@ pub struct Session {
     /// session -- and reads back as an empty table.
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
+    cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
     /// The domain identity getter shared with server-info publication.
     server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// The cluster schema version this node follows, which `ADMIN SHOW DDL`
@@ -908,6 +909,7 @@ impl Session {
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
             cluster_topology: None,
+            cluster_config: None,
             server_id_getter: Arc::new(|| 0),
             cluster_schema_version: None,
             workload_repository: None,
@@ -1234,7 +1236,15 @@ impl Session {
         }
     }
 
-    /// Binds the domain topology and live adaptive replica-read decision.
+    /// Installs the process's shared internal HTTP configuration retriever.
+    pub fn set_cluster_config_client(
+        &mut self,
+        client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
+    ) {
+        self.cluster_config = Some(client);
+    }
+
+    /// Installs process-owned topology and replica-read policy.
     pub fn set_cluster_topology(
         &mut self,
         topology: Arc<tidb_domain::cluster_topology::ClusterTopology>,
@@ -1467,6 +1477,45 @@ impl Session {
             text(&id),
             text(""),
         ]]
+    }
+
+    /// Go fetchClusterConfig checks CONFIG before discovery and reports per-node
+    /// failures as warnings while retaining successful nodes.
+    fn cluster_config_table_rows(
+        &mut self,
+        filters: &[tidb_planner::cluster_table_extractor::ClusterTableFilter],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        if filters.iter().all(|filter| filter.skip_request()) {
+            return Ok(Vec::new());
+        }
+        if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Config) {
+            return Err(DriverError::SpecificAccessDenied("CONFIG".into()));
+        }
+        let client = self.cluster_config.clone().ok_or_else(|| {
+            DriverError::unsupported("CLUSTER_CONFIG live retrieval is not installed")
+        })?;
+        let topology = self.cluster_topology.clone().ok_or_else(|| {
+            DriverError::unsupported("CLUSTER_CONFIG cluster discovery is not installed")
+        })?;
+        let mut warnings = Vec::new();
+        let servers = topology.servers(&mut warnings);
+        for warning in warnings.drain(..) {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        let servers: Vec<_> = servers
+            .map_err(DriverError::unsupported)?
+            .into_iter()
+            .filter(|server| {
+                filters
+                    .iter()
+                    .any(|filter| filter.matches(&server.server_type, &server.address))
+            })
+            .collect();
+        let rows = client.fetch(&servers, &mut warnings);
+        for warning in warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        Ok(rows)
     }
 
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.

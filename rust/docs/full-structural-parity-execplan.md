@@ -1,5 +1,7 @@
 # Audit and remove Go/Rust structural mismatches
 
+The [cluster configuration batch](parity/current-audit/cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence. See the [living plan](cluster-topology-execplan.md). No push.
+
 Current cleanup: [session cleanup plan](session-cleanup-execplan.md) removes four unused server models, empty harnesses and duplicate source compilation. No finding is closed and no push is authorized.
 
 

@@ -97,6 +97,7 @@ pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod condition_to_dual;
 pub mod configured_join_plan;
+pub mod cluster_table_extractor;
 pub mod configured_order_limit;
 pub mod configured_order_limit_contract;
 pub mod configured_relation_tree;

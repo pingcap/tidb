@@ -558,6 +558,7 @@ impl Session {
             ctx,
             needs_storage_stats,
             needs_column_lengths,
+            &tidb_planner::cluster_table_extractor::cluster_table_filters(&physical, "CLUSTER_CONFIG"),
         )?;
         tidb_executor::driver::open_query_meta_stmt_with_physical(
             query,
@@ -614,6 +615,7 @@ impl Session {
         ctx: &tidb_executor::StmtContext,
         needs_storage_stats: bool,
         needs_column_lengths: bool,
+        cluster_config_filters: &[tidb_planner::cluster_table_extractor::ClusterTableFilter],
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
@@ -733,11 +735,7 @@ impl Session {
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
                 self.user_attributes_table_rows(&scratch, ctx)
             } else if table_name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
-                // Go's fetchClusterConfig discovers nodes and reads their live
-                // HTTP configuration. A captured server image is not a source.
-                return Err(DriverError::unsupported(
-                    "CLUSTER_CONFIG live retrieval is not supported yet",
-                ));
+                self.cluster_config_table_rows(cluster_config_filters)?
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
                 self.tidb_servers_info_table_rows()?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {

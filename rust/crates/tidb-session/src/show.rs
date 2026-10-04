@@ -1556,13 +1556,20 @@ impl Session {
                         "SHOW {REPLICA | SLAVE} STATUS".into(),
                     ));
                 }
-                // go `ShowConfigExec` over the flattened config: every
-                // top-level key with its value — scalars verbatim, sections
-                // as their compact JSON — one (Type, Instance, Name, Value)
-                // row per key, sorted by name. The instance column names
-                // this server's own advertise address.
                 if show.kind == tidb_ast::ShowInspectionKind::Config {
-                    return Ok(Some(crate::show_admin::config_dump_output()));
+                    let rows = self.cluster_config_table_rows(&[Default::default()])?;
+                    let StmtOutput::Rows { columns, .. } = text_columns_output(&[
+                        "Type", "Instance", "Name", "Value",
+                    ]) else { unreachable!() };
+                    let (like_pattern, where_clause) = match show.filter.as_ref() {
+                        None => (None, None),
+                        Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                            let value = datum_text(&self.eval_value(expr)?);
+                            (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                        }
+                        Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+                    };
+                    return filter_show_output(StmtOutput::Rows { columns, rows }, like_pattern, where_clause).map(Some);
                 }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));

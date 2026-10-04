@@ -322,6 +322,15 @@
         "O16": "open",
         "O17": "open",
         "O18": "partial"
+      },
+      "latest_maintenance": {
+        "receipt": "cluster-config-batch-validation.json",
+        "advanced_findings": [
+          "I01",
+          "I02"
+        ],
+        "complete_package_acceptance": false,
+        "remaining": "CLUSTER_LOG bounds, other dynamic providers, full extractor semantics, remote fanout and complete package/mixed-cluster obligations remain. B05 N03 shares this HTTP/configuration consumer change."
       }
     },
     {
@@ -347,12 +356,19 @@
     }
   ],
   "latest_evidence": {
-    "receipt": "auth-durability-batch-validation.json",
+    "date": "2026-10-04",
+    "integration_start": "3923a01d3edba6a4220bfef97297c032f6ca8224",
     "findings": [
-      "A02",
-      "A03",
+      "I01",
+      "I02",
       "N03"
     ],
-    "boundary": "All three remain partial. Durable login transitions and canonical generated TLS are repaired at existing owners; broader privilege/config/platform acceptance remains. Other54 unresolved IDs retain prior evidence."
+    "statuses": {
+      "I01": "partial",
+      "I02": "partial",
+      "N03": "partial"
+    },
+    "receipt": "cluster-config-batch-validation.json",
+    "scope": "Live cluster configuration and shared SHOW owner, bounded address resolution, and internal HTTP timeout/security consumers. No complete package acceptance."
   }
 }
