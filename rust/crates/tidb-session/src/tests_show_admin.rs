@@ -5,8 +5,6 @@
 //! from `SimpleExec`/`ShowExec` without touching a user table, plus the
 //! column-metadata readers that must agree with each other.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

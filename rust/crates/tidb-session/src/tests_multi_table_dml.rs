@@ -7,8 +7,6 @@
 //! `*errors.Error`. `tidb_executor::driver::multi_dml`'s module doc states
 //! the rules; this file is the evidence that they hold.
 
-#![cfg(test)]
-
 use crate::tests_support::{row_text, warnings_of};
 use crate::{Session, StmtResult};
 

@@ -16,8 +16,6 @@
 //! (which `tidb_executor::sequence` covers). Every expectation is a value or
 //! message captured from real TiDB.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

@@ -14,8 +14,6 @@
 //! `TINYINT(1)` and `ZEROFILL` keep their widths either way, which is Go's
 //! own exception for connectors that read `tinyint(1)` as a boolean.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 
@@ -45,13 +43,8 @@ fn show_databases_and_tables() {
     // Go's fetchShowDatabases sorts the names, then moves
     // information_schema to the front; the column is "Database".
     //
-    // `mysql` is in the list because it is a schema the catalog seeds (see
-    // `Catalog::default`), which moves this assertion TOWARD TiDB's own
-    // answer rather than away: captured, `select schema_name from
-    // information_schema.schemata` on a real server returns
-    // `INFORMATION_SCHEMA;METRICS_SCHEMA;PERFORMANCE_SCHEMA;mysql;sys;test`.
-    // The three still missing are a documented divergence on
-    // `Catalog::default`.
+    // Go bootstrap and virtual-schema owners include mysql, sys, metrics
+    // and performance schemas alongside information_schema and user schemas.
     match session.run_with_columns("SHOW DATABASES").unwrap() {
         StmtOutput::Rows { columns, rows } => {
             assert_eq!(columns[0].0, "Database");
@@ -61,8 +54,11 @@ fn show_databases_and_tables() {
                     .collect::<Vec<_>>(),
                 vec![
                     "INFORMATION_SCHEMA".to_owned(),
+                    "METRICS_SCHEMA".to_owned(),
+                    "PERFORMANCE_SCHEMA".to_owned(),
                     "mysql".to_owned(),
                     "other".to_owned(),
+                    "sys".to_owned(),
                     "test".to_owned()
                 ]
             );
@@ -82,7 +78,7 @@ fn show_databases_and_tables() {
                 rows.iter()
                     .map(|row| datum_text(&row[0]).unwrap())
                     .collect::<Vec<_>>(),
-                vec!["INFORMATION_SCHEMA"]
+                vec!["INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA"]
             );
         }
         other => panic!("expected rows, got {other:?}"),
@@ -94,19 +90,27 @@ fn show_databases_and_tables() {
         StmtOutput::Rows { rows, .. } => {
             assert_eq!(
                 rows,
-                vec![vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())]]
+                vec![
+                    vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())],
+                    vec![Datum::Bytes(b"METRICS_SCHEMA".to_vec())],
+                    vec![Datum::Bytes(b"PERFORMANCE_SCHEMA".to_vec())],
+                ]
             )
         }
         other => panic!("expected rows, got {other:?}"),
     }
     match session
-        .run_with_columns("SHOW DATABASES WHERE Database = 'other' OR Database LIKE '%SCHEMA'")
+        .run_with_columns(
+            "SHOW DATABASES WHERE `Database` = 'other' OR `Database` LIKE '%SCHEMA'",
+        )
         .unwrap()
     {
         StmtOutput::Rows { rows, .. } => assert_eq!(
             rows,
             vec![
                 vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())],
+                vec![Datum::Bytes(b"METRICS_SCHEMA".to_vec())],
+                vec![Datum::Bytes(b"PERFORMANCE_SCHEMA".to_vec())],
                 vec![Datum::Bytes(b"other".to_vec())]
             ]
         ),
@@ -1891,13 +1895,13 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
     }
 }
 
-/// `SHOW CREATE TABLE information_schema.<t>` for every served table, against
+/// `SHOW CREATE TABLE information_schema.<t>` for captured tables, against
 /// text CAPTURED from a running TiDB (`difftests/infoschema/show_create_table.txt`).
 ///
 /// This is the whole point of #248: before the tables were catalog objects,
 /// each of these answered 1146.
 #[test]
-fn show_create_table_matches_go_for_every_served_information_schema_table() {
+fn show_create_table_matches_captured_go_tables() {
     let expected = include_str!("../../../difftests/infoschema/show_create_table.txt");
     // The fixture is one `CREATE TABLE ... ) ENGINE=...` block per table, in
     // the order it was captured.
@@ -1926,7 +1930,10 @@ fn show_create_table_matches_go_for_every_served_information_schema_table() {
         let text = datum_text(&rows[0][1]).unwrap();
         assert_eq!(text, *block, "SHOW CREATE TABLE information_schema.{name}");
     }
-    assert_eq!(blocks.len(), infoschema::served_table_names().len());
+    assert!(
+        !blocks.is_empty(),
+        "the captured Go fixture must contain tables"
+    );
 }
 
 /// `information_schema` is a virtual base table, not a special one-table

@@ -30,8 +30,6 @@
 //! value. Captured from `tidb-server v9.0.0-beta.2.pre-nightly` on this
 //! exact fixture: the rows below, and an `IndexJoin` for the hinted plan.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

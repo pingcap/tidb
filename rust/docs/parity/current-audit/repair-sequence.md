@@ -1,6 +1,6 @@
 # Repair sequence for Go/Rust structural parity
 
-The [historical read batch](historical-read-batch-validation.json) advances S04/I04/O09/N03 together: one persisted timestamp selects historical schema and rows, a bounded version cache retains shared schema images, stale transactions retain active timestamps, and snapshot settings share typed SET-time state and write admission. The original ordinary staleness refusal is repaired in both production stores. All 89 selected Rust cases and 16 live MySQL checks pass. **86 tracked: 30 repaired, 56 unresolved (30 open, 26 partial).** S04/I04 become partial; O09/N03 remain partial for the named residuals. Other 52 unresolved roots retain earlier evidence. Whole packages, lazy InfoSchema V2, SafeTS topology, complete provider transitions and multi-node/performance acceptance remain incomplete. No push.
+Current evidence and cleanup receipts are indexed in [README.md](README.md). The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
 ## Current structural execution queue
 

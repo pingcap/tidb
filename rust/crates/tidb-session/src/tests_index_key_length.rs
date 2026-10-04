@@ -18,7 +18,6 @@
 //!
 //! Every expectation is captured from a real TiDB session (mockstore,
 //! `pkg/session`), warnings and SHOW CREATE TABLE text included.
-#![cfg(test)]
 
 use crate::tests_support::{show_create, warnings_of};
 use crate::*;

@@ -2274,17 +2274,9 @@ mod variable_core_tests {
 mod tests {
     use super::*;
 
-    /// The registry must hold every entry Go's own `GetSysVars()` reported
-    /// when this table was captured.
+    /// Binary lookup requires sorted, unique, lower-case registry names.
     #[test]
-    fn the_registry_is_complete_and_sorted() {
-        // Go `defaultSysVars` carries 495 explicit entries at master
-        // `94a9cbedab` (490 before the five `tidb_mview_*` variables); the
-        // Rust registry additionally carries the inherited MySQL/InnoDB
-        // variables, hence 973 = the pre-mview 965 + Go's five mview entries,
-        // the shared-lock-upgrade rollout switch and two later additions from
-        // reviewed commits.
-        assert_eq!(SYS_VARS.len(), 973);
+    fn registry_lookup_is_sorted_unique_and_case_insensitive() {
         for pair in SYS_VARS.windows(2) {
             assert!(
                 pair[0].name < pair[1].name,
@@ -3178,8 +3170,6 @@ mod tests {
         assert_eq!(sv.validate("-5").unwrap().value, "-5");
     }
 
-    /// The registry's concrete bool entry follows the same Go conversion
-    /// rules as the synthetic `TestBoolValidation` cases above.
     /// Go's allow-fallback engine whitelist (`sysvar.go:2657`) and the
     /// analyze skip column types whitelist (`varsutil.go:501`).
     #[test]
@@ -3235,16 +3225,6 @@ mod tests {
             }
             other => panic!("expected a refused error, got {other:?}"),
         }
-    }
-
-    fn bool_validation() {
-        let sv = get_sys_var("autocommit").unwrap();
-        assert_eq!(sv.var_type, VarType::Bool);
-        for (input, want) in [("on", "ON"), ("OFF", "OFF"), ("1", "ON"), ("0", "OFF")] {
-            assert_eq!(sv.validate(input).unwrap().value, want, "{input}");
-        }
-        assert_eq!(sv.validate("2"), Err(ValidationError::WrongValue));
-        assert_eq!(sv.validate("yes"), Err(ValidationError::WrongValue));
     }
 
     /// Go `TestIsNoop`: MySQL compatibility variables are marked no-op while

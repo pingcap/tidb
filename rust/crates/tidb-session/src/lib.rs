@@ -2740,15 +2740,19 @@ mod tests_eval_bool;
 mod tests_explain;
 #[cfg(test)]
 mod tests_explain_derived;
+#[cfg(test)]
 mod tests_explain_merge_join;
+#[cfg(test)]
 mod tests_expression_indexes;
 #[cfg(test)]
 mod tests_extra_handle;
+#[cfg(test)]
 mod tests_extra_handle_access;
 #[cfg(test)]
 mod tests_fix_control;
 #[cfg(test)]
 mod tests_foreign_key;
+#[cfg(test)]
 mod tests_generated_columns;
 #[cfg(test)]
 mod tests_global_vars;
@@ -2764,6 +2768,7 @@ mod tests_in_list_full_evaluation;
 mod tests_index_hints;
 #[cfg(test)]
 mod tests_index_join_inner_pattern;
+#[cfg(test)]
 mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_key_cast;
@@ -2775,10 +2780,13 @@ mod tests_join_reorder_cost;
 mod tests_json;
 #[cfg(test)]
 mod tests_mem_quota;
+#[cfg(test)]
 mod tests_merge_join_mixed_key_types;
+#[cfg(test)]
 mod tests_mixed_sign_index_join;
 #[cfg(test)]
 mod tests_modify_column_null;
+#[cfg(test)]
 mod tests_multi_table_dml;
 #[cfg(test)]
 mod tests_mview_session_vars;
@@ -2814,6 +2822,7 @@ mod tests_recursive_cte;
 mod tests_savepoint;
 #[cfg(test)]
 mod tests_sem_v2;
+#[cfg(test)]
 mod tests_sequence;
 #[cfg(test)]
 mod tests_session_embedding_source;
@@ -2825,7 +2834,9 @@ mod tests_session_part2_source;
 mod tests_session_var_hooks;
 #[cfg(test)]
 mod tests_set_opr_precedence;
+#[cfg(test)]
 mod tests_show;
+#[cfg(test)]
 mod tests_show_admin;
 #[cfg(test)]
 mod tests_skew_distinct_agg;
@@ -2833,6 +2844,7 @@ mod tests_skew_distinct_agg;
 mod tests_sql_mode_scanner;
 #[cfg(test)]
 mod tests_statement_rollback;
+#[cfg(test)]
 mod tests_subquery;
 #[cfg(test)]
 mod tests_support;
@@ -2850,6 +2862,7 @@ mod tests_timestamp_range;
 mod tests_timezone_storage;
 #[cfg(test)]
 mod tests_topn;
+#[cfg(test)]
 mod tests_union_all_predicate_push_down;
 #[cfg(test)]
 mod tests_union_scan;

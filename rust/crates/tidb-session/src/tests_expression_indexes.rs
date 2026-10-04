@@ -32,8 +32,6 @@
 //! Mirrors Go `pkg/ddl/create_table.go`'s `BuildHiddenColumnInfo` and the
 //! expression-index path of `pkg/ddl/index.go`'s `CreateIndex`.
 
-#![cfg(test)]
-
 use crate::tests_support::row_text;
 use crate::*;
 

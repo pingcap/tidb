@@ -23,8 +23,6 @@
 //! `cop[tikv]` task and no `TableReader` wrapper here; see
 //! `tidb_executor::explain`'s module doc).
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

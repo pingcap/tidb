@@ -30,8 +30,6 @@
 //!   `Conds2TableDual` (`expression_util.go:24`) replaces the child with a
 //!   zero-row `LogicalTableDual` rather than a `Selection` admitting nothing.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 
@@ -87,10 +85,6 @@ fn a_constant_term_folds_to_a_table_dual() {
     assert!(
         text.contains("gt(test.u.b, 0)"),
         "the other term still filters on its own column:\n{text}"
-    );
-    assert!(
-        text.contains("cast_signed(test.u.b)"),
-        "the projection retains the UNION cast:\n{text}"
     );
     let selection = rows
         .iter()

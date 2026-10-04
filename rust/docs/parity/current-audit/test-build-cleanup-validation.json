@@ -1,0 +1,379 @@
+{
+  "date": "2026-10-04",
+  "parent": "b58b84f359e92e7614980a3dd4211ea5202785d5",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "14 test-only module inputs removed from normal builds (13,829 lines), 370 behavioral cases preserved; two nonbehavioral checks and one unregistered helper removed; 441 distinct selected cases pass; three independently reproduced pre-existing failures remain enabled. Four stale assertions corrected. Five working-doc summaries consolidated. Finding statuses unchanged.",
+  "counts_unchanged": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 30,
+    "partial": 26
+  },
+  "normal_build_inputs": {
+    "before": 14,
+    "after": 0,
+    "source_lines_excluded": 13829,
+    "proof": "The pre-change tidb-server.d contains all 14 files; after cargo build --locked -p tidb-server it contains none. This demonstrates fewer normal build inputs, not a measured wall-clock speedup."
+  },
+  "retained_test_modules": {
+    "modules": 14,
+    "cases": 370,
+    "unchanged_case_bodies": 367,
+    "corrected_existing_cases": [
+      "show_databases_and_tables",
+      "show_create_table_matches_go_for_every_served_information_schema_table -> show_create_table_matches_captured_go_tables",
+      "a_constant_term_folds_to_a_table_dual"
+    ],
+    "before_module_hashes": [
+      {
+        "path": "rust/crates/tidb-session/src/tests_explain_merge_join.rs",
+        "lines": 614,
+        "tests": 16,
+        "sha256": "f1317bc7f9c0ba49105696d1a285cafc7f154ce35518b54a51fb2c152c49c51c"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_expression_indexes.rs",
+        "lines": 1310,
+        "tests": 36,
+        "sha256": "29520da162bfd614eaa2012424a60174eb87ed826850bedc31a91141c89482a0"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_extra_handle_access.rs",
+        "lines": 184,
+        "tests": 3,
+        "sha256": "60a5909accbaf0bb0a844edca83e3617399a80558ed4ec4d34e7c162bc995694"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_generated_columns.rs",
+        "lines": 731,
+        "tests": 25,
+        "sha256": "bafd89ba3d8ff11e8f57823d104f8dff93644f74995e24e84dc56c55c13e0b5e"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_index_key_length.rs",
+        "lines": 146,
+        "tests": 3,
+        "sha256": "45ce8b5281b7614c4d503608bc9a93a8a401de71b16a640adecb48cc3b0f4d27"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_merge_join_mixed_key_types.rs",
+        "lines": 123,
+        "tests": 3,
+        "sha256": "53fb679be2d87e589c6193305b9a17ea6389e584aea0f58291c7e9628d25feed"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_mixed_sign_index_join.rs",
+        "lines": 84,
+        "tests": 2,
+        "sha256": "b1efd10671b2c19026dd34eb9ccd64afa37a695b434eb7500f3ab30a4eb6344d"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_multi_table_dml.rs",
+        "lines": 1659,
+        "tests": 43,
+        "sha256": "9634ec053ee08a091d2f804c15a3a4d8040475d7209ad96715fabc0da0498330"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_sequence.rs",
+        "lines": 512,
+        "tests": 14,
+        "sha256": "b899eb881baa9ebb09c86a9a863fe10f435efa91fa553a545e580db3ca52afd2"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_show.rs",
+        "lines": 2489,
+        "tests": 34,
+        "sha256": "257a056f69865f662efde0bd11f77213aac5e6ee1cc0253c44b0da5c00210cdf"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_show_admin.rs",
+        "lines": 242,
+        "tests": 4,
+        "sha256": "1b4e2cd2ac8fb130e5786d2b85be2e3fd96c743e7110a2d634f90208b4311cca"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_subquery.rs",
+        "lines": 1349,
+        "tests": 23,
+        "sha256": "e81eb8ab51e101da6a4b960febbc56b50dab1eff21503d527346e6e51d895fa4"
+      },
+      {
+        "path": "rust/crates/tidb-session/src/tests_union_all_predicate_push_down.rs",
+        "lines": 178,
+        "tests": 4,
+        "sha256": "cb42bcdee299c2e98f96da0931c84f2cf89b844bfea6a26af693c024e8556fc3"
+      },
+      {
+        "path": "rust/crates/tidb-planner/src/logical/operator_tests.rs",
+        "lines": 4208,
+        "tests": 160,
+        "sha256": "e55277a346ced003dff4f4f1039d3f36b327577b2954d482374f82c374af725a"
+      }
+    ]
+  },
+  "harness_registration": [
+    {
+      "crate": "tidb-planner",
+      "before": 1060,
+      "after": 1060,
+      "removed": [],
+      "added": [],
+      "binary": "rust/target/debug/build/tidb-planner/2fd3c8c3dba3f16e/out/tidb_planner-2fd3c8c3dba3f16e"
+    },
+    {
+      "crate": "tidb-session",
+      "before": 2014,
+      "after": 2014,
+      "removed": [
+        "sysvar::tests::the_registry_is_complete_and_sorted: test",
+        "tests_show::show_create_table_matches_go_for_every_served_information_schema_table: test"
+      ],
+      "added": [
+        "sysvar::tests::registry_lookup_is_sorted_unique_and_case_insensitive: test",
+        "tests_show::show_create_table_matches_captured_go_tables: test"
+      ],
+      "binary": "rust/target/debug/build/tidb-session/4d8a9d83b4c3da09/out/tidb_session-4d8a9d83b4c3da09"
+    },
+    {
+      "crate": "tidb-distsql",
+      "before": 257,
+      "after": 256,
+      "removed": [
+        "request_builder_source::complete_original_obligation_inventory_is_visible: test"
+      ],
+      "added": [],
+      "binary": "rust/target/debug/build/tidb-distsql/cc30daf99d5f0a5e/out/all-cc30daf99d5f0a5e"
+    },
+    {
+      "crate": "tidb-ast",
+      "before": 131,
+      "after": 130,
+      "removed": [
+        "parser_format_package_source::generated_simple_case_table_matches_the_go_oracle: test"
+      ],
+      "added": [],
+      "binary": "rust/target/debug/build/tidb-ast/332b496e6a403dd7/out/all-332b496e6a403dd7"
+    }
+  ],
+  "removed_checks": [
+    {
+      "path": "rust/crates/tidb-distsql/tests/request_builder_source.rs",
+      "lines": 35,
+      "sha256": "6bd05a171d016bfa3768d7aee94589745bbfb4bbec795a8365515e36289cb454",
+      "name": "complete_original_obligation_inventory_is_visible"
+    },
+    {
+      "path": "rust/crates/tidb-ast/tests/parser_format_package_source.rs",
+      "lines": 17,
+      "sha256": "06af27bfe03754085ca7981f7ba3a369ecf45ff8e0fd371e74b35f4929a82afd",
+      "name": "generated_simple_case_table_matches_the_go_oracle"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/sysvar.rs",
+      "lines": 10,
+      "sha256": "d600c417c7fa87c8f25aea37123f250fd67164890d648ed6eb25a27af3d557ab",
+      "name": "bool_validation"
+    }
+  ],
+  "coverage_disposition": {
+    "constant_inventory": "A local 26-label array length and trivial Key round-trip established no Go request-builder coverage. Current Go original cases and unaccepted package obligations remain in their existing inventory.",
+    "generator_subprocess": "Only generated text comparison leaves ordinary Rust tests. The generator and --check maintenance command remain; existing Rust restore tests retain every 2,879 non-identity Go simple-case vector and ASCII/mixed cases.",
+    "bool_helper": "The helper had no test attribute or caller and was never registered. Existing primitive validation and session autocommit suites remain; no newly accepted Go test obligation is claimed.",
+    "suspected_duplicate_harnesses": "Unchanged: aggregate-tests.rs already excludes modules included by a neighboring root. No duplicate-removal claim is made."
+  },
+  "preexisting_failures": {
+    "initial_suite_exit": 101,
+    "initial_failed": 7,
+    "baseline_binary": "rust/target/debug/build/tidb-session/6f9593a3c5413e52/out/tidb_session-6f9593a3c5413e52",
+    "baseline_binary_sha256": "d4ae491fbec5b8f4753c4435153bef5371145af6466722bb76f0817d3395d054",
+    "baseline_log": "/workspace/.cloud-setup/test-build-cleanup/baseline-failures.log",
+    "baseline_log_sha256": "e5ba067f219a8db8509babd71eaf50e177a218725298857f985ceb775711e996",
+    "baseline_failed": 7,
+    "intermediate_correction_run": {
+      "passed": 3,
+      "failed": 1,
+      "cause": "After schema expectations were corrected, a previously unreachable fixture used unquoted DATABASE, a reserved Go keyword; quote the column name, preserving the WHERE assertion.",
+      "final_show_run": "show-tests.log"
+    },
+    "four_stale_expectations_corrected": [
+      "hard-coded sysvar total",
+      "missing metrics/performance/sys schemas",
+      "old fixture total equated to all served tables",
+      "Rust-only cast_signed plan spelling"
+    ],
+    "remaining_enabled": [
+      "tests_show::every_information_schema_cell_matches_its_declared_column_type: blanket CLUSTER_LOG scan lacks Go-required time predicates",
+      "tests_show::information_schema: fixed append requires a fixed column",
+      "tests_show::table_comments_round_trip_through_ddl_and_metadata: fixed append requires a fixed column"
+    ]
+  },
+  "source_evidence": [
+    {
+      "path": "pkg/distsql/request_builder_test.go",
+      "sha256": "06aad15c6886939ca376d28d0a698f0f943f37c1fce8b815984b8ca238cc7401"
+    },
+    {
+      "path": "pkg/parser/format/format_test.go",
+      "sha256": "929ad61ea9fd40c31a7dfbea6e34394d8432224e2d2de59c1e513b328ba0e36a"
+    },
+    {
+      "path": "pkg/sessionctx/variable/tests/variable_test.go",
+      "sha256": "9b2af61b60553593a86885d9934eeec4cf151a476bfc7859f7b8761682372d39"
+    },
+    {
+      "path": "pkg/executor/show.go",
+      "sha256": "1aabc3cdc6ad352b00f041c5a30549d657c14cbafd2d63e8edf293ea0c4292fd"
+    },
+    {
+      "path": "pkg/session/bootstrap.go",
+      "sha256": "cddac80b8e8c7457fc282a6607c3a596b01f20dc1528d3e409ec067ec85cf406"
+    },
+    {
+      "path": "pkg/parser/keywords.go",
+      "sha256": "53f08d5f893f516457712ce1f976992519da7b13d24ce85b0b6ad17c7571a90a"
+    }
+  ],
+  "documentation": [
+    {
+      "path": "rust/docs/parity/current-audit/README.md",
+      "removed_prefix_lines": 28,
+      "replacement_prefix_lines": 4,
+      "preserved_historical_links": 13,
+      "working_document_words_removed": 460
+    },
+    {
+      "path": "rust/docs/parity/current-audit/remaining-batches.md",
+      "removed_summary_words": 104,
+      "working_document_words_removed": 80
+    },
+    {
+      "path": "rust/docs/parity/current-audit/repair-sequence.md",
+      "removed_summary_words": 104,
+      "working_document_words_removed": 80
+    },
+    {
+      "path": "rust/docs/parity/current-audit/structural-findings.md",
+      "removed_summary_words": 104,
+      "working_document_words_removed": 80
+    },
+    {
+      "path": "rust/docs/full-structural-parity-execplan.md",
+      "removed_prefix_lines": 58,
+      "replacement_prefix_lines": 6,
+      "working_document_words_removed": 1110
+    }
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-planner -p tidb-session --lib -- logical::operator_tests:: tests_explain_merge_join:: tests_expression_indexes:: tests_extra_handle_access:: tests_generated_columns:: tests_index_key_length:: tests_merge_join_mixed_key_types:: tests_mixed_sign_index_join:: tests_multi_table_dml:: tests_sequence:: tests_show:: tests_show_admin:: tests_subquery:: tests_union_all_predicate_push_down:: sysvar::tests:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "passed_counts": [
+        160,
+        248
+      ],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/lib-tests.log",
+      "log_sha256": "20e082c4cfb0d9f6edea10b1f461f92c426481b2034cbd9d46181c065755cde8"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- sysvar::tests::registry_lookup_is_sorted_unique_and_case_insensitive tests_show::show_databases_and_tables tests_show::show_create_table_matches_captured_go_tables tests_union_all_predicate_push_down::a_constant_term_folds_to_a_table_dual --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 101,
+      "passed_counts": [
+        3
+      ],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/corrected-tests.log",
+      "log_sha256": "0a67d26493374776aecc6fc9f4104f6c5cc2fb748ae7d59654336fa732117680"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_show::show_databases_and_tables --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_counts": [
+        1
+      ],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/show-tests.log",
+      "log_sha256": "adc72a16f211f4351a29975c40e87cc90267ea0518e2676ba96bc1bf96815a12"
+    },
+    {
+      "command": "cargo test --locked -p tidb-ast -p tidb-distsql --test all -- parser_format_package_source:: request_builder_source:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_counts": [
+        7,
+        22
+      ],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/integration-tests.log",
+      "log_sha256": "11465a1ac00e1cae7048796297eff1b8c7bbdfd4c8f3bad4d1a82970ca859b62"
+    },
+    {
+      "command": "cargo check --locked -p tidb-planner -p tidb-session -p tidb-ast -p tidb-distsql --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_counts": [],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/check.log",
+      "log_sha256": "01cdf16d47b20c3991e64ca40912ff8ff5acfddce60e5d993c5c59ec1b7140ca"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "passed_counts": [],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/locked-build.log",
+      "log_sha256": "57fe92c96ed5c7051134874f7137fb360a659f87042eeee94ba68b2af4a6a172"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "passed_counts": [],
+      "log": "/workspace/.cloud-setup/test-build-cleanup/lint.log",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "selected_cases_passed": 441,
+  "limits": [
+    "No tests were removed solely for lacking an identically named Go test.",
+    "No useful test was disabled, no production algorithms or Cargo dependencies changed, and no new permanent test-count gate was added.",
+    "Full Go/Rust suites, live multi-node and performance benchmarks were not run.",
+    "The mandatory actual precommit hook result, local commit, verified recovery bundle and Cloud draft identity follow in the external final-handoff.json.",
+    "No push or dry run. No finding closure or complete Go package acceptance."
+  ],
+  "selected_cases_failed_preexisting": 3,
+  "diff_check_exit": 0,
+  "verification_artifacts": [
+    {
+      "path": "/workspace/.cloud-setup/test-build-cleanup/case-proof.json",
+      "sha256": "9301b11c4ba223ea11696f118afeef3bf95b88651307ac67039830896a0b0d93"
+    },
+    {
+      "path": "/workspace/.cloud-setup/test-build-cleanup/registration-proof.json",
+      "sha256": "01ad1ceec2773f31c6cf1cfaed9bb1e953494e80d6daa876ac6365a23c71f4f2"
+    },
+    {
+      "path": "/workspace/.cloud-setup/test-build-cleanup/baseline-proof.json",
+      "sha256": "4821ee6dea920b4aa54ab56bcf01cd992b886a2d6e2959673d572444c21342eb"
+    }
+  ],
+  "rust_after_sha256": {
+    "rust/crates/tidb-ast/tests/parser_format_package_source.rs": "122e8b2dc10a9fba55fd3331a7192abe690f5ff3bcbefb86302c1f553ad52484",
+    "rust/crates/tidb-distsql/tests/request_builder_source.rs": "470b9f4d2aaf19fcdba9293fde587aefd715ff2a26cbb3cd453ac203fdeef85f",
+    "rust/crates/tidb-planner/src/logical/mod.rs": "651ab0aab2d4696b5e7329c6c0f9bb8d24e5517dc51299b370c3b75cfda3ff76",
+    "rust/crates/tidb-session/src/lib.rs": "dfc2bdfcd53a48de5ab65e358758646d190814d250c83d90c7f7a532c9ef4d76",
+    "rust/crates/tidb-session/src/sysvar.rs": "a4cbad395e5e01aee7c0d8bedd854d28741dd775ca05a0bff439496a4e731c3d",
+    "rust/crates/tidb-session/src/tests_explain_merge_join.rs": "d281b6a35b3841b437ba604e91df68708e2f65af39aeb54cdef1bcdb5be5dc88",
+    "rust/crates/tidb-session/src/tests_expression_indexes.rs": "9e46374ce661d73696e735190af2a40232801af4498b066504de31a548770400",
+    "rust/crates/tidb-session/src/tests_extra_handle_access.rs": "598a8fa7daaa5f446c23adf80d3d7991d85d837dcf45e814eebcba9b1f3e04b0",
+    "rust/crates/tidb-session/src/tests_generated_columns.rs": "5f51473d7a1474be39a405c459a13b30859dadfc4450fa878bc3d8fdd558c6cc",
+    "rust/crates/tidb-session/src/tests_index_key_length.rs": "0a26fbdf05dc476ec427afa05cbd8c93d6ba6f3c86875db75523f46f470b1fd6",
+    "rust/crates/tidb-session/src/tests_merge_join_mixed_key_types.rs": "eb04c167af42d3b9b1d8ffa051e71f2e3b41ed8be302ca41b9d227b8e52c0b79",
+    "rust/crates/tidb-session/src/tests_mixed_sign_index_join.rs": "a87963981692bbe2fdecc2101606540a8b0133a5ecd83a89fc4993421591399b",
+    "rust/crates/tidb-session/src/tests_multi_table_dml.rs": "924d322db1f9f240ac7d5d408598082a0806304e02c2ce84a0a04e03fdf8db79",
+    "rust/crates/tidb-session/src/tests_sequence.rs": "be3036214f31a68d7c84f06edcd5a87d2b6fd62856db442eeac01b26ee36d03d",
+    "rust/crates/tidb-session/src/tests_show.rs": "4d303d4ce6775d62c4ec3100f199af8c58b676c5829aee2019b48d69fc537608",
+    "rust/crates/tidb-session/src/tests_show_admin.rs": "d2c41f6602691e1dccceb4f685f3489c68f2596a1b414df32b74c82085718abc",
+    "rust/crates/tidb-session/src/tests_subquery.rs": "c92b2691f749cfce5fbc0fa286db061a9233b95d1b5a07f661c25d12b5a3e035",
+    "rust/crates/tidb-session/src/tests_union_all_predicate_push_down.rs": "68d57dd999ba6bc8e62e1a3573239732a7c218f9c007df0f9d7de0396ac440b3"
+  }
+}

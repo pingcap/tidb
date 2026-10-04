@@ -16,7 +16,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use tidb_ast::{
     CteRestorer, RestoreContext, RestoreCtx, RestoreFlags, GO_SIMPLE_CASE_UNICODE_VERSION,
@@ -244,23 +243,6 @@ fn keyword_and_name_case_use_go_simple_rune_mappings() {
     let mut lower_name = RestoreCtx::new(RestoreFlags::NAME_LOWERCASE, String::new());
     lower_name.write_name(input);
     assert_eq!(lower_name.into_inner(), "straße ß ﬃ i ΐ ᾀ ὒ ǰ");
-}
-
-#[test]
-fn generated_simple_case_table_matches_the_go_oracle() {
-    let generator =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/generate-go-simple-case.py");
-    let output = Command::new("python3")
-        .arg(generator)
-        .arg("--check")
-        .output()
-        .expect("run parser-format simple-case generator check");
-    assert!(
-        output.status.success(),
-        "generator check failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
 }
 
 #[test]

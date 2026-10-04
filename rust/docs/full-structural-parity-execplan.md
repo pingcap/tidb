@@ -1,60 +1,8 @@
 # Audit and remove Go/Rust structural mismatches
 
-The [historical read batch](parity/current-audit/historical-read-batch-validation.json) advances S04/I04/O09/N03 together: one persisted timestamp selects historical schema and rows, a bounded version cache retains shared schema images, stale transactions retain active timestamps, and snapshot settings share typed SET-time state and write admission. The original ordinary staleness refusal is repaired in both production stores. All 89 selected Rust cases and 16 live MySQL checks pass. **86 tracked: 30 repaired, 56 unresolved (30 open, 26 partial).** S04/I04 become partial; O09/N03 remain partial for the named residuals. Other 52 unresolved roots retain earlier evidence. Whole packages, lazy InfoSchema V2, SafeTS topology, complete provider transitions and multi-node/performance acceptance remain incomplete. No push. See [living plan](historical-read-batch-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [historical-read plan](historical-read-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
-The [runtime settings batch](parity/current-audit/runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence. See [living plan](runtime-settings-execplan.md). No push.
-
-The [cluster configuration batch](parity/current-audit/cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence. See the [living plan](cluster-topology-execplan.md). No push.
-
-Current cleanup: [session cleanup plan](session-cleanup-execplan.md) removes four unused server models, empty harnesses and duplicate source compilation. No finding is closed and no push is authorized.
-
-
-Current metadata batch: [living plan](metadata-policy-batch-execplan.md), [validation](parity/current-audit/metadata-policy-batch-validation.json). Replace the empty sequence reader and stale schema, share SEM visibility, and use local status identity for process rows. I01 becomes partial; I02 stays partial and I03 fanout remains open. 86 tracked:29 repaired,57 unresolved(36 open,21 partial). Other54 IDs retain earlier evidence. No whole-package acceptance or push. Earlier checkpoints retain their original counts.
-
-Current topology batch: [living plan](cluster-topology-execplan.md), [validation](parity/current-audit/cluster-topology-validation.json). I02/O13/N03 now share live component discovery, Domain AZ policy and canonical labels. I02/O13 move from open to partial; N03 stays partial. 86 tracked:29 repaired,57 unresolved(37 open,20 partial). Other54 unresolved IDs retain prior evidence. Complete packages, live mixed-cluster behavior and performance remain unaccepted. No push. Earlier checkpoints retain their original counts.
-
-Previous removal: [matrix write plan](matrix-write-removal-execplan.md) and [receipt](parity/current-audit/matrix-write-removal-validation.json). Remove alternate mutations and synthetic row identities across planner, executor and fixtures. E03 remains partial; counts stay29 repaired,57 unresolved(39 open,18 partial). No push.
-
-Previous TLS maintenance: [living plan](tls-owner-batch-execplan.md), [repair receipt](parity/current-audit/tls-owner-batch-repair.md) and [validation](parity/current-audit/tls-owner-batch-validation.json). A02/A03/N03 share account REQUIRE mutation, certificate refresh, SQL reload, request-only trust provenance, startup variables and joined renewal. All three remain partial; counts stay29 repaired,57 unresolved(39 open,18 partial). Other54 unresolved IDs retain earlier evidence. The preceding DML read/FK receipt remains linked in the audit index. No push.
-
-Current checkpoint, 2026-10-04: [admission-policy ExecPlan](admission-policy-batch-execplan.md) maintains A02/A03 together; see [repair receipt](parity/current-audit/admission-policy-batch-repair.md). Retained native/SHA2/SM3 credentials and verified CIPHER/ISSUER/SUBJECT/SAN policy share durable account owners through CREATE/ALTER/SHOW and admission. 126 distinct Rust cases and 52 Go URI plus three Go JSON oracle cases pass. Both findings remain partial; 86 tracked, 29 repaired, 57 unresolved (39 open, 18 partial). Other 55 IDs retain previous evidence. No complete package acceptance or push. Earlier checkpoints below are historical.
-
-Current checkpoint, 2026-10-04: [account TLS ExecPlan](account-tls-policy-batch-execplan.md) maintains A02/A03/N03 together; see the [repair receipt](parity/current-audit/account-tls-policy-batch-repair.md). Durable global_priv, verified client certificates and shared inbound CA/protocol configuration are connected. A03 is now partial; 57 unresolved remain (39 open, 18 partial), 29 repaired, 86 tracked. Broader package/TLS owners remain unaccepted. No push. Earlier checkpoints below are historical.
-
-Current maintenance checkpoint, 2026-10-04: [MPP transport ExecPlan](mpp-transport-batch-execplan.md) advances M04/N03 together through shared TLS/store limits and cancellation/deadline ownership. Five corrected baseline failures, 32 distinct passing Rust cases, affected all-target checking, lint and locked server build; both parent findings remain partial. Whole PD discovery/TSO/grpcutil/routing acceptance and shared MPP pooling/recovery remain open. The ten structural batches remain the scheduling authority. No push. Earlier checkpoints below retain historical scope.
-
-Current execution correction, 2026-10-04: [remaining-batches.md](parity/current-audit/remaining-batches.md) reconciles all 57 unresolved IDs into ten structural owner batches and defines shared package inventories, cross-batch gates and combined regression cadence. The current [table-policy ExecPlan](table-policy-batch-execplan.md) records six repaired T01/K03 contracts, 57 distinct passing Rust cases and required final gates; both parent findings stay partial. No push. Earlier checkpoints below retain historical scope/counts.
-
-
-## Statement attribution continuation (2026-10-04)
-
-The [plan](statement-attribution-batch-execplan.md) and [receipt](parity/current-audit/statement-attribution-batch-repair.md) maintain O11/O18 together: physical compile failures do not count as executions; actual parse/physical compilation and deduplicated existing visits reach summaries through shared statement phases. Fifty-one Rust cases and twelve real MySQL/unistore checks pass, with lint/check/locked build. O11/O18 remain partial for complete profiling, visits/phases and transport. Counts remain 29 repaired,57 unresolved(40 open,17 partial). No push.
-
-## Exhaustive pure-placeholder cleanup checkpoint (2026-10-04)
-
-The [batch plan](planner-empty-module-removal-execplan.md) and [receipt](parity/current-audit/planner-empty-module-removal.md) remove the remaining 64 strictly pure modules containing 612 ignored empty tests. All 72 retained test files are byte-identical; all 612 current Go identities and 674 relocated candidate rows are archived. The exact harness change is 1251 to 639; 355 meaningful Rust tests, lint, all-target checking and locked build pass. Counts remain 29 repaired and 57 unresolved (40 open, 17 partial). Complete upstream obligations remain unverified. No push.
-
-## Empty planner test cleanup checkpoint (2026-10-04)
-
-The [cleanup plan](placeholder-test-removal-execplan.md) removes 55 ignored empty tests across five planner modules and two assertion-free LRU probe loops. The [receipt](parity/current-audit/placeholder-test-removal.md) and [unverified obligation ledger](parity/current-audit/placeholder-test-obligations.json) retain all current Go identities/historical contracts and 81 relocated candidate-index rows. Exact harness set difference preserves every other entry. Production owners, Go obligations and counts are unchanged: 29 repaired and 57 unresolved (40 open, 17 partial). No push.
-
-## Cache/Apply continuation checkpoint (2026-10-04)
-
-The [cache/Apply batch](parity/current-audit/cache-apply-batch-repair.md) repairs **C02** and advances **E04 and N03 together**. **57 unresolved (40 open, seventeen partial), 29 repaired, 86 tracked.** E04 retains named CTE/shuffle/full-matrix gaps. The other unresolved IDs retain prior evidence, not fresh whole-register behavioral reproduction. No whole-package acceptance or push is claimed.
-
-The statement-observation checkpoint below is historical.
-
-See [living batch plan](cache-apply-batch-execplan.md) and [validation](parity/current-audit/cache-apply-batch-validation.json).
-
-User instruction (2026-10-03): **Do not push; continue implementation in Codex Cloud.** Keep both repositories' validated commits local and retain their exact intended destinations. A later push needs a new explicit user instruction plus the mandatory fresh locked server build. Normal commit hooks remain mandatory.
-
-Current checkpoint (2026-10-03): the [MPP read batch](parity/current-audit/mpp-read-batch-repair.md) repairs M02/M03 and advances M04 to partial. Exact ranges, canonical process cache/PD, incremental results, shared cancellation/quota and bounded remote cleanup are composed together. **58 unresolved (46 open, twelve partial), 28 repaired, 86 tracked.** Thirty empty ignored shells are removed with original obligations retained; full packages, transport and live multi-node acceptance remain unverified.
-
-The TiFlash checkpoint below is historical.
-
-Current checkpoint (2026-10-03): the [TiFlash replica batch](parity/current-audit/tiflash-replica-batch-repair.md) maintains F01/F02/F03 together and connects N03's shared cluster HTTP consumer. F03's classic polling contract is repaired; F01/F02 stay partial for durable placement/GC and partition readiness phases. The current register has **60 unresolved (49 open, eleven partial), 26 repaired, 86 tracked**. Earlier checkpoint counts below are historical. Eight ignored empty shells are retired with all original-source obligations retained.
-
-This is a living ExecPlan under root PLANS.md. Maintain Progress, Surprises & Discoveries, Decision Log, and Outcomes & Retrospective. The existing storage plan retains earlier repair receipts.
+User instruction: **Do not push or run push dry runs.** Keep validated commits local in the existing Cloud checkouts, preserve concurrent changes, and run the actual locked-build commit hook. Publication and a future push require their own authorized steps.
 
 ## Purpose and acceptance
 

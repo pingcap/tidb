@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! `_tidb_rowid` as a COVERED column and as an ORDER the table walk supplies.
 //!
 //! Three Go mechanisms meet on the extra handle, and each test pins one:

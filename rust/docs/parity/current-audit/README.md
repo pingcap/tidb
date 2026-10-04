@@ -1,37 +1,13 @@
 # Structural parity audit: current evidence
 
-The [historical read batch](historical-read-batch-validation.json) advances S04/I04/O09/N03 together: one persisted timestamp selects historical schema and rows, a bounded version cache retains shared schema images, stale transactions retain active timestamps, and snapshot settings share typed SET-time state and write admission. The original ordinary staleness refusal is repaired in both production stores. All 89 selected Rust cases and 16 live MySQL checks pass. **86 tracked: 30 repaired, 56 unresolved (30 open, 26 partial).** S04/I04 become partial; O09/N03 remain partial for the named residuals. Other 52 unresolved roots retain earlier evidence. Whole packages, lazy InfoSchema V2, SafeTS topology, complete provider transitions and multi-node/performance acceptance remain incomplete. No push.
-
-The [runtime settings batch](runtime-settings-batch-validation.json) advances N05/N03/I01 together: nine HTTP controls share durable GLOBAL SQL writes and process settings; both stores expose current configuration to HTTP and SHOW CONFIG. Ordered partial errors, request-body framing, UTF-8 publication and concurrent config updates are repaired; captured startup bytes and the refusal-only test are removed. N05 becomes partial. The register has 86 findings:29 repaired,57 unresolved(35 open,22 partial); other54 unresolved IDs retain prior evidence.
-
-The [cluster configuration batch](cluster-config-batch-validation.json) advances I01/I02/N03 together: live CLUSTER_CONFIG and SHOW CONFIG share retrieval, CONFIG roles, typed routing, warnings and internal HTTP policy; topology address resolution uses bounded joined workers. The captured SHOW CONFIG implementation is removed. All three remain partial; counts stay 29 repaired and 57 unresolved (36 open, 21 partial). Other 54 unresolved IDs retain earlier evidence.
-
-[Harness consolidation](harness-dedup-validation.json) removes 12 standalone targets and five private source copies. All 281 formerly duplicated cases remain registered once; 299 selected cases pass and five established DDL failures remain. Finding statuses are unchanged.
-
-The current register has **86 findings: 30 repaired and 56 unresolved (30 open, 26 partial)**. The [JSON register](structural-findings.json) and [readable register](structural-findings.md) own current dispositions; dated repair receipts own their original evidence. Finding repair is not complete Go package acceptance.
-
-The [remaining empty-harness cleanup](empty-test-cleanup-validation.json) removes 347 empty functions across five crates, one unused marker and stale inventory prose. All 367 surviving functions in affected files remain verbatim; Go obligations stay unverified.
-
-The [session cleanup](session-cleanup-validation.json) removes unused server models, empty session tests and duplicate source compilation; [original obligations](session-cleanup-obligations.json) remain unverified. Finding counts are unchanged.
-
-The [authentication durability batch](auth-durability-batch-validation.json) advances A02/A03/N03 together: durable pessimistic login tracking, shared policy and internal-session ownership, canonical generated RSA/identity/temp-file TLS, and removal of duplicated test-source compilation. All three remain partial. See the [living plan](../../auth-durability-batch-execplan.md).
-
-The [metadata policy batch](metadata-policy-batch-validation.json) replaces stale sequence schema/rows, composes shared SEM visibility, and repairs local cluster instance identity. I01/I02 remain partial; I03 fanout remains open. See the [living plan](../../metadata-policy-batch-execplan.md).
-
-The [cluster topology batch](cluster-topology-validation.json) advances I02/O13/N03 together: seven live component retrievers, Domain zone balancing and joined refresh, live session policy, post-split request adjustment and canonical startup labels. All three remain partial; other54 unresolved IDs retain previous evidence. See the [living plan](../../cluster-topology-execplan.md) for remaining producers and validation limits.
-
-The [matrix write removal](matrix-write-removal-validation.json) deletes the alternate INSERT/UPDATE/DELETE engine, synthetic row handles and unused interpreter helpers while retaining virtual reads. E03 stays partial; finding counts are unchanged.
-
-The preceding [TLS owner batch](tls-owner-batch-repair.md) advances A02/A03/N03 together: GRANT REQUIRE shares account policy; certificate-file refresh, ALTER INSTANCE reload and automatic renewal share one process owner; request-only client certificates remain untrusted for account admission. Startup variables and SUPER/rollback behavior follow Go. All three findings remain partial; other54 unresolved IDs retain earlier evidence.
-
-The [tooling removal inventory](obsolete-tooling-removal-validation.json) records retired nonbehavioral gates, profiling/probe scaffolding and superseded report before-images. Counts and previous failure dispositions are unchanged.
+Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [historical reads](historical-read-batch-validation.json). Latest build/test cleanup: [receipt](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current metadata plan](../../metadata-policy-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../historical-read-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](metadata-policy-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](historical-read-batch-validation.json): exact source/log identities and verification limits.
 
 Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `19a56ccda1e128218cd33c69709038219aced9bc` at this checkpoint.
 
@@ -48,6 +24,20 @@ Group related source fixes and test filters. Keep meaningful Go behavior/error/r
 **No push or push dry run.** Preserve the exact destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. Historical permission diagnostic: `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403); account role versus GitHub-app installation scope is undetermined. The user is arranging access. Preserve concurrent remote integration commits; never reset or force-push over them.
 
 ## Historical evidence
+
+- [runtime settings batch](runtime-settings-batch-validation.json)
+- [cluster configuration batch](cluster-config-batch-validation.json)
+- [Harness consolidation](harness-dedup-validation.json)
+- [remaining empty-harness cleanup](empty-test-cleanup-validation.json)
+- [session cleanup](session-cleanup-validation.json)
+- [original obligations](session-cleanup-obligations.json)
+- [authentication durability batch](auth-durability-batch-validation.json)
+- [living plan](../../auth-durability-batch-execplan.md)
+- [cluster topology batch](cluster-topology-validation.json)
+- [living plan](../../cluster-topology-execplan.md)
+- [matrix write removal](matrix-write-removal-validation.json)
+- [TLS owner batch](tls-owner-batch-repair.md)
+- [tooling removal inventory](obsolete-tooling-removal-validation.json)
 
 The repeated milestone summaries and stale count tables formerly copied into this index are removed. The original receipts below and Git history retain their source pins and validation limits. Complete TiPB declaration before-images live in [tipb-mismatches-before.json](tipb-mismatches-before.json); other protocol before/after evidence lives in [protocol-projections.json](protocol-projections.json) and [protocol-contracts-after.json](protocol-contracts-after.json). These replace duplicated declaration tables, not the underlying obligations.
 

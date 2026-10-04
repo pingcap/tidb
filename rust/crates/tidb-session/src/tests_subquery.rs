@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

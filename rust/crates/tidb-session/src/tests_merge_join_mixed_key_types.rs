@@ -29,8 +29,6 @@
 //! merge walked both inputs to exhaustion and emitted NOTHING. These are
 //! the recorded answers, which are non-empty.
 
-#![cfg(test)]
-
 use crate::tests_support::*;
 use crate::*;
 

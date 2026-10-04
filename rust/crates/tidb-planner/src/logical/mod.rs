@@ -1488,8 +1488,8 @@ impl LogicalPlan {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod derive_stats_tests;
+#[cfg(test)]
 mod operator_tests;
 #[cfg(test)]
 pub(crate) mod rule_tail_tests;

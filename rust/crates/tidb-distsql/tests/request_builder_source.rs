@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Direct structural translations of the complete original
-//! `pkg/distsql/request_builder_test.go` obligation inventory.
+//! Request-builder behavior selected from `pkg/distsql/request_builder_test.go`.
+//! A passing subset does not accept the complete upstream package.
 
 use prost::Message;
 use tidb_codec::{encode_int, encode_key, encode_row_key};
@@ -577,40 +577,4 @@ fn test_request_builder_handle() {
     let encoded = transport.resource_group_tag().expect("resource tag");
     let tag = ResourceGroupTag::decode(encoded.as_slice()).expect("valid tag");
     assert_eq!(tag.table_id, Some(15));
-}
-
-#[test]
-fn complete_original_obligation_inventory_is_visible() {
-    // This prevents consolidation from silently dropping generated subtests
-    // or the file-level obligation while unavailable TiKV layers stay PARTIAL.
-    let obligations = [
-        "file",
-        "handles",
-        "partition-handles",
-        "table-ranges",
-        "index-ranges",
-        "builder-1",
-        "builder-2",
-        "builder-3",
-        "builder-4",
-        "builder-5",
-        "builder-6",
-        "builder-7",
-        "builder-7-generated",
-        "builder-8",
-        "paging-bytes",
-        "read-timeout",
-        "max-exec-time",
-        "table-ranges-fbs",
-        "index-ranges-fbs",
-        "scan-limit",
-        "scan-limit-generated",
-        "index-lookup",
-        "index-lookup-generated",
-        "table-int",
-        "table-common",
-        "resource-tag",
-    ];
-    assert_eq!(obligations.len(), 26);
-    assert_eq!(Key::from_bytes(vec![0xff]).as_bytes(), &[0xff]);
 }

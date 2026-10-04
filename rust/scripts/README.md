@@ -55,6 +55,8 @@ live suite:
 cargo test --locked -p tidb-executor --test all -- window_executor_source --test-threads=1
 ```
 
+Test-only modules are gated at their parent declarations so ordinary server builds do not load their source. Unicode runtime tests consume the checked-in Go fixture; run `python3 rust/scripts/generate-go-simple-case.py --check` from the repository root when maintaining the generated table, rather than spawning a generator check from each ordinary test run.
+
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
 

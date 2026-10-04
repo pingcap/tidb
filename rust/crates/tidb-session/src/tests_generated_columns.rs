@@ -26,8 +26,6 @@
 //! generated-column write rules, and `pkg/planner/core/planbuilder.go`'s
 //! `getInsertColExpr` / `buildUpdateLists`.
 
-#![cfg(test)]
-
 use crate::tests_support::row_text;
 use crate::*;
 
