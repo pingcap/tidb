@@ -335,8 +335,11 @@ impl NodeVersions {
         inner.node_versions.is_empty() && inner.once_match_fn.is_none()
     }
 
-    /// Go `getMatchFn`, used to retain a pending predicate only when
-    /// authoritative reconciliation did not satisfy it.
+    /// Reports whether a wait predicate is still pending.
+    ///
+    /// This is a test-only observation of Go's `onceMatchFn`; production wait
+    /// code does not inspect it after installing the predicate.
+    #[cfg(test)]
     pub(crate) fn has_match_fn(&self) -> bool {
         self.lock().once_match_fn.is_some()
     }
@@ -562,9 +565,6 @@ pub struct EtcdSyncer {
     global_ver_watcher: GlobalVerWatcher,
     all_server_info: Mutex<Option<AllServerInfo>>,
     job_node_versions: Mutex<HashMap<i64, Arc<NodeVersions>>>,
-    // Serializes the authoritative range replay with watch event updates.
-    // Go has one writer for this mirror; Rust also reconciles it from waits.
-    job_schema_ver_update_lock: Mutex<()>,
     job_node_ver_prefix: String,
 }
 
@@ -579,7 +579,6 @@ pub fn new_etcd_syncer(etcd: Arc<dyn EtcdWatchOps>, id: &str) -> EtcdSyncer {
         session: Mutex::new(None),
         all_server_info: Mutex::new(None),
         job_node_versions: Mutex::new(HashMap::new()),
-        job_schema_ver_update_lock: Mutex::new(()),
         job_node_ver_prefix: format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/"),
     }
 }
@@ -792,13 +791,6 @@ impl Syncer for EtcdSyncer {
                     let _ = notify_tx.send(());
                     true
                 });
-                // The job-version mirror normally stays current through its
-                // range-then-watch loop.  During startup, however, the first
-                // DDL can publish acknowledgements while that watch is being
-                // established.  Reconcile from the authoritative prefix
-                // before installing the predicate so an already-published
-                // ack cannot be stranded behind the first one-second retry.
-                self.reconcile_job_schema_versions();
                 let item = self.job_schema_ver_match_or_set(job_id, match_fn);
                 let notify_rx = SharedRecv::new(notify_rx);
                 let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -809,19 +801,10 @@ impl Syncer for EtcdSyncer {
                     }
                     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                     if remaining.is_zero() {
-                        // The Go mirror normally receives every PUT through
-                        // its watch.  Re-read the authoritative prefix before
-                        // retrying so a watch handoff gap cannot strand this
-                        // owner on an already-published acknowledgement.
-                        self.reconcile_job_schema_versions();
-                        // Reconciliation may have satisfied the predicate.
-                        // Match the Go timeout path: retain the predicate only
-                        // when the authoritative replay still did not match.
-                        if item.has_match_fn() {
-                            item.clear_match_fn();
-                        } else {
-                            return Ok(sync_summary);
-                        }
+                        // Match Go's timeout path: the background mirror owns
+                        // all range reads and watch events; this wait only
+                        // drops its predicate and retries after logging.
+                        item.clear_match_fn();
                         let info = unmatched
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -930,13 +913,6 @@ impl EtcdSyncer {
 
     /// Go `syncJobSchemaVer`: one full mirror pass plus an event tail.
     fn sync_job_schema_ver(&self, ctx: &Context) {
-        // Keep the authoritative range read and replay atomic with respect to
-        // watch updates. Otherwise a watch PUT can land after the read but
-        // before the lock, then be erased by replaying the older snapshot.
-        let update_guard = self
-            .job_schema_ver_update_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (entries, revision) = match self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix) {
             Ok(result) => result,
             Err(_error) => {
@@ -956,9 +932,8 @@ impl EtcdSyncer {
             });
         }
         for (key, value) in &entries {
-            self.handle_job_schema_ver_kv_inner(key, value, false);
+            self.handle_job_schema_ver_kv(key, value, false);
         }
-        drop(update_guard);
 
         let stream = match self
             .etcd
@@ -997,51 +972,8 @@ impl EtcdSyncer {
         }
     }
 
-    /// Reconcile the in-memory job-version mirror from etcd.
-    ///
-    /// Go normally reaches this state through `SyncJobSchemaVer`'s
-    /// range-then-watch handoff.  A watch can nevertheless be interrupted
-    /// after the range snapshot and before its replacement is established;
-    /// retrying the range on the owner's one-second check boundary preserves
-    /// the same source-of-truth (the per-job etcd keys) and prevents a missed
-    /// PUT from blocking a DDL job indefinitely.
-    fn reconcile_job_schema_versions(&self) {
-        // The range read must be covered by the same writer lock as replay.
-        // Taking the lock only after the read permits a concurrent watch PUT
-        // to be overwritten by this stale snapshot.
-        let _update_guard = self
-            .job_schema_ver_update_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Ok((entries, _revision)) = self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix)
-        else {
-            return;
-        };
-        {
-            let mut jobs = self
-                .job_node_versions
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            jobs.retain(|_, item| {
-                item.clear_data();
-                !item.empty_and_not_used()
-            });
-        }
-        for (key, value) in entries {
-            self.handle_job_schema_ver_kv_inner(&key, &value, false);
-        }
-    }
-
     /// Go `handleJobSchemaVerKV`.
     fn handle_job_schema_ver_kv(&self, key: &str, value: &[u8], deleted: bool) {
-        let _update_guard = self
-            .job_schema_ver_update_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.handle_job_schema_ver_kv_inner(key, value, deleted);
-    }
-
-    fn handle_job_schema_ver_kv_inner(&self, key: &str, value: &[u8], deleted: bool) {
         let event_type = if deleted { "DELETE" } else { "PUT" };
         let Some((job_id, tidb_id, schema_ver)) =
             decode_job_version_event(key, value, deleted, &self.job_node_ver_prefix)
@@ -1835,53 +1767,43 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_restores_an_ack_seen_during_watch_handoff() {
-        let etcd = FakeEtcd::default();
-        let syncer = new_syncer(&etcd);
-        let notify = Arc::new(AtomicBool::new(false));
-        let notify_for_match = Arc::clone(&notify);
-        syncer.job_schema_ver_match_or_set(
-            7,
-            Box::new(move |versions| {
-                let matched = versions.get("node-a").is_some_and(|version| *version >= 2);
-                if matched {
-                    notify_for_match.store(true, AtomicOrdering::Release);
-                }
-                matched
-            }),
-        );
-
-        // The PUT happened after the watch's previous snapshot, but before
-        // the replacement watch was usable. The reconciliation must recover
-        // it from the authoritative prefix and re-run the pending predicate.
-        etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/7/node-a"), "2");
-        syncer.reconcile_job_schema_versions();
-        assert!(notify.load(AtomicOrdering::Acquire));
-    }
-
-    #[test]
-    fn wait_version_synced_reconciles_before_installing_predicate() {
+    fn wait_version_synced_uses_the_background_job_mirror() {
         let _guard = globals_test_lock();
         tidb_vardef::set_enable_mdl(true);
         let etcd = FakeEtcd::default();
-        etcd.set_server_infos(&[("node-a", "tidb-a", 4000, 1)]);
+        etcd.set_server_infos(&[
+            ("node-a", "tidb-a", 4000, 1),
+            ("node-b", "tidb-b", 4000, 1),
+            ("node-c", "tidb-c", 4000, 1),
+        ]);
         let syncer = new_syncer(&etcd);
-        // Simulate the startup race: the follower has already published its
-        // ack, but the owner's background mirror has not observed the watch
-        // event yet.
-        etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/8/node-a"), "7");
+        let ctx = Context::background();
+        syncer.init(&ctx).expect("syncer init");
+        let loop_ctx = Context::with_cancel(&ctx);
+        let loop_ctx_for_thread = loop_ctx.clone();
+        let loop_syncer = Arc::new(syncer);
+        let loop_thread_syncer = Arc::clone(&loop_syncer);
+        let loop_handle = std::thread::Builder::new()
+            .spawn(move || loop_thread_syncer.sync_job_schema_ver_loop(&loop_ctx_for_thread))
+            .expect("schema mirror thread");
+
+        for node in ["node-a", "node-b", "node-c"] {
+            etcd.put_raw(&format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/8/{node}"), "7");
+        }
 
         let wait_ctx = Context::with_timeout(&Context::background(), Duration::from_millis(500));
-        let result = syncer
+        let result = loop_syncer
             .wait_version_synced(&wait_ctx, 8, 7, false)
-            .expect("the authoritative ack should satisfy the first wait");
+            .expect("the background mirror should satisfy the wait");
         assert_eq!(
             result,
             SyncSummary {
-                server_count: 1,
+                server_count: 3,
                 assumed_server_count: 0,
             }
         );
+        loop_ctx.cancel();
+        loop_handle.join().expect("schema mirror thread");
         tidb_vardef::set_enable_mdl(false);
     }
 
