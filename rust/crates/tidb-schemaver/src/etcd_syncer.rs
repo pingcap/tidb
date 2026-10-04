@@ -335,8 +335,8 @@ impl NodeVersions {
         inner.node_versions.is_empty() && inner.once_match_fn.is_none()
     }
 
-    /// Go `getMatchFn`, reduced to what tests assert.
-    #[cfg(test)]
+    /// Go `getMatchFn`, used to retain a pending predicate only when
+    /// authoritative reconciliation did not satisfy it.
     pub(crate) fn has_match_fn(&self) -> bool {
         self.lock().once_match_fn.is_some()
     }
@@ -771,7 +771,19 @@ impl Syncer for EtcdSyncer {
                     }
                     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                     if remaining.is_zero() {
-                        item.clear_match_fn();
+                        // The Go mirror normally receives every PUT through
+                        // its watch.  Re-read the authoritative prefix before
+                        // retrying so a watch handoff gap cannot strand this
+                        // owner on an already-published acknowledgement.
+                        self.reconcile_job_schema_versions();
+                        // Reconciliation may have satisfied the predicate.
+                        // Match the Go timeout path: retain the predicate only
+                        // when the authoritative replay still did not match.
+                        if item.has_match_fn() {
+                            item.clear_match_fn();
+                        } else {
+                            return Ok(sync_summary);
+                        }
                         let info = unmatched
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -936,6 +948,34 @@ impl EtcdSyncer {
                     }
                 }
             }
+        }
+    }
+
+    /// Reconcile the in-memory job-version mirror from etcd.
+    ///
+    /// Go normally reaches this state through `SyncJobSchemaVer`'s
+    /// range-then-watch handoff.  A watch can nevertheless be interrupted
+    /// after the range snapshot and before its replacement is established;
+    /// retrying the range on the owner's one-second check boundary preserves
+    /// the same source-of-truth (the per-job etcd keys) and prevents a missed
+    /// PUT from blocking a DDL job indefinitely.
+    fn reconcile_job_schema_versions(&self) {
+        let Ok((entries, _revision)) = self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix)
+        else {
+            return;
+        };
+        {
+            let mut jobs = self
+                .job_node_versions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            jobs.retain(|_, item| {
+                item.clear_data();
+                !item.empty_and_not_used()
+            });
+        }
+        for (key, value) in entries {
+            self.handle_job_schema_ver_kv(&key, &value, false);
         }
     }
 
@@ -1714,6 +1754,34 @@ mod tests {
 
         loop_ctx.cancel();
         loop_handle.join().unwrap();
+    }
+
+    #[test]
+    fn reconcile_restores_an_ack_seen_during_watch_handoff() {
+        let etcd = FakeEtcd::default();
+        let syncer = new_syncer(&etcd);
+        let notify = Arc::new(AtomicBool::new(false));
+        let notify_for_match = Arc::clone(&notify);
+        syncer.job_schema_ver_match_or_set(
+            7,
+            Box::new(move |versions| {
+                let matched = versions.get("node-a").is_some_and(|version| *version >= 2);
+                if matched {
+                    notify_for_match.store(true, AtomicOrdering::Release);
+                }
+                matched
+            }),
+        );
+
+        // The PUT happened after the watch's previous snapshot, but before
+        // the replacement watch was usable. The reconciliation must recover
+        // it from the authoritative prefix and re-run the pending predicate.
+        etcd.put_raw(
+            &format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/7/node-a"),
+            "2",
+        );
+        syncer.reconcile_job_schema_versions();
+        assert!(notify.load(AtomicOrdering::Acquire));
     }
 
     // ---- Go TestCalculateUpdatedMap ----
