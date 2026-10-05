@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "planner-private-path-cleanup-validation.json",
-    "scope": "Seven disconnected planner modules, eight private harnesses, 24 tests and stale documentation removed; 3594 retained inputs byte-identical. Finding statuses/counts unchanged."
+    "receipt": "session-helper-cleanup-validation.json",
+    "scope": "Eleven unused session/executor modules, ten private harnesses, 30 tests and stale documentation removed; 3573 retained inputs byte-identical. All finding statuses/counts unchanged."
   },
   "test_cleanup_history": [
     {
@@ -925,6 +925,10 @@
     {
       "receipt": "leaf-owner-cleanup-validation.json",
       "scope": "Eleven disconnected tidb-exec modules, seven private harnesses, 48 tests/checks and stale coverage claims removed; all finding statuses and counts unchanged."
+    },
+    {
+      "receipt": "planner-private-path-cleanup-validation.json",
+      "scope": "Seven disconnected planner modules, eight private harnesses, 24 tests and stale documentation removed; 3594 retained inputs byte-identical. Finding statuses/counts unchanged."
     }
   ],
   "repair_history": [

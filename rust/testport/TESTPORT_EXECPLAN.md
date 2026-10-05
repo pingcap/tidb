@@ -4587,16 +4587,9 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   safe missing behavior was found; exact Go-master tests passed and the
   explicit boundary is recorded in `receipts/session_cursor.md`.
 
-- 2026-09-01: audited the complete Go-master `pkg/session/metrics` package:
-  two tracked artifacts and 158 lines, including 49 exported
-  counter/observer bindings for transaction, timing, parse/compile,
-  partition, account-lock, CTE, index-merge, and store-batched telemetry,
-  plus the BUILD target. It has no tests, fixtures, generated outputs,
-  benchmarks, fuzz inputs, or platform variants. Rust's `tidb-exec` leaf owns
-  only the three non-transactional DML labels and not the Prometheus/session
-  registry. No Rust-only behavior or safe missing behavior was found; exact
-  Go-master compilation passed and the explicit boundary is recorded in
-  `receipts/session_metrics.md`.
+- Historical session metric inventory remains in `receipts/session_metrics.md`.
+  The unused three-label copy and its private harness were retired; they never
+  established complete live session metric coverage.
 
 - 2026-09-01: audited the complete Go-master `pkg/session/sessmgr` package:
   three tracked artifacts and 392 lines, including process/transaction row

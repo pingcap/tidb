@@ -42,7 +42,6 @@ audit, not a repository-wide readiness claim.
 - `cargo test -p tidb-util --lib --locked tls::tests::test_version_name -- --exact` — passed (one source test).
 - `cargo test -p tidb-session --lib --locked tests_global_vars::require_secure_transport_can_only_be_enabled_by_a_secure_session -- --exact` — passed.
 - Both secure-transport cases in `cargo test -p tidb-server --test configured_user_store_source --locked <case> -- --exact` — passed.
-- `cargo test -p tidb-exec --lib --locked status_registry --no-fail-fast` — passed (two TLS status cases).
 - `cargo check -p tidb-session -p tidb-server -p tidb-exec --lib --offline` — passed; it regenerated the lock entry for the new internal `tidb-config` edge.
 - `rustfmt --edition 2021 --check` on all changed Rust source files and
   `git diff --check` — passed.

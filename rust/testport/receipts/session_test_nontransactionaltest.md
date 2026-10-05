@@ -35,16 +35,12 @@ The Go master delta from the earlier pinned source
 
 ## Rust ownership and explicit boundary
 
-Rust has source-backed ignored carriers for all six behavior tests and the
-TestMain harness in `tidb-session::tests_session_part4_source`. Rust already
-owns a typed admission policy in `tidb-exec::nontransactional` and metric-label
-vocabulary in `tidb-exec::session_metrics`; those are lower-level contracts,
-not the Go package's shard planner, worker cancellation/error aggregation,
-foreign-key checks, live metric publication, or max-execution-time failpoint
-path. No dependency-closed Rust session/executor/storage owner exists for the
-full TestKit workload. No Rust-only behavior was found to remove, and no safe
-package-local implementation can be added without duplicating session,
-transaction, planner, storage, and failpoint ownership.
+The historical ignored carriers and the disconnected metric-label model do not
+establish coverage of this Go workload. The label model and its private tests
+have been removed. The retained tidb-exec::nontransactional admission owner is
+unchanged. Complete shard planning, cancellation/error aggregation, foreign-key
+checks, metric publication and failpoint acceptance still require live-owner
+validation; consult the current register rather than treating old carriers as tests.
 
 ## Validation and risk
 

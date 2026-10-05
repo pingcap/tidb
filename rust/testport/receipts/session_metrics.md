@@ -25,20 +25,12 @@ declarations and both build artifacts were checked individually.
 
 ## Rust ownership and explicit boundary
 
-Rust currently owns only a small label-level leaf in
-`tidb-exec::session_metrics`: the three non-transactional DML kinds and
-their exact `delete`/`insert`/`update` labels. It deliberately does not
-register Prometheus families, expose observer handles, initialize session
-metrics, or cover the remaining statement/transaction and telemetry
-families. Those behaviors cross the session, executor, metrics, and
-telemetry consumers and have no dependency-closed Rust owner today.
-
-No Rust-only behavior was found to remove, and no safe missing behavior can
-be implemented by adding isolated counters or a second metrics registry.
-That would risk duplicate registration, label cardinality/order changes, and
-observable telemetry drift. This complete Go package is therefore recorded
-as an explicit SEED/boundary; future parity requires one coordinated
-Prometheus/session metrics owner and its consumers.
+The unused tidb-exec label-only model and its private harness were retired.
+It had no production caller and never registered or incremented metrics. Its
+three label strings did not validate Go's session instrumentation. This dated
+Go inventory remains historical evidence; complete shared metric ownership and
+consumer validation must be established from live sources before acceptance.
+See the current audit index for later connected repairs and remaining findings.
 
 ## Validation and risk
 
