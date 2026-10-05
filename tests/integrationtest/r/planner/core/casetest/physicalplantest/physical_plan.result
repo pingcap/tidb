@@ -3915,12 +3915,11 @@ Level	Code	Message
 explain format = 'plan_tree' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1;
 id	task	access object	operator info
 Limit	root		offset:0, count:1
-└─Selection	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
-  └─IndexMerge	root		type: union
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.
@@ -3949,13 +3948,12 @@ Level	Code	Message
 explain format = 'plan_tree' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1;
 id	task	access object	operator info
 Limit	root		offset:0, count:1
-└─Selection	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
-  └─IndexMerge	root		type: union
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
-    └─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
-      └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge	root		type: union
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.

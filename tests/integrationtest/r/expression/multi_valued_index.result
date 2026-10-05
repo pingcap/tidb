@@ -516,3 +516,49 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+drop table if exists t;
+create table t (id bigint primary key, j json, index zips ((cast(json_extract(j, '$.zipcode') as unsigned array))));
+insert into t values (1, '{"zipcode":[1,2]}'), (2, '{"zipcode":[3,4]}'), (3, '{"zipcode":[5,6]}'), (4, '{"zipcode":[]}'), (5, null);
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]');
+id	estRows	task	access object	operator info
+Projection	23.98	root		expression__multi_valued_index.t.id
+└─IndexMerge	29.97	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[7,7], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id;
+id
+1
+2
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]');
+id	estRows	task	access object	operator info
+Projection	23.98	root		expression__multi_valued_index.t.id
+└─Selection	23.98	root		json_overlaps(json_extract(expression__multi_valued_index.t.j, "$.zipcode"), cast("[2, 6]", json BINARY))
+  └─IndexMerge	29.97	root		type: union
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[3,3], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[7,7], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]') order by id;
+id
+1
+begin;
+insert into t values (6, '{"zipcode":[3]}'), (7, '{"zipcode":[8]}');
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]');
+id	estRows	task	access object	operator info
+Projection	23.98	root		expression__multi_valued_index.t.id
+└─Selection	23.98	root		json_overlaps(json_extract(expression__multi_valued_index.t.j, "$.zipcode"), cast("[1, 3, 7]", json BINARY))
+  └─UnionScan	29.97	root		json_overlaps(json_extract(expression__multi_valued_index.t.j, "$.zipcode"), cast("[1, 3, 7]", json BINARY))
+    └─IndexMerge	29.97	root		type: union
+      ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[3,3], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:zips(cast(json_extract(`j`, _utf8mb4'$.zipcode') as unsigned array))	range:[7,7], keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id;
+id
+1
+2
+6
+rollback;
+drop table t;

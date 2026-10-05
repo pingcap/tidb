@@ -1611,7 +1611,53 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 		}
 	}
 	t := tasks[0].ConvertToRootTask(sel.SCtx())
+	conds := removeMVIndexCoveredConds(sel.Conditions, t)
+	if len(conds) == 0 {
+		return t
+	}
+	if len(conds) < len(sel.Conditions) {
+		// Build a new Selection rather than modifying sel, which may also be attached to other child tasks.
+		sel = physicalop.PhysicalSelection{
+			Conditions:     conds,
+			FromDataSource: sel.FromDataSource,
+		}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset())
+	}
 	return attachPlan2Task(sel, t)
+}
+
+// removeMVIndexCoveredConds removes from conds the conditions that the IndexMergeReader under t already enforces
+// exactly through MVIndex ranges. These are conditions that can't be pushed down to TiKV, such as
+// `JSON_OVERLAPS(j->'$.a', '[1, 2]')`, so they stay in a Selection above the DataSource even when the MVIndex
+// consumes them. Conditions are only removed when the reader is reached through Projections and Selections, which
+// don't add rows. A UnionScan, for example, adds uncommitted rows that didn't come through the index.
+func removeMVIndexCoveredConds(conds []expression.Expression, t base.Task) []expression.Expression {
+	rt, ok := t.(*physicalop.RootTask)
+	if !ok || len(rt.IdxMergeMVCoveredConds) == 0 {
+		return conds
+	}
+	p := rt.GetPlan()
+	for {
+		if _, isReader := p.(*physicalop.PhysicalIndexMergeReader); isReader {
+			break
+		}
+		switch p.(type) {
+		case *physicalop.PhysicalProjection, *physicalop.PhysicalSelection:
+			p = p.Children()[0]
+			continue
+		}
+		return conds
+	}
+	covered := make(map[string]struct{}, len(rt.IdxMergeMVCoveredConds))
+	for _, c := range rt.IdxMergeMVCoveredConds {
+		covered[string(c.HashCode())] = struct{}{}
+	}
+	remaining := make([]expression.Expression, 0, len(conds))
+	for _, c := range conds {
+		if _, ok := covered[string(c.HashCode())]; !ok {
+			remaining = append(remaining, c)
+		}
+	}
+	return remaining
 }
 
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *physicalop.IndexJoinInfo, stats *property.StatsInfo) {
