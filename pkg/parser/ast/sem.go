@@ -162,6 +162,8 @@ const (
 	ShowCreateResourceGroupCommand = "SHOW CREATE RESOURCE GROUP"
 	// ShowCreateProcedureCommand represents SHOW CREATE PROCEDURE statement
 	ShowCreateProcedureCommand = "SHOW CREATE PROCEDURE"
+	// ShowCreateFunctionCommand represents SHOW CREATE FUNCTION statement
+	ShowCreateFunctionCommand = "SHOW CREATE FUNCTION"
 	// ShowDatabasesCommand represents SHOW DATABASES statement
 	ShowDatabasesCommand = "SHOW DATABASES"
 	// ShowTableCommand represents SHOW TABLES statement
@@ -808,6 +810,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowCreateResourceGroupCommand
 	case ShowCreateProcedure:
 		return ShowCreateProcedureCommand
+	case ShowCreateFunction:
+		return ShowCreateFunctionCommand
 	case ShowDatabases:
 		return ShowDatabasesCommand
 	case ShowTables:
@@ -1436,5 +1440,15 @@ func (n *DropFunctionStmt) SEMCommand() string {
 
 // SEMCommand returns the command string for the statement.
 func (n *ReturnStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *SignalStmt) SEMCommand() string {
+	return FunctionCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *ResignalStmt) SEMCommand() string {
 	return FunctionCommand
 }

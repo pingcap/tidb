@@ -3262,7 +3262,7 @@ type ShowStmt struct {
 	DBName string
 	Table  *TableName // Used for showing columns.
 	// Procedure's naming method is consistent with the table name
-	Procedure         *TableName
+	Procedure *TableName
 	// FuncName is used for SHOW CREATE FUNCTION
 	FuncName          *TableName
 	Partition         CIStr       // Used for showing partition.
@@ -3861,26 +3861,36 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// Variables holds variable names for SELECT ... INTO var1, var2
+	Variables []string
 }
 
 // Restore implements Node interface.
 func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp != SelectIntoOutfile {
-		// only support SELECT/TABLE/VALUES ... INTO OUTFILE statement now
-		return errors.New("Unsupported SelectionInto type")
-	}
-
-	ctx.WriteKeyWord("INTO OUTFILE ")
-	ctx.WriteString(n.FileName)
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+	switch n.Tp {
+	case SelectIntoOutfile:
+		ctx.WriteKeyWord("INTO OUTFILE ")
+		ctx.WriteString(n.FileName)
+		if n.FieldsInfo != nil {
+			if err := n.FieldsInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+			}
 		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+		if n.LinesInfo != nil {
+			if err := n.LinesInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+			}
 		}
+	case SelectIntoVars:
+		ctx.WriteKeyWord("INTO ")
+		for i, v := range n.Variables {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(v)
+		}
+	default:
+		return errors.New("Unsupported SelectInto type")
 	}
 	return nil
 }

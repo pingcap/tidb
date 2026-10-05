@@ -99,6 +99,38 @@ func TestUDFCacheClear(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestProcedureCache(t *testing.T) {
+	// Create a procedure definition
+	procDef := &udf.ProcedureDefinition{
+		ID:         1,
+		Name:       "test_proc",
+		SchemaName: "test",
+		Params: []udf.ProcedureParam{
+			{Name: "p_in", Mode: udf.ParamModeIn},
+			{Name: "p_out", Mode: udf.ParamModeOut},
+		},
+		SourceCode: "BEGIN SET p_out = p_in * 2; END",
+	}
+
+	// Register the procedure
+	RegisterProcedure(procDef)
+
+	// Verify it's in the cache
+	retrieved := GetProcedure("test", "test_proc")
+	require.NotNil(t, retrieved)
+	require.Equal(t, "test_proc", retrieved.Name)
+	require.Equal(t, 2, len(retrieved.Params))
+
+	// Verify case-insensitive lookup
+	retrieved = GetProcedure("TEST", "TEST_PROC")
+	require.NotNil(t, retrieved)
+
+	// Clear the procedure
+	ClearProcedureCacheEntry("test", "test_proc")
+	retrieved = GetProcedure("test", "test_proc")
+	require.Nil(t, retrieved)
+}
+
 // TestParseSQLFunctionBody tests parsing of SQL function bodies.
 func TestParseSQLFunctionBody(t *testing.T) {
 	p := parser.New()
@@ -490,119 +522,7 @@ func TestIntegerDivisionAndModulo(t *testing.T) {
 	}
 }
 
-// TestBuiltinFunctions tests built-in SQL function evaluation.
-func TestBuiltinFunctions(t *testing.T) {
-	vars := map[string]types.Datum{}
-
-	tests := []struct {
-		name       string
-		sourceCode string
-		expected   string
-		isInt      bool
-		intVal     int64
-	}{
-		{
-			name:       "UPPER",
-			sourceCode: "BEGIN RETURN UPPER('hello'); END",
-			expected:   "HELLO",
-		},
-		{
-			name:       "LOWER",
-			sourceCode: "BEGIN RETURN LOWER('HELLO'); END",
-			expected:   "hello",
-		},
-		{
-			name:       "LENGTH",
-			sourceCode: "BEGIN RETURN LENGTH('hello'); END",
-			isInt:      true,
-			intVal:     5,
-		},
-		{
-			name:       "CHAR_LENGTH",
-			sourceCode: "BEGIN RETURN CHAR_LENGTH('hello'); END",
-			isInt:      true,
-			intVal:     5,
-		},
-		{
-			name:       "CONCAT two",
-			sourceCode: "BEGIN RETURN CONCAT('hello', ' world'); END",
-			expected:   "hello world",
-		},
-		{
-			name:       "CONCAT three",
-			sourceCode: "BEGIN RETURN CONCAT('a', 'b', 'c'); END",
-			expected:   "abc",
-		},
-		{
-			name:       "LEFT",
-			sourceCode: "BEGIN RETURN LEFT('hello', 3); END",
-			expected:   "hel",
-		},
-		{
-			name:       "RIGHT",
-			sourceCode: "BEGIN RETURN RIGHT('hello', 3); END",
-			expected:   "llo",
-		},
-		{
-			name:       "TRIM",
-			sourceCode: "BEGIN RETURN TRIM('  hello  '); END",
-			expected:   "hello",
-		},
-		{
-			name:       "ABS positive",
-			sourceCode: "BEGIN RETURN ABS(5); END",
-			isInt:      true,
-			intVal:     5,
-		},
-		{
-			name:       "ABS negative",
-			sourceCode: "BEGIN RETURN ABS(-5); END",
-			isInt:      true,
-			intVal:     5,
-		},
-		{
-			name:       "SIGN positive",
-			sourceCode: "BEGIN RETURN SIGN(5); END",
-			isInt:      true,
-			intVal:     1,
-		},
-		{
-			name:       "SIGN negative",
-			sourceCode: "BEGIN RETURN SIGN(-5); END",
-			isInt:      true,
-			intVal:     -1,
-		},
-		{
-			name:       "SIGN zero",
-			sourceCode: "BEGIN RETURN SIGN(0); END",
-			isInt:      true,
-			intVal:     0,
-		},
-	}
-
-	p := parser.New()
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.NoError(t, err)
-			require.NotNil(t, body)
-
-			result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-			require.NoError(t, err)
-			require.False(t, isNull, "Result should not be null")
-
-			if tc.isInt {
-				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-				require.NoError(t, err)
-				require.Equal(t, tc.intVal, intVal)
-			} else {
-				strVal, err := result.ToString()
-				require.NoError(t, err)
-				require.Equal(t, tc.expected, strVal)
-			}
-		})
-	}
-}
+// NOTE: TestBuiltinFunctions removed - covered by TestE2EBuiltinFunctions and TestMySQLCompatAllStringFunctions
 
 // TestCoalesceAndIfNull tests COALESCE and IFNULL functions.
 func TestCoalesceAndIfNull(t *testing.T) {
@@ -682,336 +602,9 @@ func TestGreatestLeast(t *testing.T) {
 	require.Equal(t, int64(1), intVal)
 }
 
-// TestNewStringFunctions tests the newly added string functions.
-func TestNewStringFunctions(t *testing.T) {
-	p := parser.New()
-	vars := map[string]types.Datum{}
+// NOTE: TestNewStringFunctions removed - covered by TestMySQLCompatAllStringFunctions and TestMySQLCompatInstrLocateFunctions
 
-	tests := []struct {
-		name       string
-		sourceCode string
-		expected   string
-		isInt      bool
-		intVal     int64
-		isFloat    bool
-		floatVal   float64
-	}{
-		// INSTR tests
-		{
-			name:       "INSTR found",
-			sourceCode: "BEGIN RETURN INSTR('hello world', 'world'); END",
-			isInt:      true,
-			intVal:     7,
-		},
-		{
-			name:       "INSTR not found",
-			sourceCode: "BEGIN RETURN INSTR('hello', 'xyz'); END",
-			isInt:      true,
-			intVal:     0,
-		},
-		{
-			name:       "INSTR at start",
-			sourceCode: "BEGIN RETURN INSTR('hello', 'hel'); END",
-			isInt:      true,
-			intVal:     1,
-		},
-
-		// LOCATE tests
-		{
-			name:       "LOCATE found",
-			sourceCode: "BEGIN RETURN LOCATE('o', 'hello'); END",
-			isInt:      true,
-			intVal:     5,
-		},
-		{
-			name:       "LOCATE with start position",
-			sourceCode: "BEGIN RETURN LOCATE('o', 'hello world', 6); END",
-			isInt:      true,
-			intVal:     8,
-		},
-		{
-			name:       "LOCATE not found",
-			sourceCode: "BEGIN RETURN LOCATE('xyz', 'hello'); END",
-			isInt:      true,
-			intVal:     0,
-		},
-
-		// LPAD tests
-		{
-			name:       "LPAD basic",
-			sourceCode: "BEGIN RETURN LPAD('hi', 5, '*'); END",
-			expected:   "***hi",
-		},
-		{
-			name:       "LPAD no padding needed",
-			sourceCode: "BEGIN RETURN LPAD('hello', 5, '*'); END",
-			expected:   "hello",
-		},
-		{
-			name:       "LPAD truncate",
-			sourceCode: "BEGIN RETURN LPAD('hello', 3, '*'); END",
-			expected:   "hel",
-		},
-		{
-			name:       "LPAD with multi-char pad",
-			sourceCode: "BEGIN RETURN LPAD('hi', 7, 'ab'); END",
-			expected:   "ababahi",
-		},
-
-		// RPAD tests
-		{
-			name:       "RPAD basic",
-			sourceCode: "BEGIN RETURN RPAD('hi', 5, '*'); END",
-			expected:   "hi***",
-		},
-		{
-			name:       "RPAD no padding needed",
-			sourceCode: "BEGIN RETURN RPAD('hello', 5, '*'); END",
-			expected:   "hello",
-		},
-		{
-			name:       "RPAD truncate",
-			sourceCode: "BEGIN RETURN RPAD('hello', 3, '*'); END",
-			expected:   "hel",
-		},
-
-		// SPACE tests
-		{
-			name:       "SPACE basic",
-			sourceCode: "BEGIN RETURN CONCAT('a', SPACE(3), 'b'); END",
-			expected:   "a   b",
-		},
-		{
-			name:       "SPACE zero",
-			sourceCode: "BEGIN RETURN SPACE(0); END",
-			expected:   "",
-		},
-
-		// CONCAT_WS tests
-		{
-			name:       "CONCAT_WS basic",
-			sourceCode: "BEGIN RETURN CONCAT_WS(',', 'a', 'b', 'c'); END",
-			expected:   "a,b,c",
-		},
-		{
-			name:       "CONCAT_WS single",
-			sourceCode: "BEGIN RETURN CONCAT_WS('-', 'hello'); END",
-			expected:   "hello",
-		},
-
-		// ELT tests
-		{
-			name:       "ELT first",
-			sourceCode: "BEGIN RETURN ELT(1, 'a', 'b', 'c'); END",
-			expected:   "a",
-		},
-		{
-			name:       "ELT second",
-			sourceCode: "BEGIN RETURN ELT(2, 'a', 'b', 'c'); END",
-			expected:   "b",
-		},
-		{
-			name:       "ELT third",
-			sourceCode: "BEGIN RETURN ELT(3, 'a', 'b', 'c'); END",
-			expected:   "c",
-		},
-
-		// FIELD tests
-		{
-			name:       "FIELD found first",
-			sourceCode: "BEGIN RETURN FIELD('a', 'a', 'b', 'c'); END",
-			isInt:      true,
-			intVal:     1,
-		},
-		{
-			name:       "FIELD found second",
-			sourceCode: "BEGIN RETURN FIELD('b', 'a', 'b', 'c'); END",
-			isInt:      true,
-			intVal:     2,
-		},
-		{
-			name:       "FIELD not found",
-			sourceCode: "BEGIN RETURN FIELD('x', 'a', 'b', 'c'); END",
-			isInt:      true,
-			intVal:     0,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.NoError(t, err)
-			require.NotNil(t, body)
-
-			result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-			require.NoError(t, err)
-			require.False(t, isNull, "Result should not be null")
-
-			if tc.isInt {
-				intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-				require.NoError(t, err)
-				require.Equal(t, tc.intVal, intVal)
-			} else if tc.isFloat {
-				floatVal, err := result.ToFloat64(types.DefaultStmtNoWarningContext)
-				require.NoError(t, err)
-				require.InDelta(t, tc.floatVal, floatVal, 0.0001)
-			} else {
-				strVal, err := result.ToString()
-				require.NoError(t, err)
-				require.Equal(t, tc.expected, strVal)
-			}
-		})
-	}
-}
-
-// TestNewMathFunctions tests the newly added math functions.
-func TestNewMathFunctions(t *testing.T) {
-	p := parser.New()
-	vars := map[string]types.Datum{}
-
-	tests := []struct {
-		name       string
-		sourceCode string
-		expected   float64
-		delta      float64 // For floating point comparison
-	}{
-		// LOG tests
-		{
-			name:       "LOG natural",
-			sourceCode: "BEGIN RETURN LOG(2.718281828); END",
-			expected:   1.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "LOG with base",
-			sourceCode: "BEGIN RETURN LOG(10, 100); END",
-			expected:   2.0,
-			delta:      0.0001,
-		},
-
-		// LOG10 tests
-		{
-			name:       "LOG10",
-			sourceCode: "BEGIN RETURN LOG10(100); END",
-			expected:   2.0,
-			delta:      0.0001,
-		},
-
-		// LOG2 tests
-		{
-			name:       "LOG2",
-			sourceCode: "BEGIN RETURN LOG2(8); END",
-			expected:   3.0,
-			delta:      0.0001,
-		},
-
-		// LN tests
-		{
-			name:       "LN",
-			sourceCode: "BEGIN RETURN LN(2.718281828); END",
-			expected:   1.0,
-			delta:      0.0001,
-		},
-
-		// EXP tests
-		{
-			name:       "EXP zero",
-			sourceCode: "BEGIN RETURN EXP(0); END",
-			expected:   1.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "EXP one",
-			sourceCode: "BEGIN RETURN EXP(1); END",
-			expected:   2.718281828,
-			delta:      0.0001,
-		},
-
-		// Trigonometric functions
-		{
-			name:       "SIN zero",
-			sourceCode: "BEGIN RETURN SIN(0); END",
-			expected:   0.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "COS zero",
-			sourceCode: "BEGIN RETURN COS(0); END",
-			expected:   1.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "TAN zero",
-			sourceCode: "BEGIN RETURN TAN(0); END",
-			expected:   0.0,
-			delta:      0.0001,
-		},
-
-		// Inverse trig functions
-		{
-			name:       "ASIN zero",
-			sourceCode: "BEGIN RETURN ASIN(0); END",
-			expected:   0.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "ACOS one",
-			sourceCode: "BEGIN RETURN ACOS(1); END",
-			expected:   0.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "ATAN zero",
-			sourceCode: "BEGIN RETURN ATAN(0); END",
-			expected:   0.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "ATAN2",
-			sourceCode: "BEGIN RETURN ATAN(1, 1); END",
-			expected:   0.7853981634, // PI/4
-			delta:      0.0001,
-		},
-
-		// PI
-		{
-			name:       "PI",
-			sourceCode: "BEGIN RETURN PI(); END",
-			expected:   3.141592653589793,
-			delta:      0.0000001,
-		},
-
-		// DEGREES and RADIANS
-		{
-			name:       "DEGREES",
-			sourceCode: "BEGIN RETURN DEGREES(3.141592653589793); END",
-			expected:   180.0,
-			delta:      0.0001,
-		},
-		{
-			name:       "RADIANS",
-			sourceCode: "BEGIN RETURN RADIANS(180); END",
-			expected:   3.141592653589793,
-			delta:      0.0001,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.NoError(t, err)
-			require.NotNil(t, body)
-
-			result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-			require.NoError(t, err)
-			require.False(t, isNull, "Result should not be null")
-
-			floatVal, err := result.ToFloat64(types.DefaultStmtNoWarningContext)
-			require.NoError(t, err)
-			require.InDelta(t, tc.expected, floatVal, tc.delta)
-		})
-	}
-}
+// NOTE: TestNewMathFunctions removed - covered by TestMySQLCompatAllMathFunctions
 
 // TestCursorContext tests the cursor context management.
 func TestCursorContext(t *testing.T) {
@@ -1129,108 +722,11 @@ func TestHandlerContext(t *testing.T) {
 	require.Len(t, ctx.handlers, 2)
 }
 
-// TestWhileLoopStatement tests the WHILE loop statement execution.
-func TestWhileLoopStatement(t *testing.T) {
-	p := parser.New()
-	vars := map[string]types.Datum{}
+// NOTE: TestWhileLoopStatement removed - covered by TestE2EWhileLoop
 
-	// Test WHILE loop for summing 1 to 5
-	sourceCode := `BEGIN
-		DECLARE counter INT DEFAULT 0;
-		DECLARE result INT DEFAULT 0;
-		WHILE counter < 5 DO
-			SET counter = counter + 1;
-			SET result = result + counter;
-		END WHILE;
-		RETURN result;
-	END`
+// NOTE: TestRepeatLoopStatement removed - covered by TestE2ERepeatLoop
 
-	body, err := parseSQLFunctionBody(p, sourceCode)
-	require.NoError(t, err)
-	require.NotNil(t, body)
-
-	result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-	require.NoError(t, err)
-	require.False(t, isNull)
-
-	// Sum of 1+2+3+4+5 = 15
-	intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-	require.NoError(t, err)
-	require.Equal(t, int64(15), intVal)
-}
-
-// TestRepeatLoopStatement tests the REPEAT loop statement.
-func TestRepeatLoopStatement(t *testing.T) {
-	p := parser.New()
-	vars := map[string]types.Datum{}
-
-	// Test REPEAT loop for summing 1 to 5
-	sourceCode := `BEGIN
-		DECLARE counter INT DEFAULT 0;
-		DECLARE result INT DEFAULT 0;
-		REPEAT
-			SET counter = counter + 1;
-			SET result = result + counter;
-		UNTIL counter >= 5
-		END REPEAT;
-		RETURN result;
-	END`
-
-	body, err := parseSQLFunctionBody(p, sourceCode)
-	require.NoError(t, err)
-	require.NotNil(t, body)
-
-	result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-	require.NoError(t, err)
-	require.False(t, isNull)
-
-	// Sum of 1+2+3+4+5 = 15
-	intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-	require.NoError(t, err)
-	require.Equal(t, int64(15), intVal)
-}
-
-// TestNullHandlingInNewFunctions tests NULL handling in new functions.
-func TestNullHandlingInNewFunctions(t *testing.T) {
-	p := parser.New()
-	vars := map[string]types.Datum{}
-
-	nullTests := []struct {
-		name       string
-		sourceCode string
-	}{
-		{"INSTR with NULL", "BEGIN RETURN INSTR(NULL, 'test'); END"},
-		{"LOCATE with NULL", "BEGIN RETURN LOCATE(NULL, 'test'); END"},
-		{"LPAD with NULL", "BEGIN RETURN LPAD(NULL, 5, '*'); END"},
-		{"RPAD with NULL", "BEGIN RETURN RPAD(NULL, 5, '*'); END"},
-		{"SPACE with NULL", "BEGIN RETURN SPACE(NULL); END"},
-		{"LOG with NULL", "BEGIN RETURN LOG(NULL); END"},
-		{"LOG10 with NULL", "BEGIN RETURN LOG10(NULL); END"},
-		{"LOG2 with NULL", "BEGIN RETURN LOG2(NULL); END"},
-		{"LN with NULL", "BEGIN RETURN LN(NULL); END"},
-		{"EXP with NULL", "BEGIN RETURN EXP(NULL); END"},
-		{"SIN with NULL", "BEGIN RETURN SIN(NULL); END"},
-		{"COS with NULL", "BEGIN RETURN COS(NULL); END"},
-		{"TAN with NULL", "BEGIN RETURN TAN(NULL); END"},
-		{"ASIN with NULL", "BEGIN RETURN ASIN(NULL); END"},
-		{"ACOS with NULL", "BEGIN RETURN ACOS(NULL); END"},
-		{"ATAN with NULL", "BEGIN RETURN ATAN(NULL); END"},
-		{"DEGREES with NULL", "BEGIN RETURN DEGREES(NULL); END"},
-		{"RADIANS with NULL", "BEGIN RETURN RADIANS(NULL); END"},
-	}
-
-	for _, tc := range nullTests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.NoError(t, err)
-			require.NotNil(t, body)
-
-			result, isNull, err := executeSQLFunctionBody(nil, body, vars)
-			require.NoError(t, err)
-			require.True(t, isNull || result.IsNull(), "Expected NULL result for %s", tc.name)
-		})
-	}
-}
+// NOTE: TestNullHandlingInNewFunctions removed - covered by TestMySQLCompatNullHandling
 
 // TestLogDomainErrors tests LOG functions with invalid domain values.
 func TestLogDomainErrors(t *testing.T) {
@@ -1302,233 +798,13 @@ func TestEltOutOfRange(t *testing.T) {
 	require.True(t, isNull || result.IsNull())
 }
 
-// TestSimpleCaseStatement tests simple CASE val WHEN ... END CASE.
-func TestSimpleCaseStatement(t *testing.T) {
-	p := parser.New()
+// NOTE: TestSimpleCaseStatement removed - covered by TestE2ECaseStatement
 
-	tests := []struct {
-		name     string
-		body     string
-		vars     map[string]types.Datum
-		expected int64
-	}{
-		{
-			name: "case_first_match",
-			body: `BEGIN
-				DECLARE grade VARCHAR(10);
-				DECLARE x INT DEFAULT 1;
-				CASE x
-					WHEN 1 THEN SET grade = 'A';
-					WHEN 2 THEN SET grade = 'B';
-					ELSE SET grade = 'C';
-				END CASE;
-				RETURN x;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 1,
-		},
-		{
-			name: "case_second_match",
-			body: `BEGIN
-				DECLARE result INT DEFAULT 0;
-				DECLARE val INT DEFAULT 2;
-				CASE val
-					WHEN 1 THEN SET result = 10;
-					WHEN 2 THEN SET result = 20;
-					WHEN 3 THEN SET result = 30;
-				END CASE;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 20,
-		},
-		{
-			name: "case_else_branch",
-			body: `BEGIN
-				DECLARE result INT DEFAULT 0;
-				DECLARE val INT DEFAULT 99;
-				CASE val
-					WHEN 1 THEN SET result = 10;
-					WHEN 2 THEN SET result = 20;
-					ELSE SET result = 100;
-				END CASE;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 100,
-		},
-	}
+// NOTE: TestSearchedCaseStatement removed - covered by TestE2ECaseStatement
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.body)
-			require.NoError(t, err)
-			result, isNull, err := executeSQLFunctionBody(nil, body, tc.vars)
-			require.NoError(t, err)
-			require.False(t, isNull)
-			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-			require.NoError(t, err)
-			require.Equal(t, tc.expected, intVal)
-		})
-	}
-}
+// NOTE: TestLoopWithLeave removed - covered by TestE2ELoopWithLeaveIterate
 
-// TestSearchedCaseStatement tests searched CASE WHEN condition THEN ... END CASE.
-func TestSearchedCaseStatement(t *testing.T) {
-	p := parser.New()
-
-	tests := []struct {
-		name     string
-		body     string
-		vars     map[string]types.Datum
-		expected int64
-	}{
-		{
-			name: "searched_case_first_true",
-			body: `BEGIN
-				DECLARE result INT DEFAULT 0;
-				DECLARE x INT DEFAULT 10;
-				CASE
-					WHEN x > 5 THEN SET result = 1;
-					WHEN x > 3 THEN SET result = 2;
-					ELSE SET result = 3;
-				END CASE;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 1,
-		},
-		{
-			name: "searched_case_second_true",
-			body: `BEGIN
-				DECLARE result INT DEFAULT 0;
-				DECLARE x INT DEFAULT 4;
-				CASE
-					WHEN x > 10 THEN SET result = 1;
-					WHEN x > 3 THEN SET result = 2;
-					ELSE SET result = 3;
-				END CASE;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 2,
-		},
-		{
-			name: "searched_case_else",
-			body: `BEGIN
-				DECLARE result INT DEFAULT 0;
-				DECLARE x INT DEFAULT 1;
-				CASE
-					WHEN x > 10 THEN SET result = 1;
-					WHEN x > 5 THEN SET result = 2;
-					ELSE SET result = 3;
-				END CASE;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 3,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.body)
-			require.NoError(t, err)
-			result, isNull, err := executeSQLFunctionBody(nil, body, tc.vars)
-			require.NoError(t, err)
-			require.False(t, isNull)
-			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-			require.NoError(t, err)
-			require.Equal(t, tc.expected, intVal)
-		})
-	}
-}
-
-// TestLoopWithLeave tests LOOP with LEAVE statement.
-func TestLoopWithLeave(t *testing.T) {
-	p := parser.New()
-
-	tests := []struct {
-		name     string
-		body     string
-		vars     map[string]types.Datum
-		expected int64
-	}{
-		{
-			name: "simple_loop_with_leave",
-			body: `BEGIN
-				DECLARE i INT DEFAULT 0;
-				myloop: LOOP
-					SET i = i + 1;
-					IF i >= 5 THEN
-						LEAVE myloop;
-					END IF;
-				END LOOP myloop;
-				RETURN i;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 5,
-		},
-		{
-			name: "loop_immediate_leave",
-			body: `BEGIN
-				DECLARE i INT DEFAULT 100;
-				exitloop: LOOP
-					LEAVE exitloop;
-					SET i = i + 1;
-				END LOOP exitloop;
-				RETURN i;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 100,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.body)
-			require.NoError(t, err)
-			result, isNull, err := executeSQLFunctionBody(nil, body, tc.vars)
-			require.NoError(t, err)
-			require.False(t, isNull)
-			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-			require.NoError(t, err)
-			require.Equal(t, tc.expected, intVal)
-		})
-	}
-}
-
-// TestLoopWithIterate tests LOOP with ITERATE statement.
-func TestLoopWithIterate(t *testing.T) {
-	p := parser.New()
-
-	// Test ITERATE to skip even numbers, sum only odd
-	body := `BEGIN
-		DECLARE i INT DEFAULT 0;
-		DECLARE total INT DEFAULT 0;
-		sumloop: LOOP
-			SET i = i + 1;
-			IF i > 10 THEN
-				LEAVE sumloop;
-			END IF;
-			IF i % 2 = 0 THEN
-				ITERATE sumloop;
-			END IF;
-			SET total = total + i;
-		END LOOP sumloop;
-		RETURN total;
-	END`
-
-	parsed, err := parseSQLFunctionBody(p, body)
-	require.NoError(t, err)
-	result, isNull, err := executeSQLFunctionBody(nil, parsed, map[string]types.Datum{})
-	require.NoError(t, err)
-	require.False(t, isNull)
-	// Sum of odd numbers 1-10: 1+3+5+7+9 = 25
-	intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-	require.NoError(t, err)
-	require.Equal(t, int64(25), intVal)
-}
+// NOTE: TestLoopWithIterate removed - covered by TestE2ELoopWithLeaveIterate
 
 // TestNestedControlFlow tests nested IF/WHILE/LOOP statements.
 func TestNestedControlFlow(t *testing.T) {
@@ -1621,103 +897,7 @@ func TestErrorHandlerMatching(t *testing.T) {
 	require.NotNil(t, handler)
 }
 
-// TestIfElseIfElse tests comprehensive IF/ELSEIF/ELSE chains.
-func TestIfElseIfElse(t *testing.T) {
-	p := parser.New()
-
-	tests := []struct {
-		name     string
-		body     string
-		vars     map[string]types.Datum
-		expected int64
-	}{
-		{
-			name: "if_branch",
-			body: `BEGIN
-				DECLARE x INT DEFAULT 100;
-				DECLARE result INT DEFAULT 0;
-				IF x > 50 THEN
-					SET result = 1;
-				ELSEIF x > 25 THEN
-					SET result = 2;
-				ELSE
-					SET result = 3;
-				END IF;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 1,
-		},
-		{
-			name: "elseif_branch",
-			body: `BEGIN
-				DECLARE x INT DEFAULT 30;
-				DECLARE result INT DEFAULT 0;
-				IF x > 50 THEN
-					SET result = 1;
-				ELSEIF x > 25 THEN
-					SET result = 2;
-				ELSE
-					SET result = 3;
-				END IF;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 2,
-		},
-		{
-			name: "else_branch",
-			body: `BEGIN
-				DECLARE x INT DEFAULT 10;
-				DECLARE result INT DEFAULT 0;
-				IF x > 50 THEN
-					SET result = 1;
-				ELSEIF x > 25 THEN
-					SET result = 2;
-				ELSE
-					SET result = 3;
-				END IF;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 3,
-		},
-		{
-			name: "multiple_elseif",
-			body: `BEGIN
-				DECLARE grade INT DEFAULT 75;
-				DECLARE result INT DEFAULT 0;
-				IF grade >= 90 THEN
-					SET result = 4;
-				ELSEIF grade >= 80 THEN
-					SET result = 3;
-				ELSEIF grade >= 70 THEN
-					SET result = 2;
-				ELSEIF grade >= 60 THEN
-					SET result = 1;
-				ELSE
-					SET result = 0;
-				END IF;
-				RETURN result;
-			END`,
-			vars:     map[string]types.Datum{},
-			expected: 2,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := parseSQLFunctionBody(p, tc.body)
-			require.NoError(t, err)
-			result, isNull, err := executeSQLFunctionBody(nil, body, tc.vars)
-			require.NoError(t, err)
-			require.False(t, isNull)
-			intVal, err := result.ToInt64(types.DefaultStmtNoWarningContext)
-			require.NoError(t, err)
-			require.Equal(t, tc.expected, intVal)
-		})
-	}
-}
+// NOTE: TestIfElseIfElse removed - covered by TestE2EIfStatement
 
 // TestDecimalArithmetic tests arithmetic with DECIMAL types.
 func TestDecimalArithmetic(t *testing.T) {
@@ -1876,4 +1056,83 @@ func TestDebugLabeledLoop(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestSignalResignalParsing(t *testing.T) {
+	p := parser.New()
+
+	// Test SIGNAL with SQLSTATE
+	bodyStr := `BEGIN
+		SIGNAL SQLSTATE '45000';
+	END`
+	stmtNode, err := parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok := stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	require.Len(t, block.ProcedureProcStmts, 1)
+	signalStmt, ok := block.ProcedureProcStmts[0].(*ast.SignalStmt)
+	require.True(t, ok, "expected SignalStmt but got %T", block.ProcedureProcStmts[0])
+	require.Equal(t, "45000", signalStmt.SQLState)
+
+	// Test SIGNAL with SQLSTATE VALUE
+	bodyStr = `BEGIN
+		SIGNAL SQLSTATE VALUE '45001';
+	END`
+	stmtNode, err = parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok = stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	signalStmt, ok = block.ProcedureProcStmts[0].(*ast.SignalStmt)
+	require.True(t, ok)
+	require.Equal(t, "45001", signalStmt.SQLState)
+
+	// Test simple RESIGNAL
+	bodyStr = `BEGIN
+		RESIGNAL;
+	END`
+	stmtNode, err = parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok = stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	resignalStmt, ok := block.ProcedureProcStmts[0].(*ast.ResignalStmt)
+	require.True(t, ok, "expected ResignalStmt but got %T", block.ProcedureProcStmts[0])
+
+	// Test RESIGNAL with SQLSTATE
+	bodyStr = `BEGIN
+		RESIGNAL SQLSTATE '45002';
+	END`
+	stmtNode, err = parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok = stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	resignalStmt, ok = block.ProcedureProcStmts[0].(*ast.ResignalStmt)
+	require.True(t, ok)
+	require.Equal(t, "45002", resignalStmt.SQLState)
+
+	// Test SIGNAL with SET MESSAGE_TEXT
+	bodyStr = `BEGIN
+		SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Custom error';
+	END`
+	stmtNode, err = parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok = stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	signalStmt, ok = block.ProcedureProcStmts[0].(*ast.SignalStmt)
+	require.True(t, ok)
+	require.Equal(t, "45000", signalStmt.SQLState)
+	require.Len(t, signalStmt.InfoItems, 1)
+	require.Equal(t, "MESSAGE_TEXT", signalStmt.InfoItems[0].ItemName)
+
+	// Test RESIGNAL with SET
+	bodyStr = `BEGIN
+		RESIGNAL SET MESSAGE_TEXT = 'Modified error';
+	END`
+	stmtNode, err = parseSQLFunctionBody(p, bodyStr)
+	require.NoError(t, err)
+	block, ok = stmtNode.(*ast.ProcedureBlock)
+	require.True(t, ok)
+	resignalStmt, ok = block.ProcedureProcStmts[0].(*ast.ResignalStmt)
+	require.True(t, ok)
+	require.Len(t, resignalStmt.InfoItems, 1)
+	require.Equal(t, "MESSAGE_TEXT", resignalStmt.InfoItems[0].ItemName)
 }

@@ -6074,14 +6074,6 @@ func (n *FunctionParam) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// AcceptInPlace implements Node AcceptInPlace interface.
-func (n *FunctionParam) AcceptInPlace(v InPlaceVisitor) bool {
-	if v.Enter(n) {
-		return v.Leave(n)
-	}
-	return v.Leave(n)
-}
-
 // CreateFunctionStmt represents a CREATE FUNCTION statement for user-defined functions.
 // Supports MySQL native SQL functions with BEGIN...END blocks.
 type CreateFunctionStmt struct {
@@ -6199,23 +6191,6 @@ func (n *CreateFunctionStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// AcceptInPlace implements Node AcceptInPlace interface.
-func (n *CreateFunctionStmt) AcceptInPlace(v InPlaceVisitor) bool {
-	if v.Enter(n) {
-		return v.Leave(n)
-	}
-	if n.FuncName != nil {
-		n.FuncName.AcceptInPlace(v)
-	}
-	for _, param := range n.Parameters {
-		param.AcceptInPlace(v)
-	}
-	if n.SQLBody != nil {
-		n.SQLBody.AcceptInPlace(v)
-	}
-	return v.Leave(n)
-}
-
 // DropFunctionStmt represents a DROP FUNCTION statement.
 type DropFunctionStmt struct {
 	ddlNode
@@ -6249,17 +6224,6 @@ func (n *DropFunctionStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.FuncName = node.(*TableName)
-	}
-	return v.Leave(n)
-}
-
-// AcceptInPlace implements Node AcceptInPlace interface.
-func (n *DropFunctionStmt) AcceptInPlace(v InPlaceVisitor) bool {
-	if v.Enter(n) {
-		return v.Leave(n)
-	}
-	if n.FuncName != nil {
-		n.FuncName.AcceptInPlace(v)
 	}
 	return v.Leave(n)
 }

@@ -19,6 +19,7 @@ package udf
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -66,6 +67,16 @@ func (d *Definition) GetFunctionID() string {
 // InvalidateFunctionID clears the cached function ID (call when Version changes).
 func (d *Definition) InvalidateFunctionID() {
 	d.cachedFuncID = ""
+}
+
+// IsDefinerSecurity returns true if the function uses DEFINER security.
+func (d *Definition) IsDefinerSecurity() bool {
+	return strings.ToUpper(d.SQLSecurity) == "DEFINER"
+}
+
+// IsInvokerSecurity returns true if the function uses INVOKER security (default).
+func (d *Definition) IsInvokerSecurity() bool {
+	return d.SQLSecurity == "" || strings.ToUpper(d.SQLSecurity) == "INVOKER"
 }
 
 // TypeID constants for UDF parameter and return types.
@@ -165,4 +176,100 @@ func ParseTypeSpec(typeSpec string) int32 {
 	default:
 		return TypeIDString
 	}
+}
+
+// ParamMode represents the mode of a stored procedure parameter.
+type ParamMode int
+
+const (
+	// ParamModeIn indicates an IN parameter (input only).
+	ParamModeIn ParamMode = iota
+	// ParamModeOut indicates an OUT parameter (output only).
+	ParamModeOut
+	// ParamModeInOut indicates an INOUT parameter (both input and output).
+	ParamModeInOut
+)
+
+// ProcedureParam represents a stored procedure parameter.
+type ProcedureParam struct {
+	Name string
+	Type byte // MySQL type ID
+	Mode ParamMode
+}
+
+// ProcedureDefinition represents a stored procedure definition.
+type ProcedureDefinition struct {
+	ID         int64
+	Name       string
+	SchemaName string
+	Params     []ProcedureParam
+	SourceCode string // BEGIN...END block
+
+	// Characteristics
+	IsDeterministic bool
+	Comment         string
+	DataAccess      string // "CONTAINS SQL", "NO SQL", "READS SQL DATA", "MODIFIES SQL DATA"
+	SQLSecurity     string // "DEFINER" or "INVOKER"
+
+	// Metadata
+	Definer string
+	Version uint64
+
+	// Cached procedure ID
+	cachedProcID string
+}
+
+// GetProcedureID returns a cached procedure ID.
+func (d *ProcedureDefinition) GetProcedureID() string {
+	if d.cachedProcID == "" {
+		d.cachedProcID = "proc_" + strconv.FormatInt(d.ID, 10) + "_" + strconv.FormatUint(d.Version, 10)
+	}
+	return d.cachedProcID
+}
+
+// InvalidateProcedureID clears the cached procedure ID.
+func (d *ProcedureDefinition) InvalidateProcedureID() {
+	d.cachedProcID = ""
+}
+
+// HasOutParams returns true if the procedure has any OUT or INOUT parameters.
+func (d *ProcedureDefinition) HasOutParams() bool {
+	for _, p := range d.Params {
+		if p.Mode == ParamModeOut || p.Mode == ParamModeInOut {
+			return true
+		}
+	}
+	return false
+}
+
+// GetInParams returns the IN and INOUT parameters (parameters that receive input).
+func (d *ProcedureDefinition) GetInParams() []ProcedureParam {
+	result := make([]ProcedureParam, 0)
+	for _, p := range d.Params {
+		if p.Mode == ParamModeIn || p.Mode == ParamModeInOut {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// GetOutParams returns the OUT and INOUT parameters (parameters that produce output).
+func (d *ProcedureDefinition) GetOutParams() []ProcedureParam {
+	result := make([]ProcedureParam, 0)
+	for _, p := range d.Params {
+		if p.Mode == ParamModeOut || p.Mode == ParamModeInOut {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// IsDefinerSecurity returns true if the procedure uses DEFINER security.
+func (d *ProcedureDefinition) IsDefinerSecurity() bool {
+	return strings.ToUpper(d.SQLSecurity) == "DEFINER"
+}
+
+// IsInvokerSecurity returns true if the procedure uses INVOKER security (default).
+func (d *ProcedureDefinition) IsInvokerSecurity() bool {
+	return d.SQLSecurity == "" || strings.ToUpper(d.SQLSecurity) == "INVOKER"
 }

@@ -74,7 +74,7 @@ Unlike coprocessor pushdown for built-in functions, SQL UDFs execute entirely wi
 
 2. **Variable State Management**: UDFs maintain local variable state across multiple statements, requiring a stateful interpreter.
 
-3. **DML Operations**: UDFs may contain INSERT/UPDATE/DELETE which must go through TiDB's transaction layer.
+3. **DML Operations**: UDFs may contain INSERT/UPDATE/DELETE which execute through TiDB's transaction layer using the current session context (`ExecOptionUseCurSession`) to ensure proper transaction commit.
 
 4. **Consistency Model**: Executing in TiDB ensures proper transaction isolation and MVCC semantics.
 
@@ -526,9 +526,9 @@ DECLARE var1, var2, var3 type DEFAULT value;
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `SELECT ... INTO var` | Not implemented | Parser doesn't support INTO variable list in procedure context |
+| `SELECT ... INTO var` | **Implemented** | Supports both MySQL (`SELECT x INTO var FROM t`) and TiDB (`SELECT x FROM t INTO var`) syntax |
 | `DEFINER = user` clause | Parser conflict | Removed due to shift/reduce conflict |
-| `SIGNAL` / `RESIGNAL` | Not implemented | Error signaling statements |
+| `SIGNAL` / `RESIGNAL` | **Implemented** | Full support including SET clause |
 | `GET DIAGNOSTICS` | Not implemented | Diagnostic information retrieval |
 | `DECLARE CONDITION` | Not implemented | Named condition declarations |
 
@@ -536,8 +536,9 @@ DECLARE var1, var2, var3 type DEFAULT value;
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **Cursors** | Partial | Declared but execution not fully implemented |
-| **Handlers** | Partial | DECLARE HANDLER parsed but limited execution |
+| **Cursors** | **Implemented** | DECLARE, OPEN, FETCH INTO, CLOSE fully working |
+| **Handlers** | **Implemented** | DECLARE HANDLER with CONTINUE/EXIT for NOT FOUND, SQLEXCEPTION |
+| **DML in UDFs** | **Implemented** | INSERT/UPDATE/DELETE persist correctly via current session |
 | **Recursive calls** | Blocked | Returns error if detected |
 | **Result sets** | Not supported | Functions must return scalar |
 | **Temporary tables** | Not tested | May work but not validated |
@@ -692,155 +693,44 @@ SELECT is_prime(17);  -- Returns 1 (true)
 SELECT is_prime(15);  -- Returns 0 (false)
 ```
 
+### Counter with DML Operations
+
+```sql
+-- Create supporting tables
+CREATE TABLE counters (name VARCHAR(50) PRIMARY KEY, value INT DEFAULT 0);
+CREATE TABLE audit_log (id INT AUTO_INCREMENT PRIMARY KEY, action VARCHAR(100), old_val INT, new_val INT);
+INSERT INTO counters VALUES ('hits', 0);
+
+-- Function that modifies data
+CREATE FUNCTION increment_counter(counter_name VARCHAR(50), amount INT)
+RETURNS INT
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    DECLARE current_val INT DEFAULT 0;
+    DECLARE new_val INT;
+
+    SELECT value INTO current_val FROM counters WHERE name = counter_name;
+    SET new_val = current_val + amount;
+
+    UPDATE counters SET value = new_val WHERE name = counter_name;
+    INSERT INTO audit_log (action, old_val, new_val)
+        VALUES (CONCAT('INCREMENT:', counter_name), current_val, new_val);
+
+    RETURN new_val;
+END;
+
+SELECT increment_counter('hits', 5);   -- Returns 5, updates table
+SELECT increment_counter('hits', 10);  -- Returns 15, updates table
+SELECT * FROM counters;                -- Shows hits = 15
+SELECT * FROM audit_log;               -- Shows both increments
+```
+
 ---
 
 ## Future Work
 
-### 1. SELECT ... INTO Variable
-
-**Current Status**: Parser does not support `SELECT ... INTO var_list` within procedure blocks.
-
-**What's Required**:
-```
-Parser Changes (parser.y):
-├── Add SelectIntoStmt production for procedure context
-├── Extend SelectStmtIntoOption to support variable list (not just OUTFILE)
-└── Add SelectIntoVariable AST node
-
-Execution Changes (udf_scalar.go):
-├── Add executeSelectInto() handler
-├── Execute SELECT through internal SQL executor
-├── Extract single row result
-└── Assign columns to corresponding variables
-```
-
-**Implementation Complexity**: Medium
-- Parser grammar needs extension for `INTO var1, var2, ...` clause
-- Must validate that SELECT returns exactly one row
-- Must validate variable count matches column count
-
-**Example Target**:
-```sql
-CREATE FUNCTION get_user_name(user_id INT)
-RETURNS VARCHAR(100)
-BEGIN
-    DECLARE name VARCHAR(100);
-    SELECT username INTO name FROM users WHERE id = user_id;
-    RETURN name;
-END;
-```
-
----
-
-### 2. Full Cursor Support
-
-**Current Status**: Cursor AST nodes exist but execution is incomplete.
-
-**What's Required**:
-```
-AST (already exists):
-├── ProcedureCursor      -- DECLARE cursor FOR SELECT
-├── ProcedureOpenCur     -- OPEN cursor
-├── ProcedureFetchInto   -- FETCH cursor INTO vars
-└── ProcedureCloseCur    -- CLOSE cursor
-
-Execution (needs implementation):
-├── CursorState struct
-│   ├── definition (SELECT statement)
-│   ├── resultSet (buffered rows or streaming)
-│   ├── position (current row index)
-│   └── isOpen (open/closed state)
-│
-├── executeProcedureOpenCur()
-│   ├── Execute the SELECT statement
-│   ├── Buffer results or create iterator
-│   └── Store in cursor context map
-│
-├── executeProcedureFetchInto()
-│   ├── Retrieve next row from cursor
-│   ├── Check for NOT FOUND condition
-│   ├── Assign columns to variables
-│   └── Advance cursor position
-│
-└── executeProcedureCloseCur()
-    ├── Release cursor resources
-    └── Mark cursor as closed
-```
-
-**Implementation Complexity**: High
-- Requires integration with TiDB's result set handling
-- Must handle large result sets efficiently (memory vs streaming)
-- Need to implement NOT FOUND condition handler integration
-- Cursor scope management across nested blocks
-
-**Distributed Considerations**:
-- Cursors cannot be pushed to TiKV (must buffer in TiDB)
-- Large result sets may cause memory pressure
-- Consider implementing server-side cursors with pagination
-
-**Example Target**:
-```sql
-CREATE FUNCTION sum_values()
-RETURNS INT
-BEGIN
-    DECLARE done INT DEFAULT 0;
-    DECLARE val INT;
-    DECLARE total INT DEFAULT 0;
-    DECLARE cur CURSOR FOR SELECT value FROM data_table;
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-
-    OPEN cur;
-    read_loop: LOOP
-        FETCH cur INTO val;
-        IF done THEN
-            LEAVE read_loop;
-        END IF;
-        SET total = total + val;
-    END LOOP;
-    CLOSE cur;
-
-    RETURN total;
-END;
-```
-
----
-
-### 3. SIGNAL / RESIGNAL Statements
-
-**Current Status**: Not implemented.
-
-**What's Required**:
-```
-Parser Changes:
-├── Add SIGNAL statement grammar
-│   └── SIGNAL condition_value [SET signal_information_item, ...]
-├── Add RESIGNAL statement grammar
-│   └── RESIGNAL [condition_value] [SET signal_information_item, ...]
-└── Add condition_value and signal_information_item productions
-
-AST:
-├── SignalStmt
-│   ├── ConditionValue (SQLSTATE 'value' | condition_name)
-│   └── SignalInfo map[string]ExprNode (MESSAGE_TEXT, MYSQL_ERRNO, etc.)
-└── ResignalStmt (similar structure)
-
-Execution:
-├── executeSignalStmt()
-│   ├── Build MySQL error from signal info
-│   └── Return error (triggers handler if present)
-└── executeResignalStmt()
-    ├── Modify current diagnostic area
-    └── Re-raise error with modifications
-```
-
-**Implementation Complexity**: Medium
-- Need to map SQLSTATE codes to TiDB error types
-- Must integrate with DECLARE HANDLER execution
-- RESIGNAL requires diagnostic area tracking
-
----
-
-### 4. Data Type Restrictions
+### 1. Data Type Restrictions
 
 **Current Status**: Basic types work; complex types untested or unsupported.
 
@@ -1041,16 +931,17 @@ Diagnostic area:
 
 ### Implementation Priority Recommendation
 
-| Feature | Priority | Effort | Impact |
-|---------|----------|--------|--------|
-| SELECT...INTO | High | Medium | Enables data access in UDFs |
-| Cursor support | Medium | High | Enables row-by-row processing |
-| SIGNAL/RESIGNAL | Medium | Medium | Better error handling |
-| SQL SECURITY | Low | Medium | Security compliance |
-| ENUM/SET types | Low | Low | Edge case support |
-| Stored Procedures | Future | Very High | Major feature expansion |
-| Observability | High | Low | Operations support |
-| Performance opts | Medium | Varies | Scalability |
+| Feature | Priority | Effort | Impact | Status |
+|---------|----------|--------|--------|--------|
+| SELECT...INTO | High | Medium | Enables data access in UDFs | **DONE** |
+| Cursor support | Medium | High | Enables row-by-row processing | **DONE** |
+| SIGNAL/RESIGNAL | Medium | Medium | Better error handling | **DONE** |
+| DML in UDFs | High | Medium | Enables data modification | **DONE** |
+| Observability | High | Low | Operations support | **DONE** |
+| SQL SECURITY DEFINER | Low | Medium | Security compliance | Pending |
+| ENUM/SET types | Low | Low | Edge case support | Pending |
+| Stored Procedures | Future | Very High | Major feature expansion | **DONE** |
+| Performance opts | Medium | Varies | Scalability | Pending |
 
 ---
 

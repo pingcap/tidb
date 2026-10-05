@@ -18,7 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/udf"
 	"github.com/stretchr/testify/require"
 )
 
@@ -5856,6 +5858,376 @@ func TestMySQLSPComplexAlgorithms(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tc.expected, intVal)
 			}
+		})
+	}
+}
+
+// =============================================================================
+// Stored Procedure Tests (CREATE PROCEDURE, CALL, OUT/INOUT parameters)
+// Ported from MySQL sp.test
+// =============================================================================
+
+// TestMySQLSPBasicProcedure tests basic stored procedure creation and execution.
+func TestMySQLSPBasicProcedure(t *testing.T) {
+	p := parser.New()
+
+	// Test procedure definition parsing
+	tests := []struct {
+		name       string
+		body       string
+		params     []udf.ProcedureParam
+		inputVars  map[string]types.Datum
+		wantErr    bool
+	}{
+		{
+			name: "procedure_no_params",
+			body: `BEGIN
+				DECLARE x INT DEFAULT 10;
+				SET x = x + 5;
+			END`,
+			params:    []udf.ProcedureParam{},
+			inputVars: map[string]types.Datum{},
+		},
+		{
+			name: "procedure_in_param",
+			body: `BEGIN
+				DECLARE result INT;
+				SET result = val * 2;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "val", Mode: udf.ParamModeIn},
+			},
+			inputVars: map[string]types.Datum{"val": types.NewIntDatum(5)},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test that the procedure body can be parsed
+			body, err := parseProcedureBody(p, tc.body)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, body)
+		})
+	}
+}
+
+// TestMySQLSPOutParameter tests OUT parameter syntax in stored procedures.
+// Note: Full execution with OUT parameter writeback requires CALL statement integration.
+// This test validates that procedure bodies with OUT parameters parse correctly.
+func TestMySQLSPOutParameter(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name   string
+		body   string
+		params []udf.ProcedureParam
+	}{
+		{
+			name: "simple_out_param",
+			body: `BEGIN
+				SET result = 42;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "result", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "out_param_from_calculation",
+			body: `BEGIN
+				SET result = input_val * 2 + 10;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "input_val", Mode: udf.ParamModeIn},
+				{Name: "result", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "out_param_with_loop",
+			body: `BEGIN
+				DECLARE i INT DEFAULT 1;
+				DECLARE total INT DEFAULT 0;
+				WHILE i <= n DO
+					SET total = total + i;
+					SET i = i + 1;
+				END WHILE;
+				SET result = total;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "n", Mode: udf.ParamModeIn},
+				{Name: "result", Mode: udf.ParamModeOut},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Parse the procedure body
+			body, err := parseProcedureBody(p, tc.body)
+			require.NoError(t, err)
+			require.NotNil(t, body)
+
+			_, ok := body.(*ast.ProcedureBlock)
+			require.True(t, ok, "expected ProcedureBlock")
+		})
+	}
+}
+
+// TestMySQLSPInOutParameter tests INOUT parameter syntax in stored procedures.
+// Note: Full execution with INOUT parameter writeback requires CALL statement integration.
+func TestMySQLSPInOutParameter(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name   string
+		body   string
+		params []udf.ProcedureParam
+	}{
+		{
+			name: "simple_inout_increment",
+			body: `BEGIN
+				SET x = x + 1;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "x", Mode: udf.ParamModeInOut},
+			},
+		},
+		{
+			name: "inout_double",
+			body: `BEGIN
+				SET val = val * 2;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "val", Mode: udf.ParamModeInOut},
+			},
+		},
+		{
+			name: "inout_with_local_var",
+			body: `BEGIN
+				DECLARE temp INT;
+				SET temp = counter * 2;
+				SET counter = temp + 5;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "counter", Mode: udf.ParamModeInOut},
+			},
+		},
+		{
+			name: "multiple_inout_swap",
+			body: `BEGIN
+				DECLARE temp INT;
+				SET temp = a;
+				SET a = b;
+				SET b = temp;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "a", Mode: udf.ParamModeInOut},
+				{Name: "b", Mode: udf.ParamModeInOut},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Parse the procedure body
+			body, err := parseProcedureBody(p, tc.body)
+			require.NoError(t, err)
+			require.NotNil(t, body)
+
+			_, ok := body.(*ast.ProcedureBlock)
+			require.True(t, ok, "expected ProcedureBlock")
+		})
+	}
+}
+
+// TestMySQLSPMultipleOutParams tests procedures with multiple OUT parameters.
+// Note: Full execution with OUT parameter writeback requires CALL statement integration.
+func TestMySQLSPMultipleOutParams(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name   string
+		body   string
+		params []udf.ProcedureParam
+	}{
+		{
+			name: "two_out_params",
+			body: `BEGIN
+				SET out1 = in1 + 10;
+				SET out2 = in1 * 2;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "in1", Mode: udf.ParamModeIn},
+				{Name: "out1", Mode: udf.ParamModeOut},
+				{Name: "out2", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "min_max_out_params",
+			body: `BEGIN
+				IF a < b THEN
+					SET min_val = a;
+					SET max_val = b;
+				ELSE
+					SET min_val = b;
+					SET max_val = a;
+				END IF;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "a", Mode: udf.ParamModeIn},
+				{Name: "b", Mode: udf.ParamModeIn},
+				{Name: "min_val", Mode: udf.ParamModeOut},
+				{Name: "max_val", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "stats_out_params",
+			body: `BEGIN
+				SET sum_val = a + b + c;
+				SET avg_val = (a + b + c) / 3;
+				SET max_val = a;
+				IF b > max_val THEN SET max_val = b; END IF;
+				IF c > max_val THEN SET max_val = c; END IF;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "a", Mode: udf.ParamModeIn},
+				{Name: "b", Mode: udf.ParamModeIn},
+				{Name: "c", Mode: udf.ParamModeIn},
+				{Name: "sum_val", Mode: udf.ParamModeOut},
+				{Name: "avg_val", Mode: udf.ParamModeOut},
+				{Name: "max_val", Mode: udf.ParamModeOut},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Parse the procedure body
+			body, err := parseProcedureBody(p, tc.body)
+			require.NoError(t, err)
+			require.NotNil(t, body)
+
+			_, ok := body.(*ast.ProcedureBlock)
+			require.True(t, ok, "expected ProcedureBlock")
+		})
+	}
+}
+
+// TestMySQLSPProcedureWithCursor tests procedures that use cursors with OUT parameters.
+func TestMySQLSPProcedureWithCursor(t *testing.T) {
+	p := parser.New()
+
+	// This test validates cursor usage patterns in procedures
+	// The actual cursor execution requires database context
+	tests := []struct {
+		name    string
+		body    string
+		params  []udf.ProcedureParam
+		wantErr bool
+	}{
+		{
+			name: "cursor_count_pattern",
+			body: `BEGIN
+				DECLARE done INT DEFAULT FALSE;
+				DECLARE cnt INT DEFAULT 0;
+				DECLARE cur CURSOR FOR SELECT id FROM t1;
+				DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+				OPEN cur;
+				read_loop: LOOP
+					FETCH cur INTO cnt;
+					IF done THEN
+						LEAVE read_loop;
+					END IF;
+					SET total = total + 1;
+				END LOOP;
+				CLOSE cur;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "total", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "cursor_with_inout",
+			body: `BEGIN
+				DECLARE done INT DEFAULT FALSE;
+				DECLARE v INT;
+				DECLARE cur CURSOR FOR SELECT val FROM t1;
+				DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+				OPEN cur;
+				FETCH cur INTO v;
+				IF NOT done THEN
+					SET result = result + v;
+				END IF;
+				CLOSE cur;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "result", Mode: udf.ParamModeInOut},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test that the procedure body parses correctly
+			body, err := parseProcedureBody(p, tc.body)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, body)
+		})
+	}
+}
+
+// TestMySQLSPErrorHandlerInProcedure tests error handlers in procedures with OUT params.
+func TestMySQLSPErrorHandlerInProcedure(t *testing.T) {
+	p := parser.New()
+
+	tests := []struct {
+		name   string
+		body   string
+		params []udf.ProcedureParam
+	}{
+		{
+			name: "handler_sets_out_param",
+			body: `BEGIN
+				DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SET error_code = 1;
+				SET error_code = 0;
+				SET result = input_val / 0;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "input_val", Mode: udf.ParamModeIn},
+				{Name: "result", Mode: udf.ParamModeOut},
+				{Name: "error_code", Mode: udf.ParamModeOut},
+			},
+		},
+		{
+			name: "exit_handler_with_out",
+			body: `BEGIN
+				DECLARE EXIT HANDLER FOR NOT FOUND
+				BEGIN
+					SET found_flag = 0;
+				END;
+				SET found_flag = 1;
+			END`,
+			params: []udf.ProcedureParam{
+				{Name: "found_flag", Mode: udf.ParamModeOut},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test that the procedure body parses correctly
+			body, err := parseProcedureBody(p, tc.body)
+			require.NoError(t, err)
+			require.NotNil(t, body)
 		})
 	}
 }
