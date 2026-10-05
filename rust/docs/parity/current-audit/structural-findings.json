@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "dead-leaf-cleanup-validation.json",
-    "scope": "Previous batch removed nine unused models and their dedicated tests after tracing all exports; no tests removed by the current behavior repair."
+    "receipt": "leaf-owner-cleanup-validation.json",
+    "scope": "Eleven disconnected tidb-exec modules, seven private harnesses, 48 tests/checks and stale coverage claims removed; all finding statuses and counts unchanged."
   },
   "test_cleanup_history": [
     {

@@ -1,5 +1,10 @@
 # Global configuration synchronization repair
 
+Historical configured TopN results below refer to the dated baseline. The now-unused
+model and its private harness were retired by [unused-owner cleanup](leaf-owner-cleanup-validation.json);
+these commands are not current verification instructions. Live executor tests remain.
+
+
 This repair follows TiDB master
 `93a01d31f6da205ae4bf376825293903a6899fdb` and starts from integration
 `021de80c8cb40e8c63bbd17f273f13fefcf28354`, fast-forwarded before publication to

@@ -1,5 +1,8 @@
 # Remaining structural mismatches, maintained 2026-10-05
 
+Latest cleanup: [disconnected owners and private harnesses](leaf-owner-cleanup-validation.json). All finding dispositions remain unchanged.
+
+
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.
 
 The [JSON register](structural-findings.json) owns current dispositions. The [batch map](remaining-batches.md) assigns every unresolved ID once. Historical receipts retain their original source pins, results and unverified obligations. Finding repair is not complete Go package acceptance.

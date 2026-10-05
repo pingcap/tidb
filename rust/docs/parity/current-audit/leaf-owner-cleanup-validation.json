@@ -1,0 +1,323 @@
+{
+  "base": "3f0ac881fe9f8474eba30e365a99760adc16359d",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "a0a6ec32deb8dfb565494b9b803598cd0e7bcef2",
+  "scope": "Delete disconnected tidb-exec owners and the private tests that exclusively consume them. Preserve live code and original Go obligations.",
+  "modules": [
+    "backfill_metrics",
+    "broadcast_query_error",
+    "config_int_json",
+    "configured_topn",
+    "infoschema_context",
+    "metrics_reader",
+    "readable_size",
+    "real_tikv_stats_dump",
+    "slow_log_split",
+    "stats_load_result",
+    "traffic_form"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/backfill_metrics.rs",
+      "lines": 390,
+      "sha256": "5710794b08af27673d86a8178af54add8c631397857a4ceec6e9594220ce13ce",
+      "tests": [
+        "partition_reorg_rate_uses_logical_table_id",
+        "metric_table_id_selection_audit",
+        "nil_reorg_info_is_handled",
+        "nil_job_panics_like_gos_nil_pointer_dereference",
+        "backfill_progress_label_cases"
+      ],
+      "go_anchors": [
+        "pkg/ddl/backfill_metrics.go",
+        "pkg/ddl/backfill_metrics_test.go",
+        "pkg/ddl/reorg.go",
+        "pkg/metrics/ddl.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/broadcast_query_error.rs",
+      "lines": 31,
+      "sha256": "7f3b95c29fbc7f70afb5ea53833519c0f8abf6950f8048dca3d8b45c1bc49102",
+      "tests": [],
+      "go_anchors": [
+        "pkg/executor/analyze.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/broadcast_query_error_source.rs",
+      "lines": 44,
+      "sha256": "a8c5f12fa75680f4671eca533a8d19e050570ae33fb0054653fcb2acada483ed",
+      "tests": [
+        "broadcast_query_error_requires_both_source_fragments"
+      ],
+      "go_anchors": [
+        "pkg/executor/analyze.go",
+        "pkg/executor/analyze_utils_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/config_int_json.rs",
+      "lines": 39,
+      "sha256": "cd37bd99acc7c8add6b96385ca6a09dc305e0e6751dbb6c6d2306a3fad65bb3f",
+      "tests": [],
+      "go_anchors": [
+        "pkg/executor/set_config.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/config_int_json_source.rs",
+      "lines": 36,
+      "sha256": "fee28071599750288dd791ebe6b6d88ffb3205e63f545ea094e6e2f2ae40ddf9",
+      "tests": [
+        "integer_config_json_matches_source_boolean_and_numeric_branches",
+        "integer_config_json_preserves_nonzero_and_signed_decimal_behavior"
+      ],
+      "go_anchors": [
+        "pkg/executor/set_config.go",
+        "pkg/executor/set_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/configured_topn.rs",
+      "lines": 355,
+      "sha256": "c7e82c0a7884fca01ef32697dbece31a641341786f818b54a432cdde969a66be",
+      "tests": [],
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/configured_topn_source.rs",
+      "lines": 203,
+      "sha256": "578560f785c3356d0bf2ee67a3811b1ef59ad6f7a18e7a3baaa75bfeca88e5d3",
+      "tests": [
+        "configured_topn_uses_bounded_max_heap_multi_key_order_and_stable_ties",
+        "configured_topn_rejects_capacity_and_bad_rows_before_heap_admission",
+        "configured_topn_limit_zero_bypasses_capacity_ordering_and_source_consumption",
+        "configured_limit_stream_skips_lazily_and_closes_at_the_exact_window_end",
+        "configured_limit_zero_never_requests_an_upstream_row"
+      ],
+      "go_anchors": [
+        "pkg/executor/chunk_size_control_test.go",
+        "pkg/executor/executor_required_rows_test.go",
+        "pkg/executor/sortexec/topn.go",
+        "pkg/executor/sortexec/topn_spill_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/infoschema_context.rs",
+      "lines": 318,
+      "sha256": "b1913655fc26fe6a898b63efce26c886bc49fcee6b4e5f430592a1b50e343cd8",
+      "tests": [
+        "a_plain_table_matches_no_filter",
+        "ttl_requires_a_public_table",
+        "single_field_filters_are_independent",
+        "a_table_policy_satisfies_both_placement_filters",
+        "a_disabled_partition_hides_its_policies_from_only_one_filter",
+        "a_policyless_partition_is_a_partition_but_not_a_placement",
+        "db_info_as_info_schema_looks_schemas_up_by_name"
+      ],
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/metrics_reader.rs",
+      "lines": 1491,
+      "sha256": "6204c1d1e34c9e789beda3fe400bed14bbd2ccfbf3b10568d31feb2af2087ecf",
+      "tests": [
+        "gen_prom_ql_substitutes_all_three_keys",
+        "gen_label_condition_follows_definition_order_and_skips_empty",
+        "label_condition_values_are_sorted_and_pipe_joined",
+        "query_range_carries_extractor_window_and_step",
+        "retrieve_queries_once_per_quantile",
+        "retrieve_falls_back_to_the_definition_quantile",
+        "retrieve_answers_at_most_once",
+        "retrieve_rejects_an_unknown_metric_table",
+        "retrieve_renders_both_query_error_shapes",
+        "gen_record_column_order_label_fallback_and_nan",
+        "gen_record_without_quantile_column",
+        "gen_rows_ignores_non_matrix_values",
+        "summary_sql_shapes",
+        "summary_by_label_sql_shapes",
+        "summary_retrievers_require_process_priv",
+        "summary_retrieve_row_shape",
+        "summary_by_label_retrieve_lifts_instance_and_prefixes_stores",
+        "summary_retrieve_wraps_executor_errors",
+        "inspection_filter_empty_set_passes_all",
+        "summary_retrieve_is_one_shot_and_skippable"
+      ],
+      "go_anchors": [
+        "pkg/executor/inspection_result.go",
+        "pkg/executor/metrics_reader.go",
+        "pkg/infoschema/metrics_schema.go",
+        "pkg/meta/metadef/db.go",
+        "pkg/planner/util/misc.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/readable_size.rs",
+      "lines": 57,
+      "sha256": "81caedf4a8c5b401c6c9ddc0b17cf35faaf3384c3ce69c013494cd16640832ac",
+      "tests": [],
+      "go_anchors": [
+        "pkg/executor/inspection_result.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/readable_size_source.rs",
+      "lines": 45,
+      "sha256": "647b32bd3591fae813cd4e25815390432dc89209fe7a354c193cad75f929ce38",
+      "tests": [
+        "readable_size_preserves_source_suffixes_and_parse_boundaries",
+        "readable_size_preserves_uint64_product_behavior"
+      ],
+      "go_anchors": [
+        "pkg/executor/inspection_result.go",
+        "pkg/executor/inspection_result_internal_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_stats_dump.rs",
+      "lines": 156,
+      "sha256": "245ac6096c0aff2eaeccd96983603ee7a11ae23c0101c9b0b7198151edbe0c5c",
+      "tests": [],
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/slow_log_split.rs",
+      "lines": 117,
+      "sha256": "a90f31adf8fd233c5630fa1c3dd622b2b1f402143cf4abfefa3fbc59418126b8",
+      "tests": [],
+      "go_anchors": [
+        "pkg/executor/slow_query.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/slow_log_split_source.rs",
+      "lines": 94,
+      "sha256": "01864a15be28732a8657d09a21c969f78d844fb5615adfcd079a60b0170bc3cc",
+      "tests": [
+        "slow_log_split_matches_plain_nested_empty_and_invalid_cases",
+        "slow_log_split_preserves_timestamp_and_empty_tail_values"
+      ],
+      "go_anchors": [
+        "pkg/executor/slow_query.go",
+        "pkg/executor/slow_query_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/stats_load_result.rs",
+      "lines": 87,
+      "sha256": "cb5d20e88b105feb228c62dbcc270ae09e1a714fad154546b4c3dffd298a3d23",
+      "tests": [],
+      "go_anchors": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/stats_load_result_source.rs",
+      "lines": 48,
+      "sha256": "3a0ad065d476dbff1784416e217f5a19b9dae952f5ad5a08e38d4ad35a99ef94",
+      "tests": [
+        "stats_load_result_preserves_item_and_error_state",
+        "stats_load_result_error_message_keeps_index_identity"
+      ],
+      "go_anchors": [
+        "pkg/sessionctx/stmtctx/stmtctx.go",
+        "pkg/statistics/handle/syncload/stats_syncload_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/traffic_form.rs",
+      "lines": 62,
+      "sha256": "65513d4f2c1e836f66c3bb15532857b497c21bccabc552977860de8e4f3868cb",
+      "tests": [],
+      "go_anchors": [
+        "pkg/executor/traffic.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/traffic_form_source.rs",
+      "lines": 62,
+      "sha256": "44f78e89ef855b632c43a7268ae7fe1fdab06314b409fb7f1c2b23b128666d0e",
+      "tests": [
+        "traffic_forms_match_source_capture_and_replay_fields",
+        "traffic_form_uses_query_component_rules_and_preserves_duplicate_values"
+      ],
+      "go_anchors": [
+        "pkg/executor/traffic.go",
+        "pkg/executor/traffic_test.go"
+      ]
+    }
+  ],
+  "totals": {
+    "modules": 11,
+    "test_files": 7,
+    "files": 18,
+    "private_tests": 48,
+    "source_test_lines": 3635,
+    "export_lines": 11
+  },
+  "caller_evidence": "Tracked-workspace module and public-symbol scan across Rust, scripts and manifests has no executable references outside selected files and lib.rs. Documentation references are recorded and corrected separately.",
+  "go_anchors": [
+    "pkg/ddl/backfill_metrics.go",
+    "pkg/ddl/backfill_metrics_test.go",
+    "pkg/ddl/reorg.go",
+    "pkg/executor/analyze.go",
+    "pkg/executor/analyze_utils_test.go",
+    "pkg/executor/chunk_size_control_test.go",
+    "pkg/executor/executor_required_rows_test.go",
+    "pkg/executor/inspection_result.go",
+    "pkg/executor/inspection_result_internal_test.go",
+    "pkg/executor/metrics_reader.go",
+    "pkg/executor/set_config.go",
+    "pkg/executor/set_test.go",
+    "pkg/executor/slow_query.go",
+    "pkg/executor/slow_query_test.go",
+    "pkg/executor/sortexec/topn.go",
+    "pkg/executor/sortexec/topn_spill_test.go",
+    "pkg/executor/traffic.go",
+    "pkg/executor/traffic_test.go",
+    "pkg/infoschema/metrics_schema.go",
+    "pkg/meta/metadef/db.go",
+    "pkg/metrics/ddl.go",
+    "pkg/planner/util/misc.go",
+    "pkg/sessionctx/stmtctx/stmtctx.go",
+    "pkg/statistics/handle/syncload/stats_syncload_test.go",
+    "pkg/infoschema/context/infoschema.go",
+    "pkg/executor/metrics_reader_test.go",
+    "pkg/statistics/handle/storage/stats_read_writer.go",
+    "pkg/statistics/handle/storage/dump_test.go"
+  ],
+  "live_owners_preserved": [
+    "rust/crates/tidb-executor/src/topn.rs",
+    "rust/crates/tidb-executor/src/limit.rs",
+    "rust/crates/tidb-exec/src/cluster_stats_dump.rs",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+    "rust/crates/tidb-planner/src/configured_order_limit_contract.rs",
+    "All 3,723 remaining source/manifest/script files are byte-identical; lib.rs has exactly eleven export deletions."
+  ],
+  "docs": "Condense the 365-line rolling cleanup plan to current executable instructions and historical receipt links. Retire false metrics-reader integration and unused statistics-wrapper ownership claims. Dated PD failure receipts are retained and marked historical.",
+  "validation": {
+    "status": "passed",
+    "commands": [
+      "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb/rust; CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+      "source /workspace/.cloud-setup/env.sh; cd /workspace/tidb; make lint",
+      "git diff --check"
+    ],
+    "retained_files_identical": 3723,
+    "fresh_generated_registrations": [
+      "rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs"
+    ],
+    "behavioral_tests": "Not rerun: pure deletion, all retained executable bodies byte-identical. Original Go fixtures and live Rust behavioral/safety coverage unchanged.",
+    "check_log_sha256": "d3d756061c401f3a42e472466258508b084ca903f3cd92883962a7381f14075b",
+    "lint_log_sha256": "b489c8d3862f822b900631f6aa99b659ba8cf6edc6e407a022c90b336e3013ef",
+    "publication_gates": "Actual locked-server hook and fresh locked prepush build; external final-handoff.json records results."
+  },
+  "limits": [
+    "No measured compile/runtime speedup.",
+    "No finding closure or complete package acceptance; counts remain 86 tracked, 30 repaired, 56 unresolved.",
+    "The removed tests include source-backed examples of unused copies; their Go obligations remain unaccepted, not declared obsolete.",
+    "No production scripts or required hooks/gates were removed.",
+    "Full Go suites, live TiKV and performance not run."
+  ],
+  "recovery": "git show 3f0ac881fe9f8474eba30e365a99760adc16359d:<removed path> > /tmp/<filename>; review before restoring individual files.",
+  "external_inventory": "/workspace/.cloud-setup/leaf-owner-cleanup/inventory-before.json",
+  "external_final_handoff": "/workspace/.cloud-setup/leaf-owner-cleanup/final-handoff.json"
+}

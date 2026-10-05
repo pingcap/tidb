@@ -97,16 +97,13 @@ bounds, the equivalence-driven constant propagation, the dependency-side
 simplification and the not-null inheritance of a merged equivalence
 class. The funcdep receipt's conditional follow-up is closed.
 
-## Slice: metrics schema readers (2026-09-05) — VERIFIED
+## Historical metrics-reader seed: retired
 
-`metrics_reader.rs` (the SEED of Go `pkg/executor/metrics_reader.go`)
-mirrors the three METRICS_SCHEMA retrievers. The PromQL generation is
-line-equivalent: quantile substitution uses the shortest float text,
-label conditions walk the table's own label order skipping empties,
-rendering single values as `label="v"` and multiple as
-`label=~"a|b"` over the sorted value set (`metrics_schema.go:117-141`,
-`GenLabelConditionValues`), and the range duration appends `s`. The
-`BTreeSet` ordering matches Go's explicitly sorted StringSet keys.
+The earlier metrics_reader.rs verification covered an isolated model with no
+production callers. That model and its private tests are removed by the
+[unused-owner cleanup](parity/current-audit/leaf-owner-cleanup-validation.json).
+Go metrics-schema query, permission, cancellation and full-package obligations
+remain open; the old leaf comparisons did not establish runtime integration.
 
 ## Adjacent face: funcdep_misc helpers (2026-09-05) — LOCATED AND COVERED
 

@@ -47,9 +47,11 @@ were removed. Production ownership now spans native boundaries rather than a
 single crate:
 
 - `tidb-executor::load_stats` owns JSON/protobuf conversion and gzip blocks.
-- `tidb-exec::cluster_stats_load`, `cluster_stats_dump`,
-  `real_tikv_stats_dump`, and `cluster_stats_write` own canonical storage
-  reads, snapshot transaction boundaries, dumps, and mutation plans.
+- `tidb-exec::cluster_stats_load`, `cluster_stats_dump`, and
+  `cluster_stats_write` own storage reads, dumps and mutation plans.
+  `tidb-server::cluster_session_node` owns the live dump transaction boundaries;
+  the unused `real_tikv_stats_dump` wrapper was retired by
+  [unused-owner cleanup](../../docs/parity/current-audit/leaf-owner-cleanup-validation.json).
 - `tidb-exec::real_tikv_stats`, `real_tikv_load_stats`, and
   `real_tikv_analyze` own real transaction boundaries and cache refresh.
 - `tidb-server` owns the MySQL client-local transfer and cluster session

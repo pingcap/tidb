@@ -1,5 +1,10 @@
 # Complete PD retry ownership and initialization integration
 
+Historical configured TopN results below refer to the dated baseline. The now-unused
+model and its private harness were retired by [unused-owner cleanup](leaf-owner-cleanup-validation.json);
+these commands are not current verification instructions. Live executor tests remain.
+
+
 Historical evidence: the unused configured-join/result adapters and their
 private tests were retired on 2026-10-05. See
 [the cleanup receipt](result-path-cleanup-validation.json).

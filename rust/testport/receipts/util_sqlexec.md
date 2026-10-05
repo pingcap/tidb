@@ -72,7 +72,9 @@ audit, not a repository-wide readiness claim.
   package tests were added where Go has none.
 - `cargo test --offline -q -p tidb-resolve` — passed; no package-local tests.
 - `cargo test --offline -q -p tidb-exec --lib
-  metrics_reader::tests::summary` — passed, 7 tests.
+  metrics_reader::tests::summary` — passed, 7 tests at the recorded baseline.
+  The disconnected reader and these private tests were later retired; see
+  [unused-owner cleanup](../../docs/parity/current-audit/leaf-owner-cleanup-validation.json).
 - `cargo test --offline -q -p tidb-expr --lib expropt::tests` — passed, 1
   test.
 - `cargo test --offline -q -p tidb-timer --test all table_store_sql_test` —

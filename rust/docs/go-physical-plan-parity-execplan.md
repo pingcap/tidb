@@ -1606,8 +1606,9 @@ both `oltp_read_only` and `oltp_read_write`.
   immutable completion evidence to tests. The counters did not drive ordering,
   admission, LIMIT termination, or source close. Direct behavioral assertions
   cover those contracts without production accounting.
-  Evidence: `tidb-exec/src/configured_topn.rs` and the configured TopN/ordered
-  query source tests.
+  Historical evidence: configured_topn and its private source tests at the
+  recorded baseline. The unused owner is now retired; see
+  [unused-owner cleanup](parity/current-audit/leaf-owner-cleanup-validation.json).
 
 - Observation: the cluster binary-protocol path extracted both cached
   descriptors from `PreparedAst`, but tested `cached_select.is_some()` before
