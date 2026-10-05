@@ -516,3 +516,93 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+select tidb_json_flatten(null), tidb_json_flatten('{}'), tidb_json_flatten('[]'), tidb_json_flatten('"x"');
+tidb_json_flatten(null)	tidb_json_flatten('{}')	tidb_json_flatten('[]')	tidb_json_flatten('"x"')
+NULL	[]	[]	["$=\"x\""]
+select tidb_json_flatten('{"cells":{"ccf_1":{"state":"error","errorCode":[1,7,7.0]},"ccf_2":{"state":"results","v":"7"}}}');
+tidb_json_flatten('{"cells":{"ccf_1":{"state":"error","errorCode":[1,7,7.0]},"ccf_2":{"state":"results","v":"7"}}}')
+["$.cells.ccf_1.errorCode=1", "$.cells.ccf_1.errorCode=7", "$.cells.ccf_1.state=\"error\"", "$.cells.ccf_2.state=\"results\"", "$.cells.ccf_2.v=\"7\""]
+select tidb_json_flatten('{"a.b":1,"x":{},"y":[[1,{"z":true}]],"n":null}');
+tidb_json_flatten('{"a.b":1,"x":{},"y":[[1,{"z":true}]],"n":null}')
+["$.\"a.b\"=1", "$.n=null", "$.y=1", "$.y.z=true"]
+drop table if exists t;
+create table t (id bigint primary key, wb_id int not null default 1, meta json,
+index idx_meta ((cast(tidb_json_flatten(meta) as char(256) array))),
+index idx_wb_meta (wb_id, (cast(tidb_json_flatten(meta) as char(256) array))));
+insert into t (id, meta) values
+(1, '{"cells":{"ccf_1":{"state":"error","errorCode":[1,2]},"ccf_2":{"state":"results","errorCode":[]}}}'),
+(2, '{"cells":{"ccf_1":{"state":"results","errorCode":[]},"ccf_3":{"state":"error","errorCode":[7]}}}'),
+(3, '{"cells":{"ccf_3":{"state":"error","errorCode":[7,9]}}}'),
+(4, '{"cells":{}}'),
+(5, '{}'),
+(6, null);
+explain format='brief' select id from t use index(idx_meta) where '$.cells.ccf_1.state="error"' member of (tidb_json_flatten(meta));
+id	estRows	task	access object	operator info
+Projection	8.00	root		expression__multi_valued_index.t.id
+└─Selection	8.00	root		json_memberof(cast("$.cells.ccf_1.state="error"", json BINARY), tidb_json_flatten(expression__multi_valued_index.t.meta))
+  └─IndexMerge	10.00	root		type: union
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_meta(cast(tidb_json_flatten(`meta`) as char(256) array))	range:["$.cells.ccf_1.state=\"error\"","$.cells.ccf_1.state=\"error\""], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(idx_meta) where '$.cells.ccf_1.state="error"' member of (tidb_json_flatten(meta)) order by id;
+id
+1
+select id from t use index(idx_meta) where '$.cells.ccf_3.errorCode=7' member of (tidb_json_flatten(meta)) order by id;
+id
+2
+3
+select id from t use index(idx_meta) where '$.cells.ccf_1.errorCode=7' member of (tidb_json_flatten(meta)) order by id;
+id
+explain format='brief' select id from t use index(idx_meta) where json_overlaps(tidb_json_flatten(meta), '["$.cells.ccf_1.state=\\"error\\"","$.cells.ccf_3.state=\\"error\\""]');
+id	estRows	task	access object	operator info
+Projection	15.99	root		expression__multi_valued_index.t.id
+└─Selection	15.99	root		json_overlaps(tidb_json_flatten(expression__multi_valued_index.t.meta), cast("["$.cells.ccf_1.state=\"error\"","$.cells.ccf_3.state=\"error\""...(len:65)", json BINARY))
+  └─IndexMerge	19.99	root		type: union
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_meta(cast(tidb_json_flatten(`meta`) as char(256) array))	range:["$.cells.ccf_1.state=\"error\"","$.cells.ccf_1.state=\"error\""], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_meta(cast(tidb_json_flatten(`meta`) as char(256) array))	range:["$.cells.ccf_3.state=\"error\"","$.cells.ccf_3.state=\"error\""], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(idx_meta) where json_overlaps(tidb_json_flatten(meta), '["$.cells.ccf_1.state=\\"error\\"","$.cells.ccf_3.state=\\"error\\""]') order by id;
+id
+1
+2
+3
+explain format='brief' select id from t use index(idx_meta) where json_contains(tidb_json_flatten(meta), '["$.cells.ccf_3.state=\\"error\\"","$.cells.ccf_3.errorCode=9"]');
+id	estRows	task	access object	operator info
+Projection	0.01	root		expression__multi_valued_index.t.id
+└─Selection	0.01	root		json_contains(tidb_json_flatten(expression__multi_valued_index.t.meta), cast("["$.cells.ccf_3.state=\"error\"","$.cells.ccf_3.errorCode=9"]", json BINARY))
+  └─IndexMerge	0.01	root		type: intersection
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_meta(cast(tidb_json_flatten(`meta`) as char(256) array))	range:["$.cells.ccf_3.state=\"error\"","$.cells.ccf_3.state=\"error\""], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_meta(cast(tidb_json_flatten(`meta`) as char(256) array))	range:["$.cells.ccf_3.errorCode=9","$.cells.ccf_3.errorCode=9"], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(idx_meta) where json_contains(tidb_json_flatten(meta), '["$.cells.ccf_3.state=\\"error\\"","$.cells.ccf_3.errorCode=9"]') order by id;
+id
+3
+explain format='brief' select id from t use index(idx_wb_meta) where wb_id = 1 and '$.cells.ccf_3.errorCode=7' member of (tidb_json_flatten(meta));
+id	estRows	task	access object	operator info
+Projection	0.08	root		expression__multi_valued_index.t.id
+└─Selection	0.08	root		json_memberof(cast("$.cells.ccf_3.errorCode=7", json BINARY), tidb_json_flatten(expression__multi_valued_index.t.meta))
+  └─IndexMerge	0.10	root		type: union
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx_wb_meta(wb_id, cast(tidb_json_flatten(`meta`) as char(256) array))	range:[1 "$.cells.ccf_3.errorCode=7",1 "$.cells.ccf_3.errorCode=7"], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(idx_wb_meta) where wb_id = 1 and '$.cells.ccf_3.errorCode=7' member of (tidb_json_flatten(meta)) order by id;
+id
+2
+3
+explain format='brief' select id from t ignore index(idx_meta, idx_wb_meta) where '$.cells.ccf_3.errorCode=7' member of (tidb_json_flatten(meta));
+id	estRows	task	access object	operator info
+Projection	8000.00	root		expression__multi_valued_index.t.id
+└─Selection	8000.00	root		json_memberof(cast("$.cells.ccf_3.errorCode=7", json BINARY), tidb_json_flatten(expression__multi_valued_index.t.meta))
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+update t set meta = json_set(meta, '$.cells.ccf_1.state', 'error') where id = 2;
+delete from t where id = 1;
+update t set meta = json_remove(meta, '$.cells.ccf_3', '$.cells.ccf_99') where id = 3;
+select id from t use index(idx_meta) where '$.cells.ccf_1.state="error"' member of (tidb_json_flatten(meta)) order by id;
+id
+2
+select id from t use index(idx_meta) where '$.cells.ccf_3.state="error"' member of (tidb_json_flatten(meta)) order by id;
+id
+2
+admin check table t;
+insert into t (id, meta) values (10, json_object('note', repeat('x', 300)));
+Error 3907 (HY000): Data too long for expression index 'idx_meta'
+drop table t;
