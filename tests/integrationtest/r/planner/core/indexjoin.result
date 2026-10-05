@@ -1305,10 +1305,12 @@ Projection	7992.00	root		planner__core__indexjoin.tj4.c1, planner__core__indexjo
 show warnings;
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
-select /*+ INL_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
-c1	cnt
-select /*+ HASH_JOIN(a_t) */ tj4.c1, a_t.cnt from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2 order by tj4.c1, a_t.cnt;
-c1	cnt
+select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
+select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
 set @@sql_mode=default;
 explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 id	estRows	task	access object	operator info
