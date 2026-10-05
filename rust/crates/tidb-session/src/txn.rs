@@ -482,6 +482,11 @@ impl Session {
         self.snapshot_schema_provider = Some(provider);
     }
 
+    /// Domain's internal sessions must ignore the external timestamp read switch.
+    pub fn set_restricted_sql(&mut self, restricted: bool) {
+        self.restricted_sql = restricted;
+    }
+
     /// Timestamp retained by the current read-only historical transaction.
     pub fn historical_read_ts(&self) -> Option<u64> {
         self.txn.as_ref().and_then(|txn| txn.stale_read_ts)
@@ -539,11 +544,18 @@ impl Session {
         Ok(())
     }
 
+    pub(crate) fn cleanup_txn_read_ts(&mut self) {
+        if self.vars.cleanup_txn_read_ts() {
+            self.snapshot_schema = None;
+        }
+    }
+
     /// Ends the one-statement stale transaction the as-of interception
     /// opened: nothing to publish (read-only by construction), the
     /// start-only `LastTxnInfo` record a read-only end leaves, and the
     /// published timestamp goes with it.
     pub(crate) fn discard_stale_statement_transaction(&mut self) {
+        self.cleanup_txn_read_ts();
         if let Some(txn) = self.txn.take() {
             self.set_last_txn_info_started(txn.start_ts);
         }
@@ -629,6 +641,12 @@ impl Session {
                     // transaction opens AT that timestamp -- its `StartTS`,
                     // which `@@tidb_current_ts` reports.
                     let ts = self.resolve_as_of_ts(&expr.clone())?;
+                    if self.vars.txn_read_ts() != 0 {
+                        if let Some(provider) = &self.snapshot_schema_provider {
+                            provider(ts, self.current_resource_group(), false)?;
+                        }
+                        return Err(DriverError::unsupported("start transaction read only as of is forbidden after set transaction read only as of"));
+                    }
                     if self.txn.is_some() {
                         self.commit()?;
                     }
@@ -638,6 +656,15 @@ impl Session {
                 // An open transaction is committed first (Go's implicit commit).
                 if self.txn.is_some() {
                     self.commit()?;
+                }
+                let read_ts = self.vars.use_txn_read_ts();
+                if read_ts != 0 {
+                    self.open_stale_transaction(read_ts)?;
+                    return Ok(Some(true));
+                }
+                if let Some(ts) = self.external_read_ts()? {
+                    self.open_stale_transaction(ts)?;
+                    return Ok(Some(true));
                 }
                 let mode = self.resolve_begin_txn_mode(begin.mode);
                 self.open_transaction(mode)?;
@@ -654,6 +681,7 @@ impl Session {
                     self.rollback_to_savepoint(name)?;
                     return Ok(Some(true));
                 }
+                self.cleanup_txn_read_ts();
                 // Dropping the staged copy discards every staged write.
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
@@ -811,6 +839,7 @@ impl Session {
     /// as an aborted Go transaction does -- the staged writes are gone either
     /// way, so the caller must retry the statements, not just the COMMIT.
     pub(crate) fn commit(&mut self) -> Result<(), DriverError> {
+        self.cleanup_txn_read_ts();
         let Some(txn) = self.txn.take() else {
             // COMMIT with no open transaction is a no-op, as in MySQL.
             return Ok(());

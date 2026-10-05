@@ -59,6 +59,11 @@ pub trait PdCapability: Clone {
     /// Dispatches one timestamp request.
     fn timestamp_future(&self) -> Result<Self::TsFuture, String>;
 
+    /// Shared external timestamp oracle; unsupported stores refuse instead of emulating SQL state.
+    fn external_timestamp(&self, _value: Option<u64>) -> Result<u64, String> {
+        Err("external timestamp is unavailable from this storage owner".into())
+    }
+
     /// The current GC safe point — the floor below which no read may start.
     fn gc_safe_point(&self) -> Result<u64, String>;
 
@@ -94,6 +99,10 @@ impl PdCapability for PdClient {
     fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
         self.get_timestamp_async()
             .map_err(|error| error.to_string())
+    }
+
+    fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
+        PdClient::external_timestamp(self, value).map_err(|error| error.to_string())
     }
 
     fn gc_safe_point(&self) -> Result<u64, String> {

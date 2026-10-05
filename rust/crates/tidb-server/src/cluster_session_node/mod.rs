@@ -1153,6 +1153,9 @@ impl ClusterSessionFactory {
         stats: Arc<SharedStats>,
         auto_ids: Arc<dyn TableAutoIds>,
     ) -> Self {
+        global_vars.set_external_timestamp_provider(Arc::new(ClusterExternalTimestamp(
+            Arc::clone(&transactions),
+        )));
         let boot_skipped = cluster_session_catalog(
             &catalog.load(),
             &detached_storage(),
@@ -3164,6 +3167,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let mut opened = self.open_storage_session(context.connection_id)?;
         let session = &mut opened.session;
         let identity = &context.identity;
+        session.set_restricted_sql(identity.is_internal());
         session.set_user(
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
@@ -3285,6 +3289,7 @@ impl ClusterSessionFactory {
         };
         statistics_loading.attach(&mut built.catalog);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        session.set_restricted_sql(true);
         {
             let transactions = Arc::clone(&self.transactions);
             let historical_catalog = Arc::clone(&self.catalog);
@@ -8005,3 +8010,18 @@ impl ClusterServerSession {
 
 mod login_policy;
 mod settings;
+
+struct ClusterExternalTimestamp(Arc<dyn ClusterTransactions>);
+impl std::fmt::Debug for ClusterExternalTimestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClusterExternalTimestamp")
+    }
+}
+impl tidb_session::vars::ExternalTimestampProvider for ClusterExternalTimestamp {
+    fn get(&self) -> Result<u64, String> {
+        self.0.external_timestamp(None)
+    }
+    fn set(&self, ts: u64) -> Result<(), String> {
+        self.0.external_timestamp(Some(ts)).map(|_| ())
+    }
+}

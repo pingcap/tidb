@@ -35,6 +35,8 @@ pub enum PdOperation {
     Tso,
     /// GC state (txn safe point) lookup.
     GetGcState,
+    /// Oracle external timestamp read/write.
+    ExternalTimestamp,
     /// Publish PD global configuration.
     StoreGlobalConfig,
 }
@@ -52,6 +54,7 @@ impl std::fmt::Display for PdOperation {
             Self::GetAllStores => formatter.write_str("GetAllStores"),
             Self::Tso => formatter.write_str("Tso"),
             Self::GetGcState => formatter.write_str("GetGCState"),
+            Self::ExternalTimestamp => formatter.write_str("ExternalTimestamp"),
             Self::StoreGlobalConfig => formatter.write_str("StoreGlobalConfig"),
         }
     }

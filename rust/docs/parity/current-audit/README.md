@@ -1,13 +1,13 @@
 # Structural parity audit: current evidence
 
-Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [snapshot validation and schema ownership](snapshot-validation-batch-validation.json). Latest build/test cleanup: [statistics discard-check receipt](statistics-test-cleanup-validation.json); [earlier build-input cleanup](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
+Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [timestamp entrypoints and lifecycle](timestamp-entrypoints-batch-validation.json). Latest build/test cleanup: [statistics discard-check receipt](statistics-test-cleanup-validation.json); [earlier build-input cleanup](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../snapshot-validation-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../timestamp-entrypoints-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](snapshot-validation-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](timestamp-entrypoints-batch-validation.json): exact source/log identities and verification limits.
 
 Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `19a56ccda1e128218cd33c69709038219aced9bc` at this checkpoint.
 
@@ -21,7 +21,7 @@ Native fixes belong in client-rust first. Synchronize validated upstream source 
 
 Group related source fixes and test filters. Keep meaningful Go behavior/error/rollback assertions in the owning session tests. Remove placeholder or adapter-only harnesses after caller migration, with a recorded inventory; do not manufacture concurrency coverage from a serial loop. Run affected checks and required `make lint` once at the completed batch boundary. The actual executable `hooks/pre-commit` selected by `core.hooksPath=hooks` must run `cd rust && cargo build --locked -p tidb-server` on normal commits. Never bypass hooks; repeat that locked build immediately before every authorized push and verify the remote SHA.
 
-**Publication authorized by the user on 2026-10-05.** Preserve the exact destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. Confirmed last publication attempt: `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403); account role versus GitHub-app installation scope is undetermined. The authorized push of `99e291a3ac` was rejected with that diagnostic; read access succeeds. Retry publication after access changes. Merge concurrent remote integration commits before publication; never reset or force-push over them.
+**Publication authorized by the user on 2026-10-05.** Preserve the exact destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. Confirmed last publication attempt: `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403). The 2026-10-05 coordinator access handoff confirms PingCAP ChatGPT/Codex installation `90274244` includes only `pingcap/tiproxy` and `pingcap/pytidb`, excluding `pingcap/tidb`; account metadata nevertheless reports ngaut admin/push. OAuth reconnect did not change the selected-repository grant. GitHub installation settings require the user’s passkey before editing; no permissions were changed. Add TiDB to that installation, then verify Cloud Git write access. The authorized push of `99e291a3ac` was rejected with that diagnostic; read access succeeds. Retry publication after access changes. Merge concurrent remote integration commits before publication; never reset or force-push over them.
 
 ## Historical evidence
 

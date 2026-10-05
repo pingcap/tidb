@@ -114,6 +114,11 @@ enum WorkerCommand {
         deadline: Instant,
         reply: mpsc::Sender<Result<u64, PdClientError>>,
     },
+    ExternalTimestamp {
+        deadline: Instant,
+        value: Option<u64>,
+        reply: mpsc::Sender<Result<u64, PdClientError>>,
+    },
     GetGcState {
         keyspace_id: Option<u32>,
         reply: mpsc::Sender<Result<PdGcState, PdClientError>>,
@@ -628,6 +633,31 @@ impl PdClient {
             .send(WorkerCommand::GetAllStores { reply })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Reads or updates the external timestamp on the existing PD worker.
+    pub fn external_timestamp(&self, value: Option<u64>) -> Result<u64, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::ExternalTimestamp {
+                deadline: Instant::now() + self.shared.timeout,
+                value,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response
+            .recv_timeout(self.shared.timeout)
+            .unwrap_or_else(|error| {
+                if error == mpsc::RecvTimeoutError::Disconnected {
+                    return Err(PdClientError::Closed);
+                }
+                Err(PdClientError::Timeout {
+                    operation: PdOperation::ExternalTimestamp,
+                    endpoint: self.active_endpoint(),
+                    timeout_ms: self.shared.timeout.as_millis() as u64,
+                })
+            })
     }
 
     /// Loads PD's current GC state for one keyspace scope.

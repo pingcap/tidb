@@ -96,6 +96,9 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
+    fn external_timestamp(&self, _value: Option<u64>) -> Result<u64, String> {
+        Err("external timestamp is unavailable from this storage owner".into())
+    }
     /// PD region count and approximate storage-key count for one physical
     /// table's record range. Embedded stores have no PD HTTP authority.
     fn record_region_stats(
@@ -1125,6 +1128,10 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
+        self.opener.pd().external_timestamp(value)
+    }
+
     fn record_region_stats(
         &self,
         table_id: i64,

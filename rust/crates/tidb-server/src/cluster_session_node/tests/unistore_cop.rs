@@ -10248,3 +10248,136 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         "disconnect retires the historical owner"
     );
 }
+
+#[test]
+fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(925)).unwrap();
+    rows(&mut session, "SET time_zone='+00:00'");
+    rows(&mut session, "CREATE DATABASE ts_entry");
+    rows(&mut session, "USE ts_entry");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO t VALUES (1,10)");
+    std::thread::sleep(Duration::from_millis(5));
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT * FROM t");
+    let ts: u64 = displayed(rows(&mut session, "SELECT @@tidb_current_ts"))[0][0]
+        .parse()
+        .unwrap();
+    session.control_transaction("COMMIT").unwrap();
+    let stamp = displayed(rows(
+        &mut session,
+        &format!("SELECT FROM_UNIXTIME({:.3})", (ts >> 18) as f64 / 1000.0),
+    ))[0][0]
+        .clone();
+    std::thread::sleep(Duration::from_millis(5));
+    rows(&mut session, "UPDATE t SET v=20");
+    rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
+    let set = format!("SET tx_read_ts='{stamp}'");
+    rows(&mut session, &set);
+    assert!(session.execute_write("UPDATE t SET v=99").is_err());
+    assert!(session.execute("SELECT * FROM t FOR UPDATE").is_err());
+
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "20", "7"]]
+    );
+    rows(&mut session, "PREPARE hist FROM 'SELECT * FROM t'");
+    rows(&mut session, &set);
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE hist")),
+        vec![vec!["1", "10"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE hist")),
+        vec![vec!["1", "20", "7"]]
+    );
+    rows(&mut session, "DEALLOCATE PREPARE hist");
+    rows(&mut session, &set);
+    assert!(session
+        .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {ts}"))
+        .is_err());
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    rows(&mut session, &set);
+    assert!(session
+        .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+        .is_err());
+    session.control_transaction("BEGIN").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    assert!(session.execute(&set).is_err());
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert!(!tidb_txnkv::ACTIVE_START_TS
+        .snapshot()
+        .contains(&((ts >> 18) << 18)));
+    rows(&mut session, &format!("SET GLOBAL tidb_external_ts={ts}"));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@tidb_external_ts")),
+        vec![vec![ts.to_string()]]
+    );
+    for sql in [
+        format!("SET GLOBAL tidb_external_ts={}", ts - 1),
+        "SET GLOBAL tidb_external_ts=DEFAULT".into(),
+        format!("SET GLOBAL tidb_external_ts={}", ts + (1_000_000 << 18)),
+    ] {
+        assert!(session.execute(&sql).is_err(), "{sql}");
+    }
+    rows(&mut session, "SET tidb_enable_external_ts_read=ON");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+
+    assert!(session.execute_write("UPDATE t SET v=99").is_err());
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SET tidb_enable_external_ts_read=OFF");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+    rows(
+        &mut session,
+        "PREPARE point_history FROM 'SELECT v FROM t WHERE id=?'",
+    );
+    rows(&mut session, "SET @id=1");
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE point_history USING @id")),
+        vec![vec!["20"]]
+    );
+    rows(&mut session, &set);
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE point_history USING @id")),
+        vec![vec!["10"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE point_history USING @id")),
+        vec![vec!["20"]]
+    );
+    rows(&mut session, "SET tidb_enable_external_ts_read=ON");
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE point_history USING @id")),
+        vec![vec!["10"]]
+    );
+    rows(&mut session, "DEALLOCATE PREPARE point_history");
+    let mut peer = stack.factory.open_session(session_context(926)).unwrap();
+    rows(&mut peer, "USE ts_entry");
+    rows(&mut peer, "SET tidb_enable_external_ts_read=ON");
+    assert_eq!(
+        displayed(rows(&mut peer, "SELECT * FROM t")),
+        vec![vec!["1", "10"]]
+    );
+    peer.session.set_restricted_sql(true);
+    assert_eq!(
+        displayed(rows(&mut peer, "SELECT * FROM t")),
+        vec![vec!["1", "20", "7"]]
+    );
+}

@@ -165,6 +165,7 @@ fn parse_ttl_offset(value: &str) -> Option<i32> {
 /// documented gap the account/privilege/process registries carry.
 #[derive(Clone, Debug)]
 pub struct GlobalSysvars {
+    external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
     values: Arc<Mutex<HashMap<String, String>>>,
     /// The INSTANCE tier: Go `vardef.ScopeInstance`. A per-node value, held
     /// beside the global one rather than in it because the two tiers differ
@@ -199,9 +200,18 @@ enum InstanceMutation {
     Reset(String),
 }
 
+/// Storage-oracle authority installed once by the process session factory.
+pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
+    /// Reads the current timestamp from the storage authority.
+    fn get(&self) -> Result<u64, String>;
+    /// Updates the timestamp under that authority's monotonicity rules.
+    fn set(&self, ts: u64) -> Result<(), String>;
+}
+
 impl Default for GlobalSysvars {
     fn default() -> Self {
         Self {
+            external_timestamp: Arc::default(),
             values: Arc::default(),
             instances: Arc::default(),
             instance_mutations: None,
@@ -466,13 +476,31 @@ impl GlobalSysvars {
         }
     }
 
-    /// Reads a node-wide value (GLOBAL or INSTANCE tier), falling back to the
-    /// registry default.
-    ///
-    /// The answer comes from the [`ResolvedGlobals`] image when it is current;
-    /// only a mutation that has not been published yet falls through to the
-    /// authoritative maps.
+    /// Installs the live storage oracle used by external timestamp callbacks.
+    pub fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
+        *self
+            .external_timestamp
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(provider);
+    }
+
+    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>> {
+        self.external_timestamp
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Reads a node-wide value; oracle-backed variables bypass the cached image.
     pub fn get(&self, name: &str) -> Result<String, VarError> {
+        if name.eq_ignore_ascii_case("tidb_external_ts") {
+            if let Some(provider) = self.external_timestamp_provider() {
+                return provider
+                    .get()
+                    .map(|ts| ts.to_string())
+                    .map_err(VarError::ValidationRefused);
+            }
+        }
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
@@ -758,6 +786,9 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
+        if def.name == "tidb_external_ts" {
+            return self.get(def.name);
+        }
         if let Some(value) = self.instance_plan_cache_limit_getter(def) {
             return Ok(value);
         }
@@ -828,6 +859,21 @@ impl GlobalSysvars {
         value: String,
         zone: &tidb_executor::SessionTimeZone,
     ) -> Result<bool, VarError> {
+        if name.eq_ignore_ascii_case("tidb_external_ts") {
+            if let Some(provider) = self.external_timestamp_provider() {
+                if value.is_empty() {
+                    return Err(VarError::SqlError(tidb_error::mysql::SqlError::new_f(
+                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                        "Incorrect datetime value: '%s'",
+                        &[],
+                        &[tidb_error::mysql::FormatArg::from(value.as_str())],
+                    )));
+                }
+                provider
+                    .set(parse_read_timestamp(&value, zone, true)?)
+                    .map_err(VarError::ValidationRefused)?;
+            }
+        }
         let value = normalize_ttl_schedule_window(name, &value, zone)?;
         let value = match get_sys_var(name) {
             Some(def) if def.var_type == crate::sysvar::VarType::Time => {
@@ -2127,6 +2173,8 @@ pub struct SessionVars {
     time_zone: tidb_executor::SessionTimeZone,
     /// Go SnapshotTS: resolved by SET in that session's location, not on each read.
     snapshot_ts: u64,
+    txn_read_ts: u64,
+    txn_read_ts_used: bool,
     /// Go's typed `SessionVars.SelectLimit`, maintained by the
     /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
     /// default and any smaller value caps top-level SELECT/set results.
@@ -2265,6 +2313,8 @@ impl Default for SessionVars {
             max_execution_time: 0,
             time_zone: resolve_session_time_zone_value("SYSTEM"),
             snapshot_ts: 0,
+            txn_read_ts: 0,
+            txn_read_ts_used: false,
             select_limit: u64::MAX,
             selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             multi_statement_mode: 0,
@@ -2301,6 +2351,29 @@ impl SessionVars {
     /// SetExecutor leaves the system-variable string as assigned.
     pub(crate) fn restore_snapshot_ts(&mut self, ts: u64) {
         self.snapshot_ts = ts;
+    }
+
+    /// Go TxnReadTS: one selection, consumed when the selected transaction ends.
+    pub fn txn_read_ts(&self) -> u64 {
+        self.txn_read_ts
+    }
+
+    pub(crate) fn set_txn_read_ts(&mut self, ts: u64) {
+        self.txn_read_ts = ts;
+        self.txn_read_ts_used = false;
+    }
+
+    pub(crate) fn use_txn_read_ts(&mut self) -> u64 {
+        self.txn_read_ts_used = true;
+        self.txn_read_ts
+    }
+
+    pub(crate) fn cleanup_txn_read_ts(&mut self) -> bool {
+        if self.txn_read_ts_used && self.txn_read_ts != 0 {
+            self.set_txn_read_ts(0);
+            return true;
+        }
+        false
     }
 
     /// The snapshot selected by SET tidb_snapshot; zero clears the pin.
@@ -3252,38 +3325,12 @@ impl SessionVars {
         } else {
             None
         };
-        let parsed_snapshot_ts = if key == "tidb_snapshot" {
-            let value = &validated.value;
-            Some(if value.is_empty() {
-                0
-            } else if let Ok(ts) = value.parse::<u64>() {
-                ts
-            } else {
-                let invalid = || {
-                    VarError::SqlError(tidb_error::mysql::SqlError::new_f(
-                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
-                        "Incorrect datetime value: '%s'",
-                        &[],
-                        &[tidb_error::mysql::FormatArg::from(value.as_str())],
-                    ))
-                };
-                let time = tidb_datatype::parse_time(
-                    value,
-                    tidb_datatype::TimeType::Timestamp,
-                    6,
-                    false,
-                    false,
-                    false,
-                    &self.time_zone,
-                )
-                .map_err(|_| invalid())?;
-                let instant = time
-                    .time
-                    .core_time()
-                    .to_datetime(&self.time_zone)
-                    .map_err(|_| invalid())?;
-                (instant.timestamp_millis() as u64) << 18
-            })
+        let parsed_snapshot_ts = if key == "tidb_snapshot" || key == "tx_read_ts" {
+            Some(parse_read_timestamp(
+                &validated.value,
+                &self.time_zone,
+                key == "tidb_snapshot",
+            )?)
         } else {
             None
         };
@@ -3335,7 +3382,17 @@ impl SessionVars {
         }
         self.systems.insert(key.clone(), validated.value.clone());
         if let Some(ts) = parsed_snapshot_ts {
-            self.snapshot_ts = ts;
+            if key == "tidb_snapshot" {
+                self.snapshot_ts = ts;
+                if !validated.value.is_empty() {
+                    self.set_txn_read_ts(0);
+                }
+            } else {
+                self.set_txn_read_ts(ts);
+                if !validated.value.is_empty() {
+                    self.snapshot_ts = 0;
+                }
+            }
         }
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
@@ -3485,12 +3542,18 @@ impl SessionVars {
     /// read from the cluster before persisting it, and must be able to put
     /// the live table back unconditionally if the statement fails.
     pub fn swap_globals(&mut self, globals: GlobalSysvars) -> GlobalSysvars {
+        if let Some(provider) = self.globals.external_timestamp_provider() {
+            globals.set_external_timestamp_provider(provider);
+        }
         let previous = std::mem::replace(&mut self.globals, Arc::new(globals));
         Arc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone())
     }
 
     /// `SET GLOBAL name = DEFAULT`.
     pub fn reset_global(&mut self, name: &str) -> Result<(), VarError> {
+        if name.eq_ignore_ascii_case("tidb_external_ts") {
+            return self.set_global(name, "0".into()).map(|_| ());
+        }
         self.globals.reset(name)
     }
 
@@ -5338,4 +5401,44 @@ mod mview_from_job_tests {
             "absent envelope fields keep the captured default"
         );
     }
+}
+
+/// Go parseTSFromNumberOrTime; tx_read_ts deliberately permits datetime syntax only.
+pub(crate) fn parse_read_timestamp(
+    value: &str,
+    zone: &tidb_executor::SessionTimeZone,
+    numeric: bool,
+) -> Result<u64, VarError> {
+    if value.is_empty() {
+        return Ok(0);
+    }
+    if numeric {
+        if let Ok(ts) = value.parse::<u64>() {
+            return Ok(ts);
+        }
+    }
+    let invalid = || {
+        VarError::SqlError(tidb_error::mysql::SqlError::new_f(
+            tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+            "Incorrect datetime value: '%s'",
+            &[],
+            &[tidb_error::mysql::FormatArg::from(value)],
+        ))
+    };
+    let time = tidb_datatype::parse_time(
+        value,
+        tidb_datatype::TimeType::Timestamp,
+        6,
+        false,
+        false,
+        false,
+        zone,
+    )
+    .map_err(|_| invalid())?;
+    let instant = time
+        .time
+        .core_time()
+        .to_datetime(zone)
+        .map_err(|_| invalid())?;
+    Ok((instant.timestamp_millis() as u64) << 18)
 }

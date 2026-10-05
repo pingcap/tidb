@@ -113,6 +113,9 @@ pub(super) fn run_worker(
                 WorkerCommand::GetTimestamp { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
+                WorkerCommand::ExternalTimestamp { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
                 WorkerCommand::GetGcState { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
@@ -364,6 +367,34 @@ pub(super) fn run_worker(
                         .and_then(|batch| batch.split(index).compose());
                     let _ = reply.send(one);
                 }
+            }
+            WorkerCommand::ExternalTimestamp {
+                deadline,
+                value,
+                reply,
+            } => {
+                let state = state.read().expect("PD state lock poisoned").clone();
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let result = if remaining.is_zero() {
+                    Err(PdClientError::Timeout {
+                        operation: PdOperation::ExternalTimestamp,
+                        endpoint: state.members.leader_url.clone(),
+                        timeout_ms: timeout.as_millis() as u64,
+                    })
+                } else {
+                    super::requests::external_timestamp(
+                        &runtime,
+                        &mut clients,
+                        &state.members.leader_url,
+                        RpcControl {
+                            timeout: remaining,
+                            shutdown: &shutdown,
+                        },
+                        state.members.cluster_id,
+                        value,
+                    )
+                };
+                let _ = reply.send(result);
             }
             WorkerCommand::GetGcState { keyspace_id, reply } => {
                 let result = get_gc_state_with_failover(

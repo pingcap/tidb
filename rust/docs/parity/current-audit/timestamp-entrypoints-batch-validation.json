@@ -1,0 +1,712 @@
+{
+  "date": "2026-10-05",
+  "integration_start": "78196d5f4f549a5327506d25f773b8c9fb292c1b",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "findings": [
+    "S04",
+    "N03"
+  ],
+  "statuses_unchanged": true,
+  "counts_unchanged": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 30,
+    "partial": 26
+  },
+  "baseline_wire": {
+    "phase": "before-final",
+    "binary_sha256": "59e3ddfa0b1893634c61fe4567b9bf8ca1396de814a036e29b886419cdc7ff68",
+    "checks": [
+      {
+        "name": "one shot selects historical schema and rows",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "one shot consumed after read",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "one shot conflicts with AS OF",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "failed AS OF consumes one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "one shot cannot change in transaction",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "prepared execution consumes one shot",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "prepared second execution is current",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external timestamp drives schema and data",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external timestamp cannot decrease",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "external timestamp cannot exceed oracle",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "pending one shot rejects writes",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "pending one shot rejects locking reads",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "tableless SELECT does not consume one shot",
+        "pass": true,
+        "actual": [
+          [
+            1
+          ]
+        ]
+      },
+      {
+        "name": "read after tableless SELECT still historical",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "BEGIN AS OF conflicts with pending one shot",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "BEGIN selects one shot",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "ROLLBACK retires selected one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "invalid AS OF is validated before consuming one shot",
+        "pass": true,
+        "error": [
+          8135,
+          "invalid as of timestamp: cannot parse AS OF TIMESTAMP expression as datetime or TSO"
+        ]
+      },
+      {
+        "name": "invalid AS OF leaves one shot unused",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "future one shot refused at SET",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "failed SET restores old one shot",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "live global external getter",
+        "pass": false,
+        "actual": [
+          [
+            "469542683863154688"
+          ]
+        ]
+      },
+      {
+        "name": "external DEFAULT cannot decrease",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "empty external timestamp has datetime error",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "external enabled mid transaction does not step back",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external switch rejects writes",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "external switch rejects locking reads",
+        "pass": false,
+        "error": "succeeded"
+      },
+      {
+        "name": "external timestamp selects BEGIN snapshot",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "BEGIN retains external snapshot after switch off",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external authority shared with another session",
+        "pass": false,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      }
+    ],
+    "passed": 7,
+    "failed": 23
+  },
+  "after_wire": {
+    "phase": "after",
+    "binary_sha256": "d83c515862c371ba14161aa0ef5d7029fa8d3406d68ab4a26c2c80b2fbe54849",
+    "checks": [
+      {
+        "name": "one shot selects historical schema and rows",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "one shot consumed after read",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "one shot conflicts with AS OF",
+        "pass": true,
+        "error": [
+          8135,
+          "invalid as of timestamp: can't use select as of while already set transaction as of"
+        ]
+      },
+      {
+        "name": "failed AS OF consumes one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "one shot cannot change in transaction",
+        "pass": true,
+        "error": [
+          1568,
+          "Transaction characteristics can't be changed while a transaction is in progress"
+        ]
+      },
+      {
+        "name": "prepared execution consumes one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "prepared second execution is current",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external timestamp drives schema and data",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "external timestamp cannot decrease",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot decrease the external timestamp"
+        ]
+      },
+      {
+        "name": "external timestamp cannot exceed oracle",
+        "pass": true,
+        "error": [
+          1105,
+          "external timestamp is greater than global tso"
+        ]
+      },
+      {
+        "name": "pending one shot rejects writes",
+        "pass": true,
+        "error": [
+          1105,
+          "only support read-only statement during read-only staleness transactions"
+        ]
+      },
+      {
+        "name": "pending one shot rejects locking reads",
+        "pass": true,
+        "error": [
+          1105,
+          "select lock hasn't been supported in stale read yet"
+        ]
+      },
+      {
+        "name": "tableless SELECT does not consume one shot",
+        "pass": true,
+        "actual": [
+          [
+            1
+          ]
+        ]
+      },
+      {
+        "name": "read after tableless SELECT still historical",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "BEGIN AS OF conflicts with pending one shot",
+        "pass": true,
+        "error": [
+          1105,
+          "start transaction read only as of is forbidden after set transaction read only as of"
+        ]
+      },
+      {
+        "name": "BEGIN selects one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "ROLLBACK retires selected one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "invalid AS OF is validated before consuming one shot",
+        "pass": true,
+        "error": [
+          8135,
+          "invalid as of timestamp: cannot parse AS OF TIMESTAMP expression as datetime or TSO"
+        ]
+      },
+      {
+        "name": "invalid AS OF leaves one shot unused",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "future one shot refused at SET",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot set read timestamp to a future time, readTS: 496358129664000000, currentTS: 469542490075824129"
+        ]
+      },
+      {
+        "name": "failed SET restores old one shot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "live global external getter",
+        "pass": true,
+        "actual": [
+          [
+            "469542489577226240"
+          ]
+        ]
+      },
+      {
+        "name": "external DEFAULT cannot decrease",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot decrease the external timestamp"
+        ]
+      },
+      {
+        "name": "empty external timestamp has datetime error",
+        "pass": true,
+        "error": [
+          1292,
+          "Incorrect datetime value: ''"
+        ]
+      },
+      {
+        "name": "external enabled mid transaction does not step back",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "external switch rejects writes",
+        "pass": true,
+        "error": [
+          1105,
+          "only support read-only statement during read-only staleness transactions"
+        ]
+      },
+      {
+        "name": "external switch rejects locking reads",
+        "pass": true,
+        "error": [
+          1105,
+          "select lock hasn't been supported in stale read yet"
+        ]
+      },
+      {
+        "name": "external timestamp selects BEGIN snapshot",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "BEGIN retains external snapshot after switch off",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "external authority shared with another session",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      }
+    ],
+    "passed": 30,
+    "failed": 0
+  },
+  "rust_tests": {
+    "distinct_passed": 18,
+    "commands": [
+      "cargo test --locked -p tidb-server -p tidb-session --lib -- timestamp_entrypoints_batch historical_read_batch tests_core::transactions --test-threads=1",
+      "cargo test --locked -p tidb-pd-client --test all -- timestamp_entrypoints_batch global_config_preserves --test-threads=1"
+    ],
+    "failed": 0,
+    "ignored": 0
+  },
+  "checks": {
+    "cwd": "/workspace/tidb/rust",
+    "commands": [
+      "cargo check --locked -p tidb-server -p tidb-session -p tidb-pd-client -p tidb-txnkv -p tidb-unistore --all-targets",
+      "cargo build --locked -p tidb-server"
+    ],
+    "root_command": "make lint",
+    "exit_codes": 0
+  },
+  "source_hashes": [
+    {
+      "path": "rust/crates/tidb-pd-client/src/client/mod.rs",
+      "sha256": "6b10d003fcc29feb43d47deb45850f38cf5ab5e9ae4f8fac3fea8cd9bdd73f8d"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/src/client/requests.rs",
+      "sha256": "bfeceed54fbec97597057a0ba8e18055a406833170f479617ffad9618092973c"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/src/client/worker.rs",
+      "sha256": "38e68065e95384b1d4441861b7ca2b03d5f3405585773ded897bb56937b65b89"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/src/error.rs",
+      "sha256": "946328b8553575d8c21535284cc5990d48d7eda63f8e1c4dd38997cf6fc1cef9"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/src/metrics.rs",
+      "sha256": "b40db5db6590a2fc63edb714d374e0d24a9cb7501d25f948a26bbbd2c5e94b1f"
+    },
+    {
+      "path": "rust/crates/tidb-pd-client/tests/pd_client_source.rs",
+      "sha256": "6290c6beac74ed25c19de95391a1c8ec73f6d31a36f7aad2085bda78e27f9afe"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "sha256": "a9ebd8561041801aacbe0d6f9e20b596b6431cb3e0e865a7943fcd22b6d95716"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs",
+      "sha256": "efe7f637393aa929ee1c178329965bf881e644210df51a90a8ae14bf29b26563"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/transactions.rs",
+      "sha256": "ec463864cd28527872ce155fb7b75f6f10c50bfca78220bef9ba9dc42b53b488"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/dispatch.rs",
+      "sha256": "a9e5eacdb84e9c700cfca5e0c1d4380cd65f3bf2f8e35b041959bc846190dca6"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "052a0489c1ee66e858205d9dbaa0c214d2d41936846e6517cb808b93671bb8da"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/prepared_ast.rs",
+      "sha256": "b8a97b36f355709bffa17544641f931b0c965cd11a55e7a6df3dc8068872c787"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/txn.rs",
+      "sha256": "42fa24dbbdf4f704e3eef746abd41a0fe3f508b6484950aa604331e3bd847f11"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/variables.rs",
+      "sha256": "5640976d89b0bebf930c1514e78f371e761360ec305e30bff839087a1cd5fafa"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/vars.rs",
+      "sha256": "3c681f8dcc0cce6bc0efe2ccd506e858f3d7a2fbd04b09203483027f65bf8fbb"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/pd_capability.rs",
+      "sha256": "32cef85e3eb301f7ae81c0d8c4643234d9feeb156c55c9748658f572e43c53fb"
+    },
+    {
+      "path": "rust/crates/tidb-unistore/src/tso.rs",
+      "sha256": "e97048738d9be239e1c964c7953090289eb67877ae072f82233c91aa2e1fcab2"
+    }
+  ],
+  "intermediate_failures": [
+    "Compiler name/scope and String argument errors were corrected before final tests; wrong-cwd invocation did not compile or execute tests.",
+    "Overbroad --test all linked an unselected server integration binary and failed with linker SIGBUS under disk exhaustion. Its retained .tmp output caused a second ENOSPC failure. Both logs retained; final selection and disk cleanup corrected the causes."
+  ],
+  "artifact_cleanup": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/6f9593a3c5413e52/out/tidb_session-6f9593a3c5413e52",
+      "bytes": 289655632,
+      "sha256": "ed2e7ee496a31af943d6b3e3ca11bf4748009cf9820abca35bc1ac76f2a1c65d",
+      "reason": "reproducible unused executable; reclaim space for current batch linking; sources and receipts retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/73f1f4778ac71b6d/out/cluster_session_smoke",
+      "bytes": 378753768,
+      "sha256": "c8c48b91c169eb4c6342d70ed7ae845aef8f1954093a114c7ccf8bb9ab278d02",
+      "reason": "reproducible unused executable; reclaim space for current batch linking; sources and receipts retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/ace6360cd167a88b/out/mysql_bootstrap",
+      "bytes": 296391248,
+      "sha256": "c7246cc7c338908a1e4821c7922f7f7e71451fdbbf14d5db03f8657237149e03",
+      "reason": "unselected reproducible integration executable; reclaim final linking space; source unchanged"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/c42f0a3c5d889c29/out/cluster_stats_dump",
+      "bytes": 199607624,
+      "sha256": "bf2f3a0ee3bee45c40e0170bb8a9a457d022e584486dcf7c5d982e0855e5de27",
+      "reason": "unselected reproducible integration executable; reclaim final linking space; source unchanged"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/fc9933224c3efde9/out/all-fc9933224c3efde9.tmp56b3b12",
+      "bytes": 459857488,
+      "sha256": "13b05a8f99f5b10fde33792f52aa606d18a43a27f4efeee140d17f7e92b5cab4",
+      "reason": "failed linker temporary output"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/26197f34fe50d045/out/cardinality_stats_loading-26197f34fe50d045",
+      "bytes": 255812144,
+      "sha256": "15b6e5ea9c8d2da81f621f6009029a45444420863e9bad20822118cf4f0d3009",
+      "reason": "unselected reproducible test executable; sources retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/ea9dd823a12dc887/out/topn_assisted_string_match-ea9dd823a12dc887",
+      "bytes": 249868496,
+      "sha256": "30954efb0efed24e117117de044fc267cd9b9b95d0378294a0a40c927ea6bf18",
+      "reason": "unselected reproducible test executable; sources retained"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/5818a65c84a51108/out/all-5818a65c84a51108",
+      "bytes": 259176808,
+      "sha256": "75a0ba865b3d18c3b86a92db86d65413bebf54023d7e5658c2721a81e1b893f9",
+      "reason": "unselected reproducible test executable; sources retained"
+    }
+  ],
+  "limits": [
+    "Both root findings remain partial; complete upstream package acceptance is not claimed.",
+    "Full Go/Rust suites, live multi-node TiKV, SafeTS topology, ordinary-transaction snapshot provider switching and performance are not verified.",
+    "Prior unrelated enabled test failures remain unresolved.",
+    "Actual precommit hook must pass the locked server build; postcommit hook and recovery details are in the Cloud handoff.",
+    "No new push attempted: last normal push was denied HTTP403. The 2026-10-05 coordinator handoff confirms PingCAP installation 90274244 excludes pingcap/tidb; the grant must change before write access can be reverified."
+  ],
+  "wire_reproduction": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/timestamp-entrypoints-batch/wire.py <fresh-phase> /workspace/tidb/rust/target/debug/tidb-server"
+}

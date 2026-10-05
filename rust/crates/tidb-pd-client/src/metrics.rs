@@ -65,7 +65,9 @@ pub fn observe_cmd(operation: PdOperation, seconds: f64, succeeded: bool) {
         ),
         // Native TSO owns its command and stream timing. Go does not time
         // StoreGlobalConfig with these command collectors.
-        PdOperation::Tso | PdOperation::StoreGlobalConfig => return,
+        PdOperation::Tso | PdOperation::StoreGlobalConfig | PdOperation::ExternalTimestamp => {
+            return
+        }
     };
     total.observe(seconds);
     if !succeeded {

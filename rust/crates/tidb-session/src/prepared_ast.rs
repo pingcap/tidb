@@ -129,15 +129,18 @@ impl Session {
     pub(crate) fn prepared_plan_cache_environment(
         &self,
     ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
-        if self.historical_read_ts().is_some() {
+        if self.historical_read_ts().is_some()
+            || self.vars.txn_read_ts() != 0
+            || self.external_timestamp_read_enabled()
+        {
             return None;
         }
         let vars_generation = self.vars.generation();
         let blacklist_generation = self.pushdown_blacklists.generation();
         let in_transaction = self.in_transaction();
         let autocommit = self.is_autocommit();
-        let pessimistic_transaction = (!autocommit || in_transaction)
-            && self.statement_txn_mode().is_pessimistic();
+        let pessimistic_transaction =
+            (!autocommit || in_transaction) && self.statement_txn_mode().is_pessimistic();
         if let Some(cached) = self.prepared_plan_cache_environment_cache.borrow().as_ref() {
             if cached.vars_generation == vars_generation
                 && cached.blacklist_generation == blacklist_generation

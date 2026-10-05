@@ -77,6 +77,10 @@ impl<T> Reply<T> {
 }
 
 struct State {
+    external_get: Reply<pdpb::GetExternalTimestampResponse>,
+    external_set: Reply<pdpb::SetExternalTimestampResponse>,
+    external_get_requests: Vec<pdpb::GetExternalTimestampRequest>,
+    external_set_requests: Vec<pdpb::SetExternalTimestampRequest>,
     members: Reply<pdpb::GetMembersResponse>,
     members_after_first: Option<Reply<pdpb::GetMembersResponse>>,
     region: Reply<pdpb::GetRegionResponse>,
@@ -107,6 +111,29 @@ struct MockPd {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
+    async fn get_external_timestamp(
+        &self,
+        request: tonic::Request<pdpb::GetExternalTimestampRequest>,
+    ) -> Result<tonic::Response<pdpb::GetExternalTimestampResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.external_get_requests.push(request.into_inner());
+            state.external_get.clone()
+        };
+        reply.send().await
+    }
+    async fn set_external_timestamp(
+        &self,
+        request: tonic::Request<pdpb::SetExternalTimestampRequest>,
+    ) -> Result<tonic::Response<pdpb::SetExternalTimestampResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.external_set_requests.push(request.into_inner());
+            state.external_set.clone()
+        };
+        reply.send().await
+    }
+
     async fn get_members(
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,
@@ -461,6 +488,15 @@ fn store_record(
 
 fn valid_state() -> State {
     State {
+        external_get: Reply::Value(pdpb::GetExternalTimestampResponse {
+            header: Some(header(CLUSTER_ID)),
+            timestamp: 42,
+        }),
+        external_set: Reply::Value(pdpb::SetExternalTimestampResponse {
+            header: Some(header(CLUSTER_ID)),
+        }),
+        external_get_requests: Vec::new(),
+        external_set_requests: Vec::new(),
         members_after_first: None,
         members: Reply::Value(pdpb::GetMembersResponse {
             header: Some(header(CLUSTER_ID)),
@@ -1907,6 +1943,88 @@ fn global_config_preserves_the_pd_method_contract_without_retry() {
     client.shutdown().unwrap();
     assert_eq!(
         closed.store_global_config("", Vec::new()),
+        Err(tidb_pd_client::PdClientError::Closed)
+    );
+}
+
+#[test]
+fn timestamp_entrypoints_batch_pd_external_rpc_contract() {
+    let server = Server::start(valid_state());
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+    assert_eq!(client.external_timestamp(None).unwrap(), 42);
+    assert_eq!(client.external_timestamp(Some(77)).unwrap(), 77);
+    {
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.external_get_requests.len(), 1);
+        assert_eq!(
+            state.external_get_requests[0]
+                .header
+                .as_ref()
+                .unwrap()
+                .cluster_id,
+            CLUSTER_ID
+        );
+        assert_eq!(state.external_set_requests.len(), 1);
+        assert_eq!(
+            state.external_set_requests[0]
+                .header
+                .as_ref()
+                .unwrap()
+                .cluster_id,
+            CLUSTER_ID
+        );
+        assert_eq!(state.external_set_requests[0].timestamp, 77);
+    }
+    server.state.lock().unwrap().external_get = Reply::Value(pdpb::GetExternalTimestampResponse {
+        header: None,
+        timestamp: 43,
+    });
+    assert_eq!(client.external_timestamp(None).unwrap(), 43);
+    server.state.lock().unwrap().external_set = Reply::Value(pdpb::SetExternalTimestampResponse {
+        header: Some(header(CLUSTER_ID + 1)),
+    });
+    assert_eq!(client.external_timestamp(Some(78)).unwrap(), 78);
+    let mut failed = header(CLUSTER_ID);
+    failed.error = Some(pdpb::Error {
+        r#type: 1,
+        message: "external rejected".into(),
+    });
+    server.state.lock().unwrap().external_set = Reply::Value(pdpb::SetExternalTimestampResponse {
+        header: Some(failed),
+    });
+    assert!(client
+        .external_timestamp(Some(76))
+        .unwrap_err()
+        .to_string()
+        .contains("external rejected"));
+    server.state.lock().unwrap().external_get =
+        Reply::Status(tonic::Code::Unavailable, "not leader");
+    assert!(client.external_timestamp(None).is_err());
+    assert_eq!(
+        server.state.lock().unwrap().external_get_requests.len(),
+        3,
+        "Go sends once"
+    );
+    server.state.lock().unwrap().external_get = Reply::Delayed(
+        Duration::from_secs(1),
+        pdpb::GetExternalTimestampResponse {
+            header: Some(header(CLUSTER_ID)),
+            timestamp: 42,
+        },
+    );
+    let timed = PdClient::connect(&server.address, Duration::from_millis(50)).unwrap();
+    assert!(matches!(
+        timed.external_timestamp(None),
+        Err(tidb_pd_client::PdClientError::Timeout {
+            operation: tidb_pd_client::PdOperation::ExternalTimestamp,
+            ..
+        })
+    ));
+    timed.shutdown().unwrap();
+    let closed = client.clone();
+    client.shutdown().unwrap();
+    assert_eq!(
+        closed.external_timestamp(None),
         Err(tidb_pd_client::PdClientError::Closed)
     );
 }

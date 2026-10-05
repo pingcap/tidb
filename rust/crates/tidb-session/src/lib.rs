@@ -689,6 +689,7 @@ pub struct Session {
     historical_read_provider: Option<Arc<txn::HistoricalReadProvider>>,
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
     snapshot_schema: Option<(u64, Catalog)>,
+    restricted_sql: bool,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
@@ -952,6 +953,7 @@ impl Session {
             historical_read_provider: None,
             snapshot_schema_provider: None,
             snapshot_schema: None,
+            restricted_sql: false,
             column_stats_usage: None,
             analyze_status: None,
             table_storage_stats: None,

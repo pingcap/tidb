@@ -464,3 +464,51 @@ pub(super) fn store_global_config(
     )?;
     Ok(())
 }
+
+// Go PD Get/SetExternalTimestamp use one bounded RPC and inspect the response error.
+pub(super) fn external_timestamp(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    control: RpcControl<'_>,
+    cluster_id: u64,
+    value: Option<u64>,
+) -> Result<u64, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let operation = PdOperation::ExternalTimestamp;
+    let (header, timestamp) = if let Some(timestamp) = value {
+        let response = block_on_rpc(
+            runtime,
+            control.timeout,
+            control.shutdown,
+            operation,
+            client.set_external_timestamp(pdpb::SetExternalTimestampRequest {
+                header: Some(request_header(cluster_id)),
+                timestamp,
+            }),
+        );
+        let response = map_rpc_result(response, operation, endpoint, control.timeout)?.into_inner();
+        (response.header, timestamp)
+    } else {
+        let response = block_on_rpc(
+            runtime,
+            control.timeout,
+            control.shutdown,
+            operation,
+            client.get_external_timestamp(pdpb::GetExternalTimestampRequest {
+                header: Some(request_header(cluster_id)),
+            }),
+        );
+        let response = map_rpc_result(response, operation, endpoint, control.timeout)?.into_inner();
+        (response.header, response.timestamp)
+    };
+    // These two Go methods inspect only Header.Error (a missing header is valid).
+    if let Some(error) = header.and_then(|header| header.error) {
+        return Err(PdClientError::HeaderError {
+            operation,
+            error_type: error.r#type,
+            message: error.message,
+        });
+    }
+    Ok(timestamp)
+}

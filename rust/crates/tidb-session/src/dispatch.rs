@@ -559,7 +559,10 @@ impl Session {
             ctx,
             needs_storage_stats,
             needs_column_lengths,
-            &tidb_planner::cluster_table_extractor::cluster_table_filters(&physical, "CLUSTER_CONFIG"),
+            &tidb_planner::cluster_table_extractor::cluster_table_filters(
+                &physical,
+                "CLUSTER_CONFIG",
+            ),
         )?;
         tidb_executor::driver::open_query_meta_stmt_with_physical(
             query,
@@ -1822,6 +1825,16 @@ impl Session {
             }
         }
         let ts = resolved.expect("at least one as-of expression");
+        if self.vars.txn_read_ts() != 0 {
+            if let Some(provider) = &self.snapshot_schema_provider {
+                provider(ts, self.current_resource_group(), false)?;
+            }
+            self.vars.use_txn_read_ts();
+            self.cleanup_txn_read_ts();
+            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(
+                "can't use select as of while already set transaction as of".into(),
+            )));
+        }
         let output = self.run_statement_as_of(ts, stripped);
         Some(output).transpose()
     }
@@ -1964,6 +1977,9 @@ impl Session {
         self.start_observation_compile();
         let result =
             self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
+        if result.is_err() && !self.in_transaction() {
+            self.cleanup_txn_read_ts();
+        }
         if result.is_ok() {
             crate::metrics::observe_compile_duration(
                 self.observed_compile_duration()
@@ -2019,35 +2035,11 @@ impl Session {
         // against the store's history -- Go's stale statement
         // (`StalenessTxnContextProvider` for one statement). Intercepted at
         // this one funnel so text and prepared spellings share the rules.
-        if self.historical_read_ts().is_some() {
-            struct Locked(bool);
-            impl tidb_ast::Visitor for Locked {
-                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                    if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
-                        self.0 |= select.lock.is_some();
-                    }
-                    false
-                }
-                fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
-                    true
-                }
-            }
-            let mut locked = Locked(false);
-            tidb_ast::Visitable::accept(&mut stmt, &mut locked);
-            if locked.0 {
-                return Err(DriverError::unsupported(
-                    "select lock hasn't been supported in stale read yet",
-                ));
-            }
-        }
-        let read_only_checked = matches!(&stmt, Stmt::Dml(_) | Stmt::Query(_))
-            || matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
-        if self.historical_read_ts().is_some() && read_only_checked && !stmt.is_read_only(true) {
-            return Err(DriverError::unsupported(
-                "only support read-only statement during read-only staleness transactions",
-            ));
-        }
-        if !self.in_transaction() && matches!(&stmt, Stmt::Query(_)) && !scan.has_as_of {
+        if !self.in_transaction()
+            && matches!(&stmt, Stmt::Query(_))
+            && !scan.has_as_of
+            && (!scan.names.is_empty() || prepared.is_some() || self.vars.snapshot_ts() != 0)
+        {
             if let Some(ts) = self.configured_historical_read_ts()? {
                 return self.run_statement_as_of(ts, stmt);
             }
@@ -2738,9 +2730,9 @@ impl Session {
                         self.drain_eval_warnings(&ctx);
                         output
                     }
-                    DmlStmt::ImportInto(_) => Err(DriverError::unsupported(
-                        "IMPORT INTO is not supported yet",
-                    )),
+                    DmlStmt::ImportInto(_) => {
+                        Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
+                    }
                     DmlStmt::Call(_) => {
                         // go's unsupported-statement wall names the AST node:
                         // `executor/executor.go`'s `Unsupported type
@@ -3148,6 +3140,38 @@ fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
 impl Session {
     /// Shared snapshot write admission for ordinary and routed DDL execution.
     pub fn validate_snapshot_statement(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        if !self.restricted_sql
+            && (self.historical_read_ts().is_some()
+                || self.vars.txn_read_ts() != 0
+                || self.external_timestamp_read_enabled())
+        {
+            struct Locked(bool);
+            impl tidb_ast::Visitor for Locked {
+                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                    if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
+                        self.0 |= select.lock.is_some();
+                    }
+                    false
+                }
+                fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+                    true
+                }
+            }
+            let mut locked = Locked(false);
+            tidb_ast::Visitable::accept(&mut stmt.clone(), &mut locked);
+            if locked.0 {
+                return Err(DriverError::unsupported(
+                    "select lock hasn't been supported in stale read yet",
+                ));
+            }
+            let read_only_checked = matches!(&stmt, Stmt::Dml(_) | Stmt::Query(_))
+                || matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
+            if read_only_checked && !stmt.is_read_only(true) {
+                return Err(DriverError::unsupported(
+                    "only support read-only statement during read-only staleness transactions",
+                ));
+            }
+        }
         let checked = matches!(stmt, Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Query(_))
             || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
         if self.vars.snapshot_ts() != 0 && checked && !stmt.is_read_only(true) {
@@ -3156,6 +3180,27 @@ impl Session {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn external_timestamp_read_enabled(&self) -> bool {
+        !self.restricted_sql
+            && self
+                .vars
+                .get_system("tidb_enable_external_ts_read")
+                .is_ok_and(|v| v == "ON")
+    }
+
+    pub(crate) fn external_read_ts(&self) -> Result<Option<u64>, DriverError> {
+        if !self.external_timestamp_read_enabled() {
+            return Ok(None);
+        }
+        let ts = self
+            .vars
+            .get_global("tidb_external_ts")
+            .map_err(crate::variables::var_error)?
+            .parse::<u64>()
+            .map_err(|_| DriverError::unsupported("invalid external timestamp"))?;
+        Ok((ts != 0).then_some(ts))
     }
 
     /// Selects one statement timestamp before historical schema and row reads.
@@ -3168,6 +3213,10 @@ impl Session {
         if snapshot != 0 {
             return Ok(Some(snapshot));
         }
+        let one_shot = self.vars.use_txn_read_ts();
+        if one_shot != 0 {
+            return Ok(Some(one_shot));
+        }
         let seconds = self
             .vars
             .get_system("tidb_read_staleness")
@@ -3175,7 +3224,7 @@ impl Session {
             .parse::<i64>()
             .unwrap_or(0);
         if seconds == 0 {
-            return Ok(None);
+            return self.external_read_ts();
         }
         // This store has no published SafeTS; Go's zero SafeTS selects the lower bound.
         let now = self.eval_value(&tidb_ast::Expr::Func {

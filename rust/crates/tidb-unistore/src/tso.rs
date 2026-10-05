@@ -125,6 +125,7 @@ impl tidb_txnkv::lock::TimestampSource for Tso {
 #[derive(Clone, Debug, Default)]
 pub struct InProcessPd {
     tso: std::sync::Arc<Tso>,
+    external_ts: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl InProcessPd {
@@ -156,6 +157,22 @@ impl tidb_txnkv::pd_capability::PdCapability for InProcessPd {
         Ok(tidb_txnkv::pd_capability::ReadyTimestamp(
             self.tso.get_composed_ts(),
         ))
+    }
+
+    fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
+        use std::sync::atomic::Ordering;
+        let Some(ts) = value else {
+            return Ok(self.external_ts.load(Ordering::Acquire));
+        };
+        if ts > self.tso.get_composed_ts() {
+            return Err("external timestamp is greater than global tso".into());
+        }
+        self.external_ts
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+                (ts >= old).then_some(ts)
+            })
+            .map_err(|_| "cannot decrease the external timestamp".to_owned())?;
+        Ok(ts)
     }
 
     fn gc_safe_point(&self) -> Result<u64, String> {
