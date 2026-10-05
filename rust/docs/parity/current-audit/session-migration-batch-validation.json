@@ -1,0 +1,222 @@
+{
+  "date": "2026-10-05",
+  "integration_start": "3cb7eaec4b2b230a0beb9ecebe127094d8a05279",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_client_unchanged": "bc8cca3fea4f741e68a41b124f28164604a57ee2",
+  "scope": [
+    "S03 portable session migration and prepared protocol ownership",
+    "N03 live variable/RNG and SQL-mode consumers",
+    "S04 migrated timestamp consumers and transaction admission"
+  ],
+  "package_acceptance": "unaccepted; existing-owner repair evidence only",
+  "counts_after": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 28,
+    "partial": 28
+  },
+  "behavioral_changes": [
+    "SHOW/SET SESSION_STATES compose portable user/system values, prepared statements, bindings, warnings, counters and sequence state.",
+    "Text and binary prepared IDs share one allocator; original SQL/database survive migration and cached plans are rebuilt. Parameter types survive and execute without a new type vector.",
+    "Text and binary prepared SHOW use the same migration handler. Metadata probing avoids executing export; complete row results retain the existing statement-memory authority.",
+    "Active transactions, local temporary tables, advisory locks, sandbox mode, bound long-data slots (including empty data) and unconsumed cursors refuse export.",
+    "Variable restoration orders depended variables first, logs incompatible variables, restores RNG state through the existing hook and restores warnings last.",
+    "Migrated snapshots use the shared historical-read provider and read-only admission.",
+    "Grant/revoke executors return OK through the shared statement classifier. SHOW GRANTS uses live SQL mode and shared identifier escaping across all scopes and roles."
+  ],
+  "validation": {
+    "unsupported_dispatch_before": {
+      "command": "cargo test --locked -p tidb-session --lib session_migration",
+      "failed": 2,
+      "passed": 0
+    },
+    "grant_consumers_before": {
+      "command": "cargo test --locked -p tidb-session --lib session_migration_batch_grant",
+      "failed": 2,
+      "passed": 0,
+      "method": "Temporarily restored the four owning source files to HEAD, ran the new tests, then restored all edits in finally."
+    },
+    "session": {
+      "command": "cargo test --locked -p tidb-session --lib -- tests_core::session_state tests_core::transactions tests_prepared_statements tests_prepared_plan_cache tests_user_vars tests_binding tests_session_var_hooks tests_grants privilege::tests",
+      "passed": 337,
+      "failed": 0
+    },
+    "protocol": {
+      "command": "cargo test --locked -p tidb-server --test all -- pipeline_mysql_client_source grants_wire_protocol_source --test-threads=1",
+      "passed": 20,
+      "failed": 0
+    },
+    "all_targets": {
+      "command": "cargo check --locked -p tidb-session -p tidb-server --all-targets",
+      "exit": 0
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  },
+  "cleanup": [
+    "Removed the OUTFILE unsupported-variant assertion from the unrelated no-op-function test; it encoded a Rust implementation limitation, not a Go no-op contract. OUTFILE completion is not claimed.",
+    "Deleted the synthetic grant-resultset run_admin helper after moving every caller to the existing OK-packet helper. Corrected obsolete quoted-account expectations against current Go Escape.",
+    "Removed inaccurate parse-only/name-only prepared-store comments. Retained documented unresolved planner/expression differences.",
+    "Removed superseded local linker outputs and a previously validated native test executable when disk space became constrained; retained dependency artifacts and current executable outputs."
+  ],
+  "validation_discoveries": [
+    "Binding Time JSON must include Go type/fractional precision bits.",
+    "SET SESSION_STATES must retain PrevAffectedRows at statement completion.",
+    "Binary prepared SHOW exposed an existing missing materialization authority for complete row results; repaired the common owner.",
+    "A parallel protocol run observed 3159 instead of 1045 because another test changed process-wide require_secure_transport. The final combined run is serial and passes; no test was deleted or weakened to hide the conflict."
+  ],
+  "go_package_inventory": [
+    {
+      "path": "pkg/sessionctx/sessionstates/BUILD.bazel",
+      "sha256": "017c6166ad8e859b037c8443d1daaaec9c4a4e36017eae2648503f5b8172a474"
+    },
+    {
+      "path": "pkg/sessionctx/sessionstates/session_states.go",
+      "sha256": "6b76477cccbefac3b0f29b11ae704a95bdabfad6c803d6c72b4dbe337f95be64"
+    },
+    {
+      "path": "pkg/sessionctx/sessionstates/session_states_test.go",
+      "sha256": "6b2d7b30b167e1528346fa18a8f955b7e68bf3cbffed90a0d6e5635cd9034f61"
+    },
+    {
+      "path": "pkg/sessionctx/sessionstates/session_token.go",
+      "sha256": "57a25600b7406d68bf388baa8091237ab57563c302e88fff24bc81370e03d9fd"
+    },
+    {
+      "path": "pkg/sessionctx/sessionstates/session_token_test.go",
+      "sha256": "bc552cc604dd32f81825ef0140a2345669af11ffcf8c66ace94d59e423f973b1"
+    }
+  ],
+  "remaining_obligations": [
+    "Signing-certificate load/rotation/signature validation, token authentication and complete original session_token tests. NULL token is only the unconfigured-certificate path.",
+    "Authoritative user-variable FieldType ownership: export currently infers types from the existing Datum owner and imported type maps are validated but not retained. Exact Go-to-Rust typed migration is not accepted.",
+    "LastDDLInfo and hypothetical index/TiFlash state, full status flags, legacy binding/error envelopes and full malformed-state/cross-version compatibility matrices.",
+    "Full sessionstates/variable/session/server/bindinfo package and original-artifact acceptance. S03 remains partial; N03 and S04 retain broader existing obligations."
+  ],
+  "not_verified": [
+    "Full Go suites",
+    "Live multi-node TiKV migration",
+    "Configured session-token TLS/signing lifecycle",
+    "Complete Go-to-Rust cross-version state transfer",
+    "Performance benchmarks"
+  ],
+  "rust_source": [
+    {
+      "path": "rust/crates/tidb-executor/src/advisory_lock_state.rs",
+      "sha256": "83141da07854d72d58d14baf3ee6fba7479451763271b620557caacbc5b55f9f"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+      "sha256": "076ce132501448fbf7b70163bae7d48d96663a9c783e1406fa41e468e936c66f"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/mysql_connection.rs",
+      "sha256": "adfa0e3a7ed5c23aa81bd8c31ccddafeffe77f3f387442f1757f697287aa4df9"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/pipeline_session.rs",
+      "sha256": "9004c21080771be657f9f807410c1dc78c57e8c460497cce26e0d99fcec03b25"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/sql_node.rs",
+      "sha256": "e97c30f81a452caa2bec77df289aac95b8eb371a20699c0cd30753e46a5d44dc"
+    },
+    {
+      "path": "rust/crates/tidb-server/tests/grants_wire_protocol_source.rs",
+      "sha256": "57cc3ef39a7afddc4011ab95135d9d505b56d9d40f9b81b85de03d11b15b04cd"
+    },
+    {
+      "path": "rust/crates/tidb-server/tests/pipeline_mysql_client_source.rs",
+      "sha256": "6be3b5d0e34c3a446179226de9d577fd56051f1d1f6c90aab1a96a1b33bbe749"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/account.rs",
+      "sha256": "dd994a24accf5cd0353c363e897d53133a3b2a59a5f7ecb981a5475fb8078f26"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/classify.rs",
+      "sha256": "02e86aebaf3e128e288d02a177021a7fbbd4618a6ab03ea384e8cd1354daeecc"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/lib.rs",
+      "sha256": "f90a5b82bce967f67a6999e5cd10f696b3f30a634f592a06c47147f376d6f62d"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/prepared_statements.rs",
+      "sha256": "81994558c1cbc1b307b50946226823dba18e57a3251ea10fd23e74a018d6bdca"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/privilege.rs",
+      "sha256": "acc8d361098228613800bd06efa27b5f9394d26721aa2b2de6ad92b82e63812b"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/privilege/registry_ops.rs",
+      "sha256": "1861bda562fd37bd65cddf4fac73c1ab2e3cff00265af0fd7a471259b4523ce1"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/session_states.rs",
+      "sha256": "ca20b87dd34988cb9492be320069bdeff0f5ba2e395cb136123c5e58ecd57922"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/show.rs",
+      "sha256": "d8c6e5f8f24d14c30b830f3bdf3d92b25c28ab5d3f35e699123be0d53023c090"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/stmt_ctx.rs",
+      "sha256": "de1b24ee8d959b6368f91f011764d07e889c47edece3c1914f21e0d6b0dadd3b"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_core/session_state.rs",
+      "sha256": "606643f0f7a5893e59bd9f717e8c977f5f91a4750de0adce6872a07780017825"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/variables.rs",
+      "sha256": "474420ee2e59ae663bd772e88961b6f8b47df9f32a11d1b19aae256ebd1feb3c"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/vars.rs",
+      "sha256": "edf533482469e9363d323013675a8faa16479dc012d70757a3c6d37cde881249"
+    }
+  ],
+  "logs": {
+    "before": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/before.log",
+      "sha256": "602ce15e642239b101df451738f2c8894533387f6647a5127b8e5ff0a937c1fb"
+    },
+    "grant-before": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/grant-before.log",
+      "sha256": "7975f0d216e72e26fc15ca2096f94a5dd395b46cc25d9e3f0482ace308bc63c7"
+    },
+    "session-suite": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/session-suite.log",
+      "sha256": "566af5912a1b2c9a0ba204851dd564021a66cb6d7cbf9c210b3d7964bd6fa889"
+    },
+    "server-suite": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/server-suite.log",
+      "sha256": "775d1455b3ae43c107e998b415631fc99534a201fdf945109a78dbbf33eade3d"
+    },
+    "check": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/check.log",
+      "sha256": "898d007652eb177210de7437d7cbb658da1e5ba7f276f796c2e4f156c320b382"
+    },
+    "lint": {
+      "path": "/workspace/.cloud-setup/session-migration-batch/lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  },
+  "publication": "Actual precommit locked tidb-server build, fresh locked build immediately before push and remote SHA verification are recorded in Cloud session-migration-batch/final-handoff.json. Never bypass hooks or force-push.",
+  "batch_map_reconciliation": [
+    {
+      "finding": "P03",
+      "old_batch_status": "open",
+      "canonical_register_status": "partial"
+    }
+  ]
+}

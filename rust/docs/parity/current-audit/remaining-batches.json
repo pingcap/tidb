@@ -6,8 +6,8 @@
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 29,
-    "partial": 27
+    "open": 28,
+    "partial": 28
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
   "evidence_limit": "P03/P06 provider/bootstrap residuals rechecked; the other 54 unresolved roots retain earlier evidence.",
@@ -40,7 +40,7 @@
       "completion_boundary": "One discovery/TSO/region/channel lifecycle; service-mode switches, options, deadlines, security, cancellation and joined close. Retire competing TiDB routing only after every ordinary/coprocessor/MPP consumer migrates.",
       "acceptance": "unaccepted",
       "finding_statuses": {
-        "P03": "open",
+        "P03": "partial",
         "P06": "partial",
         "T02": "partial",
         "M04": "partial"
@@ -76,26 +76,24 @@
         "T01": "partial",
         "K01": "open",
         "K03": "partial",
-        "S03": "open",
+        "S03": "partial",
         "S04": "partial"
       },
       "latest_maintenance": {
-        "date": "2026-10-04",
-        "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+        "date": "2026-10-05",
+        "integration_start": "3cb7eaec4b2b230a0beb9ecebe127094d8a05279",
         "findings": [
-          "S04",
-          "I04",
-          "O09",
-          "N03"
+          "S03",
+          "N03",
+          "S04"
         ],
         "statuses": {
-          "S04": "partial",
-          "I04": "partial",
-          "O09": "partial",
-          "N03": "partial"
+          "S03": "partial",
+          "N03": "partial",
+          "S04": "partial"
         },
-        "receipt": "historical-read-batch-validation.json",
-        "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
+        "receipt": "session-migration-batch-validation.json",
+        "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
       }
     },
     {
@@ -217,22 +215,20 @@
         "N05": "partial"
       },
       "latest_maintenance": {
-        "date": "2026-10-04",
-        "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+        "date": "2026-10-05",
+        "integration_start": "3cb7eaec4b2b230a0beb9ecebe127094d8a05279",
         "findings": [
-          "S04",
-          "I04",
-          "O09",
-          "N03"
+          "S03",
+          "N03",
+          "S04"
         ],
         "statuses": {
-          "S04": "partial",
-          "I04": "partial",
-          "O09": "partial",
-          "N03": "partial"
+          "S03": "partial",
+          "N03": "partial",
+          "S04": "partial"
         },
-        "receipt": "historical-read-batch-validation.json",
-        "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
+        "receipt": "session-migration-batch-validation.json",
+        "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
       },
       "observation_plan_checkpoint": {
         "date": "2026-10-04",
@@ -439,21 +435,19 @@
     }
   ],
   "latest_evidence": {
-    "date": "2026-10-04",
-    "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
+    "date": "2026-10-05",
+    "integration_start": "3cb7eaec4b2b230a0beb9ecebe127094d8a05279",
     "findings": [
-      "S04",
-      "I04",
-      "O09",
-      "N03"
+      "S03",
+      "N03",
+      "S04"
     ],
     "statuses": {
-      "S04": "partial",
-      "I04": "partial",
-      "O09": "partial",
-      "N03": "partial"
+      "S03": "partial",
+      "N03": "partial",
+      "S04": "partial"
     },
-    "receipt": "historical-read-batch-validation.json",
-    "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
+    "receipt": "session-migration-batch-validation.json",
+    "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
   }
 }

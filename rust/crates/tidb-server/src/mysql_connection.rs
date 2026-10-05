@@ -266,6 +266,7 @@ fn unknown_command_error(code: u8) -> SqlQueryError {
 }
 
 struct ConnectionPreparedStatement {
+    database: String,
     /// The parsed statement is immutable after PREPARE.  Keep it behind an
     /// `Arc` so COM_STMT_EXECUTE only clones a pointer; cloning the retained
     /// AST for every execute made YCSB's point reads pay a full tree copy.
@@ -318,6 +319,43 @@ enum AppendParamError {
     ParameterOutOfRange,
 }
 
+fn prepared_sql(statement: &PreparedStatement) -> &str {
+    match statement {
+        PreparedStatement::PointRead(value) => value.sql(),
+        PreparedStatement::Write(value) => value.sql(),
+        PreparedStatement::General(value) => value.sql(),
+        PreparedStatement::TransactionControl(value) => value.as_str(),
+    }
+}
+
+fn prepare_connection_statement<S: QuerySession>(
+    engine: &mut S,
+    sql: &str,
+) -> Result<PreparedStatement, SqlQueryError> {
+    if classify_transaction_control(sql).is_some() {
+        return Ok(PreparedStatement::TransactionControl(sql.to_owned()));
+    }
+    match engine.prepare_point_read(sql) {
+        Ok(read) => Ok(PreparedStatement::PointRead(read)),
+        Err(read_error) => match engine.prepare_write(sql) {
+            Ok(write) => Ok(PreparedStatement::Write(write)),
+            Err(_) => engine
+                .prepare_general(sql)
+                .map(PreparedStatement::General)
+                .map_err(|error| {
+                    if error
+                        .message
+                        .contains("does not support general prepared statements")
+                    {
+                        read_error
+                    } else {
+                        error
+                    }
+                }),
+        },
+    }
+}
+
 struct PreparedStatementRegistry {
     next_id: Option<u32>,
     statements: HashMap<u32, ConnectionPreparedStatement>,
@@ -333,17 +371,132 @@ impl Default for PreparedStatementRegistry {
 }
 
 impl PreparedStatementRegistry {
+    fn session_states_handler<S: QuerySession>(
+        &mut self,
+        engine: &mut S,
+        stmt: &Stmt,
+    ) -> Result<(), SqlQueryError> {
+        use base64::Engine as _;
+        use tidb_session::session_states::{PreparedStmtInfo, ProtocolSessionStates};
+        let effective = engine
+            .migration_session()
+            .and_then(|session| session.session_migration_statement(stmt).cloned());
+        let stmt = effective.as_ref().unwrap_or(stmt);
+        let is_show = matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::ShowInspection(show) if show.kind == tidb_ast::ShowInspectionKind::SessionStates));
+        if is_show {
+            let mut state = ProtocolSessionStates::default();
+            for (&id, prepared) in &self.statements {
+                if prepared.bound_params.iter().any(Option::is_some) {
+                    state.cannot_migrate = Some("prepared statements have bound params");
+                    break;
+                }
+                if prepared.cursor.is_some() {
+                    state.cannot_migrate = Some("prepared statements have unfetched rows");
+                    break;
+                }
+                let sql = prepared_sql(&prepared.statement);
+                let types: Vec<u8> = prepared
+                    .parameter_types
+                    .as_ref()
+                    .map(|types| {
+                        types
+                            .iter()
+                            .flat_map(|ty| {
+                                [ty.type_code(), if ty.is_unsigned() { 0x80 } else { 0 }]
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                state.prepared.insert(
+                    id,
+                    PreparedStmtInfo {
+                        name: String::new(),
+                        text: sql.to_owned(),
+                        database: prepared.database.clone(),
+                        parameter_types: base64::engine::general_purpose::STANDARD.encode(types),
+                    },
+                );
+            }
+            if let Some(session) = engine.migration_session() {
+                session.set_protocol_session_states(state);
+            }
+        }
+        let Stmt::Session(stmt) = stmt else {
+            return Ok(());
+        };
+        let tidb_ast::SessionStmt::SetSessionStates(set) = &**stmt else {
+            return Ok(());
+        };
+        let state = tidb_session::session_states::parse_session_states(&set.session_states)
+            .map_err(|error| {
+                let error = error.to_mysql_error();
+                SqlQueryError::new(error.code, error.state, error.message)
+            })?;
+        let records: std::collections::BTreeMap<u32, PreparedStmtInfo> = serde_json::from_value(
+            state
+                .get("prepared-stmts")
+                .cloned()
+                .unwrap_or(serde_json::json!({})),
+        )
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        for (id, info) in records {
+            if !info.name.is_empty() {
+                continue;
+            }
+            let types = base64::engine::general_purpose::STANDARD
+                .decode(&info.parameter_types)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            if types.len() % 2 != 0 {
+                return Err(SqlQueryError::unknown(
+                    "invalid prepared parameter type state",
+                ));
+            }
+            let database = info.database;
+            let old_db = engine
+                .migration_session()
+                .map(|session| session.replace_migration_database(database.clone()));
+            let result = prepare_connection_statement(engine, &info.text);
+            if let Some(old_db) = old_db {
+                if let Some(session) = engine.migration_session() {
+                    session.replace_migration_database(old_db);
+                }
+            }
+            let statement = result?;
+            if !types.is_empty() && types.len() != statement.parameter_count() * 2 {
+                return Err(SqlQueryError::unknown(
+                    "invalid prepared parameter type count",
+                ));
+            }
+            if let Some(mut old) = self.statements.remove(&id) {
+                old.clear_bound_params(engine);
+                engine.close_prepared(&old.statement);
+            }
+            let old_next = self.next_id;
+            self.next_id = Some(id);
+            let result = self.insert(statement);
+            self.next_id = old_next;
+            result.map_err(SqlQueryError::unknown)?;
+            let statement = self
+                .statements
+                .get_mut(&id)
+                .expect("inserted migration handle");
+            statement.database = database;
+            statement.parameter_types = (!types.is_empty()).then(|| {
+                types
+                    .chunks_exact(2)
+                    .map(|pair| PreparedParameterType::new(pair[0], pair[1] & 0x80 != 0))
+                    .collect()
+            });
+        }
+        Ok(())
+    }
+
     fn insert(&mut self, statement: PreparedStatement) -> Result<u32, &'static str> {
         let statement_id = self
             .next_id
             .ok_or("prepared statement ID space exhausted")?;
         self.next_id = statement_id.checked_add(1);
-        let sql = match &statement {
-            PreparedStatement::PointRead(value) => value.sql(),
-            PreparedStatement::Write(value) => value.sql(),
-            PreparedStatement::General(value) => value.sql(),
-            PreparedStatement::TransactionControl(value) => value.as_str(),
-        };
+        let sql = prepared_sql(&statement);
         // Compute once at PREPARE; EXECUTE uses this immutable label.
         let metrics_label = match &statement {
             PreparedStatement::General(general) if general.prepared_ast().is_some() => general
@@ -356,6 +509,7 @@ impl PreparedStatementRegistry {
         self.statements.insert(
             statement_id,
             ConnectionPreparedStatement {
+                database: String::new(),
                 bound_params: vec![None; statement.parameter_count()],
                 bound_long_data_bytes: 0,
                 bound_params_mem_quota_exceeded: false,
@@ -1970,6 +2124,14 @@ fn run_connection_commands<S: QuerySession>(
                                 break;
                             }
                         };
+                        if let Some(stmt) = parsed.as_ref() {
+                            if let Err(error) = prepared.session_states_handler(engine, stmt) {
+                                engine.record_parse_failure(error.code, error.message.clone());
+                                write_query_error_at(output, sequence, &error, protocol_41)?;
+                                aborted = true;
+                                break;
+                            }
+                        }
                         command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
                         // Go `executor.go`: StmtNodeCounter counts every
                         // executed statement by its executor label.
@@ -2356,39 +2518,20 @@ fn run_connection_commands<S: QuerySession>(
                     // The predicate
                     // is the same one the text arm routes on, so a statement takes
                     // the same route whichever protocol carried it.
-                    let statement = if classify_transaction_control(sql).is_some() {
-                        PreparedStatement::TransactionControl(sql.to_owned())
-                    }
-                    // A read is admitted first so an existing prepared SELECT
-                    // keeps its exact error text; only a statement the read path
-                    // rejects is offered to the write planner.
-                    else {
-                        match engine.prepare_point_read(sql) {
-                            Ok(point_read) => PreparedStatement::PointRead(point_read),
-                            Err(read_error) => match engine.prepare_write(sql) {
-                                Ok(write) => PreparedStatement::Write(write),
-                                // Any other statement takes the general path, which
-                                // binds its markers and runs it through the session.
-                                Err(_) => match engine.prepare_general(sql) {
-                                    Ok(general) => PreparedStatement::General(general),
-                                    Err(general_error) => {
-                                        // The configured read's own message is the
-                                        // more specific one when the general path
-                                        // simply has no session behind it.
-                                        let reported = if general_error.message.contains(
-                                            "does not support general prepared statements",
-                                        ) {
-                                            read_error
-                                        } else {
-                                            general_error
-                                        };
-                                        write_query_error(output, &reported, protocol_41)?;
-                                        return Ok(None);
-                                    }
-                                },
-                            },
+                    let statement = match prepare_connection_statement(engine, sql) {
+                        Ok(statement) => statement,
+                        Err(error) => {
+                            write_query_error(output, &error, protocol_41)?;
+                            return Ok(None);
                         }
                     };
+                    let database = engine
+                        .migration_session()
+                        .map(|session| {
+                            prepared.next_id = Some(session.allocate_prepared_statement_id());
+                            session.current_database().to_owned()
+                        })
+                        .unwrap_or_default();
                     let result_columns = statement.result_columns().to_vec();
                     let parameter_count = statement.parameter_count();
                     let statement_id = match prepared.insert(statement) {
@@ -2405,6 +2548,11 @@ fn run_connection_commands<S: QuerySession>(
                             return Ok(None);
                         }
                     };
+                    prepared
+                        .statements
+                        .get_mut(&statement_id)
+                        .expect("just inserted")
+                        .database = database;
                     let parameter_columns = vec![prepared_parameter_column(); parameter_count];
                     // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
                     // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
@@ -2544,6 +2692,16 @@ fn run_connection_commands<S: QuerySession>(
                     tidb_executor::metrics::STATEMENT_TOTAL
                         .with_label_values(&["", engine.metrics_resource_group(), statement_label])
                         .inc();
+                    if let PreparedStatement::General(general) = prepared_statement.as_ref() {
+                        if let Some(ast) = general.prepared_ast() {
+                            if let Err(error) =
+                                prepared.session_states_handler(engine, ast.statement())
+                            {
+                                write_query_error(output, &error, protocol_41)?;
+                                return Ok(None);
+                            }
+                        }
+                    }
                     match prepared_statement.as_ref() {
                         // The same two lines the text arm runs, so the transaction
                         // a prepared BEGIN opens, and the status flag the client

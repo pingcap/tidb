@@ -337,7 +337,12 @@ impl Session {
             // `ADMIN CHECK INDEX t idx (a, b)` form keeps its result set.
             Stmt::Admin(admin)
                 if match &**admin {
-                    tidb_ast::AdminStmt::Kill(_)
+                    tidb_ast::AdminStmt::Grant(_)
+                    | tidb_ast::AdminStmt::GrantProxy(_)
+                    | tidb_ast::AdminStmt::GrantRole(_)
+                    | tidb_ast::AdminStmt::Revoke(_)
+                    | tidb_ast::AdminStmt::RevokeRole(_)
+                    | tidb_ast::AdminStmt::Kill(_)
                     | tidb_ast::AdminStmt::Flush(_)
                     | tidb_ast::AdminStmt::FlushPlanCache(_) => true,
                     tidb_ast::AdminStmt::ServerControl(control) => matches!(

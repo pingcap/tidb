@@ -34,17 +34,8 @@
 //!   `?` -- not the bound literals. [`alias_marker_fields`] pins those names
 //!   at prepare time, before any value exists to substitute.
 //!
-//! # Remaining planner differences
-//!
-//! Go's `PREPARE` runs the whole optimizer (`GeneratePlanCacheStmtWithAST`),
-//! so a statement that PARSES but cannot be PLANNED is refused at prepare
-//! time and never enters the store. Captured from TiDB:
-//! `PREPARE gb FROM 'select a from t group by ?'` fails at PREPARE with
-//! `[planner:1055]` under `only_full_group_by`, and the following
-//! `EXECUTE gb` is then `[planner:8111]Prepared statement not found`. Here
-//! only parsing happens at prepare time, so such a statement is accepted and
-//! its planning error surfaces at `EXECUTE` instead. The rejection still
-//! happens; only WHICH statement reports it differs.
+//! Marker-free queries validate their plans at PREPARE. Marker-bearing queries
+//! still defer some planning errors until EXECUTE.
 //!
 //! # Two divergences this exposed that are NOT the binding's
 //!
@@ -76,12 +67,15 @@ use crate::Session;
 /// plus the cache-owned physical SELECT descriptor.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedStatement {
+    pub(crate) id: u32,
+    pub(crate) original_sql: String,
+    pub(crate) database: String,
     /// The statement text to run, with every unaliased marker-bearing select
     /// field already carrying its Go column name (see [`alias_marker_fields`]).
     sql: String,
     /// Go `PlanCacheStmt.PreparedAst`: the one PREPARE-time parse cloned and
     /// bound on every EXECUTE. No execute reparses restored SQL.
-    statement: Stmt,
+    pub(crate) statement: Stmt,
     /// Go `PlanCacheStmt.VisitInfos`: derived once at PREPARE against the
     /// database current then, checked by every EXECUTE.
     privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
@@ -108,10 +102,7 @@ pub(crate) struct PreparedStatement {
     limit_markers: Vec<usize>,
 }
 
-/// The per-session store. Go keeps two maps (name -> id, id -> statement);
-/// nothing here needs the numeric id a client would use over the binary
-/// protocol, so the name is the key.
-///
+/// SQL names retain their shared connection-wide prepared statement ID.
 /// Keys are the spelling `PREPARE` used: TiDB's `PreparedStmtNameToID` is a
 /// plain `map[string]uint32`, so lookups are case-SENSITIVE. Captured:
 /// `PREPARE MyStmt FROM 'select 1'` followed by `EXECUTE mystmt` is
@@ -243,15 +234,20 @@ impl Session {
         // binding does), so only that statement needs its column names pinned
         // against the restore. A marker-free statement keeps the text the user
         // wrote and runs through the ordinary path, names and all.
+        let original_sql = text.clone();
         let sql = if param_count > 0 && pin_field_names(&mut statement) {
             statement.restore()
         } else {
             text
         };
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
+        let id = self.allocate_prepared_statement_id();
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {
+                id,
+                original_sql,
+                database: self.current_database().to_owned(),
                 sql,
                 statement,
                 privilege_requests,

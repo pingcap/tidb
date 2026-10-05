@@ -1039,6 +1039,9 @@ pub struct SessionContext {
 
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
+    /// Shared SQL state used by connection-owned migration handlers.
+    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { None }
+
     /// Go SessionVars.ResourceGroupName for command metrics.
     fn metrics_resource_group(&self) -> &str {
         "default"

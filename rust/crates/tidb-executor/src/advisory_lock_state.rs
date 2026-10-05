@@ -174,6 +174,12 @@ impl Default for AdvisoryLockSession {
 }
 
 impl AdvisoryLockSession {
+    /// Whether this session owns any advisory lock, including recursive holds.
+    #[must_use]
+    pub fn has_locks(&self) -> bool {
+        !self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).held.is_empty()
+    }
+
     /// Creates session ownership over `service`.
     #[must_use]
     pub fn new(service: Arc<dyn AdvisoryLockService>) -> Self {

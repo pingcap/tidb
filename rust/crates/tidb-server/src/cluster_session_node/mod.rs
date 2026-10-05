@@ -7078,6 +7078,8 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { Some(&mut self.session) }
+
     fn record_parse_failure(&mut self, code: u16, message: String) {
         self.session.record_parse_failure_coded(code, message);
     }

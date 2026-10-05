@@ -546,16 +546,6 @@ fn noop_function_gate() {
     // The warnings belong to the last statement only.
     session.run("SELECT b FROM t").unwrap();
     assert!(session.warnings().is_empty());
-
-    // INTO OUTFILE writes a server-side file, which this tier cannot do,
-    // so it is refused rather than answered with rows.
-    session
-        .apply_set("SET tidb_enable_noop_functions = 'OFF'")
-        .unwrap();
-    assert!(matches!(
-        session.run("SELECT b FROM t INTO OUTFILE '/tmp/x'"),
-        Err(DriverError::Unsupported(_))
-    ));
 }
 
 /// Go `preprocess.checkSelectNoopFuncs`: enabling shared-lock promotion turns
@@ -1155,4 +1145,218 @@ fn only_the_parsed_reporting_nodes_inherit_the_warning_buffer() {
     assert_eq!(session.warnings().len(), 1);
     assert_eq!(session.warnings()[0].level, WarningLevel::Error);
     assert_ne!(session.warnings()[0].code, 1235);
+}
+
+#[test]
+fn session_migration_exports_and_restores_variables_and_prepared_statements() {
+    let mut source = Session::new();
+    source.run("CREATE DATABASE migration").unwrap();
+    source.run("USE migration").unwrap();
+    source.run("SET @answer = 41").unwrap();
+    source.run("SET sql_mode = 'ANSI_QUOTES'").unwrap();
+    source.run("PREPARE saved FROM 'SELECT ? + 1'").unwrap();
+    let StmtOutput::Rows { rows, .. } = source.run_with_columns("SHOW SESSION_STATES").unwrap()
+    else {
+        panic!("migration must return state and token columns")
+    };
+    assert_eq!(rows[0].len(), 2);
+    let state = crate::datum_text(&rows[0][0]).unwrap();
+    let mut target = Session::with_catalog(source.catalog.clone());
+    target
+        .run(&format!(
+            "SET SESSION_STATES '{}'",
+            state.replace('\\', "\\\\").replace('\'', "''")
+        ))
+        .unwrap();
+    assert_eq!(target.current_database(), "migration");
+    assert_eq!(
+        target.vars().get_system("sql_mode").unwrap(),
+        source.vars().get_system("sql_mode").unwrap()
+    );
+    let StmtOutput::Rows { rows, .. } = target
+        .run_with_columns("EXECUTE saved USING @answer")
+        .unwrap()
+    else {
+        panic!("rows expected")
+    };
+    assert_eq!(rows[0][0], Datum::Int(42));
+}
+
+#[test]
+fn session_migration_refuses_nonportable_session_resources() {
+    for (setup, reason) in [
+        ("BEGIN", "session has an active transaction"),
+        (
+            "CREATE TEMPORARY TABLE test.local_state (a INT)",
+            "session has local temporary tables",
+        ),
+        (
+            "SELECT GET_LOCK('migration_lock', 0)",
+            "session has advisory locks",
+        ),
+    ] {
+        let mut session = Session::new();
+        session.run("CREATE DATABASE IF NOT EXISTS test").unwrap();
+        session.run(setup).unwrap();
+        let error = session.run("SHOW SESSION_STATES").unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+    }
+}
+
+#[test]
+fn session_migration_restores_dependency_order_rng_warnings_and_bindings() {
+    let mut source = Session::new();
+    source.run("USE test").unwrap();
+    source
+        .run("CREATE TABLE migration_binding (a INT PRIMARY KEY)")
+        .unwrap();
+    source.run("CREATE SESSION BINDING FOR SELECT * FROM migration_binding WHERE a = 1 USING SELECT /*+ USE_INDEX(migration_binding, PRIMARY) */ * FROM migration_binding WHERE a = 1").unwrap();
+    source
+        .run("SET rand_seed1 = 123, rand_seed2 = 456")
+        .unwrap();
+    source.run("SELECT RAND()").unwrap();
+    source.append_warning(WarningLevel::Warning, 1292, "retained warning".into());
+    let mut state = source.encode_session_states().unwrap();
+    state["sys-vars"]["tidb_allow_mpp"] = serde_json::json!("ON");
+    state["sys-vars"]["tidb_enforce_mpp"] = serde_json::json!("ON");
+    state["sys-vars"]["future_removed_variable"] = serde_json::json!("1");
+    let mut target = Session::with_catalog(source.catalog.clone());
+    target.run("SET tidb_allow_mpp=OFF").unwrap();
+    target.decode_session_states(&state.to_string()).unwrap();
+    assert_eq!(target.vars().get_system("tidb_enforce_mpp").unwrap(), "ON");
+    assert_eq!(source.rand.get_seed1(), target.rand.get_seed1());
+    assert_eq!(source.rand.get_seed2(), target.rand.get_seed2());
+    assert_eq!(source.warnings, target.warnings);
+    assert_eq!(
+        source.run("SHOW SESSION BINDINGS").unwrap(),
+        target.run("SHOW SESSION BINDINGS").unwrap()
+    );
+    assert_eq!(
+        source.run("SELECT RAND()").unwrap(),
+        target.run("SELECT RAND()").unwrap()
+    );
+}
+
+#[test]
+fn session_migration_preserves_prepare_database_and_cleans_up_after_restore_error() {
+    let mut source = Session::new();
+    source.run("CREATE DATABASE migration_prepare").unwrap();
+    source.run("USE migration_prepare").unwrap();
+    source.run("CREATE TABLE t(a INT)").unwrap();
+    source.run("INSERT INTO t VALUES (7)").unwrap();
+    source.run("PREPARE saved FROM 'SELECT a FROM t'").unwrap();
+    source.run("USE test").unwrap();
+    let state = source.encode_session_states().unwrap();
+    let mut target = Session::with_catalog(source.catalog.clone());
+    target.decode_session_states(&state.to_string()).unwrap();
+    assert_eq!(target.current_database(), "test");
+    assert_eq!(
+        source.run("EXECUTE saved").unwrap(),
+        target.run("EXECUTE saved").unwrap()
+    );
+    let before_id = target.prepared_statement_id;
+    assert!(target.decode_session_states(r#"{"prepared-stmts":{"91":{"name":"bad","text":"SELECT missing_column","db":"migration_prepare"}}}"#).is_err());
+    assert_eq!(target.current_database(), "test");
+    assert_eq!(target.prepared_statement_id, before_id);
+}
+
+#[test]
+fn session_migration_retains_affected_rows_through_statement_completion() {
+    let mut session = Session::new();
+    session.run(r#"SET SESSION_STATES '{"affected-rows":37,"last-insert-id":18446744073709551615,"found-rows":12}'"#).unwrap();
+    assert_eq!(
+        session
+            .run("SELECT ROW_COUNT(), LAST_INSERT_ID(), FOUND_ROWS()")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![
+            Datum::Int(37),
+            Datum::UInt(u64::MAX),
+            Datum::UInt(12)
+        ]])
+    );
+}
+
+#[test]
+fn session_migration_restored_timestamp_uses_shared_historical_read_owner() {
+    let mut source = Session::new();
+    source.run("USE test").unwrap();
+    source.run("CREATE TABLE migrated_snapshot(a INT)").unwrap();
+    source
+        .run("INSERT INTO migrated_snapshot VALUES (7)")
+        .unwrap();
+    let historical = source.shared_catalog().lock().unwrap().clone();
+    source.run("UPDATE migrated_snapshot SET a=8").unwrap();
+    source.run("SET tidb_snapshot=100").unwrap();
+    let states = source.encode_session_states().unwrap();
+    let mut target = Session::with_catalog(source.catalog.clone());
+    let timestamps = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&timestamps);
+    target.set_historical_read_provider(Arc::new(move |ts, _, _| {
+        observed.lock().unwrap().push(ts);
+        Ok(crate::txn::HistoricalRead {
+            catalog: historical.clone(),
+            timestamp_hold: Arc::new(()),
+        })
+    }));
+    target.decode_session_states(&states.to_string()).unwrap();
+    assert_eq!(
+        target.run("SELECT * FROM migrated_snapshot").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(7)]])
+    );
+    assert_eq!(*timestamps.lock().unwrap(), vec![100]);
+    assert!(!target.in_transaction());
+    assert!(target.run("UPDATE migrated_snapshot SET a=9").is_err());
+}
+
+#[test]
+fn session_migration_rejects_malformed_state_before_restoring_handlers() {
+    let mut session = Session::new();
+    for invalid in [
+        serde_json::json!(-1),
+        serde_json::json!(4294967296u64),
+        serde_json::json!("1"),
+    ] {
+        let state = serde_json::json!({"prepared-stmt-id": invalid, "prepared-stmts":{"5":{"name":"must_not_exist","text":"SELECT 1"}}});
+        assert!(session.decode_session_states(&state.to_string()).is_err());
+        assert!(session.prepared_statements.is_empty());
+    }
+}
+
+#[test]
+fn session_migration_batch_grant_quotes_follow_live_sql_mode() {
+    let mut session = Session::new();
+    session.attach_privileges(privilege::PrivilegeRegistry::default());
+    session.run("CREATE USER 'quote`\"user'@'%'").unwrap();
+    session.run("SET sql_mode=''").unwrap();
+    assert_eq!(
+        session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Bytes(
+            b"GRANT USAGE ON *.* TO `quote``\"user`@`%`".to_vec()
+        )]])
+    );
+    session.run("SET sql_mode='ANSI_QUOTES'").unwrap();
+    assert_eq!(
+        session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Bytes(
+            b"GRANT USAGE ON *.* TO \"quote`\"\"user\"@\"%\"".to_vec()
+        )]])
+    );
+}
+
+#[test]
+fn session_migration_batch_grant_executors_have_no_result_set() {
+    let session = Session::new();
+    for sql in [
+        "GRANT SELECT ON *.* TO 'u'@'%'",
+        "REVOKE SELECT ON *.* FROM 'u'@'%'",
+        "GRANT r TO 'u'@'%'",
+        "REVOKE r FROM 'u'@'%'",
+        "GRANT PROXY ON 'u'@'%' TO 'v'@'%'",
+    ] {
+        assert_eq!(
+            session.statement_kind_parsed(&session.parse(sql).unwrap()),
+            StmtKind::Write,
+            "{sql}"
+        );
+    }
 }

@@ -1002,7 +1002,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let grants = run_query(&mut client, &mut reader, "SHOW GRANTS");
     assert_eq!(
         grants[0][0],
-        "GRANT ALL PRIVILEGES ON *.* TO 'alice'@'%' WITH GRANT OPTION",
+        r#"GRANT ALL PRIVILEGES ON *.* TO "alice"@"%" WITH GRANT OPTION"#,
         "{grants:?}"
     );
     // A fresh account reports USAGE, as Go's mysql.user does -- and reading
@@ -1015,7 +1015,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let other = run_query(&mut client, &mut reader, "SHOW GRANTS FOR 'wireusage'@'%'");
     assert_eq!(
         other[0][0],
-        "GRANT USAGE ON *.* TO 'wireusage'@'%'",
+        r#"GRANT USAGE ON *.* TO "wireusage"@"%""#,
         "{other:?}"
     );
 
@@ -1075,11 +1075,10 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
 
     // Roles over the wire: create, grant, activate, and read the active set.
     assert_eq!(run_write(&mut client, &mut reader, "CREATE ROLE wirerole"), 0);
-    // GRANT is an Admin statement, which this tier answers as a one-column
-    // affected-rows result set (see grants_wire_protocol_source.rs).
+    // Go grant executors have an empty schema and answer with an OK packet.
     assert_eq!(
-        run_query(&mut client, &mut reader, "GRANT wirerole TO 'alice'@'%'"),
-        vec![vec!["0".to_owned()]]
+        run_write(&mut client, &mut reader, "GRANT wirerole TO 'alice'@'%'"),
+        0
     );
     assert_eq!(run_write(&mut client, &mut reader, "SET ROLE wirerole"), 0);
     assert_eq!(
@@ -2506,5 +2505,124 @@ fn session_plan_cache_binary_close_uses_session_retention_policy() {
     }
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
+    worker.join().unwrap();
+}
+
+#[test]
+fn session_migration_moves_text_and_binary_prepared_handles_over_mysql() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let store = users();
+        let factory = PipelineSessionFactory::with_configured_store(&store);
+        for _ in 0..2 {
+            let (stream, peer) = listener.accept().unwrap();
+            serve_mysql_connection(
+                stream,
+                peer,
+                ConnectionCancellation::default(),
+                &factory,
+                &store,
+                &Arc::new(ConnectionTracker::default()),
+                DEFAULT_MAX_ALLOWED_PACKET,
+            )
+            .unwrap();
+        }
+    });
+    let mut source = TcpStream::connect(address).unwrap();
+    source
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+        .unwrap();
+    let mut reader = PacketReader::new(source.try_clone().unwrap());
+    authenticate(&mut source, &mut reader);
+    run_write(&mut source, &mut reader, "SET @migration_value=42");
+    run_write(
+        &mut source,
+        &mut reader,
+        "PREPARE text_stmt FROM 'SELECT ?'",
+    );
+    let (id, _, _) = prepare_statement(&mut source, &mut reader, "SELECT ?");
+    assert_eq!(id, 2, "SQL and binary handles share the same allocator");
+    assert_eq!(
+        execute_statement(&mut source, &mut reader, id, &[42]),
+        vec![vec!["42".to_owned()]]
+    );
+    run_write(&mut source, &mut reader, "PREPARE migration_export FROM 'SHOW SESSION_STATES'");
+    let state = run_query(&mut source, &mut reader, "EXECUTE migration_export")[0][0].clone();
+    let json: serde_json::Value = serde_json::from_str(&state).unwrap();
+    assert_eq!(json["prepared-stmts"][id.to_string()]["types"], "CAA=");
+    source.shutdown(std::net::Shutdown::Both).unwrap();
+    drop(reader);
+    let mut target = TcpStream::connect(address).unwrap();
+    target
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+        .unwrap();
+    let mut reader = PacketReader::new(target.try_clone().unwrap());
+    authenticate(&mut target, &mut reader);
+    run_write(
+        &mut target,
+        &mut reader,
+        &format!(
+            "SET SESSION_STATES '{}'",
+            state.replace('\\', "\\\\").replace('\'', "''")
+        ),
+    );
+    assert_eq!(
+        run_query(
+            &mut target,
+            &mut reader,
+            "EXECUTE text_stmt USING @migration_value"
+        ),
+        vec![vec!["42".to_owned()]]
+    );
+    // Go restores remembered parameter types, so the destination can execute
+    // without the client resending a type vector.
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1u32.to_le_bytes());
+    execute.extend_from_slice(&[0, 0]); // non-NULL, reuse types
+    execute.extend_from_slice(&44i64.to_le_bytes());
+    write_packet(&mut target, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), vec![1]);
+    reader.read_packet().unwrap(); // column definition
+    let row = reader.read_packet().unwrap();
+    assert_eq!(i64::from_le_bytes(row[2..10].try_into().unwrap()), 44);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xfe);
+    assert_eq!(
+        execute_statement(&mut target, &mut reader, id, &[43]),
+        vec![vec!["43".to_owned()]]
+    );
+    let (next, _, _) = prepare_statement(&mut target, &mut reader, "SELECT 1");
+    assert_eq!(next, 4);
+    let (export, _, _) = prepare_statement(&mut target, &mut reader, "SHOW SESSION_STATES");
+    let exported = execute_statement(&mut target, &mut reader, export, &[]);
+    let exported: serde_json::Value = serde_json::from_str(&exported[0][0]).unwrap();
+    assert_eq!(exported["prepared-stmts"][id.to_string()]["types"], "CAA=");
+    let mut long_data = vec![tidb_protocol::COM_STMT_SEND_LONG_DATA];
+    long_data.extend_from_slice(&id.to_le_bytes());
+    long_data.extend_from_slice(&0u16.to_le_bytes());
+    write_packet(&mut target, 0, &long_data);
+    let mut show = vec![COM_QUERY];
+    show.extend_from_slice(b"SHOW SESSION_STATES");
+    write_packet(&mut target, 0, &show);
+    reader.set_sequence(1);
+    assert_error_packet_exact(
+        &reader.read_packet().unwrap(),
+        8146,
+        b"HY000",
+        "cannot migrate the current session: prepared statements have bound params",
+    );
+    let mut reset = vec![COM_STMT_RESET];
+    reset.extend_from_slice(&id.to_le_bytes());
+    write_packet(&mut target, 0, &reset);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    execute_with_cursor(&mut target, &mut reader, id, &[45]);
+    write_packet(&mut target, 0, &show);
+    reader.set_sequence(1);
+    assert_error_packet_exact(&reader.read_packet().unwrap(), 8146, b"HY000", "cannot migrate the current session: prepared statements have unfetched rows");
+    target.shutdown(std::net::Shutdown::Both).unwrap();
     worker.join().unwrap();
 }

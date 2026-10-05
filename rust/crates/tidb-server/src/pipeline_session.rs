@@ -341,6 +341,12 @@ impl PipelineServerSession {
 }
 
 impl QuerySession for PipelineServerSession {
+    fn parse_statement(&mut self, sql: &str) -> Result<Option<tidb_ast::Stmt>, SqlQueryError> {
+        self.session.parse_statement(sql).map(Some).map_err(map_error)
+    }
+
+    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { Some(&mut self.session) }
+
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
         self.session.finish_txn_write_throughput(cost);
     }

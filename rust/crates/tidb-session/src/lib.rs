@@ -632,6 +632,7 @@ pub struct Session {
     /// [`Session::statement_kind`], so the function and the OK packet cannot
     /// disagree about what the statement did.
     prev_row_count: i64,
+    in_set_session_states: bool,
     /// Go `SessionVars.LastFoundRows`: the row count of the last result set
     /// drained to EOF. Non-result statements leave it unchanged.
     last_found_rows: u64,
@@ -827,6 +828,8 @@ pub struct Session {
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
     prepared_statements: prepared_statements::PreparedStore,
+    prepared_statement_id: u32,
+    protocol_session_states: session_states::ProtocolSessionStates,
     /// Go PlanCacheParams, shared by contexts belonging to the current execution.
     prepared_params: Option<Arc<[Datum]>>,
     /// Go's `sessionBindingHandle` (`pkg/bindinfo/session_handle.go`): the
@@ -937,6 +940,7 @@ impl Session {
             statement_message: String::new(),
             set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
+            in_set_session_states: false,
             last_found_rows: 0,
             statement_kind: StatementKind::Other,
             current_tso: tidb_executor::CurrentTso::default(),
@@ -991,6 +995,8 @@ impl Session {
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
+            prepared_statement_id: 0,
+            protocol_session_states: Default::default(),
             prepared_params: None,
             session_bindings: binding::SessionBindings::default(),
             global_binding_cache: None,
@@ -1160,6 +1166,7 @@ mod observation;
 mod prepared_ast;
 mod prepared_plan_cache;
 mod prepared_statements;
+pub mod session_states;
 mod record_set;
 mod session_plan_cache;
 use record_set::StatementCompletion;
@@ -2006,13 +2013,13 @@ impl Session {
                 if binding_sql.is_some() {
                     self.found_in_binding = true;
                 }
-                let authority = matches!(opened, OpenedStatement::Rows(_))
+                let authority = matches!(opened, OpenedStatement::Rows(_) | OpenedStatement::Complete(StmtOutput::Rows { .. }))
                     .then(|| self.result_materialization_authority());
                 return Ok((opened, authority));
             }
         }
         let opened = self.open_bound_record_set_for(statement, prepared)?;
-        let authority = matches!(opened, OpenedStatement::Rows(_))
+        let authority = matches!(opened, OpenedStatement::Rows(_) | OpenedStatement::Complete(StmtOutput::Rows { .. }))
             .then(|| self.result_materialization_authority());
         Ok((opened, authority))
     }
@@ -2028,6 +2035,9 @@ impl Session {
         &mut self,
         mut statement: Stmt,
     ) -> Result<Vec<(String, FieldType)>, DriverError> {
+        if let Some(columns) = session_states::prepared_columns(&statement) {
+            return Ok(columns);
+        }
         let parameters = tidb_executor::bound_parameter_values(&mut statement)?;
         // Go's expression rewriter validates and resolves variables during
         // planning, including PREPARE's metadata-only path.
@@ -2054,6 +2064,9 @@ impl Session {
     /// Resolves PREPARE result metadata with NULL markers without publishing
     /// an execution cache entry or access-path pins.
     pub fn probe_prepared(&mut self, prepared: &PreparedAst) -> Result<StmtOutput, DriverError> {
+        if let Some(columns) = session_states::prepared_columns(prepared.statement()) {
+            return Ok(StmtOutput::Rows { columns, rows: Vec::new() });
+        }
         let values = vec![Datum::Null; prepared.parameter_count()];
         let statement = tidb_executor::bind_prepared_statement(prepared.statement(), &values)?;
         self.run_with_columns_using(prepared.sql(), false, |session| {
@@ -2350,6 +2363,7 @@ impl Session {
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
+        self.in_set_session_states = false;
         self.statement_message.clear();
         *self
             .published_last_insert_id

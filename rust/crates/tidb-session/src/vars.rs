@@ -2699,6 +2699,11 @@ impl SessionVars {
         self.autocommit
     }
 
+    /// Restore the autocommit status bit separately from the sysvar string, as Go does.
+    pub(crate) fn restore_autocommit_status(&mut self, status: u32) {
+        self.autocommit = status & 2 != 0;
+    }
+
     /// Go `SessionVars.SQLMode`, parsed once when its sysvar changes.
     #[must_use]
     pub const fn sql_mode(&self) -> tidb_mysql::SqlMode {

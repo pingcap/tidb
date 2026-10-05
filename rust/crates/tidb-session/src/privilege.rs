@@ -319,7 +319,7 @@ mod tests {
         assert!(registry.user_exists("root", "%"));
         assert!(registry.has_global_priv("root", "%", GlobalPriv::OperateView));
         assert_eq!(
-            registry.show_grants("root", "%", &[]).as_deref(),
+            registry.show_grants("root", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
         );
     }
@@ -329,7 +329,7 @@ mod tests {
         let registry = PrivilegeRegistry::default();
         assert!(registry.create_user("u1", "%", ""));
         assert_eq!(
-            registry.show_grants("u1", "%", &[]).as_deref(),
+            registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT USAGE ON *.* TO `u1`@`%`")
         );
         // Creating it again is refused, not silently accepted.
@@ -349,12 +349,12 @@ mod tests {
         registry.grant("u1", "%", mask);
         // Captured from Go: SELECT,INSERT,UPDATE,PROCESS,SUPER.
         assert_eq!(
-            registry.show_grants("u1", "%", &[]).as_deref(),
+            registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO `u1`@`%`")
         );
         registry.revoke("u1", "%", GlobalPriv::Super.bit());
         assert_eq!(
-            registry.show_grants("u1", "%", &[]).as_deref(),
+            registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO `u1`@`%`")
         );
     }
@@ -374,7 +374,7 @@ mod tests {
         registry.create_user("u1", "%", "");
         registry.grant("u1", "%", all_privs_mask());
         assert_eq!(
-            registry.show_grants("u1", "%", &[]).as_deref(),
+            registry.show_grants("u1", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT ALL PRIVILEGES ON *.* TO `u1`@`%`")
         );
     }
@@ -422,7 +422,7 @@ mod tests {
         registry.grant("u", "%", GlobalPriv::Select.bit());
         registry.grant_db("u", "%", "aaadb", GlobalPriv::Select.bit());
         assert_eq!(
-            registry.show_grants("u", "%", &[]).as_deref(),
+            registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
                 "GRANT SELECT ON *.* TO `u`@`%`\n\
                  GRANT SELECT ON `aaadb`.* TO `u`@`%`\n\
@@ -438,7 +438,7 @@ mod tests {
         registry.create_user("u", "%", "");
         registry.grant_db("u", "%", "db1", all_db_privs_mask());
         assert_eq!(
-            registry.show_grants("u", "%", &[]).as_deref(),
+            registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO `u`@`%`\n\
                  GRANT ALL PRIVILEGES ON `db1`.* TO `u`@`%`"
@@ -455,7 +455,7 @@ mod tests {
         assert!(privilege.is_valid_at_table_scope());
         registry.grant_db("u", "%", "db1", privilege.bit());
         registry.grant_table("u", "%", "db1", "v1", privilege.bit());
-        let grants = registry.show_grants("u", "%", &[]).unwrap();
+        let grants = registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).unwrap();
         assert!(grants.contains("OPERATE VIEW"));
         assert!(registry.has_table_priv("u", "%", "db1", "v1", privilege));
     }
@@ -466,7 +466,7 @@ mod tests {
         registry.create_user("u", "%", "");
         registry.grant_table("u", "%", "db1", "t1", all_table_privs_mask());
         assert_eq!(
-            registry.show_grants("u", "%", &[]).as_deref(),
+            registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO `u`@`%`\n\
                  GRANT ALL PRIVILEGES ON `db1`.`t1` TO `u`@`%`"
@@ -484,7 +484,7 @@ mod tests {
         // Revoking a privilege the row never had is a silent no-op.
         registry.revoke_db("u", "%", "db1", GlobalPriv::Update.bit());
         assert_eq!(
-            registry.show_grants("u", "%", &[]).as_deref(),
+            registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some(
                 "GRANT USAGE ON *.* TO `u`@`%`\n\
                  GRANT SELECT ON `db1`.* TO `u`@`%`"
@@ -495,7 +495,7 @@ mod tests {
         // left it prints no line at all.
         assert!(registry.db_grant_row_exists("u", "%", "db1"));
         assert_eq!(
-            registry.show_grants("u", "%", &[]).as_deref(),
+            registry.show_grants("u", "%", &[], tidb_mysql::SqlMode::default()).as_deref(),
             Some("GRANT USAGE ON *.* TO `u`@`%`")
         );
     }

@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD provider/bootstrap plan](pd-provider-bootstrap-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [session migration batch](parity/current-audit/session-migration-batch.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-05, session migration batch) Compose portable state, shared text/binary prepared IDs, bindings, variable/RNG restoration, historical-read admission and grant SQL-mode/output consumers. Remove stale unsupported/response-shape assertions. S03 advances to partial; N03/S04 remain partial. Complete source-package acceptance remains open. See `parity/current-audit/session-migration-batch-validation.json`.
 
 - [x] (2026-10-05, PD provider/bootstrap batch) Repair requested-keyspace initialization before TSO discovery, shared minimum-provider/compatibility selection and optional metadata-header handling across native adapters. Four grouped regressions fail before; 167 PD and 40 keyspace cases pass after. See `parity/current-audit/pd-provider-bootstrap-batch-validation.json`; P03/P06 remain partial and broader package acceptance remains open.
 

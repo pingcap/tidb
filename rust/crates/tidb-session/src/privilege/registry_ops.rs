@@ -1849,12 +1849,23 @@ impl PrivilegeRegistry {
     /// ``GRANT SELECT ON `roledb`.* TO 'u1'@'%'``). Pass an empty slice for
     /// `SHOW GRANTS FOR <other account>`, which merges nothing.
     #[must_use]
-    pub fn show_grants(&self, user: &str, host: &str, active_roles: &[Account]) -> Option<String> {
+    pub fn show_grants(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        sql_mode: tidb_mysql::SqlMode,
+    ) -> Option<String> {
         if !self.user_exists(user, host) {
             return None;
         }
         // Every identity whose rows fold into this output. Go reads the
         // account's own row and each effective role's, ORing the masks.
+        let quote = |value: &str| {
+            String::from_utf8(tidb_util::stringutil::escape(value.as_bytes(), sql_mode))
+                .expect("quoting UTF-8 preserves UTF-8")
+        };
+        let account = format!("{}@{}", quote(user), quote(host));
         let identities = self.identities_for_check(user, host, active_roles);
         let owns = |row_user: &str, row_host: &str| {
             identities
@@ -1874,7 +1885,7 @@ impl PrivilegeRegistry {
                 priv_list(privs, ALL_GLOBAL_PRIVS)
             };
             format!(
-                "GRANT {priv_text} ON *.* TO `{user}`@`{host}`{}",
+                "GRANT {priv_text} ON *.* TO {account}{}",
                 grant_option_suffix(privs)
             )
         };
@@ -1897,13 +1908,14 @@ impl PrivilegeRegistry {
             .into_iter()
             .filter(|(_, privs)| *privs != 0)
             .map(|(database, privs)| {
+                let database = quote(&database);
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_db_privs_mask() {
                     "ALL PRIVILEGES".to_owned()
                 } else {
                     priv_list(privs, ALL_DB_PRIVS)
                 };
                 format!(
-                    "GRANT {priv_text} ON `{database}`.* TO `{user}`@`{host}`{}",
+                    "GRANT {priv_text} ON {database}.* TO {account}{}",
                     grant_option_suffix(privs)
                 )
             })
@@ -1931,6 +1943,8 @@ impl PrivilegeRegistry {
             .into_iter()
             .filter(|(_, privs)| *privs != 0)
             .map(|((database, table), privs)| {
+                let database = quote(&database);
+                let table = quote(&table);
                 let priv_text = if privs & !GlobalPriv::GrantOption.bit() == all_table_privs_mask()
                 {
                     "ALL PRIVILEGES".to_owned()
@@ -1938,7 +1952,7 @@ impl PrivilegeRegistry {
                     priv_list(privs, ALL_TABLE_PRIVS)
                 };
                 format!(
-                    "GRANT {priv_text} ON `{database}`.`{table}` TO `{user}`@`{host}`{}",
+                    "GRANT {priv_text} ON {database}.{table} TO {account}{}",
                     grant_option_suffix(privs)
                 )
             })
@@ -1969,6 +1983,8 @@ impl PrivilegeRegistry {
         let mut column_lines: Vec<String> = column_groups
             .into_iter()
             .filter_map(|((database, table), columns)| {
+                let database = quote(&database);
+                let table = quote(&table);
                 let groups: Vec<String> = ALL_COLUMN_PRIVS
                     .iter()
                     .filter_map(|priv_| {
@@ -1983,7 +1999,7 @@ impl PrivilegeRegistry {
                     .collect();
                 (!groups.is_empty()).then(|| {
                     format!(
-                        "GRANT {} ON `{database}`.`{table}` TO `{user}`@`{host}`",
+                        "GRANT {} ON {database}.{table} TO {account}",
                         groups.join(", ")
                     )
                 })
@@ -2008,11 +2024,11 @@ impl PrivilegeRegistry {
         let mut role_names: Vec<String> = self
             .granted_roles(&(user.to_owned(), host.to_owned()))
             .into_iter()
-            .map(|(role, role_host)| format!("`{role}`@`{role_host}`"))
+            .map(|(role, role_host)| format!("{}@{}", quote(&role), quote(&role_host)))
             .collect();
         role_names.sort_unstable();
         let role_line = (!role_names.is_empty())
-            .then(|| format!("GRANT {} TO `{user}`@`{host}`", role_names.join(", ")));
+            .then(|| format!("GRANT {} TO {account}", role_names.join(", ")));
 
         // A role's DYNAMIC privileges merge into the account's own dynamic
         // lines. Go keeps an already-grantable entry rather than letting a
@@ -2048,13 +2064,13 @@ impl PrivilegeRegistry {
         let mut dynamic_lines = Vec::new();
         if !plain.is_empty() {
             dynamic_lines.push(format!(
-                "GRANT {} ON *.* TO `{user}`@`{host}`",
+                "GRANT {} ON *.* TO {account}",
                 plain.join(",")
             ));
         }
         if !grantable.is_empty() {
             dynamic_lines.push(format!(
-                "GRANT {} ON *.* TO `{user}`@`{host}` WITH GRANT OPTION",
+                "GRANT {} ON *.* TO {account} WITH GRANT OPTION",
                 grantable.join(",")
             ));
         }

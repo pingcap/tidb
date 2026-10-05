@@ -1581,6 +1581,10 @@ impl Session {
         if let Ok(crate::record_set::StatementCompletion::Rows(Some(rows))) = result {
             self.last_found_rows = *rows;
         }
+        // Go preserves StmtCtx.PrevAffectedRows across SET SESSION_STATES.
+        if self.in_set_session_states {
+            return;
+        }
         self.prev_row_count = match self.statement_kind {
             StatementKind::Select => -1,
             // Go reads `StmtCtx.AffectedRows()`, which a failed statement

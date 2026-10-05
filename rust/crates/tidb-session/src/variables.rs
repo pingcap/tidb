@@ -247,6 +247,11 @@ impl Session {
             return Ok(None);
         };
         match &**session_stmt {
+            SessionStmt::SetSessionStates(set) => {
+                self.in_set_session_states = true;
+                self.decode_session_states(&set.session_states)?;
+                Ok(Some(()))
+            }
             SessionStmt::Set(set) => {
                 for assignment in &set.assignments {
                     self.apply_assignment(assignment)?;
@@ -1204,7 +1209,7 @@ impl Session {
     /// clamping travels with it: `2147483648` arrives as `MaxInt32` and a
     /// negative arrives as 0, which is also what `tidbOptPositiveInt32` would
     /// have produced.
-    fn seed_rand_from_sysvar(&mut self, name: &str) -> Result<(), DriverError> {
+    pub(crate) fn seed_rand_from_sysvar(&mut self, name: &str) -> Result<(), DriverError> {
         let first = name.eq_ignore_ascii_case("rand_seed1");
         if !first && !name.eq_ignore_ascii_case("rand_seed2") {
             return Ok(());

@@ -297,20 +297,6 @@ fn run_query_expect_error(
     (code, sql_state, message)
 }
 
-/// `CREATE USER`/`GRANT`/`REVOKE` are Go `AdminStmt`s that answer over the
-/// wire as a one-column, one-row `affected_rows` result set rather than an
-/// OK packet (`tidb_session::Session::statement_kind` classifies every
-/// `AdminStmt` other than `KILL` as `StmtKind::Query`,
-/// `pipeline_session.rs`'s `affected_rows_source` shapes the reply) -- unlike
-/// `KILL`, which Go answers with a real OK packet and this tier special-cases
-/// the same way.
-fn run_admin(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: &str) -> u64 {
-    let rows = run_query(client, reader, sql);
-    assert_eq!(rows.len(), 1, "{sql}: {rows:?}");
-    assert_eq!(rows[0].len(), 1, "{sql}: {rows:?}");
-    rows[0][0].parse().unwrap()
-}
-
 /// Sends one COM_QUERY and reads its (deprecate-EOF) text result set.
 fn run_query(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: &str) -> Vec<Vec<String>> {
     let mut command = vec![COM_QUERY];
@@ -488,7 +474,7 @@ fn skip_grant_table_authentication_and_role_chain_reach_the_wire() {
         0
     );
     assert_eq!(run_write(&mut root, &mut root_reader, "CREATE ROLE r_1"), 0);
-    assert_eq!(run_admin(&mut root, &mut root_reader, "GRANT r_1 TO root"), 0);
+    assert_eq!(run_write(&mut root, &mut root_reader, "GRANT r_1 TO root"), 0);
     let (code, state, message) = run_query_expect_error(
         &mut unknown,
         &mut unknown_reader,
@@ -713,7 +699,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         0
     );
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "GRANT SELECT ON test.* TO 'bob'@'%'"),
+        run_write(&mut root, &mut root_reader, "GRANT SELECT ON test.* TO 'bob'@'%'"),
         0
     );
 
@@ -729,8 +715,8 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         grants,
         vec![
-            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
         ],
         "bob's own scoped grant, over the real wire: {grants:?}"
     );
@@ -751,7 +737,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // reconnect, no cache to invalidate: the very next query on bob's
     // existing socket sees the change.
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "GRANT PROCESS ON *.* TO 'bob'@'%'"),
+        run_write(&mut root, &mut root_reader, "GRANT PROCESS ON *.* TO 'bob'@'%'"),
         0
     );
     let after = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
@@ -775,7 +761,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // root REVOKEs PROCESS: bob's visibility shrinks back on the same
     // already-open connection.
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "REVOKE PROCESS ON *.* FROM 'bob'@'%'"),
+        run_write(&mut root, &mut root_reader, "REVOKE PROCESS ON *.* FROM 'bob'@'%'"),
         0
     );
     let revoked = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
@@ -789,11 +775,11 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // cache on either side.
     assert_eq!(run_write(&mut root, &mut root_reader, "CREATE ROLE watcher"), 0);
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "GRANT PROCESS ON *.* TO watcher"),
+        run_write(&mut root, &mut root_reader, "GRANT PROCESS ON *.* TO watcher"),
         0
     );
     assert_eq!(
-        run_admin(&mut root, &mut root_reader, "GRANT watcher TO 'bob'@'%'"),
+        run_write(&mut root, &mut root_reader, "GRANT watcher TO 'bob'@'%'"),
         0
     );
     let granted_not_active = run_query(&mut bob, &mut bob_reader, "SHOW PROCESSLIST");
@@ -822,9 +808,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT PROCESS ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT 'watcher'@'%' TO 'bob'@'%'".to_owned()],
+            vec!["GRANT PROCESS ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT `watcher`@`%` TO `bob`@`%`".to_owned()],
         ]
     );
     assert_eq!(run_write(&mut bob, &mut bob_reader, "SET ROLE NONE"), 0);
@@ -852,7 +838,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // connection. That is Go's actual gate; SUPER only passes it as the
     // dynamic-privilege fallback.
     assert_eq!(
-        run_admin(
+        run_write(
             &mut root,
             &mut root_reader,
             "GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"
@@ -865,9 +851,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`".to_owned()],
         ]
     );
     assert_eq!(
@@ -960,7 +946,7 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
         let grants = run_query(&mut carol, &mut carol_reader, "SHOW GRANTS");
         assert_eq!(
             grants,
-            vec![vec!["GRANT USAGE ON *.* TO 'carol'@'%'".to_owned()]],
+            vec![vec!["GRANT USAGE ON *.* TO `carol`@`%`".to_owned()]],
             "carol's own row, over the real wire: {grants:?}"
         );
         write_packet(&mut carol, 0, &[0x01]);
@@ -1099,7 +1085,7 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let grants = run_query(&mut root, &mut root_reader, "SHOW GRANTS FOR 'dana'@'%'");
     assert_eq!(
         grants,
-        vec![vec!["GRANT USAGE ON *.* TO 'dana'@'%'".to_owned()]],
+        vec![vec!["GRANT USAGE ON *.* TO `dana`@`%`".to_owned()]],
         "a caching_sha2_password account is a real account: {grants:?}"
     );
 

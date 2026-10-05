@@ -1953,7 +1953,7 @@ impl Session {
                 })
                 .collect()
         };
-        let Some(lines) = registry.show_grants(&user, &host, &roles) else {
+        let Some(lines) = registry.show_grants(&user, &host, &roles, self.vars.sql_mode()) else {
             return Err(DriverError::NonexistingGrant { user, host });
         };
         // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is

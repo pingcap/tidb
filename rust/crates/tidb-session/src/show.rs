@@ -1519,6 +1519,9 @@ impl Session {
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
             tidb_ast::AdminStmt::ShowInspection(show) => {
+                if show.kind == tidb_ast::ShowInspectionKind::SessionStates {
+                    return self.show_session_states().map(Some);
+                }
                 // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
                 // rejects execution because extended statistics was removed.
                 if show.kind == tidb_ast::ShowInspectionKind::StatsExtended {
