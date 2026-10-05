@@ -322,6 +322,7 @@ func SaveColOrIdxStatsToStorage(
 	hg *statistics.Histogram,
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
+	fms *statistics.FMSketch,
 	statsVersion int,
 	updateAnalyzeTime bool,
 ) (statsVer uint64, err error) {
@@ -344,6 +345,10 @@ func SaveColOrIdxStatsToStorage(
 	if err != nil {
 		return 0, err
 	}
+	fmSketch, err := statistics.EncodeFMSketch(fms)
+	if err != nil {
+		return 0, err
+	}
 	// Delete outdated data
 	if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
@@ -353,6 +358,11 @@ func SaveColOrIdxStatsToStorage(
 	}
 	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
+	}
+	if fmSketch != nil {
+		if _, err = util.Exec(sctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
+			return 0, err
+		}
 	}
 	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, hg.Correlation); err != nil {

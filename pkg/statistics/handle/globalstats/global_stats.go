@@ -365,6 +365,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			hg,
 			cms,
 			topN,
+			nil,
 			info.StatsVersion,
 			true,
 			util.StatsMetaHistorySourceAnalyze,
