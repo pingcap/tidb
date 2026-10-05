@@ -3172,6 +3172,7 @@ impl UpdateRowEvaluator<'_> {
         let physical_row = physical_chunk.as_ref().map(|chunk| chunk.get_row(0));
         // Matched rows include unchanged rows; the record owner separately
         // counts touched and affected rows.
+        let row_index = *matched as usize;
         *matched += 1;
         // Every assignment reads the row as the statement found it, so
         // `SET a = 100, b = a` stores the ORIGINAL `a` in `b`, and
@@ -3197,7 +3198,7 @@ impl UpdateRowEvaluator<'_> {
                 value,
                 &self.field_types[*offset],
                 &self.column_names[*offset],
-                0,
+                row_index,
                 self.ctx,
             )?;
         }

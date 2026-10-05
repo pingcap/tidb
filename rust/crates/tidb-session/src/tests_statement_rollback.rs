@@ -74,6 +74,31 @@ fn a_five_row_update_colliding_on_the_third_row_leaves_the_table_unchanged() {
             ["5", "50"]
         ]
     );
+
+    // CHECK errors are raised during the write phase, after earlier rows have
+    // changed. The session owns rollback; the executor must not replay rows.
+    session
+        .run("SET GLOBAL tidb_enable_check_constraint = 1")
+        .unwrap();
+    session
+        .run("CREATE TABLE check_rows (a INT PRIMARY KEY, b INT CHECK (b > 0))")
+        .unwrap();
+    session
+        .run("INSERT INTO check_rows VALUES (1,1),(2,2)")
+        .unwrap();
+    let error = session
+        .run("UPDATE check_rows SET b=CASE a WHEN 1 THEN 100 WHEN 2 THEN -200 END ORDER BY a")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3819);
+    assert_eq!(
+        error.message,
+        "Check constraint 'check_rows_chk_1' is violated."
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM check_rows ORDER BY a"),
+        [["1", "1"], ["2", "2"]]
+    );
 }
 
 /// A session opened over a shared in-process catalog still needs the image

@@ -120,3 +120,5 @@ B02/B05 now share the deferred pessimistic uniqueness consumer and its safety li
 B01 channel ownership now shares native/adapter membership, keyspace, discovery and TSO connections, including bootstrap/refresh and joined runtime shutdown. See [validation](pd-channel-batch-validation.json). Forwarding/follower consumers, health and full-package acceptance remain open.
 
 B09/B05 coprocessor policy now connects O13/N03 settings, reader estimates, adaptive routing, busy duration and deadlines through the shared request builder. See [validation](cop-read-policy-batch-validation.json). Point/batch snapshot routing and remaining reader/scope producers remain separate open obligations.
+
+B02 shared write policy now retains binary/temporal numeric diagnostics, charset error precedence and UPDATE source-row ordinals. The obsolete executor replay harness was migrated to the session rollback suite. See [validation](write-diagnostics-batch-validation.json). K03/E03 remain partial for the explicitly retained structural and conversion obligations.

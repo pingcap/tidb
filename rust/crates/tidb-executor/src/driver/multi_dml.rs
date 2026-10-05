@@ -549,7 +549,7 @@ pub(crate) fn run_multi_update(
                     value,
                     &table.columns[assignment.column].1,
                     &table.columns[assignment.column].0,
-                    0,
+                    row_index,
                     ctx,
                 )?;
             }

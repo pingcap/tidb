@@ -1,0 +1,193 @@
+{
+  "scope": "Connected K03/E03 write diagnostics: shared binary/temporal numeric conversion, charset error precedence and UPDATE source-row ordinals; relocate obsolete executor rollback assertion to the existing session owner. Existing-owner maintenance, no complete package acceptance.",
+  "baseline": {
+    "tidb": "d521ef775635f0a0c5fc2291a1e13e467611855b",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "06b4ccc2735ecf89ed57136241cb7b7d204d6c07"
+  },
+  "rechecked_findings": [
+    "K03",
+    "E03"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 28,
+    "partial": 28
+  },
+  "distinct_rust_passes": 71,
+  "mysql_unistore_assertions": 10,
+  "before_failures": {
+    "rust": 4,
+    "mysql_unistore": 8
+  },
+  "other_findings": "Other54 unresolved findings retain prior evidence; not freshly reproduced.",
+  "changes": [
+    "Charset errors use one caller truncation-policy path and skip target width production after decoding failure, as Go does.",
+    "Binary integer/float/decimal conversion uses existing BinaryLiteral context and warning sink; strict failure skips target integer bounds, warning/ignore continues to target bounds.",
+    "Temporal numeric sources retain shared overflow identity; INSERT/UPDATE/ODKU completion remains caller-owned.",
+    "BIT-to-string emits unsigned decimal while binary literals preserve raw bytes. Binary diagnostic values use raw bytes instead of Rust Debug.",
+    "Single and joined UPDATE assignments receive the source row ordinal already used by generated writes.",
+    "Remove obsolete charset branches, unnecessary Cow fallback, and executor preimage-replay test harness after moving its CHECK contract to the session rollback suite."
+  ],
+  "removed_harness": {
+    "path": "rust/crates/tidb-executor/tests/update_statement_atomicity_source.rs",
+    "sha256": "700796051067e7f293eadd88d2ea28b4bbadf632a8d81b30b61a0bae0489f11d",
+    "baseline": "d521ef775635f0a0c5fc2291a1e13e467611855b",
+    "reason": "Executor-only row-preimage replay expectation contradicts Go session rollback ownership; CHECK contract migrated to existing session rollback suite."
+  },
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib write_diagnostics_batch -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL: 4 regressions",
+      "log": "before.log",
+      "sha256": "5fdb61b2acaf47b94906c7bfb2ebca5310157250a72352070ba954918d97bd85"
+    },
+    {
+      "command": "cargo test --locked -p tidb-datatype -p tidb-executor --lib --no-fail-fast -- write_diagnostics_batch datum_convert::diagnostics driver::write_cast::source_tests driver::tests::dml --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 29 cases",
+      "log": "owner-tests.log",
+      "sha256": "da7b3f2b8901b21595450067fcf22daf4c084d5e6136ef2c5915d1532150d740"
+    },
+    {
+      "command": "cargo test --locked -p tidb-datatype --lib datum_convert -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 33 cases, including the 5 datatype cases above",
+      "log": "datatype-tests.log",
+      "sha256": "69bf88c7c9c8af56f8c6043ebcde84a7846f82b343723cc1170bfcbeb1c058b1"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all -- update_accounting_source update_statement_atomicity_source update_order_limit_multi_source update_ignore_null_source dml_expression_values_source --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "6 pass; stale executor-only rollback assertion fails. Contract migrated to session suite before harness removal.",
+      "log": "sql-tests.log",
+      "sha256": "11dd8a13c31e410c8a8fc03727585b12186853b1299c6a9d75c3fb5583005cf4"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --test all -- update_accounting_source update_order_limit_multi_source update_ignore_null_source dml_expression_values_source --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 6 cases",
+      "log": "sql-tests-final.log",
+      "sha256": "94d4fcdeb7ab8f75890f8c2085e715557805ecb74748dbc8d54ebd00679b965f"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib tests_statement_rollback -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 8 cases, including migrated CHECK contract",
+      "log": "rollback-tests.log",
+      "sha256": "63166a3d9a1c359fa11ec1f11f9fb6c9198f6b30ba3c341e8106936e2b949122"
+    },
+    {
+      "command": "cargo check --locked -p tidb-datatype -p tidb-executor -p tidb-session --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "check.log",
+      "sha256": "76553b4ed8d35c9ae6dd25c50f4925c309885069c4f8c2f99ef1ea42f9a594ac"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "server-build.log",
+      "sha256": "3c4e0815db3553e66e4fe4d8114f88f9e5cbcdae6e11848c28263aa70f41a980"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/write-diagnostics-batch/wire.py before-final /workspace/tidb/rust/target/debug/tidb-server",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "8 failed behavior assertions; rollback control passed. CHECK scenario added afterward.",
+      "log": "before-final-wire.log",
+      "sha256": "7ae25edddd8b6f8c163053e36d748c7248c82efed0ab97297f1d2f11cf0356c4"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/write-diagnostics-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 10 MySQL/unistore assertions; server shutdown exit 0",
+      "log": "after-wire.log",
+      "sha256": "2685b8ee96b39958496e3f1fbfdee196858315b6c21b0e457330c65b5fecc91a"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert.rs",
+      "sha256": "0ea02aec50d69288c6294ea4f1c746cef3131f7b492730b2de7ae49e929ebb99"
+    },
+    {
+      "path": "rust/crates/tidb-datatype/src/datum_convert/diagnostics.rs",
+      "sha256": "c02a428b1265732aa944294944427e332715dd6ad2e5123cb875b3a3620f2373"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/dml.rs",
+      "sha256": "9cb6c38f074550878e8bbfcfe3c649f896f32430f43ee3046ab46411443e50db"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/multi_dml.rs",
+      "sha256": "7a2d3a7e6d807632bd89b0074d9d447ecbe22e46db29a8a5a17e9f7d0fe2c55e"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/tests/dml.rs",
+      "sha256": "549f5aa70a88c62ff9045bbd161ecd4cbfc552bd379d7d3e3756ff1404285eb0"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/write_cast.rs",
+      "sha256": "3ec3990b1f725d93f2f56d351db67445ee113698d8219d184e3afde6f558220a"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_statement_rollback.rs",
+      "sha256": "95f1a25c290e6ad8c54a807b6da5de1ff14b9cceb85bb544dc9d438d5a9494e8"
+    }
+  ],
+  "go_sources": [
+    {
+      "path": "pkg/types/datum.go",
+      "sha256": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+    },
+    {
+      "path": "pkg/types/binary_literal.go",
+      "sha256": "44f9a34b1639c5d454c9b1c726ef26af85f952fb40103ded708e79d83b407850"
+    },
+    {
+      "path": "pkg/table/column.go",
+      "sha256": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac"
+    },
+    {
+      "path": "pkg/executor/update.go",
+      "sha256": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10"
+    },
+    {
+      "path": "pkg/session/session.go",
+      "sha256": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3"
+    },
+    {
+      "path": "pkg/executor/adapter.go",
+      "sha256": "4d58b42bfbb045634dcfbc0d8cc14d8af79c360aa514aed18d1532bed16fb55c"
+    }
+  ],
+  "not_verified": [
+    "Complete Go package inventories and original full Go suites",
+    "Full retained DML handle/partial-row metadata and chunk/write streaming",
+    "Temporal-target, JSON and remaining unported conversion diagnostics; generated-expression context and broader ANALYZE adapters",
+    "Live multi-node TiKV, performance and fresh-task environment restoration"
+  ],
+  "publication": "Actual precommit locked build and fresh pre-push build remain mandatory; postcommit evidence is /workspace/.cloud-setup/write-diagnostics-batch/final-handoff.json."
+}

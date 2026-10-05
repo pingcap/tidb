@@ -321,7 +321,7 @@ fn cast_value_with_flags(
     // Go copies the Datum header, not its string payload. Keep the original
     // for diagnostics without cloning bytes on every generated-column read.
     let source = value;
-    let mut value = std::borrow::Cow::Borrowed(&source);
+    let value = &source;
     let incorrect_value = || DriverError::IncorrectValue {
         type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
         value: datum_error_text(&source),
@@ -329,65 +329,31 @@ fn cast_value_with_flags(
         row: row_index + 1,
     };
     if let Some((converted_bytes, invalid_bytes)) =
-        invalid_string_conversion(&value, field_type, flags)
+        invalid_string_conversion(value, field_type, flags)
     {
-        if shape == CastShape::RawTable {
-            handle_raw_cast_error(
-                DriverError::IncorrectValue {
-                    type_name: "string".to_owned(),
-                    value: invalid_bytes
-                        .iter()
-                        .map(|byte| format!("\\x{byte:02X}"))
-                        .collect(),
-                    column: column.to_owned(),
-                    row: 0,
-                },
-                ctx,
-                flags,
-                force_ignore_truncate,
-            )?;
-        } else if !force_ignore_truncate {
-            let value = invalid_bytes
-                .iter()
-                .map(|byte| format!("\\x{byte:02X}"))
-                .collect::<String>();
-            let raw = DriverError::IncorrectValue {
+        // Go convertToString returns its decoded bytes beside the charset
+        // error without applying width production. CastColumnValue names and
+        // handles that error before its final CHAR trailing-space pass.
+        handle_raw_cast_error(
+            DriverError::IncorrectValue {
                 type_name: "string".to_owned(),
-                value,
+                value: invalid_bytes
+                    .iter()
+                    .map(|byte| format!("\\x{byte:02X}"))
+                    .collect(),
                 column: column.to_owned(),
-                // Raw table.CastValue failure: no statement caller has
-                // attached a one-based row yet.
                 row: 0,
-            };
-            // go's `completeInsertErr` does NOT retitle a charset error: the
-            // INSERT answer keeps `Incorrect string value '\xE4\xB8\xAD'
-            // for column 'a'` with no `at row N` suffix, so the raw
-            // table.CastValue form is the completed form.
-            let _ = &incorrect_value;
-            return Err(raw);
-        }
-        // go keeps the bytes beside the error; with the downgrade switch on
-        // (INSERT IGNORE) the error becomes a 1366 warning and the '?'
-        // substitution is what lands in the row.
-        if shape != CastShape::RawTable {
-            ctx.append_warning_parts(
-                1366,
-                &format!(
-                    "Incorrect string value '{}' for column '{}'",
-                    invalid_bytes
-                        .iter()
-                        .map(|byte| format!("\\x{byte:02X}"))
-                        .collect::<String>(),
-                    column
-                ),
-            );
-        }
-        // Go keeps the bytes returned beside the charset error, clears that
-        // error, and then still applies the target width/collation rules.
-        value = std::borrow::Cow::Owned(Datum::new_collation_string(
-            converted_bytes,
-            field_type.collation(),
-        ));
+            },
+            ctx,
+            flags,
+            force_ignore_truncate,
+        )?;
+        let converted = if field_type.is_binary_string() {
+            Datum::new_bytes(converted_bytes)
+        } else {
+            Datum::new_collation_string(converted_bytes, field_type.collation())
+        };
+        return Ok(truncate_char_trailing_spaces(converted, field_type));
     }
     if contextual_cast_supported(&value, field_type) {
         return cast_contextual_value(
@@ -591,9 +557,8 @@ fn cast_value_with_flags(
     Ok(converted.value)
 }
 
-// Temporal, JSON and binary-literal diagnostic producers still use their
-// existing adapters. These source kinds have complete contextual numeric and
-// string diagnostics in the shared datatype owner.
+// Temporal targets and JSON numeric producers retain their existing adapters.
+// Scalar, temporal and binary sources share numeric/string diagnostics here.
 fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
     use tidb_datatype::FieldTypeCode as T;
     matches!(
@@ -607,6 +572,10 @@ fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
             | Datum::Bytes(_)
             | Datum::Enum(..)
             | Datum::Set(..)
+            | Datum::Time(_)
+            | Datum::Duration(_)
+            | Datum::BinaryLiteral(_)
+            | Datum::Bit(_)
     ) && matches!(
         field.code(),
         T::Tiny
@@ -1148,6 +1117,9 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
         // datetime an invalid cast produced, not a debug rendering.
         Datum::Time(time) => time.to_string(),
         Datum::Duration(duration) => duration.to_string(),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            String::from_utf8_lossy(value.as_bytes()).into_owned()
+        }
         other => format!("{other:?}"),
     }
 }
@@ -1209,6 +1181,75 @@ mod source_tests {
             (warnings[0].1, warnings[0].2.as_str()),
             (1265, "Data truncated, field len 2, data len 4")
         );
+    }
+
+    #[test]
+    fn write_diagnostics_batch_charset_policy_stops_before_width() {
+        // Go convertToString skips ProduceStrWithSpecifiedTp after decoding
+        // fails; table.CastValue then applies the caller's truncation policy.
+        let field = FieldType::new(FieldTypeCode::Varchar)
+            .with_flen(1)
+            .with_charset_name("ascii")
+            .with_collation_name("ascii_bin");
+        for shape in [
+            CastShape::RawTable,
+            CastShape::InsertRow,
+            CastShape::UpdateAssignment,
+            CastShape::OnDuplicateAssignment,
+            CastShape::GeneratedOnDuplicate,
+        ] {
+            let ctx = crate::StmtContext::for_dml(false, false, false);
+            let result = cast_value_shaped(
+                Datum::new_string("ab中"),
+                &field,
+                "a",
+                4,
+                &ctx,
+                shape,
+                false,
+            )
+            .unwrap();
+            assert_eq!(datum_error_text(&result), "ab?");
+            let warnings = ctx.take_warnings();
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert_eq!(warnings[0].1, 1366);
+            assert_eq!(
+                warnings[0].2,
+                "Incorrect string value '\\xE4\\xB8\\xAD' for column 'a'"
+            );
+        }
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let result = cast_table_value(Datum::new_string("ab中"), &field, "a", &ctx, true).unwrap();
+        assert_eq!(datum_error_text(&result), "ab?");
+        assert!(ctx.take_warnings().is_empty());
+    }
+
+    #[test]
+    fn write_diagnostics_batch_binary_and_temporal_keep_typed_errors() {
+        let field = FieldType::new(FieldTypeCode::Tiny);
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let values = [
+            Datum::new_binary_literal(BinaryLiteral::from(vec![0xff])),
+            Datum::Duration(tidb_datatype::MySqlDuration::new(1, 0, 0, 0, 0).unwrap()),
+        ];
+        for value in values {
+            let error = cast_table_value(value, &field, "a", &ctx, false)
+                .unwrap_err()
+                .to_mysql_error();
+            assert_eq!(error.code, 1690, "{}", error.message);
+        }
+        let wide = Datum::new_binary_literal(BinaryLiteral::from(vec![1; 9]));
+        let ctx = crate::StmtContext::for_dml(false, false, false);
+        let value = cast_table_value(wide, &field, "a", &ctx, false).unwrap();
+        assert_eq!(value, Datum::Int(127));
+        let warnings = ctx.take_warnings();
+        assert_eq!(
+            warnings.iter().map(|w| w.1).collect::<Vec<_>>(),
+            vec![1292, 1690]
+        );
+        assert!(warnings[0]
+            .2
+            .contains("BINARY value: '0x010101010101010101'"));
     }
 
     fn assert_strict_cast(

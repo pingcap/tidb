@@ -847,3 +847,43 @@ fn update_and_delete_rows() {
         vec![vec![Datum::Int(1), Datum::Int(9)]]
     );
 }
+
+#[test]
+fn write_diagnostics_batch_single_update_reports_source_row() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_dml(false, true, false);
+    run_insert_on("INSERT INTO wr VALUES (1, 1), (2, 2)", &mut catalog, &ctx).unwrap();
+    let error = run_update_on("UPDATE wr SET v = id * 100 ORDER BY id", &mut catalog, &ctx)
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1264);
+    assert_eq!(error.message, "Out of range value for column 'v' at row 2");
+}
+
+#[test]
+fn write_diagnostics_batch_join_update_reports_source_row() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on("CREATE TABLE ws (id INT PRIMARY KEY)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_dml(false, true, false);
+    run_insert_on("INSERT INTO wr VALUES (1, 1), (2, 2)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO ws VALUES (1), (2)", &mut catalog, &ctx).unwrap();
+    let error = run_update_on(
+        "UPDATE wr JOIN ws ON wr.id = ws.id SET wr.v = ws.id * 100 ORDER BY wr.id",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap_err()
+    .to_mysql_error();
+    assert_eq!(error.code, 1264);
+    assert_eq!(error.message, "Out of range value for column 'v' at row 2");
+}

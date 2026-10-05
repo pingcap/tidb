@@ -90,7 +90,7 @@ impl Datum {
         context: &crate::ConversionContext<'_>,
     ) -> Result<DatumConversion, DatumValueError> {
         let mut diagnostics = Diagnostics::new(Some(context));
-        let converted = self.to_float_reported(&mut diagnostics)?;
+        let converted = self.to_float_reported(context.flags(), &mut diagnostics)?;
         if diagnostics.unmapped {
             return Err(DatumValueError::Unsupported(
                 self.kind(),
@@ -105,9 +105,17 @@ impl Datum {
 
     fn to_float_reported(
         &self,
+        flags: ConversionFlags,
         diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<f64>, DatumValueError> {
         Ok(match self {
+            Self::BinaryLiteral(value) | Self::Bit(value) => {
+                let (integer, failed) = diagnostics.binary_integer(value, flags);
+                Converted {
+                    value: integer as f64,
+                    event: failed.then_some(ScalarConversionEvent::Truncated),
+                }
+            }
             Self::String(value) => {
                 crate::convert::str_to_float_reported(value.as_utf8()?, false, diagnostics)
             }
@@ -175,7 +183,7 @@ impl Datum {
                 }
             }
             FieldTypeCode::Float | FieldTypeCode::Double => {
-                let converted = self.to_float_reported(diagnostics)?;
+                let converted = self.to_float_reported(flags, diagnostics)?;
                 let produced = produce_float_reported(converted.value, target, diagnostics);
                 let event = numeric_conversion_event(converted.event, produced.event, flags);
                 Ok(Converted {
@@ -205,7 +213,7 @@ impl Datum {
                     event: produced.event,
                 })
             }
-            FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target, diagnostics),
+            FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target, flags, diagnostics),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 diagnostics.unreported(self.convert_to_time_target(target, flags, zone))
             }
@@ -260,6 +268,14 @@ impl Datum {
                 return Err(DatumValueError::Comparison(error.to_string()));
             }
             return Ok(bytes);
+        }
+        if let Self::Bit(value) = self {
+            let integer = value.to_int();
+            return Ok(if integer.is_truncated() {
+                value.as_bytes().to_vec()
+            } else {
+                integer.value().to_string().into_bytes()
+            });
         }
         self.to_bytes().map_err(|error| {
             DatumValueError::Comparison(format!("string conversion failed: {error}"))
@@ -367,25 +383,27 @@ impl Datum {
                 target,
             )),
             Self::BinaryLiteral(value) | Self::Bit(value) => {
-                let literal = value.to_int();
-                if literal.is_truncated() {
-                    // Go's `toSignedInteger` returns immediately when
-                    // `BinaryLiteral.ToInt` reports the too-wide literal;
-                    // the value beside that error is the zero `int64`.
+                let (integer, failed) = diagnostics.binary_integer(value, flags);
+                if failed {
+                    // Go signed conversion returns zero on a literal error.
                     Converted {
                         value: 0,
                         event: Some(ScalarConversionEvent::Truncated),
                     }
                 } else {
-                    numeric_outcome(convert_uint_to_int(literal.value(), upper, target))
+                    let bounded = numeric_outcome(convert_uint_to_int(integer, upper, target));
+                    diagnostics.numeric_overflow(bounded.event.as_ref());
+                    bounded
                 }
             }
             Self::Json(value) => json_to_int(value, false, target, flags),
             _ => return Err(DatumValueError::Unsupported(self.kind(), "signed integer")),
         };
         match self {
-            Self::String(_) | Self::Bytes(_) => {}
-            Self::Int(_) | Self::UInt(_) => diagnostics.numeric_overflow(converted.event.as_ref()),
+            Self::String(_) | Self::Bytes(_) | Self::BinaryLiteral(_) | Self::Bit(_) => {}
+            Self::Int(_) | Self::UInt(_) | Self::Time(_) | Self::Duration(_) => {
+                diagnostics.numeric_overflow(converted.event.as_ref());
+            }
             Self::Real(_) | Self::Float32(_) | Self::Enum(..) | Self::Set(..)
                 if converted.event.is_some() =>
             {
@@ -484,16 +502,17 @@ impl Datum {
                 target,
             )),
             Self::BinaryLiteral(value) | Self::Bit(value) => {
-                let literal = value.to_int();
-                let bounded = numeric_outcome(convert_uint_to_uint(literal.value(), upper, target));
-                Converted {
-                    value: bounded.value,
-                    event: prefer_event(
-                        literal
-                            .is_truncated()
-                            .then_some(ScalarConversionEvent::Truncated),
-                        bounded.event,
-                    ),
+                let (integer, failed) = diagnostics.binary_integer(value, flags);
+                if failed {
+                    // Go keeps MaxUint64 and skips target bounds on error.
+                    Converted {
+                        value: integer,
+                        event: Some(ScalarConversionEvent::Truncated),
+                    }
+                } else {
+                    let bounded = numeric_outcome(convert_uint_to_uint(integer, upper, target));
+                    diagnostics.numeric_overflow(bounded.event.as_ref());
+                    bounded
                 }
             }
             Self::Json(value) => {
@@ -511,14 +530,16 @@ impl Datum {
             }
         };
         match self {
-            Self::String(_) | Self::Bytes(_) => {}
+            Self::String(_) | Self::Bytes(_) | Self::BinaryLiteral(_) | Self::Bit(_) => {}
             Self::Int(_)
             | Self::UInt(_)
             | Self::Real(_)
             | Self::Float32(_)
             | Self::Decimal(_)
             | Self::Enum(..)
-            | Self::Set(..) => {
+            | Self::Set(..)
+            | Self::Time(_)
+            | Self::Duration(_) => {
                 diagnostics.numeric_overflow(converted.event.as_ref());
             }
             _ => diagnostics.unhandled(converted.event.as_ref()),
@@ -529,10 +550,21 @@ impl Datum {
     fn convert_to_decimal_target(
         &self,
         target: &FieldType,
+        flags: ConversionFlags,
         diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let converted = self.to_decimal()?;
+        let converted = match self {
+            Self::BinaryLiteral(value) | Self::Bit(value) => {
+                let (integer, failed) = diagnostics.binary_integer(value, flags);
+                Converted {
+                    value: Decimal::from_uint(integer),
+                    event: failed.then_some(ScalarConversionEvent::Truncated),
+                }
+            }
+            _ => self.to_decimal()?,
+        };
         match (self, converted.event.as_ref()) {
+            (Self::BinaryLiteral(_) | Self::Bit(_), _) => {}
             (Self::String(_) | Self::Bytes(_), Some(ScalarConversionEvent::Truncated)) => {
                 // Datum.ConvertTo uses MyDecimal.FromString directly, not
                 // ConvertDatumToDecimal's context-dependent truncation policy.

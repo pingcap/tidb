@@ -62,6 +62,75 @@ mod tests {
     }
 
     #[test]
+    fn write_diagnostics_batch_binary_conversion_stages_follow_context() {
+        use crate::{BinaryLiteral, Decimal};
+        let input = Datum::new_binary_literal(BinaryLiteral::from(vec![1; 9]));
+        for mode in 0..3 {
+            let flags = DEFAULT_STATEMENT_FLAGS
+                .with_truncate_as_warning(mode == 1)
+                .with_ignore_truncate_err(mode == 2);
+            for unsigned in [false, true] {
+                let mut field = FieldType::new(FieldTypeCode::Tiny);
+                if unsigned {
+                    field = field.with_added_flags(FieldTypeFlags::UNSIGNED);
+                }
+                let warnings = Warnings::default();
+                let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+                let result = input
+                    .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+                    .unwrap();
+                let expected = match (unsigned, mode == 0) {
+                    (true, true) => Datum::UInt(u64::MAX),
+                    (true, false) => Datum::UInt(255),
+                    (false, true) => Datum::Int(0),
+                    (false, false) => Datum::Int(127),
+                };
+                assert_eq!(result.value, expected);
+                assert_eq!(
+                    result.error.unwrap().to_sql_error().code,
+                    if mode == 0 { 1292 } else { 1690 }
+                );
+                assert_eq!(warnings.0.borrow().len(), usize::from(mode == 1));
+                assert_eq!(input.convert_to(&field, flags).unwrap().value, expected);
+            }
+            for code in [FieldTypeCode::Double, FieldTypeCode::NewDecimal] {
+                let field = FieldType::new(code);
+                let warnings = Warnings::default();
+                let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+                let result = input
+                    .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+                    .unwrap();
+                assert_eq!(
+                    result.value,
+                    if code == FieldTypeCode::Double {
+                        Datum::Real(u64::MAX as f64)
+                    } else {
+                        Datum::Decimal(Decimal::from_uint(u64::MAX))
+                    }
+                );
+                assert_eq!(
+                    result.error.map(|e| e.to_sql_error().code),
+                    (mode == 0).then_some(1292)
+                );
+                assert_eq!(warnings.0.borrow().len(), usize::from(mode == 1));
+            }
+        }
+        let field = FieldType::new(FieldTypeCode::Varchar).with_flen(20);
+        let flags = DEFAULT_STATEMENT_FLAGS;
+        let warnings = Warnings::default();
+        let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+        let result = Datum::Bit(BinaryLiteral::from(vec![0, 65]))
+            .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(result.value.sql_string().unwrap(), "65");
+        assert!(result.error.is_none());
+        let result = Datum::new_binary_literal(BinaryLiteral::from(vec![65]))
+            .convert_to_in_context(&field, &context, &SessionTimeZone::utc())
+            .unwrap();
+        assert_eq!(result.value.sql_string().unwrap(), "A");
+    }
+
+    #[test]
     fn contextual_conversion_matches_go_values_errors_and_ordered_warnings() {
         // Actual types.Datum.ConvertTo outputs at Go revision
         // 23bff313186b8ceb61fcbe9faac43ae700e7fb14, not Rust-generated answers.
@@ -427,6 +496,32 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
             context,
             error: None,
             unmapped: false,
+        }
+    }
+
+    /// The binary literal owner applies HandleTruncate before target bounds.
+    /// A downgraded error must permit the next conversion stage to run.
+    pub(super) fn binary_integer(
+        &mut self,
+        value: &crate::BinaryLiteral,
+        flags: crate::ConversionFlags,
+    ) -> (u64, bool) {
+        if let Some(context) = self.context {
+            let (value, error) = value.to_int_with_context(context);
+            let failed = error.is_some();
+            if self.error.is_none() {
+                self.error = error;
+            }
+            (value, failed)
+        } else {
+            let (value, error) = value.to_int_with_policy(
+                crate::TruncationPolicy::new(
+                    flags.ignore_truncate_err(),
+                    flags.truncate_as_warning(),
+                ),
+                |_| {},
+            );
+            (value, error.is_some())
         }
     }
 

@@ -253,10 +253,10 @@
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "**Partially repaired:** single/joined UPDATE and DELETE consume retained physical reads; writable matrix tables and synthetic row handles remain removed. UPDATE now locates the old physical partition from its retained row, checks the actual destination key, and allocates a fresh hidden handle when a heap row crosses partitions, as Go AddRecord does. Repeated hidden IDs in separate partitions no longer corrupt the other row during that move. Complete retained handle metadata, partial/hidden-column input reconstruction, final write-row buffers and chunk/write streaming remain unresolved.",
-      "rust_evidence": "`driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; shared TableHandle writers in `driver/dml/{update_record,delete_record}.rs`; `matrix-write-removal-validation.json`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json)",
-      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete supplies schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. Go infoschemaTable/VirtualTable reject mutation and buildMemTable has no invented row positions. Final buffering/handle reconstruction and full write streaming remain. Go tables/partition.go::partitionedTableUpdateRecord derives from/to from row data and calls AddRecord with a fresh hidden ID on a heap partition move.",
-      "review_basis": "Cloud table mutation batch from 529c38ddd4f046a408bfe8d2082a62dcf672f505 against refreshed Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five grouped Rust regressions and three source-corrected real-wire assertions fail before fixes. See table-mutation-batch-validation.json for final checks, baseline failures and limitations. Existing-owner maintenance; no complete package acceptance."
+      "finding": "**Partially repaired:** single/joined UPDATE and DELETE consume retained physical reads; writable matrix tables and synthetic row handles remain removed. UPDATE now locates the old physical partition from its retained row, checks the actual destination key, and allocates a fresh hidden handle when a heap row crosses partitions, as Go AddRecord does. Repeated hidden IDs in separate partitions no longer corrupt the other row during that move. Complete retained handle metadata, partial/hidden-column input reconstruction, final write-row buffers and chunk/write streaming remain unresolved. Single and joined UPDATE assignment errors now retain the actual source-row ordinal. The obsolete executor preimage-replay harness is removed after its CHECK-failure assertion moved to the session rollback owner.",
+      "rust_evidence": "`driver/dml.rs::execute_physical_write_rows`; `driver/multi_dml.rs::planned_source_rows`; shared TableHandle writers in `driver/dml/{update_record,delete_record}.rs`; `matrix-write-removal-validation.json`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-datatype/src/datum_convert.rs`, `datum_convert/diagnostics.rs`; `driver/{write_cast,dml,multi_dml}.rs`; `tidb-session/src/tests_statement_rollback.rs`; [write diagnostics validation](write-diagnostics-batch-validation.json)",
+      "go_owner": "Go pkg/planner/core buildUpdate/buildDelete supplies schema/TblColPosInfos/handle columns; pkg/executor/update.go and delete.go consume chunks. Go infoschemaTable/VirtualTable reject mutation and buildMemTable has no invented row positions. Final buffering/handle reconstruction and full write streaming remain. Go tables/partition.go::partitionedTableUpdateRecord derives from/to from row data and calls AddRecord with a fresh hidden ID on a heap partition move. Binary stage control follows types.BinaryLiteral.ToInt and Datum.ConvertTo; charset precedence follows convertToString then table.castColumnValue; UPDATE ordinals follow update.go::updateRows globalRowIdx; session.StmtRollback owns statement rollback.",
+      "review_basis": "Cloud write diagnostics batch from d521ef775635f0a0c5fc2291a1e13e467611855b against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Four grouped Rust regressions and eight independent MySQL assertions fail before; 71 distinct Rust cases and ten MySQL/unistore assertions pass after. See write-diagnostics-batch-validation.json for exact checks, the stale harness migration and limitations. Other54 unresolved roots retain prior evidence."
     },
     {
       "id": "E04",
@@ -676,10 +676,10 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; partially repaired:** generated writes, reads and ANALYZE share column conversion and typed delivery; decoder-specific legacy ENUM/SET policy remains preserved. Supported numeric/string conversions now consume the existing contextual datatype owner, retaining multiple ordered warnings, raw overflow identity and per-stage precedence. INSERT completes errors/warnings, UPDATE completes returned overflow/width errors but preserves raw warnings, and ODKU keeps raw errors while naming ordinary warnings with converted values and generated warnings with original values. VARCHAR trailing-space truncation follows the shared datatype warning. Temporal/JSON/binary-literal and other unported diagnostics, generated-expression context, broader ANALYZE adapters and full package obligations remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json)",
-      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open. Go table/column.go::castColumnValue consumes Datum.ConvertTo and HandleTruncate; executor/insert_common.go::completeInsertErr, insert.go::doDupRowUpdate and update.go::handleUpdateError separately complete errors and warnings.",
-      "review_basis": "Cloud table mutation batch from 529c38ddd4f046a408bfe8d2082a62dcf672f505 against refreshed Go master 93a01d31f6da205ae4bf376825293903a6899fdb. Five grouped Rust regressions and three source-corrected real-wire assertions fail before fixes. See table-mutation-batch-validation.json for final checks, baseline failures and limitations. Existing-owner maintenance; no complete package acceptance."
+      "finding": "**P1; partially repaired:** generated writes, reads and ANALYZE share column conversion and typed delivery; decoder-specific legacy ENUM/SET policy remains preserved. Supported numeric/string conversions now consume the existing contextual datatype owner, retaining multiple ordered warnings, raw overflow identity and per-stage precedence. INSERT completes errors/warnings, UPDATE completes returned overflow/width errors but preserves raw warnings, and ODKU keeps raw errors while naming ordinary warnings with converted values and generated warnings with original values. VARCHAR trailing-space truncation follows the shared datatype warning. Temporal-target/JSON and other unported diagnostics, generated-expression context, broader ANALYZE adapters and full package obligations remain unresolved. Binary integer/float/decimal and temporal numeric sources now use shared contextual diagnostics; BIT string conversion emits unsigned decimal. Charset failures retain decoded bytes, use caller warning/error policy and skip width production. Binary diagnostic text uses source bytes.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-datatype/src/datum_convert.rs`, `datum_convert/diagnostics.rs`; `driver/{write_cast,dml,multi_dml}.rs`; `tidb-session/src/tests_statement_rollback.rs`; [write diagnostics validation](write-diagnostics-batch-validation.json)",
+      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open. Go table/column.go::castColumnValue consumes Datum.ConvertTo and HandleTruncate; executor/insert_common.go::completeInsertErr, insert.go::doDupRowUpdate and update.go::handleUpdateError separately complete errors and warnings. Binary stage control follows types.BinaryLiteral.ToInt and Datum.ConvertTo; charset precedence follows convertToString then table.castColumnValue; UPDATE ordinals follow update.go::updateRows globalRowIdx; session.StmtRollback owns statement rollback.",
+      "review_basis": "Cloud write diagnostics batch from d521ef775635f0a0c5fc2291a1e13e467611855b against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Four grouped Rust regressions and eight independent MySQL assertions fail before; 71 distinct Rust cases and ten MySQL/unistore assertions pass after. See write-diagnostics-batch-validation.json for exact checks, the stale harness migration and limitations. Other54 unresolved roots retain prior evidence."
     },
     {
       "id": "I04",
@@ -792,12 +792,12 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "receipt": "cop-read-policy-batch-validation.json",
-    "scope": "Connected O13/N03 coprocessor request policy: retained session settings, physical response estimates, per-handle lookup estimates, adaptive selection, precise busy durations, deadlines and counters. Existing-owner maintenance; both findings remain partial."
+    "receipt": "write-diagnostics-batch-validation.json",
+    "scope": "Connected K03/E03 write diagnostics: shared binary/temporal numeric conversion, charset error precedence and UPDATE source-row ordinals; relocate obsolete executor rollback assertion to the existing session owner. Existing-owner maintenance, no complete package acceptance."
   },
   "latest_test_cleanup": {
-    "receipt": "orphan-test-cleanup-validation.json",
-    "scope": "Remove five unregistered source-test files and stale current-coverage claims; preserve Go obligations and finding dispositions."
+    "receipt": "write-diagnostics-batch-validation.json",
+    "scope": "Remove stale executor-only UPDATE rollback harness after migrating its CHECK assertion to the existing session transaction owner."
   },
   "test_cleanup_history": [
     {
@@ -916,6 +916,10 @@
     {
       "receipt": "aggregate-leaf-cleanup-validation.json",
       "scope": "Remove three unused JSON/percentile models and thirteen private tests; migrate distinctive vectors into the existing live HashAgg merge/spill/reset test module. Finding dispositions unchanged."
+    },
+    {
+      "receipt": "write-diagnostics-batch-validation.json",
+      "scope": "Remove stale executor-only UPDATE rollback harness after migrating its CHECK assertion to the existing session transaction owner."
     }
   ],
   "repair_history": [
@@ -1329,6 +1333,19 @@
       },
       "receipt": "cop-read-policy-batch-validation.json",
       "scope": "Connected O13/N03 coprocessor request policy: retained session settings, physical response estimates, per-handle lookup estimates, adaptive selection, precise busy durations, deadlines and counters. Existing-owner maintenance; both findings remain partial."
+    },
+    {
+      "integration_start": "d521ef775635f0a0c5fc2291a1e13e467611855b",
+      "findings": [
+        "K03",
+        "E03"
+      ],
+      "statuses": {
+        "K03": "partial",
+        "E03": "partial"
+      },
+      "receipt": "write-diagnostics-batch-validation.json",
+      "scope": "Connected K03/E03 write diagnostics: shared binary/temporal numeric conversion, charset error precedence and UPDATE source-row ordinals; relocate obsolete executor rollback assertion to the existing session owner. Existing-owner maintenance, no complete package acceptance."
     }
   ],
   "execution_batches": {
