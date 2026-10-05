@@ -111,6 +111,7 @@ type closeTrackingExternalStorage struct {
 	reader storage.ExternalFileReader
 }
 
+// Open returns the reader tracked by the test.
 func (s *closeTrackingExternalStorage) Open(context.Context, string, *storage.ReaderOption) (storage.ExternalFileReader, error) {
 	return s.reader, nil
 }
@@ -120,11 +121,13 @@ type closeTrackingExternalFileReader struct {
 	closed bool
 }
 
+// Close records the call and closes the underlying reader.
 func (r *closeTrackingExternalFileReader) Close() error {
 	r.closed = true
 	return r.ExternalFileReader.Close()
 }
 
+// TestReadParquetFileRowCountClosesReader verifies row count reads release their object reader.
 func TestReadParquetFileRowCountClosesReader(t *testing.T) {
 	ctx := context.Background()
 	localStore, err := storage.NewLocalStorage(".")
