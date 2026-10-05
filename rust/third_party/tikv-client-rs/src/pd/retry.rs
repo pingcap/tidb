@@ -213,6 +213,7 @@ pub struct RetryClient<Cl = Cluster> {
     discovery_worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     cancellation: Cancellation,
     timeout: Duration,
+    initial_keyspace: Option<keyspacepb::KeyspaceMeta>,
 }
 
 impl<Cl> RetryClient<Cl> {
@@ -229,6 +230,7 @@ impl<Cl> RetryClient<Cl> {
             discovery_worker: tokio::sync::Mutex::new(None),
             cancellation: Cancellation::default(),
             timeout,
+            initial_keyspace: None,
         }
     }
 }
@@ -299,6 +301,19 @@ impl RetryClient<Cluster> {
         security_mgr: Arc<SecurityManager>,
         timeout: Duration,
     ) -> Result<RetryClient> {
+        Self::connect_for_keyspace(endpoints, security_mgr, timeout, None).await
+    }
+
+    pub(crate) fn initial_keyspace(&self) -> Option<&keyspacepb::KeyspaceMeta> {
+        self.initial_keyspace.as_ref()
+    }
+
+    pub(crate) async fn connect_for_keyspace(
+        endpoints: &[String],
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+        keyspace: Option<&str>,
+    ) -> Result<RetryClient> {
         let connection = Connection::new(security_mgr);
         // Keep the existing explicit timeout API while taking initialization
         // defaults from PD's shared options owner.
@@ -314,18 +329,19 @@ impl RetryClient<Cluster> {
             1_000_000_000,
             || async {
                 let cluster = connection
-                    .connect_cluster(endpoints, options.timeout)
+                    .connect_cluster_for_keyspace(endpoints, options.timeout, keyspace)
                     .await?;
                 *connected.lock().unwrap() = Some(cluster);
                 Ok(())
             },
         )
         .await?;
-        let cluster = connected
+        let (cluster, initial_keyspace) = connected
             .into_inner()
             .unwrap()
             .expect("successful PD initialization");
-        let client = Self::new_with_cluster(connection.security_manager(), timeout, cluster);
+        let mut client = Self::new_with_cluster(connection.security_manager(), timeout, cluster);
+        client.initial_keyspace = initial_keyspace;
         client.start_discovery().await;
         Ok(client)
     }

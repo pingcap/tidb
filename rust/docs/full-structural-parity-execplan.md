@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared PD/TSO discovery plan](pd-service-discovery-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [PD provider/bootstrap plan](pd-provider-bootstrap-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,8 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-05, PD provider/bootstrap batch) Repair requested-keyspace initialization before TSO discovery, shared minimum-provider/compatibility selection and optional metadata-header handling across native adapters. Four grouped regressions fail before; 167 PD and 40 keyspace cases pass after. See `parity/current-audit/pd-provider-bootstrap-batch-validation.json`; P03/P06 remain partial and broader package acceptance remains open.
 
 - [x] (2026-10-05 UTC, B01 connected repair) Share service-mode/group discovery and wire routing across native/TiDB; bound refresh, preserve metadata independence, retire streams and join discovery on close. Native master bb8206e is published and synchronized. Four baseline failures precede 163 native PD and 79 TiDB PD passes (one existing live-PD test ignored); see `parity/current-audit/pd-service-discovery-batch-validation.json`. P03/P06 remain partial; GetMinTS provider selection, option consumers and whole-package obligations remain explicit. No-op sync now preserves all 322 source-file contents and mtimes, avoiding regeneration-only rebuilds.
 

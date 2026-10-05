@@ -13,7 +13,7 @@ use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
 use super::*;
 use crate::pd::{Connection, RetryClient, RetryClientTrait};
-use crate::proto::{metapb, pdpb, tsopb};
+use crate::proto::{keyspacepb, metapb, pdpb, tsopb};
 use crate::SecurityManager;
 
 #[derive(Clone, Copy)]
@@ -41,6 +41,12 @@ struct PdServer {
     stall_discovery: Arc<std::sync::atomic::AtomicBool>,
     tso_headers: Arc<std::sync::Mutex<Vec<tsopb::RequestHeader>>>,
     cluster_info: Arc<std::sync::RwLock<Option<pdpb::GetClusterInfoResponse>>>,
+    min_response:
+        Arc<std::sync::RwLock<std::result::Result<pdpb::GetMinTsResponse, tonic::Status>>>,
+    min_requests: Arc<AtomicUsize>,
+    omit_metadata_header: Arc<std::sync::atomic::AtomicBool>,
+    required_keyspace: Arc<AtomicUsize>,
+    keyspace_loads: Arc<AtomicUsize>,
     reply: Reply,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -73,6 +79,14 @@ where
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
         let service = self.clone();
         match request.uri().path() {
+            "/pdpb.PD/GetMinTS" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetMinTsResponse,
+                    pdpb::GetMinTsRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
             "/pdpb.PD/GetClusterInfo" => Box::pin(async move {
                 Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
                     pdpb::GetClusterInfoResponse,
@@ -215,9 +229,10 @@ impl tonic::server::UnaryService<pdpb::GetAllStoresRequest> for PdServer {
     fn call(&mut self, request: tonic::Request<pdpb::GetAllStoresRequest>) -> Self::Future {
         assert!(request.metadata().contains_key("grpc-timeout"));
         assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
-        Box::pin(async {
+        let omit = self.omit_metadata_header.load(Ordering::SeqCst);
+        Box::pin(async move {
             Ok(tonic::Response::new(pdpb::GetAllStoresResponse {
-                header: Some(ResponseHeader {
+                header: (!omit).then_some(ResponseHeader {
                     cluster_id: 42,
                     ..Default::default()
                 }),
@@ -364,6 +379,13 @@ impl Server {
             stall_discovery: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tso_headers: Arc::new(std::sync::Mutex::new(Vec::new())),
             cluster_info: Arc::new(std::sync::RwLock::new(None)),
+            min_response: Arc::new(std::sync::RwLock::new(Err(tonic::Status::unimplemented(
+                "old API",
+            )))),
+            min_requests: Arc::new(AtomicUsize::new(0)),
+            omit_metadata_header: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            required_keyspace: Arc::new(AtomicUsize::new(0)),
+            keyspace_loads: Arc::new(AtomicUsize::new(0)),
             reply,
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
@@ -371,6 +393,7 @@ impl Server {
         let task_service = service.clone();
         let task = tokio::spawn(async move {
             tonic::transport::Server::builder()
+                .add_service(KeyspaceServer(task_service.clone()))
                 .add_service(TsoServer(task_service.clone()))
                 .add_service(task_service)
                 .serve_with_incoming(TcpListenerStream::new(listener))
@@ -1469,6 +1492,13 @@ impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for TsoSer
             assert!(request.metadata().contains_key("grpc-timeout"));
             let request = request.into_inner();
             let header = request.header.unwrap();
+            let required = service.required_keyspace.load(Ordering::SeqCst);
+            if required != 0
+                && header.keyspace
+                    != Some(tsopb::request_header::Keyspace::KeyspaceId(required as u32))
+            {
+                return Err(tonic::Status::not_found("default keyspace has no group"));
+            }
             assert_eq!(header.cluster_id, 42);
             assert_eq!(
                 header.callee_id,
@@ -1699,4 +1729,169 @@ async fn source_service_failed_initial_probe_rotates_to_healthy_endpoint() {
     assert_eq!(stalled.service.discovery_requests.load(Ordering::SeqCst), 1);
     assert_eq!(healthy.service.discovery_requests.load(Ordering::SeqCst), 1);
     client.close().await;
+}
+
+impl tonic::server::UnaryService<pdpb::GetMinTsRequest> for PdServer {
+    type Response = pdpb::GetMinTsResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, request: tonic::Request<pdpb::GetMinTsRequest>) -> Self::Future {
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
+        self.min_requests.fetch_add(1, Ordering::SeqCst);
+        let response = self.min_response.read().unwrap().clone();
+        Box::pin(async move { response.map(tonic::Response::new) })
+    }
+}
+
+#[derive(Clone)]
+struct KeyspaceServer(PdServer);
+impl tonic::server::NamedService for KeyspaceServer {
+    const NAME: &'static str = "keyspacepb.Keyspace";
+}
+impl<B> Service<http::Request<B>> for KeyspaceServer
+where
+    B: Body + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = http::Response<tonic::body::BoxBody>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        assert_eq!(request.uri().path(), "/keyspacepb.Keyspace/LoadKeyspace");
+        Box::pin(async move {
+            Ok(
+                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                    .unary(service, request)
+                    .await,
+            )
+        })
+    }
+}
+impl tonic::server::UnaryService<keyspacepb::LoadKeyspaceRequest> for KeyspaceServer {
+    type Response = keyspacepb::LoadKeyspaceResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, request: tonic::Request<keyspacepb::LoadKeyspaceRequest>) -> Self::Future {
+        assert!(request.metadata().contains_key("grpc-timeout"));
+        assert_eq!(request.get_ref().header.as_ref().unwrap().cluster_id, 42);
+        self.0.keyspace_loads.fetch_add(1, Ordering::SeqCst);
+        let name = request.into_inner().name;
+        Box::pin(async move {
+            Ok(tonic::Response::new(keyspacepb::LoadKeyspaceResponse {
+                // Go's generated getters accept a nil error header.
+                header: None,
+                keyspace: Some(keyspacepb::KeyspaceMeta {
+                    keyspace: Some(keyspacepb::keyspace_meta::Keyspace::Id(7)),
+                    name,
+                    state: keyspacepb::KeyspaceState::Enabled as i32,
+                    config: [("tso_keyspace_group_id".into(), "4".into())].into(),
+                    ..Default::default()
+                }),
+            }))
+        })
+    }
+}
+
+#[tokio::test]
+async fn source_provider_classic_minimum_uses_tso() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let mut cluster = pd.cluster(Duration::from_secs(1)).await;
+    let result = cluster.get_min_timestamp(Duration::from_secs(1)).await;
+    cluster.start_close().await;
+    assert!(
+        result.is_ok(),
+        "classic minimum must allocate ordinary TSO: {result:?}"
+    );
+    assert_eq!(pd.service.min_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(pd.service.received.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn source_provider_api_minimum_compatibility_and_errors() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &tso);
+    let mut cluster = pd.cluster(Duration::from_secs(1)).await;
+    let compatible = cluster.get_min_timestamp(Duration::from_secs(1)).await;
+    *pd.service.min_response.write().unwrap() = Ok(pdpb::GetMinTsResponse {
+        timestamp: Some(Timestamp {
+            physical: 99,
+            logical: 3,
+            suffix_bits: 0,
+        }),
+        ..Default::default()
+    });
+    let minimum = cluster.get_min_timestamp(Duration::from_secs(1)).await;
+    *pd.service.min_response.write().unwrap() = Err(tonic::Status::unavailable("API unavailable"));
+    let unavailable = cluster.get_min_timestamp(Duration::from_secs(1)).await;
+    *pd.service.min_response.write().unwrap() = Ok(pdpb::GetMinTsResponse {
+        header: Some(ResponseHeader {
+            error: Some(pdpb::Error {
+                message: "not ready".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let header_error = cluster.get_min_timestamp(Duration::from_secs(1)).await;
+    cluster.start_close().await;
+    assert_eq!(compatible.unwrap().physical, 200);
+    assert_eq!(minimum.unwrap().physical, 99);
+    assert!(unavailable.is_err());
+    assert!(header_error.is_err());
+    assert_eq!(
+        tso.service.received.load(Ordering::SeqCst),
+        1,
+        "only compatibility may allocate TSO"
+    );
+    assert_eq!(pd.service.received.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn source_provider_optional_metadata_header_preserves_payload() {
+    let pd = Server::start(Reply::Timestamp).await;
+    pd.service
+        .omit_metadata_header
+        .store(true, Ordering::SeqCst);
+    let mut cluster = pd.cluster(Duration::from_secs(1)).await;
+    let stores = cluster.get_all_stores(Duration::from_secs(1)).await;
+    cluster.start_close().await;
+    assert_eq!(stores.unwrap().stores[0].id, 9);
+}
+
+#[tokio::test]
+async fn source_provider_v2_bootstraps_without_default_group() {
+    use crate::pd::PdClient as _;
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &tso);
+    tso.service.required_keyspace.store(7, Ordering::SeqCst);
+    tso.service.group.write().unwrap().id = 4;
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        crate::pd::PdRpcClient::connect_with_keyspace(
+            &[pd.service.endpoint.clone()],
+            crate::Config::default(),
+            crate::request::KeyMode::Txn,
+            "tenant".into(),
+        ),
+    )
+    .await;
+    let client = Arc::new(
+        result
+            .expect("V2 bootstrap must not wait for the nonexistent default group")
+            .unwrap(),
+    );
+    let ts = client.clone().get_timestamp().await.unwrap();
+    client.close().await;
+    assert_eq!(ts.physical, 200);
+    assert_eq!(pd.service.keyspace_loads.load(Ordering::SeqCst), 1);
+    assert_eq!(pd.service.received.load(Ordering::SeqCst), 0);
+    let headers = tso.service.tso_headers.lock().unwrap();
+    assert!(headers.iter().all(|h| h.keyspace_group_id == 4
+        && h.keyspace == Some(tsopb::request_header::Keyspace::KeyspaceId(7))));
 }

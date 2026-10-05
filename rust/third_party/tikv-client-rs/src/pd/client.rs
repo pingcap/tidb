@@ -1408,6 +1408,10 @@ impl PdRpcClient<TikvConnect, Cluster> {
         let enable_preload = config.enable_preload;
         let regions_refresh_interval = config.regions_refresh_interval;
         let stores_refresh_interval = config.stores_refresh_interval;
+        let initial_keyspace_name = match &codec_config {
+            PdCodecConfig::V1(_) => None,
+            PdCodecConfig::V2 { keyspace_name, .. } => Some(build_keyspace_name(keyspace_name)),
+        };
         let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
             |security_mgr| {
@@ -1429,23 +1433,31 @@ impl PdRpcClient<TikvConnect, Cluster> {
                 .with_open_tracing(config.open_tracing_enable)
                 .with_tikv_client_config(config.tikv_client.clone())
             },
-            |security_mgr| RetryClient::connect(pd_endpoints, security_mgr, config.timeout),
+            |security_mgr| async move {
+                RetryClient::connect_for_keyspace(
+                    pd_endpoints,
+                    security_mgr,
+                    config.timeout,
+                    initial_keyspace_name.as_deref(),
+                )
+                .await
+            },
             move |pd| async move {
                 match codec_config {
                     PdCodecConfig::V1(mode) => Ok((PdRegionCodec::v1(mode), None)),
                     PdCodecConfig::V2 {
                         mode,
-                        keyspace_name,
+                        keyspace_name: _,
                     } => {
-                        let canonical_name = build_keyspace_name(keyspace_name);
-                        let meta = pd.load_keyspace(&canonical_name).await?;
+                        let meta = pd.initial_keyspace().cloned().ok_or_else(|| {
+                            crate::internal_err!("V2 PD initialization omitted keyspace metadata")
+                        })?;
                         let keyspace_id = match keyspace_from_pd_meta(&meta)? {
                             Keyspace::Enable { keyspace_id } => keyspace_id,
                             _ => {
                                 unreachable!("PD metadata always constructs a numeric V2 keyspace")
                             }
                         };
-                        pd.set_keyspace(&meta).await?;
                         Ok((PdRegionCodec::v2(mode, keyspace_id)?, Some(meta)))
                     }
                 }

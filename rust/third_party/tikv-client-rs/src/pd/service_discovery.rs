@@ -107,6 +107,8 @@ impl TsoDiscovery {
     pub fn set_keyspace(&mut self, meta: &keyspacepb::KeyspaceMeta) -> Result<(), Status> {
         let id = match meta.keyspace {
             Some(keyspacepb::keyspace_meta::Keyspace::Id(id)) => id,
+            // Go KeyspaceMeta.GetId returns zero when the oneof is absent.
+            None => 0,
             _ => {
                 return Err(Status::invalid_argument(
                     "TSO discovery requires a numeric V2 keyspace",

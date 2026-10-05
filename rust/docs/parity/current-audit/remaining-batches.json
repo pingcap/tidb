@@ -1,16 +1,16 @@
 {
-  "date": "2026-10-04",
+  "date": "2026-10-05",
   "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
   "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
   "counts": {
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 30,
-    "partial": 26
+    "open": 29,
+    "partial": 27
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "S04/I04/O09/N03 rechecked in this batch; the other 52 unresolved roots retain earlier evidence.",
+  "evidence_limit": "P03/P06 provider/bootstrap residuals rechecked; the other 54 unresolved roots retain earlier evidence.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -19,7 +19,7 @@
     "Run one combined post-change regression pass per target and the required integration/oracle gates. Recompile again only for a meaningful code change, failure or unresolved concern.",
     "Run the required lint/all-target/publication build once at the completed batch boundary, then normal mandatory hook gates. Never bypass hooks.",
     "Update both finding registers and living plans with actual evidence; partial fixes do not close parent findings or packages.",
-    "Keep all work local; no push or dry-run."
+    "Publication is authorized; follow README.md, exact destinations, actual hook and fresh locked build immediately before every push, then verify remote SHA."
   ],
   "batches": [
     {

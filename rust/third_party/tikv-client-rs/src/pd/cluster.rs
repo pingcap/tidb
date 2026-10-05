@@ -107,7 +107,7 @@ impl Cluster {
             request.get_mut().need_buckets = need_buckets;
             request.set_timeout(timeout);
             let response = client.get_prev_region(request).await?.into_inner();
-            if let Some(error) = &response.header().error {
+            if let Some(error) = response.header().and_then(|header| header.error.as_ref()) {
                 Err(internal_err!(error.message))
             } else {
                 Ok(response)
@@ -247,16 +247,24 @@ impl Cluster {
     ) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
         let cluster_id = self.id;
         let client = self.client.clone();
+        let classic = self.route.group_id.is_none();
+        let ordinary = self.get_timestamp();
         async move {
+            // Go GetMinTS uses the ordinary provider in classic mode. API
+            // compatibility falls back only when GetMinTS is unsupported.
             let mut client = client.ok_or(Error::ContextCanceled)?;
+            if classic {
+                return ordinary.await;
+            }
             let request = pd_request!(cluster_id, pdpb::GetMinTsRequest);
-            request
-                .send(&mut client, timeout)
-                .await?
-                .timestamp
-                .ok_or_else(|| {
+            match request.send(&mut client, timeout).await {
+                Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
+                    ordinary.await
+                }
+                result => result?.timestamp.ok_or_else(|| {
                     Error::StringError("PD GetMinTS response has no timestamp".to_owned())
-                })
+                }),
+            }
         }
     }
 
@@ -547,11 +555,37 @@ impl Connection {
         endpoints: &[String],
         timeout: Duration,
     ) -> Result<Cluster> {
+        self.connect_cluster_for_keyspace(endpoints, timeout, None)
+            .await
+            .map(|(cluster, _)| cluster)
+    }
+
+    pub(crate) async fn connect_cluster_for_keyspace(
+        &self,
+        endpoints: &[String],
+        timeout: Duration,
+        keyspace: Option<&str>,
+    ) -> Result<(Cluster, Option<keyspacepb::KeyspaceMeta>)> {
         let members = self.validate_endpoints(endpoints, timeout).await?;
-        let (client, keyspace_client, members, url) =
+        let (client, mut keyspace_client, members, url) =
             self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
         let mut discovery = self.discovery.clone();
+        // Go's initialization callback resolves the keyspace before setting
+        // the service mode. Never require a usable default group for V2.
+        let meta = if let Some(name) = keyspace {
+            let mut request = pd_request!(id, keyspacepb::LoadKeyspaceRequest);
+            request.name = name.to_owned();
+            let response = request.send(&mut keyspace_client, timeout).await?;
+            let meta = response
+                .keyspace
+                .ok_or_else(|| Error::KeyspaceNotFound(name.to_owned()))?;
+            crate::request::keyspace_from_pd_meta(&meta)?;
+            discovery.set_keyspace(&meta)?;
+            Some(meta)
+        } else {
+            None
+        };
         let (route, channel) = self.discover(&mut discovery, id, &url, timeout).await?;
         let tso = Manager::new();
         tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);
@@ -565,7 +599,7 @@ impl Connection {
             tso,
             retired_tso: Vec::new(),
         };
-        Ok(cluster)
+        Ok((cluster, meta))
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
@@ -745,6 +779,11 @@ impl Connection {
         {
             return Err(internal_err!("failed to get PD members, err {:?}", err));
         }
+        if resp.header.is_none() {
+            return Err(internal_err!(
+                "PD GetMembers response has no cluster header"
+            ));
+        }
         if resp.leader.is_none() {
             return Err(internal_err!(
                 "unexpected no PD leader in get member resp: {:?}",
@@ -865,7 +904,7 @@ trait PdMessage: Sized {
         req.set_timeout(timeout);
         let response = Self::rpc(req, client).await?;
 
-        if let Some(err) = &response.header().error {
+        if let Some(err) = response.header().and_then(|header| header.error.as_ref()) {
             Err(internal_err!(err.message))
         } else {
             Ok(response)
@@ -1044,101 +1083,101 @@ impl PdMessage for keyspacepb::LoadKeyspaceRequest {
 }
 
 trait PdResponse {
-    fn header(&self) -> &pdpb::ResponseHeader;
+    fn header(&self) -> Option<&pdpb::ResponseHeader>;
 }
 
 impl PdResponse for pdpb::GetStoreResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetRegionResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::ScanRegionsResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::BatchScanRegionsResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::SplitRegionsResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetAllStoresResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::UpdateGcSafePointResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetGcStateResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::AdvanceTxnSafePointResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::AdvanceGcSafePointResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::ScatterRegionResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetOperatorResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::SetExternalTimestampResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetExternalTimestampResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for pdpb::GetMinTsResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }
 
 impl PdResponse for keyspacepb::LoadKeyspaceResponse {
-    fn header(&self) -> &pdpb::ResponseHeader {
-        self.header.as_ref().unwrap()
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
     }
 }

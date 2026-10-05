@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-05",
+  "integration_start": "85abcb3c2304f1cf295123592863ff704e707d7c",
+  "native_base": "bb8206e7d080973192fd7f11e0d852845e3277dc",
+  "native_published": "bc8cca3fea4f741e68a41b124f28164604a57ee2",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "pd_module": "v0.0.0-20260805103528-afa43111d149",
+  "findings": [
+    "P03",
+    "P06"
+  ],
+  "complete_package_acceptance": false,
+  "implemented": [
+    "Load requested keyspace metadata over the leader connection before TSO discovery, validate codec identity before creating workers, and reuse the same immutable metadata for codec publication.",
+    "GetMinTS selects the ordinary retained TSO provider in classic mode, the PD API minimum in microservice mode, and ordinary TSO compatibility fallback only for Unimplemented. Other transport and explicit response errors remain errors.",
+    "Sixteen existing metadata response adapters accept absent error headers like generated Go getters; explicit membership identity header absence returns an error before later accesses.",
+    "Absent keyspace identity retains Go GetId default zero for numeric V2 discovery; existing codec checks reject V3 identities and out-of-range IDs."
+  ],
+  "removed": [
+    "V2 temporary default-group initialization and duplicate LoadKeyspace/reconnect during codec publication.",
+    "Sixteen unchecked metadata response-header unwraps.",
+    "Stale no-push instruction and stale open/partial counts from the machine-readable batch map."
+  ],
+  "validation": {
+    "before": {
+      "command": "cargo test --locked -p tikv-client --lib source_provider_",
+      "failed": 4,
+      "passed": 0,
+      "log": "before-retry.log"
+    },
+    "native_pd": {
+      "command": "cargo test --locked -p tikv-client --lib pd::",
+      "passed": 167,
+      "failed": 0,
+      "log": "native-pd.log"
+    },
+    "native_keyspace": {
+      "command": "cargo test --locked -p tikv-client --lib request::keyspace",
+      "passed": 40,
+      "failed": 0,
+      "log": "native-keyspace.log"
+    },
+    "native_all_targets": {
+      "command": "cargo check --locked -p tikv-client --all-targets",
+      "exit": 0,
+      "log": "native-check.log"
+    },
+    "tidb_pd": {
+      "command": "cargo test --locked -p tidb-pd-client",
+      "unit_passed": 27,
+      "integration_passed": 52,
+      "ignored": 1,
+      "ignored_reason": "existing live-PD etcd case requires TIDB_ETCD_PROBE_PD",
+      "failed": 0,
+      "log": "tidb-pd.log"
+    },
+    "tidb_all_targets": {
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-txnkv --all-targets",
+      "exit": 0,
+      "log": "tidb-check.log"
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": "lint.log"
+    },
+    "sync": {
+      "command": "bash rust/scripts/sync-tikv-client-rs.sh",
+      "exit": 0,
+      "changed_source_files_matched_to_patched_scratch": 5,
+      "log": "sync.log"
+    },
+    "rust_total_passed": 286
+  },
+  "remaining": [
+    "Operational follower-proxy/forwarding consumers, complete member-health/channel/grpcutil ownership and complete original package obligations.",
+    "Other 54 unresolved roots were not freshly reproduced.",
+    "Full Go/native suites, live multi-node migration/failover, live-cluster TLS and performance not verified."
+  ],
+  "cloud_logs": "/workspace/.cloud-setup/pd-provider-batch",
+  "publication": "Native normal push and exact remote verification precede maintained sync. Final TiDB actual hook, fresh prepush locked build and remote results are recorded in Cloud final-handoff.json.",
+  "initial_failure": "First regression fixture compilation required explicit tonic codec types; second run reached all four behavior failures.",
+  "go_evidence": [
+    {
+      "path": "client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8"
+    },
+    {
+      "path": "inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c"
+    },
+    {
+      "path": "keyspace_client.go",
+      "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e"
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+    }
+  ],
+  "self_review": [
+    "No generated source or dependency/lock changes.",
+    "All five vendored source changes match the maintained patched scratch checkout.",
+    "Metadata error checks remain shared; all sixteen adapters migrated together.",
+    "Initial metadata is validated before timestamp workers start, and existing classic/V2 public constructors consume the shared initialization.",
+    "Retained all useful existing tests; extended the existing gRPC fixture, adding no standalone test harness.",
+    "P03/P06 remain partial; complete parent-package acceptance is not claimed."
+  ]
+}
