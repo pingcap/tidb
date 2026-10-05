@@ -148,6 +148,7 @@ impl TimestampSource for TickingTimestamps {
 
 #[derive(Debug, Default)]
 struct Recorded {
+    routed_reads: Vec<(String, u64)>,
     get_versions: Vec<u64>,
     get_timeouts: Vec<Duration>,
     batch_timeouts: Vec<Duration>,
@@ -288,11 +289,15 @@ macro_rules! never_published {
 impl TransactionCommandClient for LockingClient {
     fn publish_transaction_get(
         &mut self,
-        _address: &str,
+        address: &str,
         request: &KvrpcGetRequest,
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse> {
+        self.recorded.lock().unwrap().routed_reads.push((
+            address.to_owned(),
+            context.peer.as_ref().map_or(0, |peer| peer.id),
+        ));
         self.recorded
             .lock()
             .unwrap()
@@ -354,11 +359,15 @@ impl TransactionCommandClient for LockingClient {
 
     fn publish_transaction_batch_get(
         &mut self,
-        _address: &str,
+        address: &str,
         request: &KvrpcBatchGetRequest,
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
+        self.recorded.lock().unwrap().routed_reads.push((
+            address.to_owned(),
+            context.peer.as_ref().map_or(0, |peer| peer.id),
+        ));
         self.recorded
             .lock()
             .unwrap()
@@ -504,11 +513,15 @@ impl TransactionCommandClient for LockingClient {
 
     fn publish_transaction_scan(
         &mut self,
-        _address: &str,
+        address: &str,
         request: &KvrpcScanRequest,
         context: &KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcScanResponse> {
+        self.recorded.lock().unwrap().routed_reads.push((
+            address.to_owned(),
+            context.peer.as_ref().map_or(0, |peer| peer.id),
+        ));
         self.recorded
             .lock()
             .unwrap()
@@ -2612,4 +2625,260 @@ fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
         );
     }
     transaction.finish_without_writes().unwrap();
+}
+
+#[derive(Clone)]
+struct ReplicaRegion;
+
+impl RegionLoader for ReplicaRegion {
+    fn cluster_id(&self) -> u64 {
+        11
+    }
+    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        let mut region = OneRegion.load_region(key)?;
+        for (id, role) in [(621, PeerRole::Voter), (622, PeerRole::Learner)] {
+            region.peers.push(Peer {
+                id,
+                store_id: id * 10,
+                role,
+                is_witness: false,
+                store_epoch: 1,
+            });
+            region.stores.push(Store {
+                id: id * 10,
+                address: format!("replica-{id}"),
+                epoch: 1,
+            });
+        }
+        Ok(region)
+    }
+}
+impl RegionRecoveryLoader for ReplicaRegion {
+    fn hydrate_region(
+        &mut self,
+        metadata: &RegionMetadata,
+        leader: u64,
+        stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        OneRegion.hydrate_region(metadata, leader, stores)
+    }
+}
+
+#[test]
+fn snapshot_replica_policy_reaches_point_batch_and_scan_routes() {
+    let _config = snapshot_test_config();
+    for mode in [
+        tidb_txnkv::ReplicaReadType::Follower,
+        tidb_txnkv::ReplicaReadType::Learner,
+    ] {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let client = LockingClient::new(recorded.clone());
+        client
+            .scan_responses
+            .push_back(KvrpcScanResponse::default());
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        let mut txn = RealOptimisticTransaction::new_injected(
+            SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion)),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+        )
+        .unwrap();
+        txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+            replica_read: mode,
+            busy_threshold_ns: 37_000_000,
+            ..Default::default()
+        });
+        let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+        txn.snapshot_get(ROW_KEY, &call).unwrap();
+        txn.snapshot_batch_get(&[b"batch".to_vec()], &call).unwrap();
+        txn.snapshot_scan_at(b"a", b"z", Some(1), START_TS, &call)
+            .unwrap();
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.routed_reads.len(), 3);
+        for (address, peer) in &recorded.routed_reads {
+            assert_eq!(address, &format!("replica-{peer}"));
+        }
+        for context in [
+            &recorded.get_contexts[0],
+            &recorded.batch_contexts[0],
+            &recorded.scans[0].1,
+        ] {
+            let peer = context.peer.as_ref().unwrap().id;
+            assert_ne!(peer, 620, "{mode:?} must select a replica");
+            if mode == tidb_txnkv::ReplicaReadType::Learner {
+                assert_eq!(peer, 622);
+            }
+            assert!(context.replica_read);
+            assert!(!context.stale_read);
+            assert_eq!(context.busy_threshold_ms, 37);
+        }
+    }
+}
+
+#[test]
+fn snapshot_replica_busy_retry_uses_idle_peer_and_resets_when_all_busy() {
+    let _config = snapshot_test_config();
+    for all_busy in [false, true] {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let client = LockingClient::new(recorded.clone());
+        client
+            .remaining_locked
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..if all_busy { 3 } else { 1 } {
+            client.get_responses.push_back(KvrpcGetResponse {
+                region_error: Some(tidb_proto::errorpb::Error {
+                    server_is_busy: Some(tidb_proto::errorpb::ServerIsBusy {
+                        estimated_wait_ms: 100,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        }
+        let mut txn = RealOptimisticTransaction::new_injected(
+            SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion)),
+            TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+            CALL_TIMEOUT,
+            START_TS,
+            Instant::now(),
+        )
+        .unwrap();
+        txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+            busy_threshold_ns: 37_000_000,
+            ..Default::default()
+        });
+        txn.snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+            .unwrap();
+        let recorded = recorded.lock().unwrap();
+        let first = &recorded.get_contexts[0];
+        assert_eq!(first.peer.as_ref().unwrap().id, 620);
+        assert_eq!(first.busy_threshold_ms, 37);
+        let second = &recorded.get_contexts[1];
+        assert_ne!(second.peer.as_ref().unwrap().id, 620);
+        assert!(second.replica_read);
+        let last = recorded.get_contexts.last().unwrap();
+        if all_busy {
+            assert_eq!(last.peer.as_ref().unwrap().id, 620);
+            assert_eq!(last.busy_threshold_ms, 0);
+            assert!(!last.replica_read);
+        } else {
+            assert_eq!(last.busy_threshold_ms, 37);
+        }
+    }
+}
+
+impl tidb_txnkv::region::RegionQueryLoader for ReplicaRegion {
+    fn query_region(
+        &mut self,
+        query: tidb_txnkv::region::RegionQuery<'_>,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        match query {
+            tidb_txnkv::region::RegionQuery::Id(id) => {
+                let key = Vec::new();
+                let location = self.load_region(&key)?;
+                if location.region.id == id {
+                    Ok(location)
+                } else {
+                    Err(RegionLoadError::new(
+                        "unknown-region",
+                        "unknown fixture region",
+                    ))
+                }
+            }
+            tidb_txnkv::region::RegionQuery::Key(key) => self.load_region(key),
+            tidb_txnkv::region::RegionQuery::EndKey(key) => self.load_region_by_end_key(key),
+        }
+    }
+    fn scan_regions_once(
+        &mut self,
+        range: &tidb_txnkv::region::KeyRange,
+        _limit: usize,
+        _options: tidb_txnkv::region::RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.load_region(&range.start).map(|r| vec![r])
+    }
+    fn load_store(
+        &mut self,
+        _id: u64,
+    ) -> Result<Option<tidb_txnkv::region::StoreMetadata>, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-store-query",
+            "fixture expects cached store metadata",
+        ))
+    }
+}
+
+#[test]
+fn snapshot_replica_stale_retry_probes_leader_then_uses_replica_read() {
+    use tikv_client::{ReplicaReadConfig, ReplicaReadType, TimestampExt};
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded.clone());
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    client.get_responses.extend([
+        KvrpcGetResponse {
+            region_error: Some(tidb_proto::errorpb::Error {
+                data_is_not_ready: Some(Default::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        KvrpcGetResponse {
+            region_error: Some(tidb_proto::errorpb::Error {
+                stale_command: Some(Default::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ]);
+    let pd = tidb_txnkv::driver::client_bridge::ClientPd::new(
+        SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion)),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+    );
+    pd.set_call(&UnaryCallContext::with_timeout(CALL_TIMEOUT));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let mut txn = tikv_client::transaction::Transaction::new(
+            tikv_client::Timestamp::from_version(START_TS),
+            pd,
+            tikv_client::TransactionOptions::new_optimistic(),
+            tikv_client::request::Keyspace::Disable,
+        );
+        txn.set_replica_read_config(ReplicaReadConfig {
+            read_type: ReplicaReadType::Mixed,
+            stale_read: true,
+            stores: vec![6220],
+            ..Default::default()
+        });
+        txn.get(ROW_KEY.to_vec()).await.unwrap();
+        txn.rollback().await.unwrap();
+    });
+    let actual: Vec<_> = recorded
+        .lock()
+        .unwrap()
+        .get_contexts
+        .iter()
+        .map(|ctx| {
+            (
+                ctx.peer.as_ref().unwrap().id,
+                ctx.replica_read,
+                ctx.stale_read,
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [(622, false, true), (620, false, false), (622, true, false)]
+    );
 }

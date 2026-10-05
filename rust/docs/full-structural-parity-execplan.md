@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [write diagnostics](write-diagnostics-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared replica routing](replica-routing-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -40,6 +40,9 @@ and validation results in those receipts apply only to their recorded point
 in time. This revision is a plan; it closes no production finding.
 
 ## Progress
+
+- [x] (2026-10-05, connected replica routing) Share native ReplicaRouting between PdRpcClient and ClientPd; repair point/batch/scan follower/learner routing, stale leader-probe retries and busy/all-busy fallback. Canonical store load/health feed the selector; remove the private adapter address cache. Three grouped regressions fail before/pass after; 52 native and 31 TiDB tests pass. See `parity/current-audit/replica-routing-batch-validation.json`. T02/O13/N03 remain partial for broader ownership and live-cluster/package obligations.
+
 
 - [x] (2026-10-05, O13/N03 batch) Connect retained settings, physical response estimates and lookup sizes to adaptive coprocessor routing, timeouts and counters. Three baseline regressions fail; 93 distinct Rust cases pass (one existing scaling test ignored). See `parity/current-audit/cop-read-policy-batch-validation.json`; parent findings remain partial.
 

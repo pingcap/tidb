@@ -40,10 +40,16 @@ pub use crate::interceptor::{RpcInterceptor, RpcInterceptorChain, RpcInterceptor
 pub use crate::kv::Getter;
 #[doc(hidden)]
 pub use crate::locate::{HealthStatusDetail, SlowScoreStat, StoreHealthStatus};
+#[doc(hidden)]
+pub use crate::locate::{ReplicaFlowsType, ReplicaSelectorState};
 pub use crate::logutil::with_logger as with_log_context;
 pub use crate::pd::PdClient as PlacementDriverClient;
+#[doc(hidden)]
+pub use crate::pd::ReplicaRouting;
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};
 pub use crate::region::{RegionId, RegionVerId, RegionWithLeader, StoreId};
+#[doc(hidden)]
+pub use crate::region_cache::StoreLiveness;
 pub use crate::region_cache::{
     change_pd_region_meta_circuit_breaker_settings, set_region_cache_ttl_secs,
     set_region_cache_ttl_with_jitter, PdRegionMetaCircuitBreakerSettings, RegionCache,

@@ -25,12 +25,16 @@ use crate::SharedReadRuntime;
 use async_trait::async_trait;
 use prost::Message;
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tikv_client::proto::{keyspacepb, kvrpcpb, metapb};
 use tikv_client::tikv::{Client as KvClient, RegionStore, Request, Store};
+use tikv_client::tikv::{
+    MixedReplicaSelection, ReplicaCandidate, ReplicaFlowsType, ReplicaRouting,
+    ReplicaSelectorState, StoreLiveness as NativeLiveness,
+};
 use tikv_client::PdClient;
+use tikv_client::ReplicaReadConfig;
 use tikv_client::{Error, Key, Result, Timestamp, TimestampExt};
 use tikv_client::{RegionVerId, RegionWithLeader};
 
@@ -117,6 +121,15 @@ trait Backend: Send + Sync {
     fn cluster_id(&self) -> u64;
     fn locate_key(&self, key: &[u8], end: bool) -> Result<RegionWithLeader>;
     fn locate_id(&self, id: u64) -> Result<RegionLocation>;
+    fn store_state(&self, id: u64) -> Result<crate::region::StoreState>;
+    fn candidates(
+        &self,
+        region: RegionVerId,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+    ) -> Result<Vec<ReplicaCandidate>>;
+    fn record_server_load(&self, id: u64, estimated_wait_ms: u32);
     fn update_leader(&self, id: RegionVerId, leader: metapb::Peer) -> Result<()>;
     fn update_regions(&self, regions: Vec<RegionWithLeader>) -> Result<()>;
     fn invalidate_region(&self, id: RegionVerId);
@@ -177,6 +190,31 @@ where
             .with_region_cache(|cache| cache.locate_region_by_id(id))
             .map_err(failure)?
             .map_err(failure)
+    }
+    fn store_state(&self, id: u64) -> Result<crate::region::StoreState> {
+        self.storage
+            .with_region_cache(|cache| cache.store_state(id).cloned())
+            .map_err(failure)?
+            .ok_or_else(|| failure("region store is missing"))
+    }
+    fn candidates(
+        &self,
+        region: RegionVerId,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+    ) -> Result<Vec<ReplicaCandidate>> {
+        self.storage
+            .with_region_cache(|cache| {
+                cache.native_replica_candidates(region_id(region), labels, stores, state)
+            })
+            .map_err(failure)?
+            .map_err(failure)
+    }
+    fn record_server_load(&self, id: u64, estimated_wait_ms: u32) {
+        let _ = self.storage.with_region_cache(|cache| {
+            cache.record_native_server_load(id, estimated_wait_ms);
+        });
     }
     fn update_leader(&self, id: RegionVerId, leader: metapb::Peer) -> Result<()> {
         self.storage
@@ -429,7 +467,6 @@ pub struct ClientPd {
     trace: Arc<Mutex<ClientTrace>>,
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
-    store_addresses: Mutex<HashMap<(u64, u64), String>>,
 }
 impl ClientPd {
     /// Adapts process-owned transport, metadata and timestamp capabilities.
@@ -449,7 +486,6 @@ impl ClientPd {
             }),
             trace,
             call: Arc::new(Mutex::new(None)),
-            store_addresses: Mutex::new(HashMap::new()),
         })
     }
     /// Adapts the existing read transport without requiring transaction commands.
@@ -472,7 +508,6 @@ impl ClientPd {
             }),
             trace,
             call: Arc::new(Mutex::new(None)),
-            store_addresses: Mutex::new(HashMap::new()),
         })
     }
 
@@ -639,45 +674,123 @@ impl KvClient for ClientKv {
     }
 }
 
+// This adapter supplies cache facts and transport handles. Replica choices,
+// wire flags and request-scoped retry transitions belong to client-rust.
 #[async_trait]
-impl PdClient for ClientPd {
-    type KvClient = ClientKv;
-    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        let id = region.region.id;
-        let peer = region
-            .leader
-            .as_ref()
-            .ok_or_else(|| failure("region has no leader"))?;
-        let cache_key = (id, peer.store_id);
-        let cached_address = self
-            .store_addresses
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&cache_key)
-            .cloned();
-        let address = if let Some(address) = cached_address {
-            address
-        } else {
-            let location = self.backend.locate_id(id)?;
-            let address = location
-                .stores
-                .iter()
-                .find(|store| store.id == peer.store_id)
-                .ok_or_else(|| failure("leader store is missing"))?
-                .address
-                .clone();
-            self.store_addresses
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(cache_key, address.clone());
-            address
+impl ReplicaRouting for ClientPd {
+    fn forwarding_enabled(&self) -> bool {
+        false
+    }
+    async fn get_store_by_id(&self, id: u64) -> Result<()> {
+        self.backend.store_state(id).map(|_| ())
+    }
+    fn store_liveness(&self, id: u64) -> Option<NativeLiveness> {
+        self.backend
+            .store_state(id)
+            .ok()
+            .map(|store| match store.liveness() {
+                crate::region::StoreLiveness::Reachable => NativeLiveness::Reachable,
+                crate::region::StoreLiveness::Unreachable => NativeLiveness::Unreachable,
+                crate::region::StoreLiveness::Unknown => NativeLiveness::Unknown,
+            })
+    }
+    async fn store_epoch_is_stale(&self, region: &RegionVerId, id: u64) -> bool {
+        let Ok(location) = self.backend.locate_id(region.id) else {
+            return true;
         };
+        let Ok(store) = self.backend.store_state(id) else {
+            return true;
+        };
+        location.region != region_id(region.clone())
+            || !location
+                .peers
+                .iter()
+                .any(|peer| peer.store_id == id && peer.store_epoch == store.epoch())
+    }
+    fn estimated_store_wait(&self, id: u64) -> Option<Duration> {
+        self.backend.store_state(id).ok().map(|store| {
+            store
+                .routing_health()
+                .load
+                .estimated_wait(std::time::Instant::now())
+        })
+    }
+    async fn select_mixed_replica(
+        &self,
+        region: &RegionWithLeader,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+        selection: MixedReplicaSelection,
+    ) -> Result<Option<metapb::Peer>> {
+        let candidates = self
+            .backend
+            .candidates(region.ver_id(), labels, stores, state)?;
+        Ok(selection
+            .choose(&candidates)
+            .and_then(|candidate| {
+                region
+                    .region
+                    .peers
+                    .iter()
+                    .find(|peer| peer.id == candidate.peer_id)
+            })
+            .cloned())
+    }
+    async fn proxy_for_unavailable_leader(
+        &self,
+        _region: &RegionWithLeader,
+        _state: &ReplicaSelectorState,
+    ) -> Result<Option<metapb::Peer>> {
+        // Forwarding is not enabled for this injected ordinary-RPC transport.
+        Ok(None)
+    }
+    async fn map_region_to_route(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        target: metapb::Peer,
+        proxy: Option<metapb::Peer>,
+    ) -> Result<RegionStore> {
+        debug_assert!(proxy.is_none());
+        let store = self.backend.store_state(target.store_id)?;
+        if store.address().is_empty() {
+            return Err(failure("region store address is empty"));
+        }
+        let address = store.address().to_owned();
         let client = ClientKv {
             backend: self.backend.clone(),
             address: address.clone(),
             call: self.call.clone(),
         };
-        Ok(RegionStore::new(region, Arc::new(client)).with_target(address))
+        Ok(RegionStore::new(region, Arc::new(client))
+            .with_target(address)
+            .with_target_peer(target)
+            .with_physical_store(store.id(), tikv_client::tikv::EndpointType::TiKv)
+            .with_health_status(store.routing_health().health.clone()))
+    }
+    fn record_store_replica_flow(&self, _id: u64, _destination: ReplicaFlowsType) {
+        // Periodic replica-flow metrics are not composed by this adapter yet.
+    }
+}
+
+#[async_trait]
+impl PdClient for ClientPd {
+    type KvClient = ClientKv;
+    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
+        self.route_leader(region, &ReplicaSelectorState::default())
+            .await
+    }
+    async fn map_region_to_store_with_replica(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        config: ReplicaReadConfig,
+        state: ReplicaSelectorState,
+        is_read: bool,
+    ) -> Result<RegionStore> {
+        self.route_replica(region, config, state, is_read).await
+    }
+    fn record_server_load(&self, id: u64, estimated_wait_ms: u32) {
+        self.backend.record_server_load(id, estimated_wait_ms);
     }
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
         // Region-cache lookup is synchronous and normally a read-only cache hit.
@@ -718,34 +831,18 @@ impl PdClient for ClientPd {
         self.backend.cluster_id()
     }
     async fn update_leader(&self, id: RegionVerId, peer: metapb::Peer) -> Result<()> {
-        self.store_addresses
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
         self.backend.update_leader(id, peer)
     }
     async fn update_region_cache(&self, regions: Vec<RegionWithLeader>) -> Result<()> {
-        self.store_addresses
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || backend.update_regions(regions))
             .await
             .map_err(failure)?
     }
     async fn invalidate_region_cache(&self, id: RegionVerId) {
-        self.store_addresses
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
         self.backend.invalidate_region(id);
     }
     async fn invalidate_store_cache(&self, id: u64) {
-        self.store_addresses
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
         self.backend.invalidate_store(id);
     }
     async fn all_stores(&self) -> Result<Vec<Store>> {
@@ -1129,6 +1226,21 @@ mod ownership_regressions {
         fn locate_id(&self, _: u64) -> Result<RegionLocation> {
             unreachable!()
         }
+        fn store_state(&self, _: u64) -> Result<crate::region::StoreState> {
+            unreachable!()
+        }
+        fn candidates(
+            &self,
+            _: RegionVerId,
+            _: &[metapb::StoreLabel],
+            _: &[u64],
+            _: &ReplicaSelectorState,
+        ) -> Result<Vec<ReplicaCandidate>> {
+            unreachable!()
+        }
+        fn record_server_load(&self, _: u64, _: u32) {
+            unreachable!()
+        }
         fn update_leader(&self, _: RegionVerId, _: metapb::Peer) -> Result<()> {
             unreachable!()
         }
@@ -1323,7 +1435,6 @@ mod ownership_regressions {
                 trace: Arc::new(Mutex::new(ClientTrace::default())),
                 backend: backend.clone(),
                 call: Arc::new(Mutex::new(Some(parent))),
-                store_addresses: Mutex::new(HashMap::new()),
             });
             if background {
                 let owner = tikv_client::async_util::Cancellation::default();

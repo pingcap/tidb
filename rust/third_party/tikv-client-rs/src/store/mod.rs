@@ -140,11 +140,7 @@ impl RegionStore {
         self
     }
 
-    pub(crate) fn with_physical_store(
-        mut self,
-        store_id: StoreId,
-        endpoint_type: EndpointType,
-    ) -> Self {
+    pub fn with_physical_store(mut self, store_id: StoreId, endpoint_type: EndpointType) -> Self {
         self.physical_store_id = Some(store_id);
         self.physical_endpoint_type = endpoint_type;
         self
@@ -206,7 +202,7 @@ impl RegionStore {
         self
     }
 
-    pub(crate) fn with_health_status(mut self, health_status: Arc<StoreHealthStatus>) -> Self {
+    pub fn with_health_status(mut self, health_status: Arc<StoreHealthStatus>) -> Self {
         self.health_status = Some(health_status);
         self
     }

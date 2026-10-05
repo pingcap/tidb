@@ -51,7 +51,8 @@ impl fmt::Display for AccessMode {
 /// client-go's private `replicaFlowsType` used by store flow accounting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub(crate) enum ReplicaFlowsType {
+#[doc(hidden)]
+pub enum ReplicaFlowsType {
     ToLeader = 0,
     ToFollower = 1,
     NumReplicaFlowsType = 2,
@@ -491,11 +492,11 @@ struct PendingBackoff {
 }
 
 impl ReplicaSelectorState {
-    pub(crate) fn attempts(&self, peer_id: u64) -> u8 {
+    pub fn attempts(&self, peer_id: u64) -> u8 {
         self.attempts.get(&peer_id).copied().unwrap_or_default()
     }
 
-    pub(crate) fn data_is_not_ready(&self, peer_id: u64) -> bool {
+    pub fn data_is_not_ready(&self, peer_id: u64) -> bool {
         self.data_is_not_ready.contains(&peer_id)
     }
 
@@ -663,7 +664,7 @@ impl ReplicaSelectorState {
         self.server_busy.insert(peer_id);
     }
 
-    pub(crate) fn is_server_busy(&self, peer_id: u64) -> bool {
+    pub fn is_server_busy(&self, peer_id: u64) -> bool {
         self.server_busy.contains(&peer_id)
     }
 

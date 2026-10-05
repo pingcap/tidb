@@ -1,0 +1,139 @@
+{
+  "date": "2026-10-05",
+  "scope": "Connected maintenance of T02/O13/N03 ordinary replica routing; no complete client-go package or full shared-cache acceptance.",
+  "baseline": {
+    "tidb": "e9c0821b7aa08bb210003638fa8c4720d7e7a39b",
+    "native": "63046fb9b2e0faeb74f7d58bcf27bbb5bbfdee65",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "native_commit": "a0a6ec32deb8dfb565494b9b803598cd0e7bcef2",
+  "native_remote_verified": true,
+  "before_failures": 3,
+  "distinct_native_passes": 52,
+  "distinct_tidb_passes": 31,
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 28,
+    "partial": 28
+  },
+  "repairs": [
+    "Extract existing native ReplicaRouting decision lifecycle; PdRpcClient and ClientPd both consume it with the native sender retry state.",
+    "Point/batch/scan reads emit follower/learner peer IDs, matching physical addresses, replica-read flags and busy thresholds.",
+    "Stale retry sequence preserves selected learner, leader probe, then normal replica retry: (622,false,true), (620,false,false), (622,true,false).",
+    "Busy reads move to idle replicas; all-busy fallback restores leader and clears the request threshold. Feedback reaches canonical store load/health shared with coprocessor reads.",
+    "Remove ClientPd private store_addresses map and its independent invalidation paths."
+  ],
+  "source_authority": [
+    "client-go internal/locate/replica_selector.go::nextForReplicaReadLeader,nextForReplicaReadMixed,ReplicaSelectMixedStrategy",
+    "client-go internal/locate/region_cache.go store metadata and health ownership"
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked --lib pd::client::test",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "PASS: 21 tests",
+      "log": "native-tests.log",
+      "sha256": "f2c6217441e37d423f34c7f1c09fce9bbc71ea0c9aa38b2bc7da7a26ed0c3ec2"
+    },
+    {
+      "command": "cargo test --locked --lib replica",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "PASS: 31 tests",
+      "log": "native-replica-tests.log",
+      "sha256": "05ec59dd4561bfc78e2aca3437eff39836d2f35fed80df9549d7dfb93a024cb1"
+    },
+    {
+      "command": "cargo check --locked --all-targets",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "PASS",
+      "log": "native-all-targets.log",
+      "sha256": "286e03b767a4adc87c602c6c4f24c821955a351d7338981b175bfc9fcf53cefc"
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source snapshot_replica",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL: all three regressions",
+      "log": "baseline.log",
+      "sha256": "9292d561f403fe4ea31d39cda8a3fd682c144c4a9278446535e36927b20e94f8"
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source snapshot_replica",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: three regressions",
+      "log": "after.log",
+      "sha256": "e422ff18a416fbead240071cba1e66ed7927888e0f9f611945d3b6f4172d8f36"
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 21 tests, includes all regressions and physical destination assertions",
+      "log": "snapshot-tests.log",
+      "sha256": "f6c91272c87c41666d11672af1b2d9556fadfb4e6c6fb5f0c230f03a786ab139"
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --lib client_bridge",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 10 tests",
+      "log": "bridge-tests.log",
+      "sha256": "be5ab30eb9a1e9b8b218943a005b1301ce6774c744a3b119ab66e6a243128c83"
+    },
+    {
+      "command": "cargo check --locked -p tidb-txnkv -p tidb-distsql -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "tidb-all-targets.log",
+      "sha256": "a3aa3f26198e602a204560d06efad1490fe2df8874abeeb76676789cff8d1872"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS before native push",
+      "log": "native-prepush-build.log",
+      "sha256": "3422804d3b96d2a4335daaac3968dc5474b1626cac9e3f67e14339b7e74e6a75"
+    },
+    {
+      "command": "CARGO_BUILD_JOBS=1 rust/scripts/sync-tikv-client-rs.sh",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: maintained patches and protobuf regeneration",
+      "log": "sync.log",
+      "sha256": "995dd1e6e077a089ae29608d3e9951d61da48da391201c3faa75b29e0268e1ad"
+    }
+  ],
+  "development_retries": [
+    "The first test-only edit command used the wrong cwd and made no edits; an unintended zero-match run is not counted.",
+    "Replica fixture initially lacked RegionQueryLoader and a Scan response; corrected before recording the final three semantic baseline failures.",
+    "Native test filter pd::client::tests matched zero; corrected to pd::client::test, which executed 21 cases.",
+    "Initial make lint omitted env.sh and failed to find the installed Go; rerun after activation passed.",
+    "Final snapshot run adds physical-address observations to the three semantic regressions."
+  ],
+  "publication": "Native published and synchronized. TiDB actual-hook build, fresh prepush build, remote SHA and Cloud save are recorded after commit in /workspace/.cloud-setup/replica-routing-batch/final-handoff.json.",
+  "limits": [
+    "No live multi-node TiKV/AZ, full Go suites, platform/build matrix or performance measurements.",
+    "Coprocessor RequestSelector and whole cache/recovery lifecycle migration remain open; neither cache owner is deleted.",
+    "Ordinary injected forwarding, periodic replica-flow reporting, other local/stale-scope producers and dynamic estimates remain open.",
+    "Current native all-target check reports a non-fatal unused ReplicaReadType import after moving idle selection; build/test gates pass.",
+    "Other53 unresolved roots retain prior evidence; no finding status is changed."
+  ],
+  "artifact_root": "/workspace/.cloud-setup/replica-routing-batch"
+}

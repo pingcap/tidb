@@ -1,6 +1,6 @@
 {
   "date": "2026-10-05",
-  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
   "integration_start": "796762dedd1662adc267daf74f7dfdc5f433c1cf",
   "counts": {
     "tracked": 86,
@@ -10,7 +10,7 @@
     "partial": 28
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "P03/P06 provider/bootstrap residuals rechecked; the other 54 unresolved roots retain earlier evidence.",
+  "evidence_limit": "T02/O13/N03 routing residuals rechecked and advanced by replica-routing-batch-validation.json; other53 unresolved roots retain prior evidence. Counts and whole-package acceptance unchanged.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",

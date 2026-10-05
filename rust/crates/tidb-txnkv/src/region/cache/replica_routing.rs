@@ -34,6 +34,90 @@ use super::super::{
 use super::RegionCache;
 
 impl<L> RegionCache<L> {
+    /// Adapt canonical store facts to the native sender's candidate policy.
+    /// Attempt/error history is borrowed from that sender, never reconstructed.
+    pub(crate) fn native_replica_candidates(
+        &self,
+        region: RegionVerId,
+        labels: &[tikv_client::proto::metapb::StoreLabel],
+        stores: &[u64],
+        state: &tikv_client::tikv::ReplicaSelectorState,
+    ) -> Result<Vec<tikv_client::tikv::ReplicaCandidate>, RegionRouteError> {
+        use tikv_client::tikv::{ReplicaCandidate, ReplicaLiveness};
+        let location = self
+            .regions
+            .iter()
+            .find(|location| location.region == region)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let now = health_now();
+        let mut candidates = Vec::new();
+        for peer in &location.peers {
+            let is_leader = location.leader_peer_id == Some(peer.id);
+            if location.down_peer_ids.contains(&peer.id) || (peer.is_witness && !is_leader) {
+                continue;
+            }
+            let store = self
+                .stores
+                .get(&peer.store_id)
+                .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+            if store.resolve_state == StoreResolveState::Removed || peer.store_epoch != store.epoch
+            {
+                continue;
+            }
+            if store.address.is_empty() {
+                return Err(RegionRouteError::MissingAddress(store.id));
+            }
+            let native_store = tikv_client::proto::metapb::Store {
+                labels: store
+                    .labels()
+                    .iter()
+                    .map(|(key, value)| tikv_client::proto::metapb::StoreLabel {
+                        key: key.clone(),
+                        value: value.clone(),
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            if tikv_client::tikv::EndpointType::from_store(&native_store)
+                != tikv_client::tikv::EndpointType::TiKv
+            {
+                continue;
+            }
+            candidates.push(ReplicaCandidate {
+                peer_id: peer.id,
+                is_leader,
+                is_learner: peer.role == PeerRole::Learner,
+                label_matches: (stores.is_empty() || stores.contains(&peer.store_id))
+                    && labels.iter().all(|label| {
+                        store
+                            .labels()
+                            .iter()
+                            .any(|(key, value)| key == &label.key && value == &label.value)
+                    }),
+                is_slow: store.routing_health.health.is_slow(),
+                liveness: match store.liveness {
+                    StoreLiveness::Reachable => ReplicaLiveness::Reachable,
+                    StoreLiveness::Unreachable => ReplicaLiveness::Unreachable,
+                    StoreLiveness::Unknown => ReplicaLiveness::Unknown,
+                },
+                attempts: state.attempts(peer.id),
+                data_is_not_ready: state.data_is_not_ready(peer.id),
+                reported_busy: state.is_server_busy(peer.id),
+                estimated_wait: store.routing_health.load.estimated_wait(now),
+            });
+        }
+        Ok(candidates)
+    }
+
+    /// Native retry feedback updates the same store observed by coprocessor reads.
+    pub(crate) fn record_native_server_load(&mut self, store_id: u64, estimated_wait_ms: u32) {
+        if let Some(store) = self.stores.get_mut(&store_id) {
+            store
+                .routing_health
+                .observe_server_busy(estimated_wait_ms, health_now());
+        }
+    }
+
     /// Returns the currently reusable proxy for one exact region.
     #[must_use]
     pub fn preferred_proxy(&self, region: RegionVerId) -> Option<&RegionAttempt> {

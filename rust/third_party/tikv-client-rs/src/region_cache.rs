@@ -747,7 +747,8 @@ impl CachedStore {
 /// request/health-check transition changes that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub(crate) enum StoreLiveness {
+#[doc(hidden)]
+pub enum StoreLiveness {
     Reachable = 0,
     Unreachable = 1,
     Unknown = 2,
@@ -3686,6 +3687,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     /// configured busy threshold. The leader itself and every overloaded
     /// replica are excluded; the ordinary mixed score chooses among the
     /// remaining idle followers.
+    #[cfg(test)]
     pub(crate) async fn select_idle_replica(
         &self,
         region: &RegionWithLeader,

@@ -470,6 +470,412 @@ impl<KvC: KvConnect + Clone + Send + Sync + 'static> StoreHealthFeedbackRequeste
     }
 }
 
+/// Cache and transport capabilities for the shared source replica selector.
+/// Embedding clients provide canonical store facts; the native sender retains
+/// the one request's attempt/error state and owns every routing decision.
+#[doc(hidden)]
+#[async_trait]
+pub trait ReplicaRouting: PdClient {
+    fn forwarding_enabled(&self) -> bool;
+    async fn get_store_by_id(&self, id: StoreId) -> Result<()>;
+    fn store_liveness(&self, id: StoreId) -> Option<StoreLiveness>;
+    async fn store_epoch_is_stale(&self, region: &RegionVerId, id: StoreId) -> bool;
+    fn estimated_store_wait(&self, id: StoreId) -> Option<Duration>;
+    async fn select_mixed_replica(
+        &self,
+        region: &RegionWithLeader,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+        selection: MixedReplicaSelection,
+    ) -> Result<Option<metapb::Peer>>;
+    async fn select_idle_replica(
+        &self,
+        region: &RegionWithLeader,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+        busy_threshold: Duration,
+    ) -> Result<Option<metapb::Peer>> {
+        self.select_mixed_replica(
+            region,
+            labels,
+            stores,
+            state,
+            MixedReplicaSelection {
+                read_type: ReplicaReadType::Follower,
+                leader_only: false,
+                prefer_leader: false,
+                labels_requested: !labels.is_empty(),
+                busy_threshold,
+            },
+        )
+        .await
+    }
+    async fn proxy_for_unavailable_leader(
+        &self,
+        region: &RegionWithLeader,
+        state: &ReplicaSelectorState,
+    ) -> Result<Option<metapb::Peer>>;
+    async fn map_region_to_route(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        target: metapb::Peer,
+        proxy: Option<metapb::Peer>,
+    ) -> Result<RegionStore>;
+    fn record_store_replica_flow(&self, id: StoreId, destination: ReplicaFlowsType);
+
+    async fn route_leader(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        selector_state: &ReplicaSelectorState,
+    ) -> Result<RegionStore> {
+        let leader = region
+            .leader
+            .clone()
+            .ok_or_else(|| crate::Error::LeaderNotFound {
+                region: region.ver_id(),
+            })?;
+        self.get_store_by_id(leader.store_id).await?;
+        let leader_liveness = self.store_liveness(leader.store_id);
+        let proxy = if self.forwarding_enabled() {
+            self.proxy_for_unavailable_leader(&region, selector_state)
+                .await?
+        } else {
+            None
+        };
+        if source_forwarding_exhausted(
+            self.forwarding_enabled(),
+            leader_liveness,
+            selector_state,
+            leader.id,
+            proxy.is_some(),
+        ) {
+            return Err(selector_exhausted_error());
+        }
+        self.map_region_to_route(region, leader, proxy)
+            .await
+            .map(RegionStore::with_source_leader_read)
+    }
+
+    async fn route_replica(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        config: ReplicaReadConfig,
+        selector_state: ReplicaSelectorState,
+        is_read_request: bool,
+    ) -> Result<RegionStore> {
+        let config = config.for_source_build();
+        let busy_threshold_ms = if selector_state.busy_threshold_disabled() {
+            0
+        } else {
+            config.busy_threshold_ms
+        };
+        let leader_liveness = if let Some(leader) = region.leader.as_ref() {
+            self.get_store_by_id(leader.store_id).await?;
+            self.store_liveness(leader.store_id)
+        } else {
+            None
+        };
+        let leader_epoch_stale = match region.leader.as_ref() {
+            Some(leader) => {
+                self.store_epoch_is_stale(&region.ver_id(), leader.store_id)
+                    .await
+            }
+            None => false,
+        };
+        if let Some(leader) = region.leader.clone() {
+            if !leader_epoch_stale && selector_state.should_force_leader(leader.id) {
+                self.get_store_by_id(leader.store_id).await?;
+                if self.store_liveness(leader.store_id) == Some(StoreLiveness::Reachable) {
+                    return self
+                        .route_leader(region, &selector_state)
+                        .await
+                        .map(|route| route.with_busy_threshold(busy_threshold_ms));
+                }
+            }
+        }
+        if matches!(config.read_type, ReplicaReadType::Leader) && !config.stale_read {
+            if let Some(leader) = region.leader.clone().filter(|leader| {
+                source_leader_needs_mixed_fallback(
+                    self.forwarding_enabled(),
+                    leader_epoch_stale,
+                    leader_liveness,
+                    &selector_state,
+                    leader.id,
+                )
+            }) {
+                if !config.leader_only {
+                    if let Some(follower) = self
+                        .select_mixed_replica(
+                            &region,
+                            &config.labels,
+                            &config.stores,
+                            &selector_state,
+                            MixedReplicaSelection {
+                                read_type: ReplicaReadType::Follower,
+                                leader_only: false,
+                                prefer_leader: false,
+                                labels_requested: !config.labels.is_empty(),
+                                busy_threshold: Duration::ZERO,
+                            },
+                        )
+                        .await?
+                        .filter(|peer| peer.id != leader.id)
+                    {
+                        // `nextForReplicaReadLeader` falls back to a follower
+                        // with leader-read wire context after the leader is
+                        // exhausted or returns a hintless NotLeader; it is a
+                        // probe, not a replica read.
+                        let route = self
+                            .map_region_to_route(region, follower, None)
+                            .await?
+                            .with_busy_threshold(busy_threshold_ms);
+                        return Ok(
+                            if source_leader_fallback_uses_replica_read(&selector_state, leader.id)
+                            {
+                                // A caller-configured read deadline switches the
+                                // source retry to a genuine follower read.
+                                route
+                            } else {
+                                // Ordinary exhaustion and hintless NotLeader use
+                                // the follower only as a leader-read probe.
+                                route.with_force_leader_read()
+                            },
+                        );
+                    }
+                    // `ReplicaSelectMixedStrategy.next` gives a leader that
+                    // was skipped only for the busy-leader probe another
+                    // chance after every follower is unavailable or has
+                    // replied without a leader hint. This is deliberately
+                    // before cache invalidation: reloading the unchanged
+                    // region from PD would only resume hammering the same
+                    // cached leader.
+                    self.get_store_by_id(leader.store_id).await?;
+                    if source_can_restore_suspect_leader(
+                        &selector_state,
+                        leader.id,
+                        leader_epoch_stale,
+                        leader_liveness,
+                    ) {
+                        return self
+                            .route_leader(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route
+                                    .with_busy_threshold(busy_threshold_ms)
+                                    .with_restored_suspect_leader()
+                            });
+                    }
+                    if !selector_state.has_deadline_exceeded() {
+                        self.invalidate_region_cache(region.ver_id()).await;
+                    }
+                    return Err(selector_exhausted_error());
+                }
+                // Source `leaderOnly` still applies after
+                // `ReplicaSelectLeaderStrategy` exhausts the leader. Mixed
+                // fallback has no eligible candidate in that mode, so return
+                // to the sender/cache refresh path rather than resending the
+                // known exhausted leader.
+                if !selector_state.has_deadline_exceeded() {
+                    self.invalidate_region_cache(region.ver_id()).await;
+                }
+                return Err(selector_exhausted_error());
+            }
+            if is_read_request && busy_threshold_ms != 0 {
+                if let Some(leader) = region.leader.as_ref() {
+                    self.get_store_by_id(leader.store_id).await?;
+                    let busy_threshold = Duration::from_millis(u64::from(busy_threshold_ms));
+                    if selector_state.is_server_busy(leader.id)
+                        || self.estimated_store_wait(leader.store_id) > Some(busy_threshold)
+                    {
+                        if let Some(follower) = self
+                            .select_idle_replica(
+                                &region,
+                                &config.labels,
+                                &config.stores,
+                                &selector_state,
+                                busy_threshold,
+                            )
+                            .await?
+                        {
+                            return self
+                                .map_region_to_route(region, follower, None)
+                                .await
+                                .map(|route| route.with_busy_threshold(busy_threshold_ms));
+                        }
+                        return self
+                            .route_leader(region, &selector_state)
+                            .await
+                            .map(|route| {
+                                route.with_busy_threshold(0).with_busy_threshold_disabled()
+                            });
+                    }
+                }
+            }
+            if !config.leader_only {
+                if let Some(leader) = region
+                    .leader
+                    .clone()
+                    .filter(|leader| selector_state.should_probe_busy_leader(leader.id))
+                {
+                    if let Some(follower) = self
+                        .select_mixed_replica(
+                            &region,
+                            &config.labels,
+                            &config.stores,
+                            &selector_state,
+                            MixedReplicaSelection {
+                                read_type: ReplicaReadType::Follower,
+                                leader_only: false,
+                                prefer_leader: false,
+                                labels_requested: !config.labels.is_empty(),
+                                busy_threshold: Duration::ZERO,
+                            },
+                        )
+                        .await?
+                        .filter(|peer| peer.id != leader.id)
+                    {
+                        return Ok(self
+                            .map_region_to_route(region, follower, None)
+                            .await?
+                            .with_force_leader_read()
+                            .with_busy_threshold(busy_threshold_ms));
+                    }
+                }
+            }
+            return self
+                .route_leader(region, &selector_state)
+                .await
+                .map(|route| route.with_busy_threshold(busy_threshold_ms));
+        }
+        let read_type = if config.stale_read {
+            ReplicaReadType::Mixed
+        } else {
+            config.read_type
+        };
+        // client-go's second stale-read attempt probes an untried leader with
+        // an ordinary leader read before returning to mixed selection.
+        if config.stale_read {
+            if let Some(leader) = region
+                .leader
+                .clone()
+                .filter(|leader| selector_state.should_probe_stale_leader(leader.id))
+            {
+                return self
+                    .map_region_to_route(region, leader, None)
+                    .await
+                    .map(|route| route.with_busy_threshold(busy_threshold_ms));
+            }
+        }
+        let peer = self
+            .select_mixed_replica(
+                &region,
+                &config.labels,
+                &config.stores,
+                &selector_state,
+                MixedReplicaSelection {
+                    read_type,
+                    leader_only: config.leader_only,
+                    prefer_leader: config.effective_prefer_leader(),
+                    labels_requested: !config.labels.is_empty(),
+                    busy_threshold: Duration::ZERO,
+                },
+            )
+            .await?
+            .ok_or_else(selector_exhausted_error);
+        let peer = match peer {
+            Ok(peer) => peer,
+            Err(error) => {
+                if !selector_state.has_deadline_exceeded() {
+                    self.invalidate_region_cache(region.ver_id()).await;
+                }
+                return Err(error);
+            }
+        };
+        let stale_read = config.stale_read
+            && !region
+                .leader
+                .as_ref()
+                .is_some_and(|leader| selector_state.should_retry_stale_as_replica(leader.id));
+        if config.effective_prefer_leader() {
+            let destination = if region
+                .leader
+                .as_ref()
+                .is_some_and(|leader| leader.id == peer.id)
+            {
+                ReplicaFlowsType::ToLeader
+            } else {
+                ReplicaFlowsType::ToFollower
+            };
+            self.record_store_replica_flow(peer.store_id, destination);
+        }
+        Ok(self
+            .map_region_to_route(region, peer, None)
+            .await?
+            .with_stale_read(stale_read)
+            .with_busy_threshold(busy_threshold_ms)
+            .with_prefer_leader_slow_score(matches!(
+                config.read_type,
+                ReplicaReadType::PreferLeader
+            )))
+    }
+}
+
+#[async_trait]
+impl<KvC> ReplicaRouting for PdRpcClient<KvC>
+where
+    KvC: KvConnect + Send + Sync + 'static,
+{
+    fn forwarding_enabled(&self) -> bool {
+        self.enable_forwarding
+    }
+    async fn get_store_by_id(&self, id: StoreId) -> Result<()> {
+        self.region_cache.get_store_by_id(id).await.map(|_| ())
+    }
+    fn store_liveness(&self, id: StoreId) -> Option<StoreLiveness> {
+        self.region_cache.store_liveness(id)
+    }
+    async fn store_epoch_is_stale(&self, region: &RegionVerId, id: StoreId) -> bool {
+        self.region_cache.store_epoch_is_stale(region, id).await
+    }
+    fn estimated_store_wait(&self, id: StoreId) -> Option<Duration> {
+        self.region_cache.estimated_store_wait(id)
+    }
+    async fn select_mixed_replica(
+        &self,
+        region: &RegionWithLeader,
+        labels: &[metapb::StoreLabel],
+        stores: &[u64],
+        state: &ReplicaSelectorState,
+        selection: MixedReplicaSelection,
+    ) -> Result<Option<metapb::Peer>> {
+        self.region_cache
+            .select_mixed_replica(region, labels, stores, state, selection)
+            .await
+    }
+    async fn proxy_for_unavailable_leader(
+        &self,
+        region: &RegionWithLeader,
+        state: &ReplicaSelectorState,
+    ) -> Result<Option<metapb::Peer>> {
+        self.region_cache
+            .proxy_for_unavailable_leader(region, state)
+            .await
+    }
+    async fn map_region_to_route(
+        self: Arc<Self>,
+        region: RegionWithLeader,
+        target: metapb::Peer,
+        proxy: Option<metapb::Peer>,
+    ) -> Result<RegionStore> {
+        PdRpcClient::map_region_to_route(self, region, target, proxy).await
+    }
+    fn record_store_replica_flow(&self, id: StoreId, destination: ReplicaFlowsType) {
+        self.region_cache.record_store_replica_flow(id, destination);
+    }
+}
+
 /// This client converts requests for the logical TiKV cluster into requests
 /// for a single TiKV store using PD and internal logic.
 pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
@@ -714,40 +1120,6 @@ where
         Ok(route)
     }
 
-    async fn map_leader_route(
-        self: Arc<Self>,
-        region: RegionWithLeader,
-        selector_state: &ReplicaSelectorState,
-    ) -> Result<RegionStore> {
-        let leader = region
-            .leader
-            .clone()
-            .ok_or_else(|| crate::Error::LeaderNotFound {
-                region: region.ver_id(),
-            })?;
-        self.region_cache.get_store_by_id(leader.store_id).await?;
-        let leader_liveness = self.region_cache.store_liveness(leader.store_id);
-        let proxy = if self.enable_forwarding {
-            self.region_cache
-                .proxy_for_unavailable_leader(&region, selector_state)
-                .await?
-        } else {
-            None
-        };
-        if source_forwarding_exhausted(
-            self.enable_forwarding,
-            leader_liveness,
-            selector_state,
-            leader.id,
-            proxy.is_some(),
-        ) {
-            return Err(selector_exhausted_error());
-        }
-        self.map_region_to_route(region, leader, proxy)
-            .await
-            .map(RegionStore::with_source_leader_read)
-    }
-
     async fn request_store_liveness(&self, route: &RegionStore) -> StoreLiveness {
         if route.physical_endpoint_type != crate::store::EndpointType::TiKv
             || route.target.is_empty()
@@ -848,7 +1220,7 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
     }
 
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        self.map_leader_route(region, &ReplicaSelectorState::default())
+        self.route_leader(region, &ReplicaSelectorState::default())
             .await
     }
 
@@ -929,275 +1301,8 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         selector_state: ReplicaSelectorState,
         is_read_request: bool,
     ) -> Result<RegionStore> {
-        let config = config.for_source_build();
-        let busy_threshold_ms = if selector_state.busy_threshold_disabled() {
-            0
-        } else {
-            config.busy_threshold_ms
-        };
-        let leader_liveness = if let Some(leader) = region.leader.as_ref() {
-            self.region_cache.get_store_by_id(leader.store_id).await?;
-            self.region_cache.store_liveness(leader.store_id)
-        } else {
-            None
-        };
-        let leader_epoch_stale = match region.leader.as_ref() {
-            Some(leader) => {
-                self.region_cache
-                    .store_epoch_is_stale(&region.ver_id(), leader.store_id)
-                    .await
-            }
-            None => false,
-        };
-        if let Some(leader) = region.leader.clone() {
-            if !leader_epoch_stale && selector_state.should_force_leader(leader.id) {
-                self.region_cache.get_store_by_id(leader.store_id).await?;
-                if self.region_cache.store_liveness(leader.store_id)
-                    == Some(StoreLiveness::Reachable)
-                {
-                    return self
-                        .map_leader_route(region, &selector_state)
-                        .await
-                        .map(|route| route.with_busy_threshold(busy_threshold_ms));
-                }
-            }
-        }
-        if matches!(config.read_type, ReplicaReadType::Leader) && !config.stale_read {
-            if let Some(leader) = region.leader.clone().filter(|leader| {
-                source_leader_needs_mixed_fallback(
-                    self.enable_forwarding,
-                    leader_epoch_stale,
-                    leader_liveness,
-                    &selector_state,
-                    leader.id,
-                )
-            }) {
-                if !config.leader_only {
-                    if let Some(follower) = self
-                        .region_cache
-                        .select_mixed_replica(
-                            &region,
-                            &config.labels,
-                            &config.stores,
-                            &selector_state,
-                            MixedReplicaSelection {
-                                read_type: ReplicaReadType::Follower,
-                                leader_only: false,
-                                prefer_leader: false,
-                                labels_requested: !config.labels.is_empty(),
-                                busy_threshold: Duration::ZERO,
-                            },
-                        )
-                        .await?
-                        .filter(|peer| peer.id != leader.id)
-                    {
-                        // `nextForReplicaReadLeader` falls back to a follower
-                        // with leader-read wire context after the leader is
-                        // exhausted or returns a hintless NotLeader; it is a
-                        // probe, not a replica read.
-                        let route = self
-                            .map_region_to_route(region, follower, None)
-                            .await?
-                            .with_busy_threshold(busy_threshold_ms);
-                        return Ok(
-                            if source_leader_fallback_uses_replica_read(&selector_state, leader.id)
-                            {
-                                // A caller-configured read deadline switches the
-                                // source retry to a genuine follower read.
-                                route
-                            } else {
-                                // Ordinary exhaustion and hintless NotLeader use
-                                // the follower only as a leader-read probe.
-                                route.with_force_leader_read()
-                            },
-                        );
-                    }
-                    // `ReplicaSelectMixedStrategy.next` gives a leader that
-                    // was skipped only for the busy-leader probe another
-                    // chance after every follower is unavailable or has
-                    // replied without a leader hint. This is deliberately
-                    // before cache invalidation: reloading the unchanged
-                    // region from PD would only resume hammering the same
-                    // cached leader.
-                    self.region_cache.get_store_by_id(leader.store_id).await?;
-                    if source_can_restore_suspect_leader(
-                        &selector_state,
-                        leader.id,
-                        leader_epoch_stale,
-                        leader_liveness,
-                    ) {
-                        return self
-                            .map_leader_route(region, &selector_state)
-                            .await
-                            .map(|route| {
-                                route
-                                    .with_busy_threshold(busy_threshold_ms)
-                                    .with_restored_suspect_leader()
-                            });
-                    }
-                    if !selector_state.has_deadline_exceeded() {
-                        self.region_cache
-                            .invalidate_region_cache(region.ver_id())
-                            .await;
-                    }
-                    return Err(selector_exhausted_error());
-                }
-                // Source `leaderOnly` still applies after
-                // `ReplicaSelectLeaderStrategy` exhausts the leader. Mixed
-                // fallback has no eligible candidate in that mode, so return
-                // to the sender/cache refresh path rather than resending the
-                // known exhausted leader.
-                if !selector_state.has_deadline_exceeded() {
-                    self.region_cache
-                        .invalidate_region_cache(region.ver_id())
-                        .await;
-                }
-                return Err(selector_exhausted_error());
-            }
-            if is_read_request && busy_threshold_ms != 0 {
-                if let Some(leader) = region.leader.as_ref() {
-                    self.region_cache.get_store_by_id(leader.store_id).await?;
-                    let busy_threshold = Duration::from_millis(u64::from(busy_threshold_ms));
-                    if selector_state.is_server_busy(leader.id)
-                        || self.region_cache.estimated_store_wait(leader.store_id)
-                            > Some(busy_threshold)
-                    {
-                        if let Some(follower) = self
-                            .region_cache
-                            .select_idle_replica(
-                                &region,
-                                &config.labels,
-                                &config.stores,
-                                &selector_state,
-                                busy_threshold,
-                            )
-                            .await?
-                        {
-                            return self
-                                .map_region_to_route(region, follower, None)
-                                .await
-                                .map(|route| route.with_busy_threshold(busy_threshold_ms));
-                        }
-                        return self
-                            .map_leader_route(region, &selector_state)
-                            .await
-                            .map(|route| {
-                                route.with_busy_threshold(0).with_busy_threshold_disabled()
-                            });
-                    }
-                }
-            }
-            if !config.leader_only {
-                if let Some(leader) = region
-                    .leader
-                    .clone()
-                    .filter(|leader| selector_state.should_probe_busy_leader(leader.id))
-                {
-                    if let Some(follower) = self
-                        .region_cache
-                        .select_mixed_replica(
-                            &region,
-                            &config.labels,
-                            &config.stores,
-                            &selector_state,
-                            MixedReplicaSelection {
-                                read_type: ReplicaReadType::Follower,
-                                leader_only: false,
-                                prefer_leader: false,
-                                labels_requested: !config.labels.is_empty(),
-                                busy_threshold: Duration::ZERO,
-                            },
-                        )
-                        .await?
-                        .filter(|peer| peer.id != leader.id)
-                    {
-                        return Ok(self
-                            .map_region_to_route(region, follower, None)
-                            .await?
-                            .with_force_leader_read()
-                            .with_busy_threshold(busy_threshold_ms));
-                    }
-                }
-            }
-            return self
-                .map_leader_route(region, &selector_state)
-                .await
-                .map(|route| route.with_busy_threshold(busy_threshold_ms));
-        }
-        let read_type = if config.stale_read {
-            ReplicaReadType::Mixed
-        } else {
-            config.read_type
-        };
-        // client-go's second stale-read attempt probes an untried leader with
-        // an ordinary leader read before returning to mixed selection.
-        if config.stale_read {
-            if let Some(leader) = region
-                .leader
-                .clone()
-                .filter(|leader| selector_state.should_probe_stale_leader(leader.id))
-            {
-                return self
-                    .map_region_to_route(region, leader, None)
-                    .await
-                    .map(|route| route.with_busy_threshold(busy_threshold_ms));
-            }
-        }
-        let peer = self
-            .region_cache
-            .select_mixed_replica(
-                &region,
-                &config.labels,
-                &config.stores,
-                &selector_state,
-                MixedReplicaSelection {
-                    read_type,
-                    leader_only: config.leader_only,
-                    prefer_leader: config.effective_prefer_leader(),
-                    labels_requested: !config.labels.is_empty(),
-                    busy_threshold: Duration::ZERO,
-                },
-            )
-            .await?
-            .ok_or_else(selector_exhausted_error);
-        let peer = match peer {
-            Ok(peer) => peer,
-            Err(error) => {
-                if !selector_state.has_deadline_exceeded() {
-                    self.region_cache
-                        .invalidate_region_cache(region.ver_id())
-                        .await;
-                }
-                return Err(error);
-            }
-        };
-        let stale_read = config.stale_read
-            && !region
-                .leader
-                .as_ref()
-                .is_some_and(|leader| selector_state.should_retry_stale_as_replica(leader.id));
-        if config.effective_prefer_leader() {
-            let destination = if region
-                .leader
-                .as_ref()
-                .is_some_and(|leader| leader.id == peer.id)
-            {
-                ReplicaFlowsType::ToLeader
-            } else {
-                ReplicaFlowsType::ToFollower
-            };
-            self.region_cache
-                .record_store_replica_flow(peer.store_id, destination);
-        }
-        Ok(self
-            .map_region_to_route(region, peer, None)
-            .await?
-            .with_stale_read(stale_read)
-            .with_busy_threshold(busy_threshold_ms)
-            .with_prefer_leader_slow_score(matches!(
-                config.read_type,
-                ReplicaReadType::PreferLeader
-            )))
+        self.route_replica(region, config, selector_state, is_read_request)
+            .await
     }
 
     async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
