@@ -1,5 +1,11 @@
 # `pkg/server/handler/optimizor` parity receipt
 
+Historical receipt: disconnected Rust models named here were retired in the
+[2026-10-05 cleanup](../../docs/parity/current-audit/disconnected-model-cleanup-validation.json).
+Original Go contracts remain obligations; this receipt does not establish
+current integration or package acceptance.
+
+
 Status: complete inventory and explicit HTTP/domain boundary; no production edit
 was required. This receipt covers the complete Go `optimizor` package and does
 not claim repository-wide parity.

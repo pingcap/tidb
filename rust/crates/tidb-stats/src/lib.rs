@@ -32,13 +32,11 @@ pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
-pub mod average_count;
 pub mod builder;
 pub mod cmsketch;
 pub mod column;
 pub mod constants;
 pub mod correlation;
-pub mod count_metrics;
 pub mod datum_map_cache;
 pub mod estimate;
 pub mod existence_map;
@@ -66,7 +64,6 @@ pub mod stats_lock_table;
 pub mod stats_version;
 pub mod status;
 pub mod table;
-pub mod weighted_reservoir;
 
 pub use analysis_policy::{
     is_eligible_for_analysis, meets_auto_analyze_min_count, table_is_analyzed,
@@ -80,7 +77,6 @@ pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
-pub use average_count::avg_count_per_not_null_value;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
     try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
@@ -104,7 +100,6 @@ pub use cmsketch::{
 pub use column::{column_is_all_evicted, copy_column, empty_column, Column, ColumnInfo};
 pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
-pub use count_metrics::HistogramCountSummary;
 pub use datum_map_cache::DatumMapCache;
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;
@@ -170,4 +165,3 @@ pub use table::{
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION, RATIO_OF_PSEUDO_ESTIMATE,
 };
 pub use tidb_stats_handle_util::*;
-pub use weighted_reservoir::{WeightedReservoir, WeightedSample};

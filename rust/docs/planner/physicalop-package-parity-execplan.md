@@ -551,9 +551,9 @@ their recorded stage. The latest verified state is summarized first.
   Schemas without generated columns are not copied by the new binding step.
 - [ ] Audit the current-baseline additions and all prior unchecked behavior;
   finish ordered IndexMergeReader handle representation and resolution.
-  The two new helper files have Rust implementations in
-  `tidb-planner/src/storage_engine_usage.rs`, but a source search found no
-  production callers; their optimizer integration remains unverified.
+  The unused `storage_engine_usage.rs` model and private tests were retired
+  in the disconnected-model cleanup. Both Go helpers and their optimizer
+  integration remain obligations; no complete-package claim is made.
 - [x] (2026-09-01) Enumerated the pinned package: 55 artifacts, comprising
   `BUILD.bazel`, 51 hand-written production Go files, one generated production
   Go file, two test files, and no package fixtures or platform variants.

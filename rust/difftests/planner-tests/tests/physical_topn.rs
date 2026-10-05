@@ -60,6 +60,7 @@ fn prefix_index_metadata_lives_on_the_wired_topn() {
         count: 2,
         prefix_col: Some(2),
         prefix_len: 3,
+        ..PhysicalTopN::default()
     };
     assert_eq!(plan.base.base.query_block_offset(), 4);
     assert_eq!(plan.prefix_col, Some(2));

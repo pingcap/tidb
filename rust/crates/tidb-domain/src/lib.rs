@@ -29,7 +29,7 @@
 //! | --- | --- | --- |
 //! | `sysvar_cache.go` | [`sysvar_cache`] | complete |
 //! | `schema_checker.go` | [`schema_checker`] | complete |
-//! | `optimize_trace.go` | [`optimize_trace`] | complete |
+//! | `optimize_trace.go` | absent | unused naming model retired; integration remains open |
 //! | `domain_sysvars.go` | [`domain_sysvars`] | partial — `initDomainSysVars` absent |
 //! | `historical_stats.go` | [`historical_stats`] | complete |
 //! | `ru_stats.go` | [`ru_stats`] | complete except `NewRUStatsWriter` and `requestUnitsWriterLoop`, both `*Domain` wiring — see the module doc |
@@ -152,7 +152,6 @@ pub mod domainutil;
 pub mod globalconfigsync;
 pub mod historical_stats;
 pub mod metrics;
-pub mod optimize_trace;
 pub mod plan_replayer;
 pub mod replayer;
 pub mod ru_stats;

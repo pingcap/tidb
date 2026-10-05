@@ -1,5 +1,12 @@
 # Complete pinned `pkg/planner/property` behavior as one Rust parity unit
 
+Current status (2026-10-05): the completion claim below is historical and is
+not current package acceptance. The unused `LogicalProperty` carrier was
+retired after a complete caller search found only its module declaration.
+Go's `logical_property.go` and memo ownership remain obligations. Connected
+physical properties, statistics, task types and their tests are retained.
+See [cleanup evidence](../parity/current-audit/disconnected-model-cleanup-validation.json).
+
 This ExecPlan is a living document maintained under `PLANS.md`.
 
 ## Purpose / Big Picture

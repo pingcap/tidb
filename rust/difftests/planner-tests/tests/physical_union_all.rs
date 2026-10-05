@@ -23,14 +23,16 @@ use tidb_planner::physical_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]
-fn unsupported_mpp_union_is_not_claimed_without_the_tiflash_tier() {
+fn mpp_child_requirement_is_rejected() {
     let allocator = PlanIdAllocator::new();
     let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0));
     let mpp = PhysicalProperty {
         task_tp: TaskType::Mpp,
         ..PhysicalProperty::default()
     };
-    assert!(exhaust_physical_plans_4_logical_union_all(&union, &mpp, &allocator, 1.0).is_empty());
+    assert!(
+        exhaust_physical_plans_4_logical_union_all(&union, &mpp, &allocator, 1.0, false).is_empty()
+    );
 }
 
 #[test]
@@ -42,12 +44,9 @@ fn root_union_all_emits_source_candidate_order() {
         &PhysicalProperty::default(),
         &allocator,
         1.0,
+        false,
     );
-    assert_eq!(
-        plans.len(),
-        1,
-        "the TiFlash-less tier has one root candidate"
-    );
+    assert_eq!(plans.len(), 1, "MPP disabled yields one root candidate");
     let PhysicalPlan::UnionAll(plan) = &plans[0] else {
         panic!("a wired PhysicalUnionAll, got {:?}", plans[0]);
     };
@@ -65,6 +64,7 @@ fn sort_requests_are_rejected() {
         ..PhysicalProperty::default()
     };
     assert!(
-        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0).is_empty()
+        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0, false)
+            .is_empty()
     );
 }

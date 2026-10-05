@@ -1,5 +1,11 @@
 # `pkg/domain` Go-master plan-replayer retention parity receipt
 
+Historical receipt: disconnected Rust models named here were retired in the
+[2026-10-05 cleanup](../../docs/parity/current-audit/disconnected-model-cleanup-validation.json).
+Original Go contracts remain obligations; this receipt does not establish
+current integration or package acceptance.
+
+
 Comparison source: Go `origin/master` at commit
 `1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
 

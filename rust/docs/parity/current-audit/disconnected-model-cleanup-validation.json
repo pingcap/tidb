@@ -1,0 +1,293 @@
+{
+  "base": "a94bac4fe8a3792161397e7d3d7d4a4c7194956d",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "modules": {
+    "tidb-stats": [
+      "average_count",
+      "count_metrics",
+      "weighted_reservoir"
+    ],
+    "tidb-planner": [
+      "logical_property",
+      "memo_group_id",
+      "plan_context",
+      "storage_engine_usage"
+    ],
+    "tidb-domain": [
+      "optimize_trace"
+    ],
+    "tidb-session": [
+      "binding_plan_evolution"
+    ]
+  },
+  "removed": [
+    {
+      "path": "rust/crates/tidb-stats/src/average_count.rs",
+      "lines": 52,
+      "sha256": "1334ba216a1776f170496d51e2d4332aec76067b64822b17dcd4b95159fa41cb",
+      "tests": 0,
+      "symbols": [
+        "avg_count_per_not_null_value"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-stats/src/count_metrics.rs",
+      "lines": 75,
+      "sha256": "fa801cf1169716d9a364df3ef0ddb1804c00b604a0bcf1c32c6ccba1f47c22a7",
+      "tests": 0,
+      "symbols": [
+        "HistogramCountSummary"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-stats/src/weighted_reservoir.rs",
+      "lines": 140,
+      "sha256": "8715b329f2f31c0333ff66b02c7a942ff1147326d8aa9e81a09c234367b247ad",
+      "tests": 0,
+      "symbols": [
+        "WeightedSample",
+        "WeightedReservoir"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_property.rs",
+      "lines": 43,
+      "sha256": "3ffcca50915afd8a6c6cab1b7a8315ce828dea5dd9b7a24e4a4d67869c31d02e",
+      "tests": 0,
+      "symbols": [
+        "LogicalProperty"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/memo_group_id.rs",
+      "lines": 67,
+      "sha256": "9eed5f87ddf6506e1e5b8748e6c94df5eda2d8717a2d44b2fcc9ac710a7885ba",
+      "tests": 0,
+      "symbols": [
+        "GroupId",
+        "GroupIdGenerator"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/plan_context.rs",
+      "lines": 81,
+      "sha256": "b73f2ff6e42391720c2508e0f34835a4f1b9867760bcbd4c478d6b745c054a52",
+      "tests": 0,
+      "symbols": [
+        "OpaqueContextHandle",
+        "BuildPbContext"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/storage_engine_usage.rs",
+      "lines": 220,
+      "sha256": "572313b9263ec5506b31113ea05ffab2b82c2cb19e4bcb58c4da2459fe522795",
+      "tests": 2,
+      "symbols": [
+        "StorageEngineUsage",
+        "storage_engine_usage",
+        "has_single_scan_index_join"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-domain/src/optimize_trace.rs",
+      "lines": 121,
+      "sha256": "d8555d4574b67954f8eddec8a72e4eff3f5e393b1b17f238606da65661f70b7a",
+      "tests": 4,
+      "symbols": [
+        "OPTIMIZER_TRACE_DIR",
+        "get_optimizer_trace_dir_name",
+        "optimizer_trace_dir_name_with"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-session/src/binding_plan_evolution.rs",
+      "lines": 417,
+      "sha256": "fb38dcdee3c552e455dbc45ecb403e8930d3ca3ab6e93075a6299d4e5bd5ee8c",
+      "tests": 3,
+      "symbols": [
+        "Prediction",
+        "BindingPlanInfo",
+        "PlanPerfPredictor",
+        "RuleBasedPlanPerfPredictor",
+        "LlmBasedPlanPerfPredictor",
+        "is_simple_point_plan"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/average_count_source.rs",
+      "lines": 40,
+      "sha256": "18464ad417bb220ff1ed930100145901f236e5a8027849ea1f5eb091501ed9a0",
+      "tests": 4,
+      "symbols": []
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/count_metrics_source.rs",
+      "lines": 47,
+      "sha256": "3964591cd80d2a18b9a0d05525fb38c3602ba5e02f3adc16a2ad21d0b7514d14",
+      "tests": 3,
+      "symbols": []
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/weighted_reservoir_source.rs",
+      "lines": 78,
+      "sha256": "c6e3ad95487f5e237dee65a705f6506a3ca3672e54b820333a63d7145acdda8e",
+      "tests": 4,
+      "symbols": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs",
+      "lines": 49,
+      "sha256": "223ba2b7b8046904b420a1f9cae0d91667ca255676ed0c6312974843a4b9f759",
+      "tests": 1,
+      "symbols": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/planctx_build_pb_context_detach_source.rs",
+      "lines": 107,
+      "sha256": "ad2f8ff72e3853ddbb3a35e203f1ff3ef0faefdd12b71dbad5801fdf50a41f18",
+      "tests": 1,
+      "symbols": []
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/memo_group_id.rs",
+      "lines": 36,
+      "sha256": "84d1e51be3bc993d70e82bcde3294715e20103aba4f43d61725acfd41575ceed",
+      "tests": 2
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/plan_context.rs",
+      "lines": 63,
+      "sha256": "01812b4a7c9656ab2ef9d13d499ad694059d6b93cbda1e9c84a72684ba6c49d7",
+      "tests": 2
+    }
+  ],
+  "go_anchors": [
+    {
+      "path": "pkg/statistics/histogram.go",
+      "sha256": "373ee0a9835e6d89f549c0561539ee8034226f2bb5938a22a0b17b6506f9d03d"
+    },
+    {
+      "path": "pkg/statistics/histogram_test.go",
+      "sha256": "8b522ba434f078303badbb9b0cb7ad8071e08dd4dd6f6decf768d5d466336caa"
+    },
+    {
+      "path": "pkg/statistics/row_sampler.go",
+      "sha256": "bfe23e29b310f6760821adeba374791659993c508442a35155c877d66dcff733"
+    },
+    {
+      "path": "pkg/planner/property/logical_property.go",
+      "sha256": "0ad31f600c70df8702aca5a6cc725f0450547465d4650acaf77f54df383116cb"
+    },
+    {
+      "path": "pkg/planner/cascades/memo/group_id_generator.go",
+      "sha256": "2ffd8341f5495f6d7777522785b4892b20e920680bc607aefbfed13a9cb20e0b"
+    },
+    {
+      "path": "pkg/planner/cascades/memo/group_id_generator_test.go",
+      "sha256": "25a5b41752b6135fca66567c84100f7b5c7fb3a3780260eb27e9bd6fb52c26f5"
+    },
+    {
+      "path": "pkg/planner/planctx/context.go",
+      "sha256": "0101e997c4c038bb70732aecd4c26da983e037fc7ee88c54d9cae9b6f88070e1"
+    },
+    {
+      "path": "pkg/planner/planctx/context_test.go",
+      "sha256": "d2e3374c2ee4e63d5367f19a9e5d6524f5210dda7ee04338aace4afe7c0aeb52"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/storage_engine_usage.go",
+      "sha256": "3db1feeaefd930d2326f1ece8ee07000ab9e2650371b6756bd9f33fea0c6d454"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/single_scan_index_join.go",
+      "sha256": "bdda651f445f64317fcef63777f0e85e6ad72aa2d0974bca62afa442a8ed630f"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_utils_test.go",
+      "sha256": "ae0a20839af8d9aa3442de6f3e37e05fbace1f5bb12fffc1a9511cb70aa1a96d"
+    },
+    {
+      "path": "pkg/domain/optimize_trace.go",
+      "sha256": "1e04a20d866c13bf279cdac7df4c0ff7fddda8315486e50e6d01ae2bff193a85"
+    },
+    {
+      "path": "pkg/bindinfo/binding_plan_evolution.go",
+      "sha256": "3144d9c73b784427e1cbc7b0b4d8a183231edb1e05404f2e2b2bdf45426c544c"
+    },
+    {
+      "path": "pkg/bindinfo/binding_plan_evolution_test.go",
+      "sha256": "3364ce9c9ef75b4c853ee3aee082c1d62c0fe495cc59dadc6c683a5ee66b0222"
+    }
+  ],
+  "tests_removed": 26,
+  "lines_removed": 1636,
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Pure deletion of nine disconnected Rust models and seven private harnesses; retain connected behavior and original Go obligations.",
+  "caller_evidence": "All tracked files scanned for module paths and exported symbols. Outside deletion set: four lib declarations/reexports; documentation/history; unrelated native count_metrics test helper. No production caller.",
+  "preserved": [
+    "Async histogram loading (live static reexport)",
+    "Legacy sample collector and Go regression suites",
+    "Connected planner/executor/session/statistics owners",
+    "Original Go production, tests, fixtures, scripts and build gates"
+  ],
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "changed": false
+  },
+  "validation": {
+    "status": "grouped checks and targeted tests passed; publication gates run at commit/push",
+    "logs": "/workspace/.cloud-setup/disconnected-model-cleanup",
+    "not_run": [
+      "Full Go suites",
+      "Live multi-node TiKV",
+      "Performance benchmarks"
+    ],
+    "limits": "No speedup or package completion claim; cleanup removes compiled source and tests only.",
+    "grouped_all_target_check": "passed",
+    "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-stats -p tidb-planner -p tidb-domain -p tidb-session -p difftest-planner-tests -p tidb-server --all-targets",
+    "lint": "make lint passed",
+    "diff_check": "passed",
+    "retained_files": {
+      "unchanged_files": 3702,
+      "allowed_changes": [
+        "rust/crates/tidb-domain/src/lib.rs",
+        "rust/crates/tidb-planner/src/lib.rs",
+        "rust/crates/tidb-session/src/lib.rs",
+        "rust/crates/tidb-stats/src/lib.rs",
+        "rust/difftests/planner-tests/tests/cross_estimation.rs",
+        "rust/difftests/planner-tests/tests/physical_topn.rs",
+        "rust/difftests/planner-tests/tests/physical_union_all.rs"
+      ],
+      "unexpected_changes": []
+    },
+    "registration": [
+      {
+        "package": "tidb-stats",
+        "path": "/workspace/tidb/rust/target/debug/build/tidb-stats/9cc12b548869aa64/out/all_tests.rs",
+        "sha256": "abebdcedde7c517ba16cc2a03520194d149e24b1ed94108f88a0d949f2b04f8d"
+      },
+      {
+        "package": "tidb-planner",
+        "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+        "sha256": "18a8d0b9a5e97d8ac982f10082527a9d861a5a52b1931a3d1d5c97755d2dd58f"
+      },
+      {
+        "package": "difftest-planner-tests",
+        "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+        "sha256": "ea7450fb5e721c11e2ff0bdb75bd4e11009e7a6c4638286e4b7794f36803c578"
+      }
+    ],
+    "initial_failure": "Nine stale fixture compilation errors in retained planner difftests; live Datum range, TopN defaults and explicit MPP switch migrations preserve assertions.",
+    "refreshed_tests": {
+      "passed": 10,
+      "failed": 0,
+      "build_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p difftest-planner-tests --test all --no-run --message-format=json",
+      "execution": "Run the emitted all test binary with cross_estimation::, physical_topn:: and physical_union_all:: filters and --test-threads=1",
+      "assertions": "All ten original cases retained; only obsolete fixture types/API arguments and stale description updated"
+    },
+    "self_review": "Pure disconnected source deletions; retained code changes restricted to declarations/doc and three test fixture migrations; no manifest/native/Go edits"
+  }
+}

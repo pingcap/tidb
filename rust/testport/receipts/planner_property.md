@@ -1,5 +1,11 @@
 # `pkg/planner/property` — Go-master parity audit receipt
 
+Historical receipt: disconnected Rust models named here were retired in the
+[2026-10-05 cleanup](../../docs/parity/current-audit/disconnected-model-cleanup-validation.json).
+Original Go contracts remain obligations; this receipt does not establish
+current integration or package acceptance.
+
+
 Go authority: `origin/master` at
 `aec988ea500de42dd6c8b2cf429dff907ce5bd41`.
 

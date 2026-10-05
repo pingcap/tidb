@@ -1,100 +1,95 @@
-# Retire disconnected execution models and private harnesses
+# Retire disconnected planner, statistics and session models
 
-This living ExecPlan follows root PLANS.md. Earlier batches are preserved in the
-receipts indexed by [the current audit](parity/current-audit/README.md), with their
-original validation and recovery limits. Historical source is available in Git.
+This living ExecPlan follows root PLANS.md. Earlier cleanup evidence remains
+indexed in parity/current-audit/README.md; Git preserves retired source.
 
 ## Purpose / Big Picture
 
 
-Reduce compiled, disconnected code and misleading coverage claims. Retire eleven
-unused tidb-exec modules and their private tests together. The active chunk
-executor, cluster statistics consumers, original Go tests and Rust correctness
-regressions remain unchanged. This cleanup does not complete any Go package or
-repair a structural finding, and no timing improvement is claimed.
+Remove compiled Rust models with no production callers, including their private
+harnesses and stale integration claims. This reduces inputs to future builds and
+test runs. It does not repair a runtime finding or establish whole Go package
+parity. No timing improvement is claimed.
 
 ## Context and Orientation
 
 
-Base: 3f0ac881fe9f8474eba30e365a99760adc16359d on /workspace/tidb
-hparser-integration. Refreshed Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
-Native client-rust remains a0a6ec32deb8dfb565494b9b803598cd0e7bcef2.
-The removed modules are backfill_metrics, broadcast_query_error, config_int_json,
-configured_topn, infoschema_context, metrics_reader, readable_size,
-real_tikv_stats_dump, slow_log_split, stats_load_result and traffic_form.
-They have no production callers. Their tests exercise isolated copies rather
-than the SQL/runtime owners. Go remains the authority for the original contracts;
-absence of a literal Go test name alone is not grounds for deleting a regression.
+Base a94bac4fe8a3792161397e7d3d7d4a4c7194956d, branch hparser-integration in
+/workspace/tidb. Refreshed Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed.
+Native client remains cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1.
+Delete tidb-stats average_count/count_metrics/weighted_reservoir;
+tidb-planner logical_property/memo_group_id/plan_context/storage_engine_usage;
+tidb-domain optimize_trace; and tidb-session binding_plan_evolution. Seven private
+test files include two duplicate planner difftest harnesses. Remove declarations
+and statistics reexports from the four owning lib.rs files.
 
 ## Progress
 
 
-- [x] Refresh refs, trace exported symbols and module paths across tracked Rust code, scripts and manifests; no production references outside the deletion set.
-- [x] Remove eleven modules, seven private test files, eleven exports and 48 tests; retain before-images, hashes and original Go anchors.
-- [x] Replace stale coverage claims and condense accumulated cleanup instructions into this current plan plus durable receipts.
-- [x] Verify 3,723 retained files and fresh generated registration; grouped affected compilation, lint and self-review pass.
-- [ ] Commit with the actual locked-build hook, rebuild immediately before push, verify remote SHA and refresh Cloud startup/recovery state.
+- [x] Refresh refs; inventory all tracked caller references and original Go anchors.
+- [x] Delete nine models and seven private harnesses, totaling 26 tests and 1,636 file lines; remove declarations and stale integration claims.
+- [x] Verify 3,702 unchanged files and regenerated test registration; grouped all-target check, ten refreshed difftests, lint and self-review pass.
+- [ ] Commit through actual locked-build hook, repeat locked build immediately before push, verify remote and refresh Cloud recovery/startup state.
 
 ## Milestones and Plan of Work
 
 
-The removal milestone deletes the disconnected owners and their test entrypoints
-as one unit. Generated aggregate registration discovers the remaining test files;
-do not hand-edit generated output or add another permanent cleanup script.
-The documentation milestone retires the metrics-reader verification claim and
-unused statistics-wrapper ownership claim, while preserving dated PD failure
-receipts. This replaces the prior 365-line rolling plan; each earlier batch's
-receipt retains its evidence instead of carrying stale pending checkboxes forward.
+First prove the deletion set has no executable consumers outside its private
+tests and module declarations. Then delete the whole unused unit; do not leave
+its tests registered or remove checks from surviving runtime code. Finally
+correct current documentation and mark old receipts historical, retaining the
+original Go obligations and their source hashes in the cleanup receipt.
 
 ## Validation and Acceptance
 
 
-Source /workspace/.cloud-setup/env.sh in each shell. From rust/ run
-CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets.
-From the repository root run make lint and git diff --check. Compare every
-retained Rust source, manifest and script with its before hash; only lib.rs may
-lose the eleven module declarations. Verify generated all_tests.rs no longer
-registers the seven retired harnesses. These are pure deletions: no new behavior
-or regression requires a behavioral suite rerun. Normal commits must execute
-hooks/pre-commit through core.hooksPath=hooks, including cd rust && cargo build
---locked -p tidb-server. Repeat that exact build immediately before each push.
+Source /workspace/.cloud-setup/env.sh in each shell. From rust/ run:
+
+    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-stats -p tidb-planner -p tidb-domain -p tidb-session -p difftest-planner-tests -p tidb-server --all-targets
+
+From the root run make lint and git diff --check. Verify retained Rust source,
+manifests and scripts are byte-identical except the four lib.rs declaration/doc
+edits and three retained difftest fixture migrations; generated all_tests.rs must no longer register deleted harnesses. No
+behavioral tests need rerunning for unreachable pure deletions. Run the ten
+retained cross_estimation, physical_topn and physical_union_all difftests after
+updating obsolete fixture types and function arguments. Normal commit
+must run hooks/pre-commit with core.hooksPath=hooks and pass cd rust && cargo
+build --locked -p tidb-server. Repeat that exact build immediately before push.
 
 ## Surprises & Discoveries
 
 
-The configured TopN/Limit model survived its planner and query-adapter retirement.
-It is now entirely test-owned; the real tidb-executor::topn remains intact.
-The old metrics-reader audit called an unconnected seed VERIFIED. The statistics
-storage receipt listed an unused real_tikv_stats_dump wrapper, while actual
-cluster_session_node callers use cluster_stats_dump directly. All 24 explicitly
-cited Go file paths still exist; removal is about unused Rust ownership, not
-claiming that these Go behaviors disappeared.
+Initial leaf-symbol scanning missed the live async-loading static reexport.
+A complete exported-symbol/caller search retained that module and its consumers.
+Two planner difftest files duplicated private model coverage outside crates/;
+the all-tracked-file search found and included both. Go still contains the
+retired models' contracts: lack of integration, not missing Go behavior, is the
+reason for removal. The old property plan's completion claim is historical.
+Grouped compilation exposed nine pre-existing errors in three retained planner
+harnesses. Migrate their fixtures to live Datum ranges, TopN defaults and the
+explicit MPP switch; retain every assertion and execute all ten cases.
 
 ## Decision Log
 
 
-Delete the whole unused owner plus its tests instead of hiding failures or
-removing tests from live code. Preserve Go obligations and dated evidence. Keep
-connected helpers even when their names resemble the retired models. Date:
-2026-10-05 UTC. No dependencies, scripts, native code or original Go files change.
+Retire disconnected models and their private tests as one batch; retain connected
+Go regressions, Rust correctness tests, native sources and build gates. Dated
+receipts remain evidence rather than current acceptance claims. Decision date:
+2026-10-05 UTC. No manifest or dependency changes are needed.
 
 ## Outcomes & Retrospective
 
 
-Eleven modules and seven harness files remove 3,635 lines plus eleven exports.
-Forty-eight private tests/checks are retired. Validation passes; exact
-outcomes belong in parity/current-audit/leaf-owner-cleanup-validation.json.
-Publication and Cloud draft outcomes belong in
-/workspace/.cloud-setup/leaf-owner-cleanup/final-handoff.json.
+Evidence and original Go file hashes are in
+parity/current-audit/disconnected-model-cleanup-validation.json. Findings remain
+86 tracked / 30 repaired / 56 unresolved. Publication results are recorded in
+/workspace/.cloud-setup/disconnected-model-cleanup/final-handoff.json after commit.
 
-## Recovery
+## Recovery and Dependencies
 
 
-Before-images and retained-file hashes are under
-/workspace/.cloud-setup/leaf-owner-cleanup. Recover an individual file with
- git show 3f0ac881fe9f8474eba30e365a99760adc16359d:<path> > /tmp/<filename>
-and review before restoring it. Preserve concurrent changes and never reset or
-force-push. Earlier cleanup receipts remain linked from README.md, including
-configured-planner-cleanup, result-path-cleanup, session-leaf-cleanup,
-dead-leaf-cleanup, orphan-test-cleanup, aggregate-leaf-cleanup,
-comment-test-cleanup, audit-plan-cleanup and discard-check-cleanup validation.
+Before-images, hashes and logs are in /workspace/.cloud-setup/disconnected-model-cleanup.
+Recover individual files with git show a94bac4fe8a3792161397e7d3d7d4a4c7194956d:<path>
+into a temporary file before reviewing restoration. Preserve concurrent edits;
+never reset or force-push. No new interfaces, dependencies or permanent cleanup
+scripts are introduced. Updated 2026-10-05 for this removal batch.

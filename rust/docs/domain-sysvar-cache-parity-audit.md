@@ -4,12 +4,11 @@ Audit date: 2026-09-05. Opening slice of the domain-surface audit.
 
 ## Inventory
 
-All thirteen non-test Go files of `pkg/domain` have mirrored Rust
-modules in `tidb-domain/src` (`domain_sysvars`, `sysvar_cache`,
-`schema_checker`, `serverinfo_syncer`, `topn_slow_query`,
-`historical_stats`, `ru_stats`, `plan_replayer`, `optimize_trace`,
-`disttask`, `domainutil`, `cdcutil`, `replayer`), plus
-`status_endpoint_claim` for the fork's own extension.
+This is a historical 2026-09-05 audit, not the current module inventory.
+The disconnected optimizer-trace naming model has since been retired; the
+Go behavior remains an integration obligation. Use the current audit README
+and live module declarations for maintained coverage. The original observations
+below retain their original source and validation limits.
 
 ## sysvar_cache slice: VERIFIED
 

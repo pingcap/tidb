@@ -14,19 +14,19 @@
 
 //! Direct source-contract tests for `convertRangeFromExpectedCnt`.
 
-use tidb_planner::cardinality::cross_estimation::{
-    convert_range_from_expected_cnt, CountedRange, RangeEndpoint, ScanRange,
-};
+use tidb_datatype::{Collation, Datum};
+use tidb_planner::cardinality::cross_estimation::{convert_range_from_expected_cnt, CountedRange};
+use tidb_planner::ranger::types::Range;
 
-fn counted(low: u64, high: u64, low_exclude: bool, high_exclude: bool, rows: f64) -> CountedRange {
+fn counted(low: i64, high: i64, low_exclude: bool, high_exclude: bool, rows: f64) -> CountedRange {
     CountedRange::new(
-        ScanRange::new(
-            RangeEndpoint::Opaque(low),
-            RangeEndpoint::Opaque(high),
+        Range {
+            low_val: vec![Datum::Int(low)],
+            high_val: vec![Datum::Int(high)],
             low_exclude,
             high_exclude,
-            Some(7),
-        ),
+            collators: vec![Collation::Binary],
+        },
         rows,
     )
 }
@@ -34,7 +34,7 @@ fn counted(low: u64, high: u64, low_exclude: bool, high_exclude: bool, rows: f64
 /// Source anchor: `TestOrderingIdxSelectivityThreshold` in
 /// `pkg/planner/cardinality/selectivity_test.go:1869` exercises this helper
 /// through ordered index-scan limit estimation. These vectors pin the helper's
-/// pure range/arithmetic contract without inventing statistics or Datum types.
+/// range/arithmetic contract using the live Datum range owner.
 #[test]
 fn ascending_conversion_selects_the_first_range_reaching_expected_count() {
     let ranges = [
@@ -46,16 +46,12 @@ fn ascending_conversion_selects_the_first_range_reaching_expected_count() {
 
     assert!(!converted.is_full_scan());
     assert_eq!(converted.skipped_rows(), 2.0);
-    assert_eq!(
-        converted.converted_range(),
-        Some(ScanRange::new(
-            RangeEndpoint::UnboundedLow,
-            RangeEndpoint::Opaque(30),
-            false,
-            false,
-            Some(7),
-        ))
-    );
+    let range = converted.converted_range().expect("converted range");
+    assert_eq!(range.low_val, [Datum::Null]);
+    assert_eq!(range.high_val, [Datum::Int(30)]);
+    assert!(!range.low_exclude);
+    assert!(!range.high_exclude);
+    assert_eq!(range.collators, [Collation::Binary]);
 }
 
 #[test]
@@ -69,16 +65,12 @@ fn descending_conversion_selects_from_the_high_end_and_inverts_exclusion() {
 
     assert!(!converted.is_full_scan());
     assert_eq!(converted.skipped_rows(), 10.0);
-    assert_eq!(
-        converted.converted_range(),
-        Some(ScanRange::new(
-            RangeEndpoint::Opaque(40),
-            RangeEndpoint::UnboundedHigh,
-            false,
-            false,
-            Some(7),
-        ))
-    );
+    let range = converted.converted_range().expect("converted range");
+    assert_eq!(range.low_val, [Datum::Int(40)]);
+    assert_eq!(range.high_val, [Datum::MaxValue]);
+    assert!(!range.low_exclude);
+    assert!(!range.high_exclude);
+    assert_eq!(range.collators, [Collation::Binary]);
 }
 
 #[test]
@@ -90,7 +82,7 @@ fn expected_count_beyond_all_ranges_requests_the_full_scan() {
     for descending in [false, true] {
         let converted = convert_range_from_expected_cnt(&ranges, 6.0, descending);
         assert!(converted.is_full_scan());
-        assert_eq!(converted.converted_range(), None);
+        assert!(converted.converted_range().is_none());
         assert_eq!(converted.skipped_rows(), 0.0);
     }
 }
@@ -100,20 +92,16 @@ fn source_boundary_and_empty_inputs_follow_the_loop_contract() {
     let ranges = [counted(10, 20, true, false, 2.0)];
     let exact = convert_range_from_expected_cnt(&ranges, 2.0, false);
     assert_eq!(exact.skipped_rows(), 0.0);
-    assert_eq!(
-        exact.converted_range(),
-        Some(ScanRange::new(
-            RangeEndpoint::UnboundedLow,
-            RangeEndpoint::Opaque(10),
-            false,
-            false,
-            Some(7),
-        ))
-    );
+    let range = exact.converted_range().expect("converted range");
+    assert_eq!(range.low_val, [Datum::Null]);
+    assert_eq!(range.high_val, [Datum::Int(10)]);
+    assert!(!range.low_exclude);
+    assert!(!range.high_exclude);
+    assert_eq!(range.collators, [Collation::Binary]);
 
     let empty = convert_range_from_expected_cnt(&[], 1.0, false);
     assert!(empty.is_full_scan());
-    assert_eq!(empty.converted_range(), None);
+    assert!(empty.converted_range().is_none());
     assert_eq!(empty.skipped_rows(), 0.0);
 }
 
@@ -128,12 +116,15 @@ fn floating_point_comparisons_keep_source_nan_and_negative_contracts() {
     assert!(!negative.is_full_scan());
     assert_eq!(negative.skipped_rows(), 0.0);
     assert_eq!(
-        negative.converted_range().map(|range| range.high()),
-        Some(RangeEndpoint::Opaque(10))
+        negative
+            .converted_range()
+            .expect("negative count prefix")
+            .high_val,
+        [Datum::Int(10)]
     );
 
     let nan = convert_range_from_expected_cnt(&ranges, f64::NAN, false);
     assert!(nan.is_full_scan());
-    assert_eq!(nan.converted_range(), None);
+    assert!(nan.converted_range().is_none());
     assert_eq!(nan.skipped_rows(), 0.0);
 }
