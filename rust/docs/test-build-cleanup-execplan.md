@@ -122,3 +122,63 @@ All 68 named Go declarations were found in current master after resolving
 `TestGetDBNames` to `pkg/util/metricsutil/db_labels_test.go`; original Go
 obligations and all 86 finding dispositions remain unchanged. No behavioral
 test execution or compile-time improvement is claimed for this deletion.
+
+## Unused execution and statement models
+
+
+Base `a59185577928e2e4a1e7a559cc3b090882211386`; refreshed Go master remains
+`93a01d31f6da205ae4bf376825293903a6899fdb`. Remove nine exported tidb-exec models
+and their dedicated tests together: chunk flags, CTE error selection, ordered
+Apply buffering, input accounting, statement reference counts, batch flushing,
+row-ID reservation and INSERT/DELETE row-column sizing. All exported symbols
+have only private test callers. These models neither own nor integrate the
+live Go lifecycle. Their removal reduces the compiled surface and eliminates
+misleading standalone coverage; no timing improvement is claimed.
+
+### Progress
+
+
+- [x] Trace all module/export callers and check original Go source paths against refreshed master; record the stale executor_test.go citation.
+- [x] Remove nine models, nine test files and nine module declarations in one batch.
+- [x] Affected all-target checks, nine retained live Apply cases, lint and complete diff review pass.
+- [ ] Commit through the actual locked-server hook; rebuild immediately before authorized push and verify the remote SHA.
+
+### Discoveries and decisions
+
+
+The private Apply BTreeMap simulator duplicates ordering examples already in
+live executor SQL tests. Keep those tests and actual worker error/cancellation,
+queue shutdown and reopen tests unchanged. The batch-flusher seed starts a
+sleeping thread yet has no production consumer. Removing these models does
+not implement chunk/session reuse, CTE error publication,
+statement-cache reference counting, row-ID reservation or full runaway flushing.
+Those Go obligations remain outstanding. The old RUV2 models also cite an
+absent executor_test.go; current Go executor.go, insert_common.go and delete.go
+have neither nextIOAcc nor rowsColMultiply. Do not promote those historical
+claims into current-master requirements. Keep used min/max deque code, Rust
+safety tests and operational scripts with real path/service safeguards.
+
+### Validation and recovery
+
+
+Activate `/workspace/.cloud-setup/env.sh`. From `rust/`, run with
+`CARGO_BUILD_JOBS=1`: `cargo check --locked -p tidb-exec -p tidb-server --all-targets`
+and `cargo test --locked -p tidb-executor --lib -- ordered_parallel_apply
+apply::parallel::tests --test-threads=1`. Run root `make lint` and
+`git diff --check`. Verify every retained Rust source, manifest and build script
+except the nine removed exports is identical to base. The existing shared test
+generator removes registration automatically; do not edit generated output.
+Exact inventory, source hashes, Go anchors and outcomes are in
+[the receipt](parity/current-audit/dead-leaf-cleanup-validation.json).
+Recover individual files with its `git show` command; never reset concurrent
+work. Full suites, live clusters and performance are outside this cleanup.
+
+### Outcome
+
+
+Nine unused models and 25 private tests are removed (1,546 file lines plus
+nine exports). All 3,701 retained source/manifest files are byte-identical.
+Nine live Apply tests, affected all-target checks, lint and diff review pass.
+The actual hook and fresh prepush gate remain required; publication evidence
+belongs in Cloud `dead-leaf-cleanup/final-handoff.json`. No finding status or
+package acceptance is changed by removing unused seed models.

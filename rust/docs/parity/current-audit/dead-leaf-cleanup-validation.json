@@ -1,0 +1,288 @@
+{
+  "base": "a59185577928e2e4a1e7a559cc3b090882211386",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remove unused exported models and their private tests; no live runtime algorithm, complete Go package acceptance or finding disposition changes.",
+  "modules": [
+    "chunk_alloc_status",
+    "cte_first_error",
+    "ordered_apply_buffer",
+    "next_io_acc",
+    "statement_refcount",
+    "batch_flusher",
+    "reserved_row_id",
+    "delete_rows_col_multiply",
+    "insert_rows_col_multiply"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/chunk_alloc_status.rs",
+      "lines": 48,
+      "sha256": "22a999712bcbf200f213afb9bb6a514bf77a4b91d47e8e27132f894b52801943",
+      "tests": [],
+      "go_paths": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/chunk_alloc_status_source.rs",
+      "lines": 33,
+      "sha256": "a7c3f1e8c9b1668a107d2091e07161652ff30f1d51cf4e24c6916fa2b75572b4",
+      "tests": [
+        "chunk_allocation_status_matches_source_set_clear_readback"
+      ],
+      "go_paths": [
+        "pkg/sessionctx/stmtctx/stmtctx.go",
+        "pkg/sessionctx/variable/tests/session_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/cte_first_error.rs",
+      "lines": 32,
+      "sha256": "7adb121313d73cb6d9fbd200e92b1a7826caff904f5f035f90ca8a05ae811b42",
+      "tests": [],
+      "go_paths": [
+        "pkg/executor/cte.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/cte_first_error_source.rs",
+      "lines": 48,
+      "sha256": "26556c5daadcc158cf4e60cfe8d2d49b6d03a24e76ddf83b94a150a3aa1d228a",
+      "tests": [
+        "cte_first_error_preserves_existing_error_and_adopts_only_when_empty",
+        "cte_first_error_preserves_concrete_value_without_reformatting"
+      ],
+      "go_paths": [
+        "pkg/executor/cte.go",
+        "pkg/executor/test/cte/cte_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/ordered_apply_buffer.rs",
+      "lines": 188,
+      "sha256": "9fec071f0522d13f2d2f29c0cd59180735d4a7d8af39f652df239e9455020669",
+      "tests": [],
+      "go_paths": [
+        "pkg/executor/parallel_apply.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/ordered_apply_buffer_source.rs",
+      "lines": 186,
+      "sha256": "2f82e62573c289ab1c46d7ff21acf99691f2f3f3f467628f5f254d23d5abe785",
+      "tests": [
+        "ordered_parallel_apply_preserves_outer_sequence",
+        "ordered_parallel_apply_edge_cases_keep_empty_and_left_semi_rows",
+        "ordered_parallel_apply_large_inner_flushes_multiple_batches",
+        "ordered_parallel_apply_left_outer_semi_preserves_unmatched_positions",
+        "ordered_parallel_apply_nested_layers_are_independent",
+        "ordered_parallel_apply_error_and_cancel_are_terminal"
+      ],
+      "go_paths": [
+        "pkg/executor/parallel_apply.go",
+        "pkg/executor/parallel_apply_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/next_io_acc.rs",
+      "lines": 83,
+      "sha256": "906e4232bfd814359c7ccd39289e642fe9a6e659b825f9a85379d042e6d97cc9",
+      "tests": [],
+      "go_paths": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/next_io_acc_source.rs",
+      "lines": 72,
+      "sha256": "6633c02234c44043146d635dc8cec599b61b16f3f851413dd65707728e469eeb",
+      "tests": [
+        "next_io_acc_counts_rows_with_zero_columns_like_source",
+        "next_io_acc_reset_reuses_state_without_carryover",
+        "next_io_acc_admission_requires_child_and_tracking_parent",
+        "next_io_acc_cell_guard_matches_source"
+      ],
+      "go_paths": [
+        "pkg/executor/internal/exec/executor.go",
+        "pkg/executor/internal/exec/executor_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/statement_refcount.rs",
+      "lines": 119,
+      "sha256": "acde7428fe39c5b7ef6d62ea0ca6d62eb85b294e18f8a53400d83b77e006d9e1",
+      "tests": [],
+      "go_paths": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/statement_refcount_source.rs",
+      "lines": 57,
+      "sha256": "39ede31528b0bebe2a2a87eb64bae0bf293d7eb0415a51a0cbb2bec0b333218a",
+      "tests": [
+        "reference_count_matches_source_freeze_lifecycle",
+        "reference_count_freeze_rejects_active_references"
+      ],
+      "go_paths": [
+        "pkg/sessionctx/stmtctx/stmtctx.go",
+        "pkg/sessionctx/variable/session.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/batch_flusher.rs",
+      "lines": 241,
+      "sha256": "bf3536303fa0295b9fa54bd898f3868524b9b1f874cb532962b6d5fc0f883e81",
+      "tests": [],
+      "go_paths": [
+        "pkg/resourcegroup/runaway/flusher.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/batch_flusher_source.rs",
+      "lines": 192,
+      "sha256": "46c598c656cd8553fe6a89108992ff24decd2f78bed6a35d730a3c023ca0cf0c",
+      "tests": [
+        "test_batch_flusher_add",
+        "test_batch_flusher_merge_fn",
+        "test_batch_flusher_flush",
+        "test_batch_flusher_flush_empty"
+      ],
+      "go_paths": [
+        "pkg/resourcegroup/runaway/flusher_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/reserved_row_id.rs",
+      "lines": 50,
+      "sha256": "afef8f1aea9664cae6924e7eb51b9089017824d73dcfcb7fa169e282e83254d1",
+      "tests": [],
+      "go_paths": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/reserved_row_id_source.rs",
+      "lines": 51,
+      "sha256": "c2c64d64f5637c45c3cde44b3df5561a2de9e3d1f1b8b26b90eab5b1a08979a7",
+      "tests": [
+        "default_allocator_is_exhausted_and_returns_zero_equivalent_none",
+        "reset_consumes_base_excluded_max_in_order",
+        "reset_replaces_an_old_reservation_and_invalid_ranges_are_empty"
+      ],
+      "go_paths": [
+        "pkg/sessionctx/stmtctx/stmtctx.go",
+        "pkg/sessionctx/stmtctx/stmtctx_test.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/delete_rows_col_multiply.rs",
+      "lines": 35,
+      "sha256": "4cd0760e1ade2a87482a0c66bf91ff73752b4ebdb25fdb60a0abb153abc85646",
+      "tests": [],
+      "go_paths": [
+        "pkg/executor/delete.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/delete_rows_col_multiply_source.rs",
+      "lines": 44,
+      "sha256": "b3a783693ea6003030d63dd00a51f019391d34ff5e6d46d8d7035771b1a2269c",
+      "tests": [
+        "delete_rows_col_multiply_preserves_ordinary_and_non_positive_updates",
+        "delete_rows_col_multiply_saturates_only_positive_overflow"
+      ],
+      "go_paths": [
+        "pkg/executor/adapter_test.go",
+        "pkg/executor/delete.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/insert_rows_col_multiply.rs",
+      "lines": 34,
+      "sha256": "8b2c872f2f50d2b64dd16577237bc036ddc4c59a10800ec47345a76ad5374658",
+      "tests": [],
+      "go_paths": [
+        "pkg/executor/insert_common.go"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/insert_rows_col_multiply_source.rs",
+      "lines": 33,
+      "sha256": "99de50da895c307be33b41c6eca4281b0d27051bc7f8e2eff0e99ad99861f738",
+      "tests": [
+        "rows_col_multiply_preserves_zero_and_saturating_boundaries"
+      ],
+      "go_paths": [
+        "pkg/executor/explain_unit_test.go",
+        "pkg/executor/insert_common.go"
+      ]
+    }
+  ],
+  "totals": {
+    "modules": 9,
+    "files": 18,
+    "lines": 1546,
+    "tests": 25
+  },
+  "stale_go_paths": [
+    "pkg/executor/internal/exec/executor_test.go"
+  ],
+  "caller_evidence": "All module names and 18 top-level exported symbols traced across tracked rust/ excluding vendored third_party; only declarations and the selected tests reference them. Shared test generator discovers tests automatically.",
+  "retained_live_apply_tests": [
+    "rust/crates/tidb-executor/src/tests_parallel_apply_sql_source.rs",
+    "rust/crates/tidb-executor/src/apply/parallel_tests.rs"
+  ],
+  "remaining_go_obligations": [
+    "Chunk allocator/pool and session reuse lifecycle",
+    "CTE first-error publication in the actual execution lifecycle",
+    "Historical RUV2 input and INSERT/DELETE row-column seeds require revalidation against current Go before any implementation claim",
+    "Statement-context reference-count cache lifecycle",
+    "Runaway flusher session pool, metrics, failpoints and logging",
+    "Statement row-ID reservation integration"
+  ],
+  "recovery": "git show a59185577928e2e4a1e7a559cc3b090882211386:<removed path> > /tmp/<recovered filename>; inspect before restoring individual files. Do not reset concurrent work.",
+  "validation": {
+    "status": "passed",
+    "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+    "checks": [
+      {
+        "cwd": "rust",
+        "command": "cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+        "exit": 0
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --locked -p tidb-executor --lib -- ordered_parallel_apply apply::parallel::tests --test-threads=1",
+        "exit": 0,
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0,
+        "tests": [
+          "apply::parallel::tests::apply_close_cancels_request_children_without_killing_the_statement_and_reopen_rotates",
+          "apply::parallel::tests::native_parallel_apply_early_close_joins_full_output_queues_and_reopens",
+          "apply::parallel::tests::native_parallel_apply_overlaps_isolated_inner_bindings_and_preserves_order",
+          "apply::parallel::tests::native_parallel_apply_preserves_errors_and_panic_messages_and_joins",
+          "apply::parallel::tests::native_parallel_apply_unordered_results_and_shared_cache_retire",
+          "tests_parallel_apply_sql_source::ordered_parallel_apply_edge_cases_source",
+          "tests_parallel_apply_sql_source::ordered_parallel_apply_large_inner_source",
+          "tests_parallel_apply_sql_source::ordered_parallel_apply_left_outer_semi_source",
+          "tests_parallel_apply_sql_source::ordered_parallel_apply_source"
+        ]
+      },
+      {
+        "cwd": ".",
+        "command": "make lint",
+        "exit": 0
+      },
+      {
+        "cwd": ".",
+        "command": "git diff --check",
+        "exit": 0
+      }
+    ],
+    "notes": "Existing compiler warnings remain; no suppressed checks or added permanent harness. No Go/Bazel edits."
+  },
+  "limits": [
+    "No full Go suite, live TiKV, performance measurement or complete upstream package acceptance.",
+    "Removal of private model tests does not prove their original Go obligations are implemented."
+  ],
+  "retained_source_verification": {
+    "files": 3701,
+    "result": "byte-identical to base except the nine removed lib.rs module declarations"
+  },
+  "go_anchor_check": "All historical Go file paths still exist except pkg/executor/internal/exec/executor_test.go. Current executor.go, insert_common.go and delete.go contain neither nextIOAcc nor rowsColMultiply; those historical RUV2 model contracts are not accepted as current-master requirements.",
+  "publication": "Normal commit must run actual hooks/pre-commit locked server build. Immediately-before-push locked build and remote SHA verification are recorded separately in /workspace/.cloud-setup/dead-leaf-cleanup/final-handoff.json."
+}
