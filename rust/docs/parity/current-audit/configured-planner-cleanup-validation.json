@@ -1,0 +1,55 @@
+{
+  "base": "b5350838de6e6e303f02b08f111bf91700496f1e",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Retire unused configured two-relation binder, join planner and ordered-tail planner, plus their sole bound-scan construction API. Shared live scan/order contract stays.",
+  "modules": [
+    "configured_join_plan",
+    "configured_relation_tree",
+    "configured_order_limit"
+  ],
+  "removed_test_files": [
+    "configured_fullschema_join_source",
+    "configured_relation_tree_binding_source",
+    "configured_order_limit_source"
+  ],
+  "totals": {
+    "files_removed": 6,
+    "modules_removed": 3,
+    "private_tests_removed": 20,
+    "file_lines_removed": 2102,
+    "block_lines_removed": 165,
+    "export_lines_removed": 3
+  },
+  "caller_evidence": "All exported types and module names, BoundBigIntComparison and lower_bound_relation traced across tracked Rust source/manifests/scripts including vendor; no outside callers.",
+  "go_anchors": [
+    "pkg/planner/core/logical_plan_builder.go",
+    "pkg/planner/core/casetest/join/join_test.go",
+    "pkg/planner/core/planbuilder.go"
+  ],
+  "live_owners": [
+    "rust/crates/tidb-planner/src/plan_builder/from.rs",
+    "rust/crates/tidb-planner/src/plan_builder.rs",
+    "rust/crates/tidb-planner/src/configured_order_limit_contract.rs",
+    "rust/crates/tidb-planner/src/read_only_scan.rs",
+    "rust/crates/tidb-planner/tests/read_only_scan_source.rs"
+  ],
+  "validation": {
+    "status": "passed",
+    "affected_all_targets": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p tidb-exec -p tidb-server --all-targets (rust/)",
+    "lint": "make lint (root)",
+    "diff": "git diff --check",
+    "retained_source_manifest_script_files_identical": 3738,
+    "mixed_scan_source_and_test": "Only identified dead blocks and unused import removed; retained bodies identical",
+    "generated_registration": "Three deleted harnesses absent; configured_order_limit_contract_source retained",
+    "behavioral_tests": "Not rerun for deletion-only changes",
+    "logs": "/workspace/.cloud-setup/configured-planner-cleanup/{check,lint}.log",
+    "publication_gates": "Actual hook and fresh prepush locked build required; final results in external final-handoff.json"
+  },
+  "limits": [
+    "No finding closure or whole-package acceptance.",
+    "Original Go join/ordering/name-binding obligations remain.",
+    "No measured speedup or live TiKV/Go suite validation."
+  ],
+  "recovery": "git show b5350838de6e6e303f02b08f111bf91700496f1e:<removed path> > /tmp/<recovered filename>; inspect before restoring individual files.",
+  "external_inventory": "/workspace/.cloud-setup/configured-planner-cleanup/inventory-before.json"
+}

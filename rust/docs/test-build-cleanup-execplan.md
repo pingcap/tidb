@@ -305,3 +305,61 @@ Recover individual files with the git-show command in
 Deletion and grouped validation complete. No runtime or build timing
 improvement is claimed. Cloud `result-path-cleanup/final-handoff.json` records
 publication and environment persistence after the tracked validation completes.
+
+## Retired configured planner chain
+
+
+Base `b5350838de6e6e303f02b08f111bf91700496f1e`, Go `b36c940a4332c866d8b0e2afde88f5e7c2fd7fed`.
+Following runtime retirement, remove the complete unconsumed configured
+relation binder, join planner and ORDER BY/LIMIT planner with their three
+private harnesses from `rust/crates/tidb-planner`. Remove their sole bound-scan
+construction API (`BoundBigIntComparison`, `lower_bound_relation`) and its two
+private tests. Keep the live SQL scan entrypoints, shared configured ordering
+contract, actual PlanBuilder and their tests byte-for-byte unchanged.
+
+### Progress
+
+
+- [x] Trace all exported types and the bound-scan entrypoint; no consumers remain outside this deletion set.
+- [x] Compare shared Go PlanBuilder ownership and retire the entire unused chain, not just its tests.
+- [x] All 3,738 retained source/manifest/script files identical; mixed scan source/tests contain only specified deletions. Generated registration, affected all-target checks, lint and diff review pass.
+- [ ] Normal hook commit, fresh locked build immediately before push, remote SHA verification, Cloud recovery/configuration refresh.
+
+### Surprises & Discoveries
+
+
+The private planner artificially admits exactly two tables, one equality and
+ORDER BY only with LIMIT; these restrictions belong to the retired prototype,
+not the complete Go planner. Its scan bridge is also unused after retirement.
+The similarly named `configured_order_limit_contract` still has live callers
+and remains. Go `PlanBuilder.buildJoin/buildSort/buildLimit` and Rust's real
+`plan_builder` own the active behavior. No parity finding is closed here.
+
+### Decision Log
+
+
+Remove three mutually dependent modules, their exports and test registrations
+as one unit, including the last dead entrypoint in the retained scan module.
+Preserve every remaining assertion and algorithm. No new deletion harness.
+
+### Validation and recovery
+
+
+Source `/workspace/.cloud-setup/env.sh`. From `rust/`, run
+`CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p tidb-exec -p tidb-server --all-targets`.
+At repository root run `make lint` and `git diff --check`. Verify all retained
+files against base, and ensure the mixed scan source/test diffs contain only
+the identified dead blocks and unused import. Regenerated test registration
+must exclude the three deleted harnesses. No behavioral rerun is required for
+this deletion-only batch. Normal commits must run the actual server-build
+hook; repeat `cd rust && cargo build --locked -p tidb-server` immediately before
+push. Individual files can be recovered using the git-show command in
+[the receipt](parity/current-audit/configured-planner-cleanup-validation.json).
+
+### Outcomes & Retrospective
+
+
+Deletion and grouped validation complete: 20 private tests and 2,270 net
+source/test lines removed. No measured speedup claimed.
+Cloud `configured-planner-cleanup/final-handoff.json` records final publication
+and configuration evidence; original Go package obligations remain outstanding.

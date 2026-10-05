@@ -1115,57 +1115,6 @@ pub enum ReadLockWait {
     Seconds(u64),
 }
 
-/// One already-bound signed-`BIGINT` column-versus-literal comparison.
-///
-/// The variants retain operand order exactly. `ColumnLeft` represents
-/// `column <op> value`; `LiteralLeft` represents `value <op> column`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BoundBigIntComparison {
-    /// The configured column is the left operand.
-    ColumnLeft {
-        /// Zero-based source column index in [`ConfiguredTable::columns`].
-        column_index: usize,
-        /// Typed ordinary comparison operator.
-        op: ComparisonOp,
-        /// Signed integer literal on the right.
-        value: i64,
-    },
-    /// The signed integer literal is the left operand.
-    LiteralLeft {
-        /// Signed integer literal on the left.
-        value: i64,
-        /// Typed ordinary comparison operator.
-        op: ComparisonOp,
-        /// Zero-based source column index in [`ConfiguredTable::columns`].
-        column_index: usize,
-    },
-}
-
-impl BoundBigIntComparison {
-    fn into_unbound(self) -> UnboundComparison {
-        match self {
-            Self::ColumnLeft {
-                column_index,
-                op,
-                value,
-            } => UnboundComparison {
-                op,
-                lhs: UnboundComparisonOperand::Column(column_index),
-                rhs: UnboundComparisonOperand::Int(value),
-            },
-            Self::LiteralLeft {
-                value,
-                op,
-                column_index,
-            } => UnboundComparison {
-                op,
-                lhs: UnboundComparisonOperand::Int(value),
-                rhs: UnboundComparisonOperand::Column(column_index),
-            },
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnboundComparisonOperand {
     Column(usize),
@@ -1221,42 +1170,6 @@ impl ReadOnlyScanPlan {
         };
 
         let validated = validate_select(&select, table)?;
-        Self::lower_validated(table, validated)
-    }
-
-    /// Lowers one already-bound configured relation without parsing SQL.
-    ///
-    /// `projected_column_indices` are zero-based indices into
-    /// [`ConfiguredTable::columns`] and remain in caller order, including
-    /// duplicates. `comparisons` must already be local to this relation and
-    /// retain exact column/literal operand order. Both inputs enter the same
-    /// range-detachment, residual Selection, scan-column, and physical-reader
-    /// lowering core used by [`Self::lower`].
-    pub fn lower_bound_relation(
-        table: &ConfiguredTable,
-        projected_column_indices: &[usize],
-        comparisons: &[BoundBigIntComparison],
-    ) -> Result<Self, ReadOnlyScanError> {
-        let validated = ValidatedReadOnlySelect {
-            projections: projected_column_indices
-                .iter()
-                .map(|column_index| UnboundProjection {
-                    column_index: *column_index,
-                    output_name: None,
-                })
-                .collect(),
-            comparisons: comparisons
-                .iter()
-                .copied()
-                .map(BoundBigIntComparison::into_unbound)
-                .collect(),
-            order_by: Vec::new(),
-            distinct: false,
-            aggregate: None,
-            // A join input is one already-bound relation of a larger statement;
-            // the locking clause belongs to the statement, not to this input.
-            lock: None,
-        };
         Self::lower_validated(table, validated)
     }
 
