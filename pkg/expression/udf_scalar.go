@@ -22,11 +22,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -37,9 +40,16 @@ import (
 	"github.com/pingcap/tidb/pkg/udf"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
+
+// ErrCantUpdateUsedTableInSfOrTrg is returned when a stored function tries to update a table
+// that is already being used by the statement which invoked the function.
+var ErrCantUpdateUsedTableInSfOrTrg = dbterror.ClassExpression.NewStd(errno.ErrCantUpdateUsedTableInSfOrTrg)
 
 // udfFuncs stores loaded UDF function classes.
 var udfFuncs sync.Map
@@ -74,16 +84,113 @@ type dmlDetectorVisitor struct {
 }
 
 func (v *dmlDetectorVisitor) Enter(n ast.Node) (ast.Node, bool) {
-	switch n.(type) {
+	switch s := n.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.SelectStmt:
 		v.containsDML = true
 		return n, true // Skip children, we already know
+	case *ast.ProcedureBlock:
+		// ProcedureBlock.Accept() doesn't traverse ProcedureProcStmts,
+		// so we need to manually check them for DML
+		for _, stmt := range s.ProcedureProcStmts {
+			if v.containsDML {
+				break
+			}
+			stmt.Accept(v)
+		}
+		return n, true // We've manually processed children
 	}
 	return n, false
 }
 
 func (v *dmlDetectorVisitor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
+}
+
+// getDMLTargetTable extracts the target table name from a DML statement (INSERT/UPDATE/DELETE).
+// Returns the schema (database) and table name, along with a bool indicating if a table was found.
+func getDMLTargetTable(stmt ast.StmtNode) (schema string, table string, found bool) {
+	var tableRefs *ast.TableRefsClause
+
+	switch s := stmt.(type) {
+	case *ast.InsertStmt:
+		tableRefs = s.Table
+	case *ast.UpdateStmt:
+		tableRefs = s.TableRefs
+	case *ast.DeleteStmt:
+		tableRefs = s.TableRefs
+	default:
+		return "", "", false
+	}
+
+	if tableRefs == nil || tableRefs.TableRefs == nil {
+		return "", "", false
+	}
+
+	// Get the leftmost table from the join tree
+	return extractTableFromJoin(tableRefs.TableRefs)
+}
+
+// extractTableFromJoin recursively extracts the leftmost table name from a Join tree.
+func extractTableFromJoin(join *ast.Join) (schema string, table string, found bool) {
+	if join == nil {
+		return "", "", false
+	}
+
+	// Try left side first
+	if join.Left != nil {
+		switch left := join.Left.(type) {
+		case *ast.TableSource:
+			if tableName, ok := left.Source.(*ast.TableName); ok {
+				return tableName.Schema.L, tableName.Name.L, true
+			}
+		case *ast.Join:
+			return extractTableFromJoin(left)
+		}
+	}
+
+	return "", "", false
+}
+
+// checkDMLTableConflict checks if a DML statement targets a table that is already being
+// used by the outer statement (ERROR 1442 in MySQL).
+func checkDMLTableConflict(ctx EvalContext, stmt ast.StmtNode) error {
+	// Check if this is a DML statement
+	schema, table, isDML := getDMLTargetTable(stmt)
+	if !isDML || table == "" {
+		return nil
+	}
+
+	// Try to get session vars to check outer statement's tables
+	if !ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		// Can't check without session vars, allow the operation
+		return nil
+	}
+
+	sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx)
+	if err != nil || sessVars == nil {
+		// Can't get session vars, allow the operation
+		return nil
+	}
+
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx == nil {
+		return nil
+	}
+
+	// Check if the target table is in the outer statement's table list
+	for _, entry := range stmtCtx.Tables {
+		// Compare table names (case-insensitive)
+		if strings.EqualFold(entry.Table, table) {
+			// If schema is specified, check it too
+			if schema != "" && entry.DB != "" && !strings.EqualFold(entry.DB, schema) {
+				continue
+			}
+			// Table conflict found
+			return ErrCantUpdateUsedTableInSfOrTrg.GenWithStackByArgs(table)
+		}
+	}
+
+	return nil
 }
 
 // udfFuncClass implements functionClass for user-defined functions.
@@ -208,23 +315,107 @@ func (b *udfFuncSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecim
 // executeUDF executes the UDF.
 // For JavaScript UDFs, it uses the GraalVM runtime.
 // For SQL UDFs, it interprets the SQL function body directly.
+//
+// SQL SECURITY behavior:
+// - INVOKER (default): Executes with the privileges of the calling user
+// - DEFINER: Should execute with the privileges of the function definer
+//
+// Note: Full DEFINER security enforcement is not yet implemented.
+// Currently all UDFs execute with INVOKER semantics for safety.
+// The Definer and SQLSecurity fields are stored for future implementation.
 func (b *udfFuncSig) executeUDF(ctx EvalContext, row chunk.Row) (types.Datum, bool, error) {
+	// Record metrics
+	startTime := time.Now()
+	language := strings.ToLower(b.def.Language)
+	schema := b.def.SchemaName
+	name := b.def.Name
+
+	// Increment active executions gauge
+	if metrics.UDFActiveGauge != nil {
+		metrics.UDFActiveGauge.WithLabelValues(language).Inc()
+		defer metrics.UDFActiveGauge.WithLabelValues(language).Dec()
+	}
+
 	// Evaluate arguments first (needed for both SQL and JavaScript UDFs)
 	args := make([]types.Datum, len(b.args))
 	for i, arg := range b.args {
 		val, err := arg.Eval(ctx, row)
 		if err != nil {
+			recordUDFError(name, language, schema, "eval_args")
 			return types.Datum{}, true, errors.Trace(err)
 		}
 		args[i] = val
 	}
 
 	// MySQL UDF only supports SQL language
-	if strings.ToLower(b.def.Language) != "sql" {
+	if language != "sql" {
+		recordUDFError(name, language, schema, "unsupported_language")
 		return types.Datum{}, true, errors.Errorf("unsupported UDF language: %s; only SQL is supported", b.def.Language)
 	}
 
-	return b.executeSQLFunction(ctx, row, args)
+	result, isNull, err := b.executeSQLFunction(ctx, row, args)
+
+	// Record execution duration and result
+	duration := time.Since(startTime).Seconds()
+	recordUDFExecution(name, language, schema, duration, err)
+
+	return result, isNull, err
+}
+
+// SlowUDFThreshold is the threshold in seconds for logging slow UDF executions.
+// UDFs taking longer than this threshold will be logged.
+// Default is 1 second. Set to 0 to disable slow UDF logging.
+var SlowUDFThreshold float64 = 1.0
+
+// recordUDFExecution records UDF execution metrics and logs slow UDFs.
+func recordUDFExecution(name, language, schema string, duration float64, err error) {
+	if metrics.UDFExecutionDuration != nil {
+		metrics.UDFExecutionDuration.WithLabelValues(name, language, schema).Observe(duration)
+	}
+	if metrics.UDFExecutionCounter != nil {
+		result := "ok"
+		if err != nil {
+			result = "err"
+		}
+		metrics.UDFExecutionCounter.WithLabelValues(name, language, schema, result).Inc()
+	}
+
+	// Log slow UDF executions
+	if SlowUDFThreshold > 0 && duration >= SlowUDFThreshold {
+		logSlowUDF(name, language, schema, duration, err)
+	}
+}
+
+// logSlowUDF logs a slow UDF execution using TiDB's logging infrastructure.
+func logSlowUDF(name, language, schema string, duration float64, err error) {
+	fields := []zap.Field{
+		zap.String("schema", schema),
+		zap.String("name", name),
+		zap.String("language", language),
+		zap.Float64("duration_seconds", duration),
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	logutil.BgLogger().Warn("[SLOW_UDF]", fields...)
+}
+
+// recordUDFError records a UDF error by type.
+func recordUDFError(name, language, schema, errorType string) {
+	if metrics.UDFErrorCounter != nil {
+		metrics.UDFErrorCounter.WithLabelValues(name, language, schema, errorType).Inc()
+	}
+}
+
+// recordUDFCacheHit records UDF cache hit or miss.
+func recordUDFCacheHit(hit bool) {
+	if metrics.UDFCacheHitCounter != nil {
+		result := "miss"
+		if hit {
+			result = "hit"
+		}
+		metrics.UDFCacheHitCounter.WithLabelValues(result).Inc()
+	}
 }
 
 // executeSQLFunction interprets and executes a MySQL SQL function body.
@@ -245,12 +436,18 @@ func (b *udfFuncSig) executeSQLFunction(ctx EvalContext, row chunk.Row, args []t
 		if !containsDML {
 			// Safe to reuse cached AST - no DML means no AST modification during execution
 			stmtNode = cachedBody.body
+			recordUDFCacheHit(true)
+		} else {
+			// DML functions need re-parsing, count as miss
+			recordUDFCacheHit(false)
 		}
 		// If containsDML, we must re-parse because executeInternalSQL modifies the AST
+	} else {
+		recordUDFCacheHit(false)
 	}
 
 	if stmtNode == nil {
-		// Parse the SQL function body
+		// Parse the SQL function body - always parse fresh for DML functions
 		p := utilparser.GetParser()
 		var err error
 		stmtNode, err = parseSQLFunctionBody(p, sourceCode)
@@ -264,11 +461,21 @@ func (b *udfFuncSig) executeSQLFunction(ctx EvalContext, row chunk.Row, args []t
 		stmtNode.Accept(detector)
 		containsDML = detector.containsDML
 
-		// Cache the result (even for DML functions, we cache the metadata)
-		parsedSQLBodies.Store(cacheKey, &cachedSQLBody{
-			body:        stmtNode,
-			containsDML: containsDML,
-		})
+		// For DML functions, don't cache the AST body since it gets modified during execution.
+		// Only cache the containsDML flag to avoid re-detection.
+		if containsDML {
+			// Cache only the flag, not the body
+			parsedSQLBodies.Store(cacheKey, &cachedSQLBody{
+				body:        nil, // Don't cache body for DML functions
+				containsDML: containsDML,
+			})
+		} else {
+			// Safe to cache body for non-DML functions
+			parsedSQLBodies.Store(cacheKey, &cachedSQLBody{
+				body:        stmtNode,
+				containsDML: containsDML,
+			})
+		}
 	}
 
 	// Create parameter map with pre-allocated capacity
@@ -285,9 +492,13 @@ func (b *udfFuncSig) executeSQLFunction(ctx EvalContext, row chunk.Row, args []t
 
 // parseSQLFunctionBody parses a SQL function body (BEGIN...END block).
 func parseSQLFunctionBody(p *parser.Parser, sourceCode string) (ast.StmtNode, error) {
+	// Transform MySQL's "SELECT ... INTO var FROM ..." syntax to TiDB's "SELECT ... FROM ... INTO var"
+	// This is necessary because TiDB's parser doesn't support the MySQL middle-position INTO syntax
+	transformedSource := transformSelectIntoSyntax(sourceCode)
+
 	// The sourceCode is the serialized BEGIN...END block
 	// We need to wrap it in a CREATE FUNCTION to parse it correctly
-	wrapperSQL := "CREATE FUNCTION _temp() RETURNS INT " + sourceCode
+	wrapperSQL := "CREATE FUNCTION _temp() RETURNS INT " + transformedSource
 
 	stmts, _, err := p.Parse(wrapperSQL, "", "")
 	if err != nil {
@@ -304,6 +515,75 @@ func parseSQLFunctionBody(p *parser.Parser, sourceCode string) (ast.StmtNode, er
 	}
 
 	return createStmt.SQLBody, nil
+}
+
+// transformSelectIntoSyntax transforms MySQL's "SELECT ... INTO var FROM ..."
+// to TiDB's supported "SELECT ... FROM ... INTO var" syntax.
+func transformSelectIntoSyntax(source string) string {
+	return transformSelectIntoStatements(source)
+}
+
+// transformSelectIntoStatements transforms all SELECT...INTO var FROM... statements
+// to SELECT...FROM...INTO var format.
+func transformSelectIntoStatements(source string) string {
+	// Split into statements roughly by semicolons (not perfect but works for most cases)
+	// Process each potential SELECT INTO statement
+	lines := strings.Split(source, ";")
+	var result []string
+
+	for _, line := range lines {
+		transformed := transformSingleSelectInto(strings.TrimSpace(line))
+		result = append(result, transformed)
+	}
+
+	return strings.Join(result, ";")
+}
+
+// transformSingleSelectInto transforms a single SELECT...INTO var FROM... statement.
+func transformSingleSelectInto(stmt string) string {
+	if stmt == "" {
+		return stmt
+	}
+
+	// Check if this looks like a SELECT ... INTO ... FROM statement
+	upperStmt := strings.ToUpper(stmt)
+
+	// Find SELECT keyword
+	selectIdx := strings.Index(upperStmt, "SELECT")
+	if selectIdx == -1 {
+		return stmt
+	}
+
+	// Find INTO keyword after SELECT
+	afterSelect := upperStmt[selectIdx+6:]
+	intoIdx := strings.Index(afterSelect, " INTO ")
+	if intoIdx == -1 {
+		return stmt
+	}
+	intoPos := selectIdx + 6 + intoIdx
+
+	// Find FROM keyword after INTO
+	afterInto := upperStmt[intoPos+6:]
+	fromIdx := strings.Index(afterInto, " FROM ")
+	if fromIdx == -1 {
+		// INTO without FROM - might be INTO OUTFILE or end-position INTO
+		return stmt
+	}
+	fromPos := intoPos + 6 + fromIdx
+
+	// Extract parts using original case
+	selectPart := stmt[selectIdx:intoPos]                    // "SELECT ..."
+	intoPart := strings.TrimSpace(stmt[intoPos+5:fromPos])   // "var1, var2, ..."
+	restPart := stmt[fromPos:]                               // " FROM ..."
+
+	// Check if intoPart looks like variable list (not OUTFILE)
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(intoPart)), "OUTFILE") ||
+	   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(intoPart)), "DUMPFILE") {
+		return stmt
+	}
+
+	// Reconstruct: SELECT ... FROM ... INTO var_list
+	return selectPart + restPart + " INTO " + intoPart
 }
 
 // executeSQLFunctionBody executes a SQL function body and returns the result.
@@ -509,6 +789,13 @@ func executeProcedureBlock(ctx EvalContext, block *ast.ProcedureBlock, paramMap 
 	}
 	// No RETURN statement found
 	return types.Datum{}, true, errors.New("SQL function did not return a value")
+}
+
+// executeProcedureBlockNoReturn executes a stored procedure body without requiring a RETURN statement.
+// This is used for stored procedures (as opposed to functions which must return a value).
+func executeProcedureBlockNoReturn(ctx EvalContext, block *ast.ProcedureBlock, paramMap map[string]types.Datum) error {
+	_, err := executeProcedureBlockInternal(ctx, block, paramMap, "")
+	return err
 }
 
 // cursorContextKey is the special key used to store cursor context in vars map.
@@ -729,7 +1016,17 @@ func executeStatement(ctx EvalContext, stmt ast.StmtNode, vars map[string]types.
 		return executeInternalSQL(ctx, s, vars, "DML")
 
 	case *ast.SelectStmt:
+		// Check for SELECT ... INTO var1, var2, ...
+		if s.SelectIntoOpt != nil && s.SelectIntoOpt.Tp == ast.SelectIntoVars {
+			return executeSelectIntoVars(ctx, s, vars)
+		}
 		return executeInternalSQL(ctx, s, vars, "SELECT")
+
+	case *ast.SignalStmt:
+		return executeSignalStmt(ctx, s, vars)
+
+	case *ast.ResignalStmt:
+		return executeResignalStmt(ctx, s, vars)
 
 	default:
 		return executionResult{}, errors.Errorf("unsupported statement type in SQL function: %T", stmt)
@@ -905,12 +1202,21 @@ func (v *variableSubstitutionVisitor) Leave(n ast.Node) (ast.Node, bool) {
 // the parent node to be updated. TiDB's AST Accept pattern returns new nodes but doesn't
 // automatically update parent references for all node types.
 func substituteVariables(stmt ast.StmtNode, vars map[string]types.Datum) ast.StmtNode {
+	if stmt == nil {
+		return nil
+	}
 	visitor := visitorPool.Get().(*variableSubstitutionVisitor)
 	visitor.vars = vars
 	newNode, _ := stmt.Accept(visitor)
 	visitor.vars = nil // Clear reference before returning to pool
 	visitorPool.Put(visitor)
-	return newNode.(ast.StmtNode)
+	if newNode == nil {
+		return stmt // Return original if visitor returned nil
+	}
+	if result, ok := newNode.(ast.StmtNode); ok {
+		return result
+	}
+	return stmt // Return original if type assertion fails
 }
 
 // executeInternalSQL executes a SQL statement (DML or SELECT) within a UDF context.
@@ -920,6 +1226,14 @@ func executeInternalSQL(ctx EvalContext, stmt ast.StmtNode, vars map[string]type
 	executor := getSQLExecutor(ctx)
 	if executor == nil {
 		return executionResult{}, errors.Errorf("%s execution requires session context with SQL executor", stmtType)
+	}
+
+	// MySQL ERROR 1442: Check if DML targets a table already used by the invoking statement
+	// This prevents updating tables that are being read by the outer SELECT
+	if stmtType == "DML" {
+		if err := checkDMLTableConflict(ctx, stmt); err != nil {
+			return executionResult{}, err
+		}
 	}
 
 	// Substitute local variable references with their values in the AST
@@ -934,15 +1248,169 @@ func executeInternalSQL(ctx EvalContext, stmt ast.StmtNode, vars map[string]type
 		return executionResult{}, errors.Wrapf(err, "failed to restore %s statement", stmtType)
 	}
 
-	// Execute the statement
+	// Execute the statement using current session to inherit database context
 	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	_, _, err := executor.ExecRestrictedSQL(sqlCtx, nil, sb.String())
+	_, _, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sb.String())
 	stringBuilderPool.Put(sb)
 	if err != nil {
 		return executionResult{}, errors.Wrapf(err, "%s execution failed", stmtType)
 	}
 
+	// For DML statements, update session state so ROW_COUNT() and LAST_INSERT_ID() return correct values
+	if stmtType == "DML" {
+		if ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+			sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx)
+			if err == nil && sessVars != nil && sessVars.StmtCtx != nil {
+				// Copy current affected rows to PrevAffectedRows for ROW_COUNT()
+				sessVars.StmtCtx.PrevAffectedRows = int64(sessVars.StmtCtx.AffectedRows())
+				// Copy LastInsertID to PrevLastInsertID for LAST_INSERT_ID()
+				if sessVars.StmtCtx.LastInsertID > 0 {
+					sessVars.StmtCtx.PrevLastInsertID = sessVars.StmtCtx.LastInsertID
+				}
+			}
+		}
+	}
+
 	return executionResult{}, nil
+}
+
+// executeSelectIntoVars executes SELECT ... INTO var1, var2, ... statement.
+// It executes the SELECT query and assigns results to the specified variables.
+func executeSelectIntoVars(ctx EvalContext, stmt *ast.SelectStmt, vars map[string]types.Datum) (executionResult, error) {
+	executor := getSQLExecutor(ctx)
+	if executor == nil {
+		return executionResult{}, errors.New("SELECT INTO execution requires session context with SQL executor")
+	}
+
+	varList := stmt.SelectIntoOpt.Variables
+	if len(varList) == 0 {
+		return executionResult{}, errors.New("SELECT INTO requires at least one variable")
+	}
+
+	// Create a copy of the SELECT statement without the INTO clause for execution
+	// We need to clear SelectIntoOpt before restoring to SQL
+	selectCopy := *stmt
+	selectCopy.SelectIntoOpt = nil
+
+	// Substitute local variable references with their values in the AST
+	modifiedStmt := substituteVariables(&selectCopy, vars)
+
+	// Restore the modified statement to SQL using pooled builder
+	sb := stringBuilderPool.Get().(*strings.Builder)
+	sb.Reset()
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, sb)
+	if err := modifiedStmt.Restore(restoreCtx); err != nil {
+		stringBuilderPool.Put(sb)
+		return executionResult{}, errors.Wrap(err, "failed to restore SELECT statement")
+	}
+
+	// Execute the statement and get results using current session to inherit database context
+	sqlCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rows, fields, err := executor.ExecRestrictedSQL(sqlCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sb.String())
+	stringBuilderPool.Put(sb)
+	if err != nil {
+		return executionResult{}, errors.Wrap(err, "SELECT INTO execution failed")
+	}
+
+	// Check that we got exactly one row
+	if len(rows) == 0 {
+		// No rows returned - set all variables to NULL (MySQL behavior)
+		for _, varName := range varList {
+			vars[strings.ToLower(varName)] = types.Datum{}
+		}
+		return executionResult{}, nil
+	}
+	if len(rows) > 1 {
+		return executionResult{}, errors.New("Result consisted of more than one row")
+	}
+
+	row := rows[0]
+	// Assign column values to variables
+	for i, varName := range varList {
+		lowerName := strings.ToLower(varName)
+		if i < row.Len() && i < len(fields) {
+			// Get the FieldType from the ResultField for proper datum extraction
+			fieldType := fields[i].Column.FieldType
+			vars[lowerName] = row.GetDatum(i, &fieldType)
+		} else {
+			// Not enough columns in result
+			vars[lowerName] = types.Datum{}
+		}
+	}
+
+	return executionResult{}, nil
+}
+
+// executeSignalStmt executes a SIGNAL statement to raise an error condition.
+func executeSignalStmt(ctx EvalContext, stmt *ast.SignalStmt, vars map[string]types.Datum) (executionResult, error) {
+	// Get SQLSTATE value
+	sqlState := stmt.SQLState
+	if sqlState == "" && stmt.ConditionName != "" {
+		// Look up condition name - for now, use a generic SQLSTATE
+		// In full implementation, this would look up declared conditions
+		sqlState = "45000" // User-defined exception
+	}
+	if sqlState == "" {
+		sqlState = "45000" // Default SQLSTATE for user signals
+	}
+
+	// Get MESSAGE_TEXT if specified
+	messageText := ""
+	for _, item := range stmt.InfoItems {
+		if strings.ToUpper(item.ItemName) == "MESSAGE_TEXT" {
+			if item.Value != nil {
+				val, _, err := evaluateExpression(ctx, item.Value, vars)
+				if err != nil {
+					return executionResult{}, errors.Wrap(err, "failed to evaluate SIGNAL MESSAGE_TEXT")
+				}
+				messageText, _ = val.ToString()
+			}
+		}
+	}
+
+	if messageText == "" {
+		messageText = "Unhandled user-defined exception condition"
+	}
+
+	// Create and return the error
+	// In MySQL, SIGNAL raises an error that can be caught by handlers
+	return executionResult{}, errors.Errorf("SIGNAL SQLSTATE '%s': %s", sqlState, messageText)
+}
+
+// executeResignalStmt executes a RESIGNAL statement to modify and re-raise an error.
+// RESIGNAL can only be used within an error handler.
+func executeResignalStmt(ctx EvalContext, stmt *ast.ResignalStmt, vars map[string]types.Datum) (executionResult, error) {
+	// Get SQLSTATE value (optional for RESIGNAL)
+	sqlState := stmt.SQLState
+	if sqlState == "" && stmt.ConditionName == "" {
+		// RESIGNAL without condition re-raises the current exception
+		// For now, use a generic SQLSTATE since we don't track the current exception
+		sqlState = "45000"
+	}
+	if sqlState == "" {
+		sqlState = "45000"
+	}
+
+	// Get MESSAGE_TEXT if specified
+	messageText := ""
+	for _, item := range stmt.InfoItems {
+		if strings.ToUpper(item.ItemName) == "MESSAGE_TEXT" {
+			if item.Value != nil {
+				val, _, err := evaluateExpression(ctx, item.Value, vars)
+				if err != nil {
+					return executionResult{}, errors.Wrap(err, "failed to evaluate RESIGNAL MESSAGE_TEXT")
+				}
+				messageText, _ = val.ToString()
+			}
+		}
+	}
+
+	if messageText == "" {
+		messageText = "Unhandled user-defined exception condition"
+	}
+
+	// Create and return the error
+	return executionResult{}, errors.Errorf("RESIGNAL SQLSTATE '%s': %s", sqlState, messageText)
 }
 
 // executeProcedureFetchInto fetches the next row from a cursor into variables.
@@ -2462,8 +2930,7 @@ func evaluateFuncCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[string]t
 				return result, true, err
 			}
 		}
-		multiplier := math.Pow(10, float64(decimals))
-		rounded := math.Round(floatVal*multiplier) / multiplier
+		rounded := types.Round(floatVal, int(decimals))
 		if decimals <= 0 {
 			result.SetInt64(int64(rounded))
 		} else {
@@ -2485,8 +2952,7 @@ func evaluateFuncCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[string]t
 		if err != nil {
 			return result, true, err
 		}
-		multiplier := math.Pow(10, float64(decimals))
-		truncated := math.Trunc(floatVal*multiplier) / multiplier
+		truncated := types.Truncate(floatVal, int(decimals))
 		if decimals <= 0 {
 			result.SetInt64(int64(truncated))
 		} else {
@@ -3372,11 +3838,70 @@ func evaluateFuncCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[string]t
 		length := jsonLengthSimple(jsonStr)
 		result.SetInt64(int64(length))
 
+	case "ROW_COUNT":
+		// ROW_COUNT() returns the number of rows affected by the previous statement
+		if ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+			sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx)
+			if err != nil {
+				return result, true, err
+			}
+			result.SetInt64(sessVars.StmtCtx.PrevAffectedRows)
+		} else {
+			// Without session context, return -1 (MySQL behavior for unknown)
+			result.SetInt64(-1)
+		}
+
+	case "LAST_INSERT_ID":
+		// LAST_INSERT_ID() returns the last auto-generated ID
+		if ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+			sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx)
+			if err != nil {
+				return result, true, err
+			}
+			result.SetInt64(int64(sessVars.StmtCtx.PrevLastInsertID))
+		} else {
+			result.SetInt64(0)
+		}
+
 	default:
-		return result, true, errors.Errorf("unsupported function in SQL UDF: %s", funcName)
+		// Try to look up as a user-defined function (nested UDF call)
+		return evaluateNestedUDFCall(ctx, call, vars, funcName, args)
 	}
 
 	return result, result.IsNull(), nil
+}
+
+// evaluateNestedUDFCall handles calls to user-defined functions from within another UDF.
+// This enables nested UDF calls like: CREATE FUNCTION foo() ... RETURN bar(x);
+func evaluateNestedUDFCall(ctx EvalContext, call *ast.FuncCallExpr, vars map[string]types.Datum, funcName string, args []types.Datum) (types.Datum, bool, error) {
+	var result types.Datum
+
+	// Get the current schema from context
+	schemaName := ""
+	if call.Schema.L != "" {
+		schemaName = call.Schema.L
+	} else {
+		schemaName = ctx.CurrentDB()
+	}
+
+	// Look up the UDF definition in the cache
+	def := udf.GlobalCache.GetByName(schemaName, strings.ToLower(funcName))
+	if def == nil {
+		// Not a UDF, return error for unsupported function
+		return result, true, errors.Errorf("unsupported function in SQL UDF: %s", funcName)
+	}
+
+	// Verify argument count
+	if len(args) != len(def.ParamNames) {
+		return result, true, errors.Errorf("function %s expects %d arguments, got %d", funcName, len(def.ParamNames), len(args))
+	}
+
+	// Create a temporary udfFuncSig to execute the nested function
+	sig := &udfFuncSig{def: def}
+
+	// Execute the SQL function directly with the evaluated arguments
+	// We pass chunk.Row{} as a placeholder since executeSQLFunction uses args directly
+	return sig.executeSQLFunction(ctx, chunk.Row{}, args)
 }
 
 // LookupUDF looks up a UDF by name and schema from the mysql.tidb_udf table.
@@ -3778,3 +4303,203 @@ var _ builtinFunc = (*udfFuncSig)(nil)
 
 // Ensure udfFuncClass implements functionClass
 var _ functionClass = (*udfFuncClass)(nil)
+
+// procedureCache stores loaded procedure definitions.
+var procedureCache sync.Map
+
+// parsedProcedureBodies caches parsed procedure bodies.
+var parsedProcedureBodies sync.Map
+
+// ProcedureCacheEntry holds a cached procedure definition.
+type ProcedureCacheEntry struct {
+	Def *udf.ProcedureDefinition
+}
+
+// RegisterProcedure registers a procedure definition in the cache.
+func RegisterProcedure(def *udf.ProcedureDefinition) {
+	cacheKey := strings.ToLower(def.SchemaName + "." + def.Name)
+	// Clear any existing parsed body cache for this procedure
+	parsedProcedureBodies.Delete(cacheKey)
+	procedureCache.Store(cacheKey, &ProcedureCacheEntry{Def: def})
+}
+
+// GetProcedure retrieves a procedure definition from the cache.
+func GetProcedure(schemaName, procName string) *udf.ProcedureDefinition {
+	cacheKey := strings.ToLower(schemaName + "." + procName)
+	if entry, ok := procedureCache.Load(cacheKey); ok {
+		return entry.(*ProcedureCacheEntry).Def
+	}
+	return nil
+}
+
+// ClearProcedureCacheEntry removes a procedure from the cache.
+func ClearProcedureCacheEntry(schemaName, procName string) {
+	cacheKey := strings.ToLower(schemaName + "." + procName)
+	procedureCache.Delete(cacheKey)
+	// Also clear parsed body cache using schema.name key
+	parsedProcedureBodies.Delete(cacheKey)
+}
+
+// ExecuteProcedure executes a stored procedure and handles OUT/INOUT parameters.
+// Returns a map of output parameter values.
+//
+// SQL SECURITY behavior:
+// - INVOKER (default): Executes with the privileges of the calling user
+// - DEFINER: Should execute with the privileges of the procedure definer
+//
+// Note: Full DEFINER security enforcement is not yet implemented.
+// Currently all procedures execute with INVOKER semantics for safety.
+// The Definer and SQLSecurity fields are stored for future implementation.
+func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []types.Datum) (map[string]types.Datum, error) {
+	// Record metrics
+	startTime := time.Now()
+	schema := def.SchemaName
+	name := def.Name
+
+	if def.SourceCode == "" {
+		recordProcedureError(name, schema, "no_source")
+		return nil, errors.New("procedure has no source code")
+	}
+
+	// Try to get cached AST - use schema.name as cache key since ID might be 0 for in-memory procedures
+	var stmtNode ast.StmtNode
+	cacheKey := strings.ToLower(schema + "." + name)
+	if cached, ok := parsedProcedureBodies.Load(cacheKey); ok {
+		stmtNode = cached.(ast.StmtNode)
+	}
+
+	if stmtNode == nil {
+		// Parse the procedure body
+		p := utilparser.GetParser()
+		var err error
+		stmtNode, err = parseProcedureBody(p, def.SourceCode)
+		utilparser.DestroyParser(p)
+		if err != nil {
+			recordProcedureError(name, schema, "parse_error")
+			return nil, errors.Errorf("failed to parse procedure body: %v", err)
+		}
+		parsedProcedureBodies.Store(cacheKey, stmtNode)
+	}
+
+	// Create parameter map with pre-allocated capacity
+	paramMap := make(map[string]types.Datum, len(def.Params))
+	argIndex := 0
+	for _, param := range def.Params {
+		lowerName := strings.ToLower(param.Name)
+		switch param.Mode {
+		case udf.ParamModeIn:
+			// IN params take values from args
+			if argIndex < len(args) {
+				paramMap[lowerName] = args[argIndex]
+				argIndex++
+			}
+		case udf.ParamModeOut:
+			// OUT params start as NULL but must be in paramMap for propagation
+			paramMap[lowerName] = types.Datum{}
+		case udf.ParamModeInOut:
+			// INOUT params take values from args
+			if argIndex < len(args) {
+				paramMap[lowerName] = args[argIndex]
+				argIndex++
+			}
+		}
+	}
+
+	// Execute the procedure body (procedures don't require RETURN)
+	var err error
+	if block, ok := stmtNode.(*ast.ProcedureBlock); ok {
+		err = executeProcedureBlockNoReturn(ctx, block, paramMap)
+	} else {
+		// Fallback for non-block statements (shouldn't happen for procedures)
+		_, _, err = executeSQLFunctionBody(ctx, stmtNode, paramMap)
+	}
+
+	// Record execution duration and result
+	duration := time.Since(startTime).Seconds()
+	recordProcedureExecution(name, schema, duration, err)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect OUT/INOUT parameter values
+	outParams := make(map[string]types.Datum)
+	for _, param := range def.Params {
+		if param.Mode == udf.ParamModeOut || param.Mode == udf.ParamModeInOut {
+			if val, ok := paramMap[strings.ToLower(param.Name)]; ok {
+				outParams[param.Name] = val
+			}
+		}
+	}
+
+	return outParams, nil
+}
+
+// SlowProcedureThreshold is the threshold in seconds for logging slow procedure executions.
+// Procedures taking longer than this threshold will be logged.
+// Default is 1 second. Set to 0 to disable slow procedure logging.
+var SlowProcedureThreshold float64 = 1.0
+
+// recordProcedureExecution records stored procedure execution metrics and logs slow procedures.
+func recordProcedureExecution(name, schema string, duration float64, err error) {
+	if metrics.ProcedureExecutionDuration != nil {
+		metrics.ProcedureExecutionDuration.WithLabelValues(name, schema).Observe(duration)
+	}
+	if metrics.ProcedureExecutionCounter != nil {
+		result := "ok"
+		if err != nil {
+			result = "err"
+		}
+		metrics.ProcedureExecutionCounter.WithLabelValues(name, schema, result).Inc()
+	}
+
+	// Log slow procedure executions
+	if SlowProcedureThreshold > 0 && duration >= SlowProcedureThreshold {
+		logSlowProcedure(name, schema, duration, err)
+	}
+}
+
+// logSlowProcedure logs a slow procedure execution using TiDB's logging infrastructure.
+func logSlowProcedure(name, schema string, duration float64, err error) {
+	fields := []zap.Field{
+		zap.String("schema", schema),
+		zap.String("name", name),
+		zap.Float64("duration_seconds", duration),
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	logutil.BgLogger().Warn("[SLOW_PROCEDURE]", fields...)
+}
+
+// recordProcedureError records a procedure error by type.
+func recordProcedureError(name, schema, errorType string) {
+	if metrics.ProcedureErrorCounter != nil {
+		metrics.ProcedureErrorCounter.WithLabelValues(name, schema, errorType).Inc()
+	}
+}
+
+// parseProcedureBody parses a procedure body (BEGIN...END block).
+func parseProcedureBody(p *parser.Parser, sourceCode string) (ast.StmtNode, error) {
+	// Transform MySQL's "SELECT ... INTO var FROM ..." syntax
+	transformedSource := transformSelectIntoSyntax(sourceCode)
+
+	// Wrap in CREATE PROCEDURE to parse
+	wrapperSQL := "CREATE PROCEDURE _temp() " + transformedSource
+
+	stmts, _, err := p.Parse(wrapperSQL, "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	if len(stmts) == 0 {
+		return nil, errors.New("no statements parsed")
+	}
+
+	procStmt, ok := stmts[0].(*ast.ProcedureInfo)
+	if !ok {
+		return nil, errors.New("expected ProcedureInfo")
+	}
+
+	return procStmt.ProcedureBody, nil
+}

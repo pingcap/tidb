@@ -40,6 +40,7 @@ import (
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/udf"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -212,6 +213,16 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterRange(x)
 	case *ast.DropQueryWatchStmt:
 		err = e.executeDropQueryWatch(x)
+	case *ast.CallStmt:
+		err = e.executeCall(ctx, x)
+	case *ast.CreateFunctionStmt:
+		err = e.executeCreateFunction(ctx, x)
+	case *ast.DropFunctionStmt:
+		err = e.executeDropFunction(ctx, x)
+	case *ast.ProcedureInfo:
+		err = e.executeCreateProcedure(ctx, x)
+	case *ast.DropProcedureStmt:
+		err = e.executeDropProcedure(ctx, x)
 	}
 	e.done = true
 	return err
@@ -3737,4 +3748,417 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 	}
 
 	return infosync.PutRuleBundlesWithDefaultRetry(context.Background(), []*placement.Bundle{bundle})
+}
+
+// executeCall executes a CALL statement for stored procedures.
+func (e *SimpleExec) executeCall(ctx context.Context, stmt *ast.CallStmt) error {
+	if stmt.Procedure == nil {
+		return errors.New("CALL statement has no procedure specified")
+	}
+
+	// Get procedure name and schema
+	procName := stmt.Procedure.FnName.L
+	schemaName := stmt.Procedure.Schema.L
+	if schemaName == "" {
+		schemaName = e.Ctx().GetSessionVars().CurrentDB
+	}
+
+	if schemaName == "" {
+		return errors.New("no database selected for CALL statement")
+	}
+
+	// Look up the procedure definition
+	procDef := expression.GetProcedure(schemaName, procName)
+	if procDef == nil {
+		return errors.Errorf("PROCEDURE %s.%s does not exist", schemaName, procName)
+	}
+
+	// Build map of OUT parameter positions to @var names
+	// This allows us to write back OUT values after execution
+	outVarNames := make(map[string]string) // param name -> @var name
+	for i, arg := range stmt.Procedure.Args {
+		if i < len(procDef.Params) {
+			param := procDef.Params[i]
+			if param.Mode == udf.ParamModeOut || param.Mode == udf.ParamModeInOut {
+				// Check if arg is a user variable reference (@var)
+				if varExpr, ok := arg.(*ast.VariableExpr); ok && !varExpr.IsSystem {
+					outVarNames[param.Name] = varExpr.Name
+				}
+			}
+		}
+	}
+
+	// Evaluate arguments
+	args := make([]types.Datum, len(stmt.Procedure.Args))
+	for i, arg := range stmt.Procedure.Args {
+		val, err := expression.EvalSimpleAst(e.Ctx().GetExprCtx(), arg)
+		if err != nil {
+			return errors.Annotatef(err, "failed to evaluate argument %d", i)
+		}
+		args[i] = val
+	}
+
+	// Check parameter count
+	expectedParams := len(procDef.Params)
+	inParamCount := 0
+	for _, p := range procDef.Params {
+		if p.Mode == udf.ParamModeIn || p.Mode == udf.ParamModeInOut {
+			inParamCount++
+		}
+	}
+	if len(args) != inParamCount && len(args) != expectedParams {
+		return errors.Errorf("incorrect parameter count for CALL %s.%s (expected %d, got %d)",
+			schemaName, procName, inParamCount, len(args))
+	}
+
+	// Execute the procedure
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	outParams, err := expression.ExecuteProcedure(evalCtx, procDef, args)
+	if err != nil {
+		return errors.Annotatef(err, "failed to execute CALL %s.%s", schemaName, procName)
+	}
+
+	// Write OUT/INOUT parameter values back to user variables
+	sessionVars := e.Ctx().GetSessionVars()
+	for paramName, val := range outParams {
+		if varName, ok := outVarNames[paramName]; ok {
+			varName = strings.ToLower(varName)
+			if val.IsNull() {
+				sessionVars.UnsetUserVar(varName)
+				continue
+			}
+
+			// Find the parameter definition to get its declared type
+			var paramType byte
+			for _, p := range procDef.Params {
+				if strings.EqualFold(p.Name, paramName) {
+					paramType = p.Type
+					break
+				}
+			}
+
+			// Convert the value to the declared parameter type
+			// This is necessary because arithmetic operations may return KindFloat64
+			// but GetInt64() on a KindFloat64 datum returns the raw IEEE 754 bits
+			convertedVal := val
+			ft := types.NewFieldType(paramType)
+			switch paramType {
+			case mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
+				// Convert to int64
+				if val.Kind() != types.KindInt64 && val.Kind() != types.KindUint64 {
+					intVal, err := val.ToInt64(e.Ctx().GetSessionVars().StmtCtx.TypeCtx())
+					if err == nil {
+						convertedVal.SetInt64(intVal)
+					}
+				}
+			case mysql.TypeDouble, mysql.TypeFloat:
+				// Ensure it's stored as float64
+				if val.Kind() != types.KindFloat64 && val.Kind() != types.KindFloat32 {
+					floatVal, err := val.ToFloat64(e.Ctx().GetSessionVars().StmtCtx.TypeCtx())
+					if err == nil {
+						convertedVal.SetFloat64(floatVal)
+					}
+				}
+			case mysql.TypeNewDecimal:
+				// Convert to decimal
+				if val.Kind() != types.KindMysqlDecimal {
+					decVal, err := val.ToDecimal(e.Ctx().GetSessionVars().StmtCtx.TypeCtx())
+					if err == nil {
+						convertedVal.SetMysqlDecimal(decVal)
+					}
+				}
+			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+				// Convert to string
+				if val.Kind() != types.KindString && val.Kind() != types.KindBytes {
+					strVal, err := val.ToString()
+					if err == nil {
+						convertedVal.SetString(strVal, mysql.DefaultCollationName)
+					}
+				}
+			}
+
+			// Set both the value and type for proper SELECT evaluation
+			sessionVars.SetUserVarVal(varName, convertedVal)
+			sessionVars.SetUserVarType(varName, ft)
+		}
+	}
+
+	return nil
+}
+
+// executeCreateFunction handles CREATE FUNCTION statements for SQL UDFs.
+func (e *SimpleExec) executeCreateFunction(ctx context.Context, stmt *ast.CreateFunctionStmt) error {
+	if stmt.FuncName == nil {
+		return errors.New("CREATE FUNCTION has no function name specified")
+	}
+
+	funcName := stmt.FuncName.Name.L
+	schemaName := stmt.FuncName.Schema.L
+	if schemaName == "" {
+		schemaName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if schemaName == "" {
+		return errors.New("no database selected for CREATE FUNCTION")
+	}
+
+	// Get definer
+	definer := ""
+	if stmt.Definer != nil {
+		definer = fmt.Sprintf("%s@%s", stmt.Definer.Username, stmt.Definer.Hostname)
+	} else {
+		currentUser := e.Ctx().GetSessionVars().User
+		if currentUser != nil {
+			definer = fmt.Sprintf("%s@%s", currentUser.Username, currentUser.Hostname)
+		} else {
+			definer = "root@%"
+		}
+	}
+
+	// Build param names and types
+	paramNames := make([]string, len(stmt.Parameters))
+	paramTypes := make([]int, len(stmt.Parameters))
+	for i, param := range stmt.Parameters {
+		paramNames[i] = param.Name
+		paramTypes[i] = int(param.Type.GetType())
+	}
+
+	paramNamesJSON, err := json.Marshal(paramNames)
+	if err != nil {
+		return errors.Wrap(err, "failed to serialize param_names")
+	}
+	paramTypesJSON, err := json.Marshal(paramTypes)
+	if err != nil {
+		return errors.Wrap(err, "failed to serialize param_types")
+	}
+
+	// Serialize the SQL body
+	var sourceCode string
+	if stmt.SQLBody != nil {
+		var sb strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		if err := stmt.SQLBody.Restore(restoreCtx); err != nil {
+			return errors.Wrap(err, "failed to serialize function body")
+		}
+		sourceCode = sb.String()
+	}
+
+	returnType := int(stmt.ReturnType.GetType())
+	isDeterministic := 0
+	if stmt.IsDeterministic {
+		isDeterministic = 1
+	}
+	dataAccess := stmt.DataAccess
+	if dataAccess == "" {
+		dataAccess = "CONTAINS SQL"
+	}
+	sqlSecurity := stmt.SQLSecurity
+	if sqlSecurity == "" {
+		sqlSecurity = "DEFINER"
+	}
+
+	// Check if function already exists
+	restrictedCtx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
+	sqlExecutor := restrictedCtx.GetRestrictedSQLExecutor()
+
+	// Check for existing function
+	rows, _, err := sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"SELECT id FROM mysql.tidb_udf WHERE schema_name = %? AND name = %?",
+		schemaName, funcName)
+	if err != nil {
+		return errors.Wrap(err, "failed to check existing function")
+	}
+
+	if len(rows) > 0 {
+		if stmt.IfNotExists {
+			return nil
+		}
+		if stmt.OrReplace {
+			// Delete existing function
+			_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+				"DELETE FROM mysql.tidb_udf WHERE schema_name = %? AND name = %?",
+				schemaName, funcName)
+			if err != nil {
+				return errors.Wrap(err, "failed to replace existing function")
+			}
+			// Clear from cache
+			expression.ClearUDFCacheEntry(schemaName, funcName)
+		} else {
+			return errors.Errorf("FUNCTION %s.%s already exists", schemaName, funcName)
+		}
+	}
+
+	// Insert the function
+	_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		`INSERT INTO mysql.tidb_udf (name, schema_name, param_names, param_types, return_type,
+		 language, source_code, is_deterministic, is_aggregate, definer, sql_security,
+		 data_access, func_comment) VALUES (%?, %?, %?, %?, %?, 'sql', %?, %?, 0, %?, %?, %?, %?)`,
+		funcName, schemaName, string(paramNamesJSON), string(paramTypesJSON), returnType,
+		sourceCode, isDeterministic, definer, sqlSecurity, dataAccess, stmt.Comment)
+	if err != nil {
+		return errors.Wrap(err, "failed to create function")
+	}
+
+	return nil
+}
+
+// executeDropFunction handles DROP FUNCTION statements.
+func (e *SimpleExec) executeDropFunction(ctx context.Context, stmt *ast.DropFunctionStmt) error {
+	if stmt.FuncName == nil {
+		return errors.New("DROP FUNCTION has no function name specified")
+	}
+
+	funcName := stmt.FuncName.Name.L
+	schemaName := stmt.FuncName.Schema.L
+	if schemaName == "" {
+		schemaName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if schemaName == "" {
+		return errors.New("no database selected for DROP FUNCTION")
+	}
+
+	restrictedCtx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
+	sqlExecutor := restrictedCtx.GetRestrictedSQLExecutor()
+
+	// Check if function exists
+	rows, _, err := sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"SELECT id FROM mysql.tidb_udf WHERE schema_name = %? AND name = %?",
+		schemaName, funcName)
+	if err != nil {
+		return errors.Wrap(err, "failed to check existing function")
+	}
+
+	if len(rows) == 0 {
+		if stmt.IfExists {
+			return nil
+		}
+		return errors.Errorf("FUNCTION %s.%s does not exist", schemaName, funcName)
+	}
+
+	// Delete the function
+	_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"DELETE FROM mysql.tidb_udf WHERE schema_name = %? AND name = %?",
+		schemaName, funcName)
+	if err != nil {
+		return errors.Wrap(err, "failed to drop function")
+	}
+
+	// Clear from cache
+	expression.ClearUDFCacheEntry(schemaName, funcName)
+
+	return nil
+}
+
+// executeCreateProcedure handles CREATE PROCEDURE statements for SQL stored procedures.
+func (e *SimpleExec) executeCreateProcedure(ctx context.Context, stmt *ast.ProcedureInfo) error {
+	if stmt.ProcedureName == nil {
+		return errors.New("CREATE PROCEDURE has no procedure name specified")
+	}
+
+	procName := stmt.ProcedureName.Name.L
+	schemaName := stmt.ProcedureName.Schema.L
+	if schemaName == "" {
+		schemaName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if schemaName == "" {
+		return errors.New("no database selected for CREATE PROCEDURE")
+	}
+
+	// Check if procedure already exists
+	existingProc := expression.GetProcedure(schemaName, procName)
+	if existingProc != nil {
+		if stmt.IfNotExists {
+			return nil
+		}
+		if !stmt.OrReplace {
+			return errors.Errorf("PROCEDURE %s.%s already exists", schemaName, procName)
+		}
+	}
+
+	// Build parameters list
+	params := make([]udf.ProcedureParam, len(stmt.ProcedureParam))
+	for i, p := range stmt.ProcedureParam {
+		mode := udf.ParamModeIn
+		switch p.Paramstatus {
+		case ast.MODE_IN:
+			mode = udf.ParamModeIn
+		case ast.MODE_OUT:
+			mode = udf.ParamModeOut
+		case ast.MODE_INOUT:
+			mode = udf.ParamModeInOut
+		}
+		params[i] = udf.ProcedureParam{
+			Name: p.ParamName,
+			Mode: mode,
+			Type: byte(p.ParamType.GetType()),
+		}
+	}
+
+	// Serialize the SQL body
+	var sourceCode string
+	if stmt.ProcedureBody != nil {
+		var sb strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		if err := stmt.ProcedureBody.Restore(restoreCtx); err != nil {
+			return errors.Wrap(err, "failed to serialize procedure body")
+		}
+		sourceCode = sb.String()
+	}
+
+	// Create procedure definition
+	procDef := &udf.ProcedureDefinition{
+		ID:              0, // Will be assigned when persisted
+		Name:            procName,
+		SchemaName:      schemaName,
+		Params:          params,
+		SourceCode:      sourceCode,
+		IsDeterministic: stmt.IsDeterministic,
+		DataAccess:      stmt.DataAccess,
+		SQLSecurity:     stmt.SQLSecurity,
+		Comment:         stmt.Comment,
+	}
+
+	// Register in cache
+	expression.RegisterProcedure(procDef)
+
+	return nil
+}
+
+// executeDropProcedure handles DROP PROCEDURE statements.
+func (e *SimpleExec) executeDropProcedure(ctx context.Context, stmt *ast.DropProcedureStmt) error {
+	if stmt.ProcedureName == nil {
+		return errors.New("DROP PROCEDURE has no procedure name specified")
+	}
+
+	procName := stmt.ProcedureName.Name.L
+	schemaName := stmt.ProcedureName.Schema.L
+	if schemaName == "" {
+		schemaName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if schemaName == "" {
+		return errors.New("no database selected for DROP PROCEDURE")
+	}
+
+	// Check if procedure exists
+	existingProc := expression.GetProcedure(schemaName, procName)
+	if existingProc == nil {
+		if stmt.IfExists {
+			return nil
+		}
+		return errors.Errorf("PROCEDURE %s.%s does not exist", schemaName, procName)
+	}
+
+	// Clear from cache
+	expression.ClearProcedureCacheEntry(schemaName, procName)
+
+	return nil
 }

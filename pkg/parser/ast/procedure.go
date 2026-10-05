@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -38,6 +39,8 @@ var (
 	_ StmtNode = &ProcedureJump{}
 	_ StmtNode = &ReturnStmt{}
 	_ StmtNode = &ProcedureLoopStmt{}
+	_ StmtNode = &SignalStmt{}
+	_ StmtNode = &ResignalStmt{}
 
 	_ DeclNode = &ProcedureErrorControl{}
 	_ DeclNode = &ProcedureCursor{}
@@ -233,18 +236,42 @@ func (n *ProcedureBlock) Accept(v Visitor) (Node, bool) {
 }
 
 // ProcedureInfo stores all procedure information.
+// This represents CREATE PROCEDURE statement with full MySQL 8.0 compatibility.
 type ProcedureInfo struct {
 	stmtNode
+	OrReplace         bool
 	IfNotExists       bool
+	Definer           *auth.UserIdentity // MySQL DEFINER = 'user'@'host' clause
 	ProcedureName     *TableName
 	ProcedureParam    []*StoreParameter //procedure param
 	ProcedureBody     StmtNode          //procedure body statement
 	ProcedureParamStr string            //procedure parameter string
+
+	// MySQL procedure characteristics
+	IsDeterministic bool
+	Comment         string
+	DataAccess      string // "CONTAINS SQL", "NO SQL", "READS SQL DATA", "MODIFIES SQL DATA"
+	SQLSecurity     string // "DEFINER" or "INVOKER"
 }
 
 // Restore implements Node interface.
 func (n *ProcedureInfo) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE PROCEDURE ")
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	// DEFINER clause comes before PROCEDURE keyword (MySQL syntax)
+	if n.Definer != nil {
+		ctx.WriteKeyWord("DEFINER")
+		ctx.WritePlain("=")
+		ctx.WriteName(n.Definer.Username)
+		if n.Definer.Hostname != "" {
+			ctx.WritePlain("@")
+			ctx.WriteName(n.Definer.Hostname)
+		}
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("PROCEDURE ")
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
@@ -262,7 +289,26 @@ func (n *ProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 			return err
 		}
 	}
-	ctx.WritePlain(") ")
+	ctx.WritePlain(")")
+
+	// Restore characteristics
+	if n.IsDeterministic {
+		ctx.WriteKeyWord(" DETERMINISTIC")
+	}
+	if n.Comment != "" {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WriteString(n.Comment)
+	}
+	if n.DataAccess != "" {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord(n.DataAccess)
+	}
+	if n.SQLSecurity != "" {
+		ctx.WriteKeyWord(" SQL SECURITY ")
+		ctx.WriteKeyWord(n.SQLSecurity)
+	}
+
+	ctx.WritePlain(" ")
 	err = (n.ProcedureBody).Restore(ctx)
 	if err != nil {
 		return err
@@ -826,17 +872,6 @@ func (n *ProcedureLoopStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// AcceptInPlace implements Node AcceptInPlace interface.
-func (n *ProcedureLoopStmt) AcceptInPlace(v InPlaceVisitor) bool {
-	if v.Enter(n) {
-		return v.Leave(n)
-	}
-	for _, stmt := range n.Body {
-		stmt.AcceptInPlace(v)
-	}
-	return v.Leave(n)
-}
-
 // ProcedureCursor stores procedure cursor statement.
 type ProcedureCursor struct {
 	ProcedureDeclInfo
@@ -1216,7 +1251,7 @@ func (n *ProcedureJump) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ITERATE ")
 	}
 
-	ctx.WriteString(n.Name)
+	ctx.WriteName(n.Name)
 	return nil
 }
 
@@ -1266,13 +1301,133 @@ func (n *ReturnStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// AcceptInPlace implements Node AcceptInPlace interface.
-func (n *ReturnStmt) AcceptInPlace(v InPlaceVisitor) bool {
-	if v.Enter(n) {
-		return v.Leave(n)
+// SignalInfo represents information items that can be set by SIGNAL/RESIGNAL.
+type SignalInfo struct {
+	// MySQL allows setting these condition information items:
+	// CLASS_ORIGIN, SUBCLASS_ORIGIN, MESSAGE_TEXT, MYSQL_ERRNO,
+	// CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME,
+	// CATALOG_NAME, SCHEMA_NAME, TABLE_NAME, COLUMN_NAME, CURSOR_NAME
+	ItemName string
+	Value    ExprNode
+}
+
+// SignalStmt represents a SIGNAL statement.
+// SIGNAL condition_value [SET signal_information_item [, ...]]
+type SignalStmt struct {
+	stmtNode
+
+	// ConditionValue is either an SQLSTATE value or a condition name
+	// For SQLSTATE: SQLState will be set (5-character string)
+	// For named condition: ConditionName will be set
+	SQLState      string
+	ConditionName string
+
+	// InfoItems are SET clause items (MESSAGE_TEXT, MYSQL_ERRNO, etc.)
+	InfoItems []SignalInfo
+}
+
+// Restore implements SignalStmt Restore interface.
+func (n *SignalStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SIGNAL ")
+	if n.SQLState != "" {
+		ctx.WriteKeyWord("SQLSTATE ")
+		ctx.WriteString(n.SQLState)
+	} else if n.ConditionName != "" {
+		ctx.WriteName(n.ConditionName)
 	}
-	if n.ReturnValue != nil {
-		n.ReturnValue.AcceptInPlace(v)
+
+	if len(n.InfoItems) > 0 {
+		ctx.WriteKeyWord(" SET ")
+		for i, item := range n.InfoItems {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(item.ItemName)
+			ctx.WritePlain(" = ")
+			if err := item.Value.Restore(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements SignalStmt Accept interface.
+func (n *SignalStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SignalStmt)
+	for i, item := range n.InfoItems {
+		if item.Value != nil {
+			node, ok := item.Value.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.InfoItems[i].Value = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// ResignalStmt represents a RESIGNAL statement.
+// RESIGNAL [condition_value] [SET signal_information_item [, ...]]
+type ResignalStmt struct {
+	stmtNode
+
+	// Optional condition value (can be empty for simple RESIGNAL)
+	SQLState      string
+	ConditionName string
+
+	// Optional SET clause items
+	InfoItems []SignalInfo
+}
+
+// Restore implements ResignalStmt Restore interface.
+func (n *ResignalStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESIGNAL")
+
+	if n.SQLState != "" {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("SQLSTATE ")
+		ctx.WriteString(n.SQLState)
+	} else if n.ConditionName != "" {
+		ctx.WritePlain(" ")
+		ctx.WriteName(n.ConditionName)
+	}
+
+	if len(n.InfoItems) > 0 {
+		ctx.WriteKeyWord(" SET ")
+		for i, item := range n.InfoItems {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(item.ItemName)
+			ctx.WritePlain(" = ")
+			if err := item.Value.Restore(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Accept implements ResignalStmt Accept interface.
+func (n *ResignalStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ResignalStmt)
+	for i, item := range n.InfoItems {
+		if item.Value != nil {
+			node, ok := item.Value.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.InfoItems[i].Value = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
