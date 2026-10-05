@@ -109,6 +109,104 @@ impl<L> RegionCache<L> {
         Ok(candidates)
     }
 
+    /// Capture only the selected generations; unrelated stale replicas do not
+    /// invalidate a healthy selected route.
+    pub(crate) fn native_route(
+        &self,
+        region: RegionVerId,
+        target: u64,
+        proxy: Option<u64>,
+        forwarding: bool,
+    ) -> Result<LeaderRequest, RegionRouteError> {
+        let location = self
+            .regions
+            .iter()
+            .find(|r| r.region == region)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let capture = |id| {
+            let peer = location
+                .peers
+                .iter()
+                .find(|p| p.id == id)
+                .ok_or(RegionRouteError::MissingLeader)?;
+            let store = self
+                .stores
+                .get(&peer.store_id)
+                .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+            if peer.store_epoch != store.epoch {
+                return Err(RegionRouteError::StaleStoreEpoch {
+                    store_id: store.id,
+                    expected: peer.store_epoch,
+                    actual: store.epoch,
+                });
+            }
+            Ok(RegionAttempt {
+                region,
+                peer_id: peer.id,
+                store_id: store.id,
+                store_epoch: store.epoch,
+                address: store.address.clone(),
+            })
+        };
+        let peer = location
+            .peers
+            .iter()
+            .find(|p| p.id == target)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        Ok(LeaderRequest {
+            attempt: capture(target)?,
+            proxy: proxy.map(capture).transpose()?,
+            role: peer.role,
+            is_witness: peer.is_witness,
+            cached_leader: location.leader_peer_id == Some(target),
+            forwarding,
+            replica_read: false,
+            stale_read: false,
+            read_mode: ReplicaReadMode::Leader,
+        })
+    }
+
+    /// Go ReplicaSelectLeaderWithProxyStrategy consumes canonical candidates
+    /// and the native request's attempts; it owns no second retry history.
+    pub(crate) fn native_proxy(
+        &mut self,
+        region: RegionVerId,
+        leader: u64,
+        state: &tikv_client::tikv::ReplicaSelectorState,
+    ) -> Result<Option<u64>, RegionRouteError> {
+        let target = self.native_route(region, leader, None, true)?;
+        if self.stores[&target.attempt.store_id].liveness == StoreLiveness::Reachable
+            || state.has_no_leader(leader)
+        {
+            self.preferred_proxies.remove(&region);
+            return Ok(None);
+        }
+        let candidates = self.native_replica_candidates(region, &[], &[], state)?;
+        let eligible = |id| {
+            candidates.iter().any(|c| {
+                c.peer_id == id
+                    && id != leader
+                    && c.liveness == tikv_client::tikv::ReplicaLiveness::Reachable
+                    && c.attempts == 0
+            })
+        };
+        let proxy = self
+            .preferred_proxy(region)
+            .map(|p| p.peer_id)
+            .filter(|id| eligible(*id))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .find(|c| eligible(c.peer_id))
+                    .map(|c| c.peer_id)
+            });
+        if proxy.is_none() {
+            let _ = self.on_send_failure(&target.attempt, StoreLiveness::Unreachable);
+            self.mark_reload_on_access(region);
+        }
+        Ok(proxy)
+    }
+
     /// Native retry feedback updates the same store observed by coprocessor reads.
     pub(crate) fn record_native_server_load(&mut self, store_id: u64, estimated_wait_ms: u32) {
         if let Some(store) = self.stores.get_mut(&store_id) {
@@ -373,7 +471,7 @@ impl<L> RegionCache<L> {
             && request.forwarding
             && request.cached_leader
             && request.read_mode == ReplicaReadMode::Leader
-            && liveness != StoreLiveness::Reachable
+            && liveness == StoreLiveness::Unreachable
             && self.has_forwarding_proxy(request.target())?
         {
             let store = self

@@ -71,6 +71,12 @@ impl TimestampSource for FixedTimestampSource {
 
 /// Typed commands required from the sole shared TiKV client.
 pub trait LockRecoveryClient {
+    /// Foreground health observation through the same client/channel owner.
+    /// An unavailable probe is unknown, never proof of a healthy store.
+    fn store_liveness_for_route(&mut self, _address: &str) -> crate::region::StoreLiveness {
+        crate::region::StoreLiveness::Unknown
+    }
+
     /// Clones this client capability for one concurrent resolver worker.
     /// Test clients that are intentionally single-threaded keep the default
     /// `None` and execute through the caller's inline fallback.
@@ -120,6 +126,11 @@ pub trait LockRecoveryClient {
 }
 
 impl LockRecoveryClient for TonicCoprocessorClient {
+    fn store_liveness_for_route(&mut self, address: &str) -> crate::region::StoreLiveness {
+        self.liveness_default(address)
+            .unwrap_or(crate::region::StoreLiveness::Unknown)
+    }
+
     fn fork_for_async_worker(&self) -> Option<Box<dyn LockRecoveryClient + Send>> {
         Some(Box::new(self.clone()))
     }
@@ -162,7 +173,13 @@ impl LockRecoveryClient for TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
         let decoded = self
-            .begin_transaction_pessimistic_rollback(address, None, request, context, call)?
+            .begin_transaction_pessimistic_rollback(
+                address,
+                call.forwarded_host(),
+                request,
+                context,
+                call,
+            )?
             .complete(call)
             .map_err(|error| DirectUnaryClientError::InvalidRequest(error.to_string()))??;
         Ok(decoded.response)

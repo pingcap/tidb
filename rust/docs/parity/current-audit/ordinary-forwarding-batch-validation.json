@@ -1,0 +1,120 @@
+{
+  "base": "03f9e989ac280d6d2fa34f05e8b1b01128013773",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "native_before": "a0a6ec32deb8dfb565494b9b803598cd0e7bcef2",
+  "native_after": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "native_published_and_remote_verified": true,
+  "maintained_sync": true,
+  "finding_ids": [
+    "T02",
+    "N03"
+  ],
+  "status": "passed",
+  "repairs": [
+    "Consume enable-forwarding and the native request NotLeader/attempt history in the injected ordinary client.",
+    "Select and reuse canonical physical proxies while retaining the logical leader peer for point/batch/scan, writes and lock recovery.",
+    "Preserve per-attempt forwarding metadata through timeout/background scopes, raw Get, BatchCommands publication and unary resolver commands.",
+    "Apply generation-checked success/failure to the shared cache; preserve native retry history, refresh invalidated snapshots on later lookup, exclude expired/canceled callers, retain source read mode separately from wire flags.",
+    "Record unary resolver duration exactly once under the actual command, including error returns."
+  ],
+  "source_authority": [
+    "client-go internal/locate/replica_selector.go: ReplicaSelectLeaderWithProxyStrategy.next/isCandidate, onSendFailure/onSendSuccess",
+    "client-go internal/client/client.go: SendRequest/updateRPCMetrics and forwarding metadata",
+    "client-go internal/client/client_batch.go: forwarding-keyed batch streams",
+    "TiDB pkg/config and cmd/tidb-server: EnableForwarding process policy"
+  ],
+  "original_package_inventory": {
+    "path": "/workspace/.cloud-setup/ordinary-forwarding-batch/go-owner-inventory.json",
+    "sha256": "85681956cf79ac0cd022205e12242e7ecd2a6c0e9d498d033e3832371e7094b8",
+    "internal_locate_files": 17,
+    "internal_client_files": 19,
+    "complete_package_accepted": false
+  },
+  "regressions": {
+    "before": [
+      "ordinary_forwarding_routes_point_batch_and_scan_to_proxy: direct follower instead of physical proxy/logical leader",
+      "ordinary_forwarding_success_publishes_shared_proxy: preferred proxy absent",
+      "ordinary_forwarding_reaches_batch_and_unary_with_exact_command_metrics: original metrics body records [1,1,1] instead of [1,0,0]"
+    ],
+    "baseline_scope": "First two run at original production baseline. Metrics original command body restored with only the new forwarding carrier retained, then fixed body restored exactly.",
+    "new_cases": 7,
+    "expanded_checks": [
+      "disabled forwarding retains direct probing",
+      "failed leader then failed proxy preserves logical leader and retires physical proxy",
+      "delayed success cannot revive a replaced generation",
+      "all 12 command kinds preserve forwarded metadata with deadlines in foreground/background",
+      "real loopback gRPC BatchCommands Get, resolver metadata and exact success/error metric counts"
+    ],
+    "retained_failures_during_review": "Two retained snapshot cases exposed expired-call cache mutation and stale next-statement snapshots. Assertions preserved. Fixture health now reports only scripted unavailable stores; reachable stores remain reachable."
+  },
+  "tests": {
+    "native-test": {
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "207775b87464a9c77c9e57ad85913f6fbba166bb82675cd44ed43e8143fb1c7d"
+    },
+    "bridge": {
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "14c077d9b86d8921efe00fa95f5a4ffa655ea135c0d0e95001ba80e16218e7dc"
+    },
+    "snapshot": {
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "b21450c35e678903f640b361140d44b4983666e215379d0c2fa89bd7c1159f3a"
+    },
+    "transport-cache": {
+      "passed": 37,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "ef45aab246e3b5fcfe2e9fd27378879a6f3cb7a6a171397f95089c0d7ddd4bb5"
+    }
+  },
+  "distinct_tests_passed": 105,
+  "commands": [
+    "source /workspace/.cloud-setup/env.sh in each shell",
+    "native: CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p tikv-client --lib replica -- --test-threads=1",
+    "rust/: CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-txnkv --lib --test all --test snapshot_lock_wait_source --no-run --message-format=json",
+    "Run emitted binaries: library client_bridge::; complete snapshot_lock_wait_source; aggregate filters batch_coprocessor_dispatch_source:: request_selector_source:: route_policy_seam_source:: store_failure_state_source::; --test-threads=1",
+    "rust/: CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-txnkv -p tidb-server --all-targets",
+    "root: make lint; git diff --check",
+    "actual precommit: cd rust && cargo build --locked -p tidb-server",
+    "immediately before each push: cd rust && cargo build --locked -p tidb-server"
+  ],
+  "limits": [
+    "No complete Go package or parent finding closed. Counts remain 86 tracked, 30 repaired, 56 unresolved (28 open, 28 partial).",
+    "Other54 unresolved roots were not freshly revalidated.",
+    "Coprocessor RequestSelector and complete cache consolidation, periodic replica-flow reporting and broader health policy remain open. The foreground adapter probe uses the existing one-second default; configurable health timeout and full concurrent health ownership are not accepted.",
+    "No live multi-node TiKV, full Go suites, mixed-node security or benchmark/speedup measurement. Loopback gRPC and deterministic capability fixtures are scoped evidence."
+  ],
+  "publication_evidence": "/workspace/.cloud-setup/ordinary-forwarding-batch/final-handoff.json",
+  "final_gates": {
+    "affected_all_target_check": "passed",
+    "make_lint": "passed",
+    "git_diff_check": "passed",
+    "check_log_sha256": "e2cfcf61ba3eefe8eccf9b69e5afbdfac5635196c2d38173f5953aa4014ff172",
+    "lint_log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "actual_commit_hook_and_fresh_push_build": "results recorded in external final-handoff.json",
+    "combined_all_target_check": "passed",
+    "combined_make_lint": "passed",
+    "combined_check_log_sha256": "ec1a93239a33fbd0154456ddeb22132ffc0247bef8f8a0f7ecfc4f018d733770",
+    "combined_lint_log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+  },
+  "concurrent_changes": {
+    "integrated_before_commit": "c22792ae620868d931e4aa6f10918ca6b05845f8",
+    "commits": [
+      "ab8cb5a5f8",
+      "c22792ae62"
+    ],
+    "files": [
+      "rust/crates/tidb-exec/src/mdl_info_load.rs",
+      "rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs"
+    ],
+    "method": "Fast-forward with nonoverlapping cleanup-free working changes retained; combined affected checking and server publication gates follow.",
+    "combined_validation": "All 74 TiDB cases, affected all-target check and lint pass with both concurrent DDL commits retained."
+  }
+}

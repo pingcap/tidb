@@ -259,37 +259,16 @@ impl TonicCoprocessorClient {
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         let mut request = request.clone();
         request.context = Some(context.clone());
-        let send_metrics_started = std::time::Instant::now();
+        let _metrics = crate::client_go_metrics::RequestDuration::new("CheckTxnStatus", context);
         let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: CHECK_TXN_STATUS_PATH,
                 encoded_request: request.encode_to_vec(),
-                forwarded_host: None,
+                forwarded_host: call.forwarded_host().map(str::to_owned),
             },
             call,
         )?;
-        crate::client_go_metrics::observe_send_request_seconds(
-            "CheckTxnStatus",
-            context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            context.stale_read,
-            &context.request_source,
-            send_metrics_started.elapsed().as_secs_f64(),
-        );
-        crate::client_go_metrics::observe_send_request_seconds(
-            "CheckSecondaryLocks",
-            context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            context.stale_read,
-            &context.request_source,
-            send_metrics_started.elapsed().as_secs_f64(),
-        );
-        crate::client_go_metrics::observe_send_request_seconds(
-            "ResolveLock",
-            context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            context.stale_read,
-            &context.request_source,
-            send_metrics_started.elapsed().as_secs_f64(),
-        );
         KvrpcCheckTxnStatusResponse::decode(response.encoded_response.as_ref()).map_err(|error| {
             DirectUnaryClientError::InvalidRequest(format!(
                 "invalid CheckTxnStatus response: {error}"
@@ -312,23 +291,17 @@ impl TonicCoprocessorClient {
     ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
         let mut request = request.clone();
         request.context = Some(context.clone());
-        let send_metrics_started = std::time::Instant::now();
+        let _metrics =
+            crate::client_go_metrics::RequestDuration::new("CheckSecondaryLocks", context);
         let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: CHECK_SECONDARY_LOCKS_PATH,
                 encoded_request: request.encode_to_vec(),
-                forwarded_host: None,
+                forwarded_host: call.forwarded_host().map(str::to_owned),
             },
             call,
         )?;
-        crate::client_go_metrics::observe_send_request_seconds(
-            "CheckSecondaryLocks",
-            context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            context.stale_read,
-            &context.request_source,
-            send_metrics_started.elapsed().as_secs_f64(),
-        );
         KvrpcCheckSecondaryLocksResponse::decode(response.encoded_response.as_ref()).map_err(
             |error| {
                 DirectUnaryClientError::InvalidRequest(format!(
@@ -348,23 +321,16 @@ impl TonicCoprocessorClient {
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
         let mut request = request.clone();
         request.context = Some(context.clone());
-        let send_metrics_started = std::time::Instant::now();
+        let _metrics = crate::client_go_metrics::RequestDuration::new("ResolveLock", context);
         let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: RESOLVE_LOCK_PATH,
                 encoded_request: request.encode_to_vec(),
-                forwarded_host: None,
+                forwarded_host: call.forwarded_host().map(str::to_owned),
             },
             call,
         )?;
-        crate::client_go_metrics::observe_send_request_seconds(
-            "ResolveLock",
-            context.peer.as_ref().map_or(0, |peer| peer.store_id),
-            context.stale_read,
-            &context.request_source,
-            send_metrics_started.elapsed().as_secs_f64(),
-        );
         KvrpcResolveLockResponse::decode(response.encoded_response.as_ref()).map_err(|error| {
             DirectUnaryClientError::InvalidRequest(format!("invalid ResolveLock response: {error}"))
         })
@@ -465,11 +431,15 @@ impl TonicCoprocessorClient {
                     pending.cancel();
                     return Err(error);
                 }
-        };
+            };
         pending.retain_barrier(barrier);
         pending.observe_send_metrics(
             send_metrics_started,
-            request.context.peer.as_ref().map_or(0, |peer| peer.store_id),
+            request
+                .context
+                .peer
+                .as_ref()
+                .map_or(0, |peer| peer.store_id),
             request.context.stale_read,
             request.context.request_source.clone(),
         );

@@ -61,6 +61,31 @@ struct BatchFixture {
 
 #[tonic::async_trait]
 impl Tikv for BatchFixture {
+    async fn kv_check_txn_status(
+        &self,
+        request: tonic::Request<tidb_proto::KvrpcCheckTxnStatusRequest>,
+    ) -> Result<tonic::Response<tidb_proto::KvrpcCheckTxnStatusResponse>, tonic::Status> {
+        require_forwarding(&request)?;
+        if request.get_ref().lock_ts == 1 {
+            return Err(tonic::Status::unavailable("probe failure"));
+        }
+        Ok(tonic::Response::new(Default::default()))
+    }
+    async fn kv_check_secondary_locks(
+        &self,
+        request: tonic::Request<tidb_proto::KvrpcCheckSecondaryLocksRequest>,
+    ) -> Result<tonic::Response<tidb_proto::KvrpcCheckSecondaryLocksResponse>, tonic::Status> {
+        require_forwarding(&request)?;
+        Ok(tonic::Response::new(Default::default()))
+    }
+    async fn kv_resolve_lock(
+        &self,
+        request: tonic::Request<tidb_proto::KvrpcResolveLockRequest>,
+    ) -> Result<tonic::Response<tidb_proto::KvrpcResolveLockResponse>, tonic::Status> {
+        require_forwarding(&request)?;
+        Ok(tonic::Response::new(Default::default()))
+    }
+
     async fn batch_commands(
         &self,
         request: tonic::Request<tonic::Streaming<BatchCommandsRequest>>,
@@ -94,6 +119,32 @@ impl Tikv for BatchFixture {
         tokio::spawn(async move {
             while let Ok(Some(packet)) = inbound.message().await {
                 for (request_id, request) in packet.request_ids.into_iter().zip(packet.requests) {
+                    if let Some(RequestCmd::Get(body)) = &request.cmd {
+                        if forwarded_host.as_deref() != Some("logical:20160") {
+                            let _ = responses
+                                .send(Err(tonic::Status::invalid_argument(
+                                    "missing forwarding target",
+                                )))
+                                .await;
+                            return;
+                        }
+                        let get = tidb_proto::KvrpcGetRequest::decode(body.as_ref()).unwrap();
+                        assert_eq!(get.context.unwrap().peer.unwrap().store_id, 99991);
+                        let response = tidb_proto::KvrpcGetResponse {
+                            value: b"forwarded".to_vec(),
+                            ..Default::default()
+                        };
+                        let _ = responses
+                            .send(Ok(BatchCommandsResponse {
+                                request_ids: vec![request_id],
+                                responses: vec![batch_commands_response::Response {
+                                    cmd: Some(ResponseCmd::Get(response.encode_to_vec().into())),
+                                }],
+                                ..Default::default()
+                            }))
+                            .await;
+                        continue;
+                    }
                     let Some(RequestCmd::Coprocessor(body)) = request.cmd else {
                         let _ = responses
                             .send(Err(tonic::Status::invalid_argument(
@@ -556,4 +607,77 @@ fn canonical_deadline_bounds_cold_stream_open_before_the_fixed_cap() {
 
     assert!(begin_elapsed < Duration::from_secs(1));
     assert_eq!(completion, Err(CompletionError::DeadlineExceeded));
+}
+
+fn require_forwarding<T>(request: &tonic::Request<T>) -> Result<(), tonic::Status> {
+    if request
+        .metadata()
+        .get(FORWARD_METADATA_KEY)
+        .and_then(|m| m.to_str().ok())
+        != Some("logical:20160")
+    {
+        return Err(tonic::Status::invalid_argument("missing forwarding target"));
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_forwarding_reaches_batch_and_unary_with_exact_command_metrics() {
+    use tidb_txnkv::transaction::{PublishedCommand, TransactionCommandClient};
+    let (server, _, _, _) = fixture(ResponseMode::Echo);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let call =
+        UnaryCallContext::with_timeout(Duration::from_secs(5)).with_forwarded_host("logical:20160");
+    let context = KvrpcContext {
+        peer: Some(tidb_proto::metapb::Peer {
+            store_id: 99991,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let response =
+        client.publish_transaction_get(&server.address, &Default::default(), &context, &call);
+    let PublishedCommand::Response(response) = response else {
+        panic!("forwarded Get failed")
+    };
+    assert_eq!(response.response.value, b"forwarded");
+    assert_eq!(response.publication.forwarded_host(), Some("logical:20160"));
+    let counts = || {
+        let metrics = tikv_client::metrics::global_metrics();
+        let histogram = metrics.histogram_vec("TiKVSendReqHistogram").unwrap();
+        ["CheckTxnStatus", "CheckSecondaryLocks", "ResolveLock"].map(|command| {
+            histogram
+                .with_label_values(&[command, "99991", "false", "false"])
+                .get_sample_count()
+        })
+    };
+    let before = counts();
+    client
+        .check_txn_status(&server.address, &Default::default(), &context, &call)
+        .unwrap();
+    assert_eq!(counts(), [before[0] + 1, before[1], before[2]]);
+    assert!(client
+        .check_txn_status(
+            &server.address,
+            &tidb_proto::KvrpcCheckTxnStatusRequest {
+                lock_ts: 1,
+                ..Default::default()
+            },
+            &context,
+            &call
+        )
+        .is_err());
+    assert_eq!(
+        counts(),
+        [before[0] + 2, before[1], before[2]],
+        "failed RPC is also timed under its own command"
+    );
+    client
+        .check_secondary_locks(&server.address, &Default::default(), &context, &call)
+        .unwrap();
+    client
+        .resolve_lock(&server.address, &Default::default(), &context, &call)
+        .unwrap();
+    assert_eq!(counts(), [before[0] + 2, before[1] + 1, before[2] + 1]);
+    client.close().unwrap();
 }

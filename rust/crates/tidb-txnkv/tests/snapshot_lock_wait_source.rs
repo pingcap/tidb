@@ -149,6 +149,8 @@ impl TimestampSource for TickingTimestamps {
 #[derive(Debug, Default)]
 struct Recorded {
     routed_reads: Vec<(String, u64)>,
+    forwarded_hosts: Vec<Option<String>>,
+    unreachable: std::collections::BTreeSet<String>,
     get_versions: Vec<u64>,
     get_timeouts: Vec<Duration>,
     batch_timeouts: Vec<Duration>,
@@ -196,6 +198,7 @@ impl<T, const N: usize> From<[T; N]> for Replies<T> {
 #[derive(Clone)]
 struct LockingClient {
     reject_async: bool,
+    failed_addresses: Arc<Mutex<std::collections::BTreeSet<String>>>,
     initial_batch_barrier: Option<Arc<(Mutex<usize>, std::sync::Condvar)>>,
     keyed_batch_responses:
         Option<Arc<Mutex<std::collections::BTreeMap<Vec<u8>, KvrpcBatchGetResponse>>>>,
@@ -219,6 +222,7 @@ impl LockingClient {
     fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
         Self {
             reject_async: false,
+            failed_addresses: Default::default(),
             initial_batch_barrier: None,
             keyed_batch_responses: None,
             remaining_locked: Arc::new(std::sync::atomic::AtomicU64::new(LOCKED_RESPONSES)),
@@ -294,6 +298,11 @@ impl TransactionCommandClient for LockingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .forwarded_hosts
+            .push(call.forwarded_host().map(str::to_owned));
         self.recorded.lock().unwrap().routed_reads.push((
             address.to_owned(),
             context.peer.as_ref().map_or(0, |peer| peer.id),
@@ -313,6 +322,21 @@ impl TransactionCommandClient for LockingClient {
             .unwrap()
             .get_contexts
             .push(context.clone());
+        if self.failed_addresses.lock().unwrap().remove(address) {
+            self.recorded
+                .lock()
+                .unwrap()
+                .unreachable
+                .insert(address.to_owned());
+            return PublishedCommand::AfterPublication {
+                publication: TransactionBatchPublication::in_process(
+                    BatchCommandTag::Get,
+                    address,
+                    1,
+                ),
+                error: "unavailable physical store".into(),
+            };
+        }
         if request.key == b"transport-error" {
             return PublishedCommand::BeforePublication("injected transport failure".to_owned());
         }
@@ -364,6 +388,11 @@ impl TransactionCommandClient for LockingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .forwarded_hosts
+            .push(call.forwarded_host().map(str::to_owned));
         self.recorded.lock().unwrap().routed_reads.push((
             address.to_owned(),
             context.peer.as_ref().map_or(0, |peer| peer.id),
@@ -516,8 +545,13 @@ impl TransactionCommandClient for LockingClient {
         address: &str,
         request: &KvrpcScanRequest,
         context: &KvrpcContext,
-        _call: &UnaryCallContext,
+        call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcScanResponse> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .forwarded_hosts
+            .push(call.forwarded_host().map(str::to_owned));
         self.recorded.lock().unwrap().routed_reads.push((
             address.to_owned(),
             context.peer.as_ref().map_or(0, |peer| peer.id),
@@ -595,6 +629,14 @@ impl TransactionCommandClient for LockingClient {
 }
 
 impl LockRecoveryClient for LockingClient {
+    fn store_liveness_for_route(&mut self, address: &str) -> tidb_txnkv::region::StoreLiveness {
+        if self.recorded.lock().unwrap().unreachable.contains(address) {
+            tidb_txnkv::region::StoreLiveness::Unreachable
+        } else {
+            tidb_txnkv::region::StoreLiveness::Reachable
+        }
+    }
+
     fn check_txn_status_for_lock(
         &mut self,
         _address: &str,
@@ -2881,4 +2923,249 @@ fn snapshot_replica_stale_retry_probes_leader_then_uses_replica_read() {
         actual,
         [(622, false, true), (620, false, false), (622, true, false)]
     );
+}
+
+fn forwarding_runtime() -> (
+    SharedReadRuntime<LockingClient, ReplicaRegion>,
+    Arc<Mutex<Recorded>>,
+) {
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded.clone());
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    client
+        .scan_responses
+        .push_back(KvrpcScanResponse::default());
+    let storage = SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion));
+    storage
+        .with_region_cache(|cache| {
+            let location = cache.locate_key(ROW_KEY).unwrap().clone();
+            let request = tidb_txnkv::region::LeaderRequest {
+                attempt: tidb_txnkv::region::RegionAttempt {
+                    region: location.region,
+                    peer_id: 620,
+                    store_id: 6200,
+                    address: ADDRESS.to_owned(),
+                    store_epoch: 1,
+                },
+                proxy: None,
+                role: PeerRole::Voter,
+                is_witness: false,
+                replica_read: false,
+                stale_read: false,
+                cached_leader: true,
+                forwarding: true,
+                read_mode: tidb_txnkv::region::ReplicaReadMode::Leader,
+            };
+            cache
+                .on_route_send_failure(&request, tidb_txnkv::region::StoreLiveness::Unreachable)
+                .unwrap();
+        })
+        .unwrap();
+    (storage, recorded)
+}
+
+#[test]
+fn ordinary_forwarding_routes_point_batch_and_scan_to_proxy() {
+    let _config = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_forwarding = true);
+    let (storage, recorded) = forwarding_runtime();
+    let mut txn = RealOptimisticTransaction::new_injected(
+        storage,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+    txn.snapshot_get(ROW_KEY, &call).unwrap();
+    txn.snapshot_batch_get(&[b"batch".to_vec()], &call).unwrap();
+    txn.snapshot_scan_at(b"a", b"z", Some(1), START_TS, &call)
+        .unwrap();
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.routed_reads.len(), 3);
+    assert_eq!(recorded.forwarded_hosts, vec![Some(ADDRESS.to_owned()); 3]);
+    for (address, peer) in &recorded.routed_reads {
+        assert_eq!(
+            address, "replica-621",
+            "unavailable logical leader uses the physical proxy"
+        );
+        assert_eq!(*peer, 620, "forwarding retains the logical leader peer");
+    }
+}
+
+#[test]
+fn ordinary_forwarding_success_publishes_shared_proxy() {
+    let _config = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_forwarding = true);
+    let (storage, _) = forwarding_runtime();
+    let mut txn = RealOptimisticTransaction::new_injected(
+        storage.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    txn.snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    storage
+        .with_region_cache(|cache| {
+            let region = cache.locate_key(ROW_KEY).unwrap().region;
+            assert_eq!(cache.preferred_proxy(region).map(|p| p.peer_id), Some(621));
+        })
+        .unwrap();
+}
+
+#[test]
+fn ordinary_forwarding_failure_retries_physical_proxy_and_preserves_leader() {
+    let _config = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_forwarding = true);
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded.clone());
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    client
+        .failed_addresses
+        .lock()
+        .unwrap()
+        .extend([ADDRESS.to_owned(), "replica-621".into()]);
+    let storage = SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion));
+    let mut txn = RealOptimisticTransaction::new_injected(
+        storage.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    txn.snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        recorded.routed_reads,
+        vec![
+            (ADDRESS.into(), 620),
+            ("replica-621".into(), 620),
+            ("replica-622".into(), 620)
+        ]
+    );
+    assert_eq!(
+        recorded.forwarded_hosts,
+        vec![None, Some(ADDRESS.into()), Some(ADDRESS.into())]
+    );
+    storage
+        .with_region_cache(|cache| {
+            let region = RegionVerId {
+                id: REGION,
+                epoch: RegionEpoch {
+                    conf_ver: 1,
+                    version: 1,
+                },
+            };
+            assert_eq!(
+                cache.store_state(6200).unwrap().epoch(),
+                1,
+                "keep unavailable leader generation for forwarding"
+            );
+            assert_eq!(
+                cache.store_state(6210).unwrap().epoch(),
+                2,
+                "invalidate failed physical proxy"
+            );
+            assert_eq!(cache.preferred_proxy(region).unwrap().peer_id, 622);
+        })
+        .unwrap();
+}
+
+#[test]
+fn ordinary_forwarding_delayed_success_cannot_publish_a_replaced_proxy() {
+    use tikv_client::{Key, PdClient};
+    let _config = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_forwarding = true);
+    let (storage, _) = forwarding_runtime();
+    let pd = tidb_txnkv::driver::client_bridge::ClientPd::new(
+        storage.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let region = runtime
+        .block_on(pd.region_for_key(&Key::from(ROW_KEY.to_vec())))
+        .unwrap();
+    let route = runtime.block_on(pd.map_region_to_store(region)).unwrap();
+    let old = storage
+        .with_region_cache(|cache| {
+            let region = cache.locate_key(ROW_KEY).unwrap().region;
+            let snapshot = cache.route_snapshot(region).unwrap();
+            let old = snapshot
+                .peers()
+                .iter()
+                .find(|p| p.attempt().peer_id == 621)
+                .unwrap()
+                .attempt()
+                .clone();
+            cache
+                .on_send_failure(&old, tidb_txnkv::region::StoreLiveness::Unreachable)
+                .unwrap();
+            old
+        })
+        .unwrap();
+    let request = tikv_client::proto::kvrpcpb::GetRequest {
+        key: ROW_KEY.to_vec(),
+        version: START_TS,
+        context: Some(KvrpcContext {
+            region_id: REGION,
+            peer: Some(tidb_proto::metapb::Peer {
+                id: 620,
+                store_id: 6200,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    runtime
+        .block_on(
+            route
+                .client
+                .dispatch_with_forwarded_host(&request, &route.forwarded_host),
+        )
+        .unwrap();
+    storage
+        .with_region_cache(|cache| {
+            assert_eq!(
+                cache.store_state(6210).unwrap().epoch(),
+                old.store_epoch + 1
+            );
+            assert!(
+                cache.preferred_proxy(old.region).is_none(),
+                "late response must not revive the replaced proxy"
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn ordinary_forwarding_disabled_keeps_direct_replica_probe() {
+    let _config = snapshot_test_config();
+    let (storage, recorded) = forwarding_runtime();
+    let mut txn = RealOptimisticTransaction::new_injected(
+        storage,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    txn.snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.forwarded_hosts, vec![None]);
+    assert_ne!(recorded.routed_reads[0].1, 620);
 }

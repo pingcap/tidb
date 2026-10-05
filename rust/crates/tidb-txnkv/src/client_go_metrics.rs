@@ -485,3 +485,32 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
         })
         .collect()
 }
+
+/// Go defers per-command timing until every success/error return path completes.
+pub(crate) struct RequestDuration<'a> {
+    command: &'static str,
+    context: &'a tidb_proto::KvrpcContext,
+    started: std::time::Instant,
+}
+
+impl<'a> RequestDuration<'a> {
+    pub(crate) fn new(command: &'static str, context: &'a tidb_proto::KvrpcContext) -> Self {
+        Self {
+            command,
+            context,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for RequestDuration<'_> {
+    fn drop(&mut self) {
+        observe_send_request_seconds(
+            self.command,
+            self.context.peer.as_ref().map_or(0, |peer| peer.store_id),
+            self.context.stale_read,
+            &self.context.request_source,
+            self.started.elapsed().as_secs_f64(),
+        );
+    }
+}

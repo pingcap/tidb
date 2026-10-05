@@ -18,7 +18,7 @@
 //! retries, lock resolution and heartbeat tasks belong to client-rust.
 
 use crate::lock::{LockRecoveryClient, TimestampSource};
-use crate::region::{RegionLocation, RegionQueryLoader, RegionRecoveryLoader};
+use crate::region::{LeaderRequest, RegionLocation, RegionQueryLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
 use crate::transaction::{PublishedCommand, TransactionCommandClient};
 use crate::SharedReadRuntime;
@@ -129,6 +129,20 @@ trait Backend: Send + Sync {
         stores: &[u64],
         state: &ReplicaSelectorState,
     ) -> Result<Vec<ReplicaCandidate>>;
+    fn route(
+        &self,
+        region: RegionVerId,
+        target: u64,
+        proxy: Option<u64>,
+        forwarding: bool,
+    ) -> Result<LeaderRequest>;
+    fn proxy(
+        &self,
+        region: RegionVerId,
+        leader: u64,
+        state: &ReplicaSelectorState,
+    ) -> Result<Option<u64>>;
+    fn route_feedback(&self, route: &LeaderRequest, success: bool);
     fn record_server_load(&self, id: u64, estimated_wait_ms: u32);
     fn update_leader(&self, id: RegionVerId, leader: metapb::Peer) -> Result<()>;
     fn update_regions(&self, regions: Vec<RegionWithLeader>) -> Result<()>;
@@ -158,7 +172,7 @@ struct StorageBackend<C, L, T> {
 }
 impl<C, L, T> Backend for StorageBackend<C, L, T>
 where
-    C: Send + 'static,
+    C: LockRecoveryClient + Send + 'static,
     L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
     T: TimestampSource + Send + 'static,
 {
@@ -210,6 +224,77 @@ where
             })
             .map_err(failure)?
             .map_err(failure)
+    }
+    fn route(
+        &self,
+        region: RegionVerId,
+        target: u64,
+        proxy: Option<u64>,
+        forwarding: bool,
+    ) -> Result<LeaderRequest> {
+        self.storage
+            .with_region_cache(|cache| {
+                cache.native_route(region_id(region), target, proxy, forwarding)
+            })
+            .map_err(failure)?
+            .map_err(failure)
+    }
+    fn proxy(
+        &self,
+        region: RegionVerId,
+        leader: u64,
+        state: &ReplicaSelectorState,
+    ) -> Result<Option<u64>> {
+        self.storage
+            .with_region_cache(|cache| cache.native_proxy(region_id(region), leader, state))
+            .map_err(failure)?
+            .map_err(failure)
+    }
+    fn route_feedback(&self, route: &LeaderRequest, success: bool) {
+        if success {
+            if route.cached_leader {
+                let _ = self.storage.with_region_cache(|cache| {
+                    cache.apply_route_feedback(&crate::region::RouteFeedback::from_request(
+                        route,
+                        crate::region::RouteOutcome::Success,
+                    ))
+                });
+            }
+            return;
+        }
+        // Probe outside the cache lock. Publication validates both captured
+        // generations, including when a concurrent refresh completes meanwhile.
+        let worker = self
+            .storage
+            .client()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .fork_for_async_worker();
+        let liveness = if let Some(mut worker) = worker {
+            // The real transport clone shares channels, not the session's
+            // command mutex. Health I/O must not block unrelated publications.
+            worker.store_liveness_for_route(route.dispatch_address())
+        } else {
+            self.storage
+                .client()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .store_liveness_for_route(route.dispatch_address())
+        };
+        let _ = self.storage.with_region_cache(|cache| {
+            let result = cache.on_route_send_failure(route, liveness);
+            if matches!(
+                result,
+                Ok(crate::region::StoreFailureOutcome::Invalidated { .. })
+            ) {
+                // Native retries keep their immutable peer vector. The next
+                // cache lookup must refresh stale store epochs instead of
+                // handing a new statement the same invalidated snapshot.
+                cache.mark_reload_on_access(route.attempt.region);
+            }
+            result
+        });
+        let _ = self.storage.trigger_store_check();
     }
     fn record_server_load(&self, id: u64, estimated_wait_ms: u32) {
         let _ = self.storage.with_region_cache(|cache| {
@@ -463,7 +548,9 @@ fn dispatch_lock_request(
 }
 
 /// One client engine's view of the existing store, with no second cache or transport.
+#[derive(Clone)]
 pub struct ClientPd {
+    source_leader_read: bool,
     trace: Arc<Mutex<ClientTrace>>,
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
@@ -478,6 +565,7 @@ impl ClientPd {
     {
         let trace = Arc::new(Mutex::new(ClientTrace::default()));
         Arc::new(Self {
+            source_leader_read: true,
             backend: Arc::new(StorageBackend {
                 storage,
                 timestamps: Mutex::new(timestamps),
@@ -500,6 +588,7 @@ impl ClientPd {
     {
         let trace = Arc::new(Mutex::new(ClientTrace::default()));
         Arc::new(Self {
+            source_leader_read: true,
             backend: Arc::new(StorageBackend {
                 storage,
                 timestamps: Mutex::new(timestamps),
@@ -568,6 +657,7 @@ impl ClientPd {
 
 /// A native KV endpoint backed by the existing TiDB transport.
 pub struct ClientKv {
+    route: Option<LeaderRequest>,
     backend: Arc<dyn Backend>,
     address: String,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
@@ -589,6 +679,23 @@ impl KvClient for ClientKv {
         &self,
         request: &dyn Request,
         timeout: Option<Duration>,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_timeout_and_forwarded_host(request, timeout, "")
+            .await
+    }
+    async fn dispatch_with_forwarded_host(
+        &self,
+        request: &dyn Request,
+        host: &str,
+    ) -> Result<Box<dyn Any>> {
+        self.dispatch_with_timeout_and_forwarded_host(request, None, host)
+            .await
+    }
+    async fn dispatch_with_timeout_and_forwarded_host(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+        host: &str,
     ) -> Result<Box<dyn Any>> {
         let timeout = timeout.unwrap_or(Duration::from_secs(30));
         let background = tikv_client::async_util::background_rpc_cancellation();
@@ -615,6 +722,7 @@ impl KvClient for ClientKv {
                     },
                 )
         };
+        let call = call.with_forwarded_host(host);
         if call.cancellation().is_cancelled() {
             return Err(Error::ContextCanceled);
         }
@@ -628,8 +736,9 @@ impl KvClient for ClientKv {
             .map(|_| CancelBackgroundCall(call.cancellation().clone()));
         let backend = self.backend.clone();
         let address = self.address.clone();
+        let route = self.route.clone();
         macro_rules! send {
-            ($($request:ident),+) => { $(
+            ($(($request:ident, $response:ident)),+) => { $(
                 if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
                     let request = request.clone();
                     // Foreground transaction RPCs are already driven from the
@@ -638,12 +747,33 @@ impl KvClient for ClientKv {
                     // spawn_blocking hop for every Get/lock/commit. Resolver
                     // cleanup keeps the worker hop so cancellation can abort
                     // an in-flight request safely.
+                    let dispatch = move || {
+                        let response = backend.dispatch(&address, &request, &call);
+                        if let Some(mut route) = route {
+                            let context = request.context.as_ref();
+                            route.replica_read = context.is_some_and(|c| c.replica_read);
+                            route.stale_read = context.is_some_and(|c| c.stale_read);
+                            if route.replica_read || route.stale_read {
+                                route.read_mode = crate::region::ReplicaReadMode::Mixed;
+                            }
+                            match &response {
+                                Ok(value) if value.downcast_ref::<kvrpcpb::$response>()
+                                    .is_some_and(|r| r.region_error.is_none()) => backend.route_feedback(&route, true),
+                                Err(error) if !call.cancellation().is_cancelled() && !call.timeout().is_zero()
+                                    && !matches!(error, Error::ContextCanceled)
+                                    && !matches!(error, Error::GrpcAPI(status) if status.code() == tonic::Code::Cancelled)
+                                    && !matches!(error, Error::StringError(message) if message == "context canceled") => {
+                                    backend.route_feedback(&route, false);
+                                }
+                                _ => {}
+                            }
+                        }
+                        response
+                    };
                     if background.is_none() {
-                        return backend
-                            .dispatch(&address, &request, &call)
-                            .map(|response| response as Box<dyn Any>);
+                        return dispatch().map(|response| response as Box<dyn Any>);
                     }
-                    let pending = tokio::task::spawn_blocking(move || backend.dispatch(&address, &request, &call));
+                    let pending = tokio::task::spawn_blocking(dispatch);
                     let owner = background.as_ref().unwrap();
                     let response = tokio::select! {
                         result = pending => result.map_err(failure)??,
@@ -654,18 +784,18 @@ impl KvClient for ClientKv {
             )+ }
         }
         send!(
-            GetRequest,
-            BatchGetRequest,
-            ScanRequest,
-            PrewriteRequest,
-            CommitRequest,
-            BatchRollbackRequest,
-            PessimisticLockRequest,
-            PessimisticRollbackRequest,
-            TxnHeartBeatRequest,
-            CheckTxnStatusRequest,
-            CheckSecondaryLocksRequest,
-            ResolveLockRequest
+            (GetRequest, GetResponse),
+            (BatchGetRequest, BatchGetResponse),
+            (ScanRequest, ScanResponse),
+            (PrewriteRequest, PrewriteResponse),
+            (CommitRequest, CommitResponse),
+            (BatchRollbackRequest, BatchRollbackResponse),
+            (PessimisticLockRequest, PessimisticLockResponse),
+            (PessimisticRollbackRequest, PessimisticRollbackResponse),
+            (TxnHeartBeatRequest, TxnHeartBeatResponse),
+            (CheckTxnStatusRequest, CheckTxnStatusResponse),
+            (CheckSecondaryLocksRequest, CheckSecondaryLocksResponse),
+            (ResolveLockRequest, ResolveLockResponse)
         );
         Err(failure(format!(
             "unsupported transaction RPC {}",
@@ -679,7 +809,7 @@ impl KvClient for ClientKv {
 #[async_trait]
 impl ReplicaRouting for ClientPd {
     fn forwarding_enabled(&self) -> bool {
-        false
+        tidb_config::config_tree::config::get_global_config().enable_forwarding
     }
     async fn get_store_by_id(&self, id: u64) -> Result<()> {
         self.backend.store_state(id).map(|_| ())
@@ -739,11 +869,19 @@ impl ReplicaRouting for ClientPd {
     }
     async fn proxy_for_unavailable_leader(
         &self,
-        _region: &RegionWithLeader,
-        _state: &ReplicaSelectorState,
+        region: &RegionWithLeader,
+        state: &ReplicaSelectorState,
     ) -> Result<Option<metapb::Peer>> {
-        // Forwarding is not enabled for this injected ordinary-RPC transport.
-        Ok(None)
+        let Some(leader) = &region.leader else {
+            return Ok(None);
+        };
+        let proxy = self.backend.proxy(region.ver_id(), leader.id, state)?;
+        Ok(region
+            .region
+            .peers
+            .iter()
+            .find(|p| Some(p.id) == proxy)
+            .cloned())
     }
     async fn map_region_to_route(
         self: Arc<Self>,
@@ -751,23 +889,37 @@ impl ReplicaRouting for ClientPd {
         target: metapb::Peer,
         proxy: Option<metapb::Peer>,
     ) -> Result<RegionStore> {
-        debug_assert!(proxy.is_none());
-        let store = self.backend.store_state(target.store_id)?;
-        if store.address().is_empty() {
+        let mut route = self.backend.route(
+            region.ver_id(),
+            target.id,
+            proxy.as_ref().map(|p| p.id),
+            self.forwarding_enabled(),
+        )?;
+        if !self.source_leader_read {
+            route.read_mode = crate::region::ReplicaReadMode::Mixed;
+        }
+        let target_store = self.backend.store_state(target.store_id)?;
+        let physical = route.dispatch_attempt();
+        if physical.address.is_empty() || route.attempt.address.is_empty() {
             return Err(failure("region store address is empty"));
         }
-        let address = store.address().to_owned();
         let client = ClientKv {
             backend: self.backend.clone(),
-            address: address.clone(),
+            address: physical.address.clone(),
             call: self.call.clone(),
+            route: Some(route.clone()),
         };
-        Ok(RegionStore::new(region, Arc::new(client))
-            .with_target(address)
+        let mut native = RegionStore::new(region, Arc::new(client))
+            .with_target(physical.address.clone())
             .with_target_peer(target)
-            .with_physical_store(store.id(), tikv_client::tikv::EndpointType::TiKv)
-            .with_health_status(store.routing_health().health.clone()))
+            .with_physical_store(physical.store_id, tikv_client::tikv::EndpointType::TiKv)
+            .with_health_status(target_store.routing_health().health.clone());
+        if let Some(host) = route.forwarded_host() {
+            native = native.with_forwarded_host(host);
+        }
+        Ok(native)
     }
+
     fn record_store_replica_flow(&self, _id: u64, _destination: ReplicaFlowsType) {
         // Periodic replica-flow metrics are not composed by this adapter yet.
     }
@@ -776,6 +928,11 @@ impl ReplicaRouting for ClientPd {
 #[async_trait]
 impl PdClient for ClientPd {
     type KvClient = ClientKv;
+    async fn on_send_failure(self: Arc<Self>, _route: Option<&RegionStore>) -> bool {
+        // ClientKv applied exact-generation feedback before returning the error.
+        // Preserve native request attempts and the shared region snapshot.
+        false
+    }
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         self.route_leader(region, &ReplicaSelectorState::default())
             .await
@@ -787,7 +944,19 @@ impl PdClient for ClientPd {
         state: ReplicaSelectorState,
         is_read: bool,
     ) -> Result<RegionStore> {
-        self.route_replica(region, config, state, is_read).await
+        // Source mode belongs to this selection, including the ordinary-wire
+        // leader probe in a stale read. Wire flags alone lose that distinction.
+        let source_leader_read =
+            config.read_type == tikv_client::ReplicaReadType::Leader && !config.stale_read;
+        let routing = if self.source_leader_read == source_leader_read {
+            self
+        } else {
+            Arc::new(Self {
+                source_leader_read,
+                ..(*self).clone()
+            })
+        };
+        routing.route_replica(region, config, state, is_read).await
     }
     fn record_server_load(&self, id: u64, estimated_wait_ms: u32) {
         self.backend.record_server_load(id, estimated_wait_ms);
@@ -1208,6 +1377,7 @@ mod ownership_regressions {
     struct CleanupBackend {
         calls: AtomicUsize,
         error: Mutex<Option<Error>>,
+        forwarded: Mutex<Vec<Option<String>>>,
         blocking: bool,
         started: tokio::sync::Notify,
         finished: tokio::sync::Notify,
@@ -1238,6 +1408,15 @@ mod ownership_regressions {
         ) -> Result<Vec<ReplicaCandidate>> {
             unreachable!()
         }
+        fn route(&self, _: RegionVerId, _: u64, _: Option<u64>, _: bool) -> Result<LeaderRequest> {
+            unreachable!()
+        }
+        fn proxy(&self, _: RegionVerId, _: u64, _: &ReplicaSelectorState) -> Result<Option<u64>> {
+            unreachable!()
+        }
+        fn route_feedback(&self, _: &LeaderRequest, _: bool) {
+            unreachable!()
+        }
         fn record_server_load(&self, _: u64, _: u32) {
             unreachable!()
         }
@@ -1261,6 +1440,10 @@ mod ownership_regressions {
         ) -> Result<Box<dyn Any + Send>> {
             assert!(!call.cancellation().is_cancelled());
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.forwarded
+                .lock()
+                .unwrap()
+                .push(call.forwarded_host().map(str::to_owned));
             if let Some(error) = self.error.lock().unwrap().take() {
                 return Err(error);
             }
@@ -1286,6 +1469,56 @@ mod ownership_regressions {
     }
 
     #[test]
+    fn ordinary_forwarding_preserves_metadata_with_timeout_and_background_scope() {
+        let backend = Arc::new(CleanupBackend::default());
+        let client = ClientKv {
+            route: None,
+            backend: backend.clone(),
+            address: "proxy".into(),
+            call: Arc::new(Mutex::new(None)),
+        };
+        let requests: Vec<Box<dyn Request>> = vec![
+            Box::new(kvrpcpb::GetRequest::default()),
+            Box::new(kvrpcpb::BatchGetRequest::default()),
+            Box::new(kvrpcpb::ScanRequest::default()),
+            Box::new(kvrpcpb::PrewriteRequest::default()),
+            Box::new(kvrpcpb::CommitRequest::default()),
+            Box::new(kvrpcpb::BatchRollbackRequest::default()),
+            Box::new(kvrpcpb::PessimisticLockRequest::default()),
+            Box::new(kvrpcpb::PessimisticRollbackRequest::default()),
+            Box::new(kvrpcpb::TxnHeartBeatRequest::default()),
+            Box::new(kvrpcpb::CheckTxnStatusRequest::default()),
+            Box::new(kvrpcpb::CheckSecondaryLocksRequest::default()),
+            Box::new(kvrpcpb::ResolveLockRequest::default()),
+        ];
+        for background in [false, true] {
+            for request in &requests {
+                for host in ["leader:20160", ""] {
+                    *backend.error.lock().unwrap() = Some(Error::StringError("fixture".into()));
+                    let send = client.dispatch_with_timeout_and_forwarded_host(
+                        request.as_ref(),
+                        Some(Duration::from_secs(2)),
+                        host,
+                    );
+                    let result = if background {
+                        runtime().block_on(tikv_client::async_util::with_background_rpc_context(
+                            tikv_client::async_util::Cancellation::default(),
+                            send,
+                        ))
+                    } else {
+                        runtime().block_on(send)
+                    };
+                    assert!(result.is_err());
+                    assert_eq!(
+                        backend.forwarded.lock().unwrap().last().unwrap().as_deref(),
+                        (!host.is_empty()).then_some(host)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_rpc_preserves_native_error_identity_in_both_operation_scopes() {
         let requests: Vec<Box<dyn Request>> = vec![
             Box::new(kvrpcpb::GetRequest::default()),
@@ -1304,6 +1537,7 @@ mod ownership_regressions {
         for background in [false, true] {
             let backend = Arc::new(CleanupBackend::default());
             let client = ClientKv {
+                route: None,
                 backend: backend.clone(),
                 address: "store1".to_owned(),
                 call: Arc::new(Mutex::new(None)),
@@ -1348,6 +1582,7 @@ mod ownership_regressions {
         parent.cancellation().cancel();
         let backend = Arc::new(CleanupBackend::default());
         let client = ClientKv {
+            route: None,
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
@@ -1377,6 +1612,7 @@ mod ownership_regressions {
         parent.cancellation().cancel();
         let backend = Arc::new(CleanupBackend::default());
         let client = ClientKv {
+            route: None,
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
@@ -1392,6 +1628,7 @@ mod ownership_regressions {
         parent.cancellation().cancel();
         let backend = Arc::new(CleanupBackend::default());
         let client = ClientKv {
+            route: None,
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
@@ -1413,6 +1650,7 @@ mod ownership_regressions {
         parent.cancellation().cancel();
         let backend = Arc::new(CleanupBackend::default());
         let client = ClientKv {
+            route: None,
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(Some(parent))),
@@ -1432,6 +1670,7 @@ mod ownership_regressions {
             parent.cancellation().cancel();
             let backend = Arc::new(CleanupBackend::default());
             let client = Arc::new(ClientPd {
+                source_leader_read: true,
                 trace: Arc::new(Mutex::new(ClientTrace::default())),
                 backend: backend.clone(),
                 call: Arc::new(Mutex::new(Some(parent))),
@@ -1464,6 +1703,7 @@ mod ownership_regressions {
     fn background_resolution_obeys_its_owner_cancellation() {
         let backend = Arc::new(CleanupBackend::default());
         let client = ClientKv {
+            route: None,
             backend: backend.clone(),
             address: "store1".to_owned(),
             call: Arc::new(Mutex::new(None)),
@@ -1486,6 +1726,7 @@ mod ownership_regressions {
                     ..Default::default()
                 });
                 let client = ClientKv {
+                    route: None,
                     backend: backend.clone(),
                     address: "store1".to_owned(),
                     call: Arc::new(Mutex::new(None)),

@@ -5,7 +5,7 @@ Current evidence and cleanup receipts are indexed in [README.md](README.md). The
 ## Current structural execution queue
 
 
-Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON for the reconciled ten owner batches and all 56 current unresolved IDs. The historical W01–W12 assignment below preserves source ownership context, including findings now repaired. Do not treat its old counts or residual descriptions as current. Implement a shared lifecycle and its callers as a unit, group regression filters/compatible crate targets, then run required final gates at that batch boundary. Package acceptance remains atomic; no push is authorized.
+Use [remaining-batches.md](remaining-batches.md) and its machine-readable JSON for the reconciled ten owner batches and all 56 current unresolved IDs. The historical W01–W12 assignment below preserves source ownership context, including findings now repaired. Do not treat its old counts or residual descriptions as current. Implement a shared lifecycle and its callers as a unit, group regression filters/compatible crate targets, then run required final gates at that batch boundary. Package acceptance remains atomic; current publication authorization and required gates are maintained in README.md.
 
 ## Baseline and scope
 

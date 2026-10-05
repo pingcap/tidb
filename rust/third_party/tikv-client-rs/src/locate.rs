@@ -645,7 +645,10 @@ impl ReplicaSelectorState {
         self.no_leader.insert(peer_id);
     }
 
-    pub(crate) fn has_no_leader(&self, peer_id: u64) -> bool {
+    /// Whether this request already received a hintless NotLeader from the peer.
+    /// Embedded cache adapters use the same state to bypass forwarding; they
+    /// must not reconstruct a second request history.
+    pub fn has_no_leader(&self, peer_id: u64) -> bool {
         self.no_leader.contains(&peer_id)
     }
 

@@ -320,7 +320,7 @@ impl TonicCoprocessorClient {
     fn publish_transaction_command<R>(
         &mut self,
         physical_address: &str,
-        entry: BatchCommandEntry,
+        mut entry: BatchCommandEntry,
         mut pending: TransactionBatchPending<R>,
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchPending<R>, DirectUnaryClientError>
@@ -342,6 +342,13 @@ impl TonicCoprocessorClient {
                 ),
                 timeout_ms: 0,
             });
+        }
+        // Preserve an explicit route; native ordinary commands carry their
+        // per-attempt target in the same call context as deadline/cancellation.
+        if entry.forwarded_host().is_none() {
+            if let Some(host) = call.forwarded_host() {
+                entry = entry.with_forwarded_host(host);
+            }
         }
         // Go sendBatchRequest waits on the response, not a publication ACK.
         let barrier =

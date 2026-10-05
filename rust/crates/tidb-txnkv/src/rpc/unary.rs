@@ -235,6 +235,7 @@ impl UnaryCancellation {
 pub struct UnaryCallContext {
     deadline: Option<Instant>,
     cancellation: UnaryCancellation,
+    forwarded_host: Option<String>,
 }
 
 impl UnaryCallContext {
@@ -250,6 +251,7 @@ impl UnaryCallContext {
         Self {
             deadline: Some(deadline),
             cancellation,
+            forwarded_host: None,
         }
     }
 
@@ -263,6 +265,7 @@ impl UnaryCallContext {
         Self {
             deadline,
             cancellation,
+            forwarded_host: None,
         }
     }
 
@@ -291,6 +294,18 @@ impl UnaryCallContext {
     #[must_use]
     pub const fn cancellation(&self) -> &UnaryCancellation {
         &self.cancellation
+    }
+    /// Carries the logical TiKV address on this one physical RPC attempt.
+    #[must_use]
+    pub fn with_forwarded_host(mut self, host: &str) -> Self {
+        self.forwarded_host = (!host.is_empty()).then(|| host.to_owned());
+        self
+    }
+
+    /// Logical target of a forwarded attempt, absent for direct dispatch.
+    #[must_use]
+    pub fn forwarded_host(&self) -> Option<&str> {
+        self.forwarded_host.as_deref()
     }
 }
 
