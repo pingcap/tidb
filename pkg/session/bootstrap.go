@@ -330,6 +330,8 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+		{ID: metadef.TiDBUDFTableID, Name: "tidb_udf", SQL: metadef.CreateTiDBUDFTable},
+		{ID: metadef.TiDBStoredProcedureTableID, Name: "tidb_stored_procedure", SQL: metadef.CreateTiDBStoredProcedureTable},
 	}
 	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
 	// the masking-policy bootstrap version.

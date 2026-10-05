@@ -3750,6 +3750,93 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 	return infosync.PutRuleBundlesWithDefaultRetry(context.Background(), []*placement.Bundle{bundle})
 }
 
+// loadProcedureFromTable loads a procedure from the mysql.tidb_stored_procedure table.
+func (e *SimpleExec) loadProcedureFromTable(ctx context.Context, schemaName, procName string) (*udf.ProcedureDefinition, error) {
+	restrictedCtx, err := e.GetSysSession()
+	if err != nil {
+		return nil, err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
+	sqlExecutor := restrictedCtx.GetRestrictedSQLExecutor()
+
+	rows, _, err := sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		`SELECT id, name, schema_name, param_names, param_types, param_modes,
+		 source_code, is_deterministic, definer, sql_security, data_access, proc_comment
+		 FROM mysql.tidb_stored_procedure WHERE schema_name = %? AND name = %?`,
+		schemaName, procName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load procedure from table")
+	}
+
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	row := rows[0]
+	id := row.GetInt64(0)
+	name := row.GetString(1)
+	schema := row.GetString(2)
+	// JSON columns need GetJSON().String() to get the proper string representation
+	paramNamesJSON := row.GetJSON(3).String()
+	paramTypesJSON := row.GetJSON(4).String()
+	paramModesJSON := row.GetJSON(5).String()
+	sourceCode := row.GetString(6)
+	isDeterministic := row.GetInt64(7) == 1
+	// definer := row.GetString(8) // Not used yet
+	sqlSecurity := row.GetString(9)
+	dataAccess := row.GetString(10)
+	comment := row.GetString(11)
+
+	// Parse JSON arrays
+	var paramNames []string
+	var paramTypes []int
+	var paramModes []string
+	if err := json.Unmarshal([]byte(paramNamesJSON), &paramNames); err != nil {
+		return nil, errors.Wrap(err, "failed to parse param_names")
+	}
+	if err := json.Unmarshal([]byte(paramTypesJSON), &paramTypes); err != nil {
+		return nil, errors.Wrap(err, "failed to parse param_types")
+	}
+	if err := json.Unmarshal([]byte(paramModesJSON), &paramModes); err != nil {
+		return nil, errors.Wrap(err, "failed to parse param_modes")
+	}
+
+	// Build parameters
+	params := make([]udf.ProcedureParam, len(paramNames))
+	for i := range paramNames {
+		mode := udf.ParamModeIn
+		switch paramModes[i] {
+		case "OUT":
+			mode = udf.ParamModeOut
+		case "INOUT":
+			mode = udf.ParamModeInOut
+		}
+		params[i] = udf.ProcedureParam{
+			Name: paramNames[i],
+			Mode: mode,
+			Type: byte(paramTypes[i]),
+		}
+	}
+
+	procDef := &udf.ProcedureDefinition{
+		ID:              id,
+		Name:            name,
+		SchemaName:      schema,
+		Params:          params,
+		SourceCode:      sourceCode,
+		IsDeterministic: isDeterministic,
+		DataAccess:      dataAccess,
+		SQLSecurity:     sqlSecurity,
+		Comment:         comment,
+	}
+
+	// Cache the loaded procedure
+	expression.RegisterProcedure(procDef)
+
+	return procDef, nil
+}
+
 // executeCall executes a CALL statement for stored procedures.
 func (e *SimpleExec) executeCall(ctx context.Context, stmt *ast.CallStmt) error {
 	if stmt.Procedure == nil {
@@ -3767,8 +3854,16 @@ func (e *SimpleExec) executeCall(ctx context.Context, stmt *ast.CallStmt) error 
 		return errors.New("no database selected for CALL statement")
 	}
 
-	// Look up the procedure definition
+	// Look up the procedure definition in cache first
 	procDef := expression.GetProcedure(schemaName, procName)
+	if procDef == nil {
+		// Try loading from the system table
+		var err error
+		procDef, err = e.loadProcedureFromTable(ctx, schemaName, procName)
+		if err != nil {
+			return errors.Wrap(err, "failed to load procedure")
+		}
+	}
 	if procDef == nil {
 		return errors.Errorf("PROCEDURE %s.%s does not exist", schemaName, procName)
 	}
@@ -4073,34 +4168,60 @@ func (e *SimpleExec) executeCreateProcedure(ctx context.Context, stmt *ast.Proce
 		return errors.New("no database selected for CREATE PROCEDURE")
 	}
 
-	// Check if procedure already exists
-	existingProc := expression.GetProcedure(schemaName, procName)
-	if existingProc != nil {
-		if stmt.IfNotExists {
-			return nil
-		}
-		if !stmt.OrReplace {
-			return errors.Errorf("PROCEDURE %s.%s already exists", schemaName, procName)
+	// Get definer
+	definer := ""
+	if stmt.Definer != nil {
+		definer = fmt.Sprintf("%s@%s", stmt.Definer.Username, stmt.Definer.Hostname)
+	} else {
+		currentUser := e.Ctx().GetSessionVars().User
+		if currentUser != nil {
+			definer = fmt.Sprintf("%s@%s", currentUser.Username, currentUser.Hostname)
+		} else {
+			definer = "root@%"
 		}
 	}
 
 	// Build parameters list
 	params := make([]udf.ProcedureParam, len(stmt.ProcedureParam))
+	paramNames := make([]string, len(stmt.ProcedureParam))
+	paramTypes := make([]int, len(stmt.ProcedureParam))
+	paramModes := make([]string, len(stmt.ProcedureParam))
 	for i, p := range stmt.ProcedureParam {
 		mode := udf.ParamModeIn
+		modeStr := "IN"
 		switch p.Paramstatus {
 		case ast.MODE_IN:
 			mode = udf.ParamModeIn
+			modeStr = "IN"
 		case ast.MODE_OUT:
 			mode = udf.ParamModeOut
+			modeStr = "OUT"
 		case ast.MODE_INOUT:
 			mode = udf.ParamModeInOut
+			modeStr = "INOUT"
 		}
 		params[i] = udf.ProcedureParam{
 			Name: p.ParamName,
 			Mode: mode,
 			Type: byte(p.ParamType.GetType()),
 		}
+		paramNames[i] = p.ParamName
+		paramTypes[i] = int(p.ParamType.GetType())
+		paramModes[i] = modeStr
+	}
+
+	// Serialize param arrays to JSON
+	paramNamesJSON, err := json.Marshal(paramNames)
+	if err != nil {
+		return errors.Wrap(err, "failed to serialize param_names")
+	}
+	paramTypesJSON, err := json.Marshal(paramTypes)
+	if err != nil {
+		return errors.Wrap(err, "failed to serialize param_types")
+	}
+	paramModesJSON, err := json.Marshal(paramModes)
+	if err != nil {
+		return errors.Wrap(err, "failed to serialize param_modes")
 	}
 
 	// Serialize the SQL body
@@ -4114,16 +4235,76 @@ func (e *SimpleExec) executeCreateProcedure(ctx context.Context, stmt *ast.Proce
 		sourceCode = sb.String()
 	}
 
-	// Create procedure definition
+	isDeterministic := 0
+	if stmt.IsDeterministic {
+		isDeterministic = 1
+	}
+	dataAccess := stmt.DataAccess
+	if dataAccess == "" {
+		dataAccess = "CONTAINS SQL"
+	}
+	sqlSecurity := stmt.SQLSecurity
+	if sqlSecurity == "" {
+		sqlSecurity = "DEFINER"
+	}
+
+	// Get system session for database operations
+	restrictedCtx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
+	sqlExecutor := restrictedCtx.GetRestrictedSQLExecutor()
+
+	// Check if procedure already exists in the database
+	rows, _, err := sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"SELECT id FROM mysql.tidb_stored_procedure WHERE schema_name = %? AND name = %?",
+		schemaName, procName)
+	if err != nil {
+		return errors.Wrap(err, "failed to check existing procedure")
+	}
+
+	if len(rows) > 0 {
+		if stmt.IfNotExists {
+			return nil
+		}
+		if stmt.OrReplace {
+			// Delete existing procedure
+			_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+				"DELETE FROM mysql.tidb_stored_procedure WHERE schema_name = %? AND name = %?",
+				schemaName, procName)
+			if err != nil {
+				return errors.Wrap(err, "failed to replace existing procedure")
+			}
+			// Clear from cache
+			expression.ClearProcedureCacheEntry(schemaName, procName)
+		} else {
+			return errors.Errorf("PROCEDURE %s.%s already exists", schemaName, procName)
+		}
+	}
+
+	// Insert the procedure into the system table
+	_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		`INSERT INTO mysql.tidb_stored_procedure (name, schema_name, param_names, param_types, param_modes,
+		 language, source_code, is_deterministic, definer, sql_security, data_access, proc_comment)
+		 VALUES (%?, %?, %?, %?, %?, 'sql', %?, %?, %?, %?, %?, %?)`,
+		procName, schemaName, string(paramNamesJSON), string(paramTypesJSON), string(paramModesJSON),
+		sourceCode, isDeterministic, definer, sqlSecurity, dataAccess, stmt.Comment)
+	if err != nil {
+		return errors.Wrap(err, "failed to create procedure")
+	}
+
+	// Create procedure definition for cache
 	procDef := &udf.ProcedureDefinition{
-		ID:              0, // Will be assigned when persisted
+		ID:              0, // Will be assigned when loaded from DB
 		Name:            procName,
 		SchemaName:      schemaName,
 		Params:          params,
 		SourceCode:      sourceCode,
 		IsDeterministic: stmt.IsDeterministic,
-		DataAccess:      stmt.DataAccess,
-		SQLSecurity:     stmt.SQLSecurity,
+		DataAccess:      dataAccess,
+		SQLSecurity:     sqlSecurity,
 		Comment:         stmt.Comment,
 	}
 
@@ -4148,13 +4329,36 @@ func (e *SimpleExec) executeDropProcedure(ctx context.Context, stmt *ast.DropPro
 		return errors.New("no database selected for DROP PROCEDURE")
 	}
 
-	// Check if procedure exists
-	existingProc := expression.GetProcedure(schemaName, procName)
-	if existingProc == nil {
+	// Get system session for database operations
+	restrictedCtx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
+	sqlExecutor := restrictedCtx.GetRestrictedSQLExecutor()
+
+	// Check if procedure exists in the database
+	rows, _, err := sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"SELECT id FROM mysql.tidb_stored_procedure WHERE schema_name = %? AND name = %?",
+		schemaName, procName)
+	if err != nil {
+		return errors.Wrap(err, "failed to check existing procedure")
+	}
+
+	if len(rows) == 0 {
 		if stmt.IfExists {
 			return nil
 		}
 		return errors.Errorf("PROCEDURE %s.%s does not exist", schemaName, procName)
+	}
+
+	// Delete the procedure from the system table
+	_, _, err = sqlExecutor.ExecRestrictedSQL(internalCtx, nil,
+		"DELETE FROM mysql.tidb_stored_procedure WHERE schema_name = %? AND name = %?",
+		schemaName, procName)
+	if err != nil {
+		return errors.Wrap(err, "failed to drop procedure")
 	}
 
 	// Clear from cache
