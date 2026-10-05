@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-05 UTC",
+  "base": "2087a78910ddbfece658b0b52a75ffcd39068f35",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Retire obsolete annotation audit plans and nonbehavioral type/debug scaffolding; remove duplicate metadata suite registration. No production code, Go fixtures, manifests, lockfiles or behavioral finding changed.",
+  "removed_unique_tests": [
+    "pkg_meta_model_column_engine_anchor",
+    "pkg_meta_model_index_anchor",
+    "pkg_meta_model_placement_anchor",
+    "pkg_meta_model_reorg_anchor",
+    "pkg_meta_model_job_anchor",
+    "pkg_meta_model_table_partition_anchor",
+    "pkg_meta_model_absorbed_locks_anchor",
+    "pkg_meta_model_native_abi_boundaries",
+    "probe_nested_gt_plus",
+    "probe_pow_expr"
+  ],
+  "removed_duplicate_registrations": 26,
+  "removed_nonzero_size_markers": 16,
+  "removed_plans": [
+    {
+      "path": "rust/docs/operations/util-fastrand-audit-execplan.md",
+      "sha256": "0601633905fb865e91bb0dd96d3699d92f7a417cd998fad9ed2f060fc2098531",
+      "receipt": "rust/testport/receipts/util_fastrand.md"
+    },
+    {
+      "path": "rust/docs/operations/util-engine-audit-execplan.md",
+      "sha256": "469d315e496ab26aed6788cf5d4b199f4a0c8b3bf529ef9e87c93d8a4b2e2dbb",
+      "receipt": "rust/testport/receipts/util_engine.md"
+    },
+    {
+      "path": "rust/docs/operations/meta-model-index-audit-execplan.md",
+      "sha256": "031644ae29ba9f630db675313d802bcbf3eb0f09cc046b1be48d667a0a0c7cf8",
+      "receipt": "rust/testport/receipts/meta_model_materialized_view.md"
+    },
+    {
+      "path": "rust/docs/operations/util-stmtsummary-v1-return-contract-audit-execplan.md",
+      "sha256": "66e6829665f472cdb497dd272af73e3d8c90b6a751f9cbf5482e735654fc81ff",
+      "receipt": "rust/testport/receipts/util_stmtsummary_audit.md"
+    },
+    {
+      "path": "rust/docs/operations/util-checksum-audit-execplan.md",
+      "sha256": "dd69b531fe2d3777f951fb8a5b8b09338a104ed5858d556c8614b70cf53d576b",
+      "receipt": "rust/testport/receipts/util_checksum.md"
+    },
+    {
+      "path": "rust/docs/operations/util-context-audit-execplan.md",
+      "sha256": "c3c5ab691959458e2619291da8766b400885a01a58548dedfc4ba2891bb37dd6",
+      "receipt": "rust/testport/receipts/util_context.md"
+    },
+    {
+      "path": "rust/docs/operations/util-format-audit-execplan.md",
+      "sha256": "6a9512c6e21847e5cc20faf4d4bc32f1fd08336185db7eb2c5391617864fe0bd",
+      "receipt": "rust/testport/receipts/util_format.md"
+    },
+    {
+      "path": "rust/docs/operations/util-filter-audit-execplan.md",
+      "sha256": "43c6708a609d6f649082f8c56a46472242b504b87987cb8bfc81b926ff48cda7",
+      "receipt": "rust/testport/receipts/util_filter.md"
+    },
+    {
+      "path": "rust/docs/operations/util-queue-audit-execplan.md",
+      "sha256": "0dff9c54012ddd4d39c5ca11693bfbc7e0c7c6c55832f2f2a392672219324b56",
+      "receipt": "rust/testport/receipts/util_queue.md"
+    },
+    {
+      "path": "rust/docs/operations/util-set-audit-execplan.md",
+      "sha256": "6ff4e671f8d6e4785ee2ffc076bd161b9a8c00a860bb73aba9bd249ab1d14c76",
+      "receipt": "rust/testport/receipts/util_set.md"
+    },
+    {
+      "path": "rust/docs/operations/util-sem-compat-audit-execplan.md",
+      "sha256": "c9a5700c119e0f5c0688c5d7b2a6da64753fd3522588106568b07e56e08e5c73",
+      "receipt": "rust/testport/receipts/util_sem_compat.md"
+    },
+    {
+      "path": "rust/docs/operations/util-servermemorylimit-audit-execplan.md",
+      "sha256": "f13c6b62844839ad1e805645b4d2920073c6f724995d2020dc30b9249962f3f8",
+      "receipt": "rust/testport/receipts/util_servermemorylimit.md"
+    },
+    {
+      "path": "rust/docs/operations/keyspace-audit-execplan.md",
+      "sha256": "ff8bdb189140b20d7153b12aaa313455a460a9304295dafb4086595707be781c",
+      "receipt": "rust/testport/receipts/keyspace_audit.md"
+    },
+    {
+      "path": "rust/docs/operations/br-restore-utils-audit-execplan.md",
+      "sha256": "1fa37b6f968cfe47783e6b9de2325d201a71a212246103f495e1451ab026cef1",
+      "receipt": "rust/testport/receipts/br_restore_utils.md"
+    },
+    {
+      "path": "rust/docs/operations/br-rtree-audit-execplan.md",
+      "sha256": "6fd4da0d8bd523acf73b708d170522784d739376e9e10b20b108365e34f1e205",
+      "receipt": "rust/testport/receipts/br_rtree.md"
+    },
+    {
+      "path": "rust/docs/operations/br-streamhelper-spans-audit-execplan.md",
+      "sha256": "dd3772989493c9dba970964647f99d2d55a28b3f5243b5f53e82d04a49cc18af",
+      "receipt": "rust/testport/receipts/br_streamhelper_spans.md"
+    },
+    {
+      "path": "rust/docs/operations/util-tracing-audit-execplan.md",
+      "sha256": "36adabe3babe4614f814889cbbd3c7392f89fe6747b401707eeea7cdf83da3b3",
+      "receipt": "rust/testport/receipts/util_tracing.md"
+    },
+    {
+      "path": "rust/docs/operations/util-sqlexec-mock-audit-execplan.md",
+      "sha256": "9d557527b96a04a92f6beec12e1c6799a2452c4269566510b81723c289fe7f87",
+      "receipt": "rust/testport/receipts/util_sqlexec_mock.md"
+    },
+    {
+      "path": "rust/docs/operations/util-zeropool-audit-execplan.md",
+      "sha256": "b20eb96b3dbd25e35503b6bfc66f138fbece8f2f585d51cbfdc0aa4191ab4fc7",
+      "receipt": "rust/testport/receipts/util_zeropool.md"
+    }
+  ],
+  "retention": {
+    "retained_bodies_equal_after_only_sixteen_nonzero_marker_removals": 113,
+    "removed_unique_tests": 10,
+    "duplicate_registrations_removed": 26,
+    "historical_command_reference_files": [
+      "rust/testport/receipts/util_sqlexec_mock.md",
+      "rust/testport/receipts/util_tracing.md"
+    ],
+    "retired_plan_count": 19
+  },
+  "validation": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "tidb-model",
+        "--test",
+        "pkg_meta_model_semantics",
+        "--test",
+        "pkg_meta_model_package_anchors",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "test_results": [
+        "ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "059c6b60fd4d37d4f1afe8433203b7cbefbf700e4339e39d46342a0b4d09fff9"
+    },
+    {
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "-p",
+        "tidb-expr",
+        "-p",
+        "tidb-unistore",
+        "--tests"
+      ],
+      "exit": 0,
+      "test_results": [],
+      "log_sha256": "86e0fb7651a175a3a8484ec5d559eec9eccf5f90e745f99e715a58f1991eaa07"
+    },
+    {
+      "command": [
+        "make",
+        "lint"
+      ],
+      "exit": 0,
+      "test_results": [],
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "hook_gate": "Commit requires the actual precommit hook to pass cd rust && cargo build --locked -p tidb-server; final log and commit identity are in /workspace/.cloud-setup/audit-plan-cleanup/final-handoff.json.",
+  "limits": [
+    "Metadata targets execute 25 plus 5 retained cases; other behavioral suites were not rerun for pure probe deletion.",
+    "Complete Go package obligations, known failing tests and structural counts remain unchanged: 86 tracked, 30 repaired, 56 unresolved.",
+    "Go benchmarks, helper-based assertions, live multi-node harnesses and Rust ownership/error tests remain.",
+    "dbterror and stringutil audit plans remain because they contain separate semantic or generated-catalog concerns.",
+    "No measured wall-clock speedup, new package acceptance, live multi-node validation or fresh-task restoration claim.",
+    "The coordinator verified the user-saved installation now includes pingcap/tidb. Cloud Git publication must establish that the previous HTTP 403 is cleared."
+  ],
+  "setup_retry": {
+    "initial_hook": "Two normal commit hooks aborted when linking exhausted disk; linker reported signal 7 and filesystem had zero free bytes.",
+    "correction": "Removed failed temporaries, three inactive test executables and 678 check-only metadata artifacts without paired build libraries; observed free space rose to 1,106,448,384 bytes. Source, compiled dependencies, current server and recovery data preserved.",
+    "artifact_journal": "/workspace/.cloud-setup/audit-plan-cleanup/artifact-cleanup.json",
+    "retry": "normal commit with the same actual locked-build hook"
+  }
+}

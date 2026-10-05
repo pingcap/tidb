@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Compile anchors for the current `pkg/meta/model` public surface.
+//! Behavioral boundaries for the current `pkg/meta/model` public surface.
 
-mod pkg_meta_model_package_anchors;
-
-use tidb_model::{
-    BackfillMeta, ColumnInfo, DBInfo, DDLBDRType, DDLReorgMeta, EngineAttribute, HistoryInfo,
-    IndexInfo, Job, JobState, JobW, MaskingPolicyInfo, PartitionInfo, PlacementSettings,
-    PolicyInfo, RenameTableArgs, ResourceGroupInfo, TableInfo, TableMode,
-};
+use tidb_model::{DBInfo, DDLBDRType, TableInfo, TableMode};
 
 #[test]
 fn pkg_meta_model_bdr_boundary() {
@@ -104,52 +98,4 @@ fn pkg_meta_model_owned_clone_boundaries() {
     };
     assert_eq!(clone_observation, "owned-deep-copy");
     assert_eq!(map_observation, "one-empty-map-state");
-}
-
-#[test]
-fn pkg_meta_model_column_engine_anchor() {
-    let _ = std::mem::size_of::<ColumnInfo>();
-    let _ = std::mem::size_of::<EngineAttribute>();
-}
-
-#[test]
-fn pkg_meta_model_index_anchor() {
-    let _ = std::mem::size_of::<IndexInfo>();
-    assert_eq!(
-        tidb_model::indexable_fn_name_to_distance_metric(tidb_model::VEC_COSINE_DISTANCE_FN),
-        Some(tidb_model::index::distance_metric::COSINE)
-    );
-}
-
-#[test]
-fn pkg_meta_model_placement_anchor() {
-    let _ = std::mem::size_of::<PlacementSettings>();
-    let _ = std::mem::size_of::<PolicyInfo>();
-}
-
-#[test]
-fn pkg_meta_model_reorg_anchor() {
-    let _ = std::mem::size_of::<DDLReorgMeta>();
-    let _ = std::mem::size_of::<BackfillMeta>();
-}
-
-#[test]
-fn pkg_meta_model_job_anchor() {
-    let _ = std::mem::size_of::<Job>();
-    let _ = std::mem::size_of::<JobState>();
-    let _ = std::mem::size_of::<HistoryInfo>();
-    let _ = std::mem::size_of::<JobW>();
-}
-
-#[test]
-fn pkg_meta_model_table_partition_anchor() {
-    let _ = std::mem::size_of::<TableInfo>();
-    let _ = std::mem::size_of::<PartitionInfo>();
-}
-
-#[test]
-fn pkg_meta_model_absorbed_locks_anchor() {
-    let _ = std::mem::size_of::<RenameTableArgs>();
-    let _ = std::mem::size_of::<MaskingPolicyInfo>();
-    let _ = std::mem::size_of::<ResourceGroupInfo>();
 }

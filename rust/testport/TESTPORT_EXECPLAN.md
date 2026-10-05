@@ -208,8 +208,7 @@ For each bounded behavior cluster:
   `#[must_use]` annotations were removed; six Rust ownership/equality
   adapters remain. The focused regression failed pre-fix with exactly 25
   diagnostics and passes after the edit. Evidence is recorded in
-  `receipts/meta_model_materialized_view.md` and
-  `docs/operations/meta-model-index-audit-execplan.md`.
+  `receipts/meta_model_materialized_view.md`.
 - 2026-09-06 (`pkg/ttl/cache` return contracts): the complete 13-artifact,
   3,572-line cache package and full Rust owner were re-read at current Go
   master, including every test/build artifact and the absence of fixtures,
@@ -3351,8 +3350,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   failed before the edit with one lint error and passes afterward. The
   failpoint-wrapped current Go test, detached latest-master Go test, focused
   Rust tests, Ready formatting, pinned lint, and diff hygiene pass. Details
-  are in `receipts/util_servermemorylimit.md` and
-  `docs/operations/util-servermemorylimit-audit-execplan.md`.
+  are in `receipts/util_servermemorylimit.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/sem/compat`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and
@@ -3362,8 +3360,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   before the edit with six lint errors and passes afterward. The
   failpoint-wrapped current Go suite, all six Rust tests, Ready formatting,
   pinned lint, and diff hygiene pass. Details are in
-  `receipts/util_sem_compat.md` and
-  `docs/operations/util-sem-compat-audit-execplan.md`; detached latest-master
+  `receipts/util_sem_compat.md`; detached latest-master
   full Go execution remains unverified because it did not terminate locally.
 
 - 2026-09-02: re-audited the complete root `pkg/util/sem` package at current
@@ -3381,8 +3378,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   annotations and added a regression that failed before the edit with two
   lint errors and passes afterward. Current and detached latest-master Go
   tests, focused Rust regressions, Ready formatting, pinned lint, and diff
-  hygiene pass. Details are in `receipts/util_disk.md` and
-  `receipts/util_disk.md`.
+  hygiene pass. Details are in `receipts/util_disk.md`.
 
 - 2026-09-02: re-audited the complete root `pkg/util/traceevent` boundary at
   current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: seven
@@ -3400,8 +3396,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `tidb-util` owner retains shared span state, open phases, CE record identity,
   source-derived tests, and benchmark carriers; current/detached Go suites,
   seven focused Rust tests, and benchmark compilation pass. Details are in
-  `receipts/util_tracing.md` and
-  `docs/operations/util-tracing-audit-execplan.md`.
+  `receipts/util_tracing.md`.
 
 - 2026-09-02: re-audited the complete `pkg/session/syssession` boundary at
   current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: eight
@@ -3420,8 +3415,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   the complete generated three-method restricted executor mock. The
   dependency-closed `tidb-sqlexec-mock` owner remains aligned; both Go package
   probes and three focused Rust tests pass. Details are in
-  `receipts/util_sqlexec_mock.md` and
-  `docs/operations/util-sqlexec-mock-audit-execplan.md`.
+  `receipts/util_sqlexec_mock.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
@@ -3442,8 +3436,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   discardable-return regression, which failed before the fix with 11 lint
   errors and passes afterward. Current and detached latest-master Go tests,
   all seven Rust keyspace tests, Ready formatting, pinned lint, and diff
-  hygiene pass. Details are in `receipts/keyspace_audit.md` and
-  `docs/operations/keyspace-audit-execplan.md`.
+  hygiene pass. Details are in `receipts/keyspace_audit.md`.
 
 - 2026-09-02: fixed the remaining Rust-only return diagnostics in the
   complete Go-master `pkg/util/checksum` owner. The package has four tracked
@@ -3456,8 +3449,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   lint errors and passes afterward. Current and exact detached Go tests, all
   eleven Rust owner tests, encrypted spill consumer checks, formatting, diff
   checks, and the pinned detached `make lint` gate pass. Updated
-  `receipts/util_checksum.md` and added the Ready plan at
-  `docs/operations/util-checksum-audit-execplan.md`.
+  `receipts/util_checksum.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/cpu` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 308
@@ -3492,8 +3484,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   the fix with three `unused_must_use` errors and passes after removing the
   annotations. Current and exact detached Go tests, focused Rust tests,
   package checking, formatting, and diff checks pass. Updated
-  `receipts/util_engine.md` and added the Ready plan at
-  `docs/operations/util-engine-audit-execplan.md`.
+  `receipts/util_engine.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/texttree` inventory at
   `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: four tracked artifacts, 174
@@ -3537,8 +3528,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   four lint errors and the post-fix suite passes. Current and exact detached Go
   tests, focused Rust tests, all-target/benchmark checks, formatting, diff
   checks, and the pinned detached `make lint` gate pass. Updated
-  `receipts/util_fastrand.md` and added the Ready plan at
-  `docs/operations/util-fastrand-audit-execplan.md`.
+  `receipts/util_fastrand.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/backoff` inventory at
       `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`: three tracked artifacts, 113
@@ -3568,7 +3558,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Go tests, focused Rust test, all-target check, formatting, and diff checks
   pass. Updated `receipts/util_zeropool.md` and added the Ready
   documentation-only plan at
-  `docs/operations/util-zeropool-audit-execplan.md`.
+  `receipts/util_zeropool.md`.
 
 - 2026-09-02: refreshed the complete Go-master `pkg/util/watcher` inventory
   at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four tracked artifacts,
@@ -5850,8 +5840,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   existing `tidb-util::generic` owner preserves signed capacity, comparator
   panic/order and wrapping sort behavior, synchronized-map semantics, and the
   stats TopN consumer; current and detached Go suites plus all eight Rust owner
-  tests pass. Details are in `receipts/util_generic.md` and
-  `receipts/util_generic.md`.
+  tests pass. Details are in `receipts/util_generic.md`.
 - 2026-08-29: re-read all four pinned Go `pkg/util/checksum` artifacts and
   removed two supplemental signed-overflow tests plus their private fixture.
   Production keeps Go's wrapping arithmetic and zeropool-backed reader path;
@@ -6282,8 +6271,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       remove the unused executor duplicate whose `Clear` eagerly dropped
       backing values and whose public head/tail accessors existed only for its
       duplicate external tests. The current inventory and package ExecPlan are
-      recorded in `receipts/util_queue.md` and
-      `docs/operations/util-queue-audit-execplan.md`.
+      recorded in `receipts/util_queue.md`.
 - [x] Complete the current Go-master `pkg/util/sli` package in its
       `tidb-util` owner; retain the existing source-shaped accumulator and
       session/executor integration after a complete 132-line inventory. The
@@ -6297,8 +6285,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       generic wrapper and ordered-tree policy, restore the free keyed-set API
       and current-key clone/order behavior, pre-size memory-aware constructors,
       and wire HashAgg to Go's concrete string set. Current inventory and
-      package ExecPlan: `receipts/util_set.md` and
-      `docs/operations/util-set-audit-execplan.md`.
+      package ExecPlan: `receipts/util_set.md`.
 - [x] Complete the pinned `pkg/util/slice` package in its `tidb-util` owner,
       retain its three production functions and one source test, and remove
       four supplementary non-source tests.
@@ -6332,8 +6319,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       exact temp-directory lifecycle and both tracker constructors, route its
       real server/chunk/memory-alarm consumers through them, and remove the
       Rust-only spill-policy surface from the package. The five-artifact
-      inventory and Ready gates are in `receipts/util_disk.md` and
-      `receipts/util_disk.md`.
+      inventory and Ready gates are in `receipts/util_disk.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions. The
@@ -6359,7 +6345,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       pointer-preserving CE deduplication, add the four source benchmarks and
       empty `OptimizeTracer`, and remove supplementary Rust-only APIs/tests.
       The atomic inventory and Ready gates are in `receipts/util_tracing.md`
-      and `docs/operations/util-tracing-audit-execplan.md`.
+      and `receipts/util_tracing.md`.
 - [x] Complete the pinned `pkg/session/syssession` package in the
       `tidb-syssession` owner: replace the executor-local policy fragments
       with the full owner/operation/pool lifecycle, remove ignored empty
@@ -6371,8 +6357,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       distinct `tidb-sqlexec-mock` owner: preserve the context-key identity
       and the generated restricted-executor mock's full three-method
       contract without introducing a second SQL interface. The atomic
-      inventory and Ready gates are in `receipts/util_sqlexec_mock.md` and
-      `docs/operations/util-sqlexec-mock-audit-execplan.md`.
+      inventory and Ready gates are in `receipts/util_sqlexec_mock.md`.
 - [x] Complete the pinned `pkg/statistics/handle/util` package in a distinct
       `tidb-stats-handle-util` owner: remove five partial policy modules,
       implement every production artifact over shared model/executor/session
@@ -6926,16 +6911,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       remains owned by `tidb-datatype`. Added a deny-lint regression proving
       the return may be ignored like Go; the pre-fix test failed with one
       unused-return error and the focused Rust/Go suites plus Ready lint pass.
-      Details are in `receipts/util_format.md` and
-      `docs/operations/util-format-audit-execplan.md`.
+      Details are in `receipts/util_format.md`.
 - 2026-09-02: fixed five Rust-only `#[must_use]` diagnostics in the complete
       `pkg/util/context` owner (two static-warning constructors and three
       plan-cache accessors). The Go package remains five artifacts and 757
       lines at authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`; added a
       deny-lint regression whose pre-fix compile failed with five errors, then
       passed the focused Rust/Go suites, formatting, and Ready lint gate.
-      Details are in `receipts/util_context.md` and
-      `docs/operations/util-context-audit-execplan.md`.
+      Details are in `receipts/util_context.md`.
 - 2026-09-02: re-audited all four Go-master `pkg/util/selection` artifacts
       (433 lines across introselect/median-of-medians production code, four
       source tests, benchmark registrations, and the Bazel target) at
@@ -6951,8 +6934,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`; added a deny-lint
       regression whose pre-fix compile failed with four errors, then passed
       the focused Rust/Go suites, formatting, and Ready lint gate. Details are
-      in `receipts/util_filter.md` and
-      `docs/operations/util-filter-audit-execplan.md`.
+      in `receipts/util_filter.md`.
 - 2026-09-02: refreshed all five Go-master `pkg/util/globalconn` artifacts
       (1,391 lines covering GCID packing/parsing, both allocators, both pools,
       nine source tests, two benchmark families, and the Bazel target) at
@@ -6971,8 +6953,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       `cap`; the focused deny-lint regression failed with four errors before
       the fix and passes afterward. Current/detached Go tests, nine Rust owner
       tests, formatting, Ready lint, and diff checks pass. Details are in
-      `receipts/util_queue.md` and
-      `docs/operations/util-queue-audit-execplan.md`.
+      `receipts/util_queue.md`.
 - 2026-09-02: refreshed all four Go-master `pkg/util/kvcache` artifacts (600
       lines covering the LRU owner, eight source tests, and the BUILD target)
       at authority `c6054025ed4c32ab3672a2a24ea46892714d21ec`. Removed five
@@ -6989,8 +6970,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       Rust-only `#[must_use]` diagnostics; the focused deny-lint regression
       failed with 47 errors before the fix and passes afterward. Current and
       detached Go tests, focused Rust owner tests, formatting, Ready lint, and
-      diff checks pass. Details are in `receipts/util_set.md` and
-      `docs/operations/util-set-audit-execplan.md`.
+      diff checks pass. Details are in `receipts/util_set.md`.
 - 2026-09-01: audited all four Go-master `pkg/util/cpu` artifacts (308 lines,
       six production functions/methods, two source tests, and one test
       harness), including its failpoint, race/flaky BUILD target, cgroup/EMA,

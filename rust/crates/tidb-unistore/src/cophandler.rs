@@ -6361,24 +6361,6 @@ mod tests {
     }
 
     #[test]
-    fn probe_pow_expr() {
-        let pow = SimpleExpr::Func(
-            SimpleSig::Pow,
-            vec![
-                SimpleExpr::Column(0),
-                SimpleExpr::Func(
-                    SimpleSig::MultiplyReal,
-                    vec![SimpleExpr::Column(0), SimpleExpr::Column(0)],
-                ),
-            ],
-        );
-        eprintln!(
-            "eval_expr(pow, row, 4, &zone()) = {:?}",
-            eval_expr(&pow, &[tidb_datatype::Datum::Real(0.5)], 4, &zone())
-        );
-    }
-
-    #[test]
     fn string_functions_follow_go_semantics() {
         use tidb_datatype::Datum;
         // CHAR_LENGTH counts runes over UTF-8; LENGTH-style binary counts

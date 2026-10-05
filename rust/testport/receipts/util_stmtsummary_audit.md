@@ -166,9 +166,6 @@ concurrency behavior changed. No Go, v2, Bazel, Cargo, generated, fixture, or
 platform-specific artifact changed, so neither Go execution nor
 `make bazel_prepare` applies.
 
-The living implementation plan is
-`rust/docs/operations/util-stmtsummary-v1-return-contract-audit-execplan.md`.
-
 Return-contract follow-up evidence:
 
 - Pre-fix focused command, after temporarily restoring the 39 annotations:
