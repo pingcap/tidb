@@ -41,26 +41,13 @@ declarations and all 29 top-level tests were checked individually.
 ## Rust ownership and explicit boundary
 
 Rust has partial owners, but no dependency-closed equivalent of this Go
-package. `tidb-exec::isolation_state` owns the pure isolation enum and
-one-shot state machine; `tidb-session` owns system-variable validation and
-the in-memory transaction lifecycle; `tidb-server`/`tidb-exec` own optimistic
-and pessimistic cluster transaction seams. Those owners do not yet provide
-the Go provider interface's complete lifecycle, per-isolation timestamp
-selection, RC conflict retry metrics, `tidb_snapshot` information-schema
-overlay, temporary-table interceptor, or all pessimistic lock/error paths as
-one integrated session owner. The Rust source tests therefore cover only the
-metadata boundary and selected transaction seams, not the 121-declaration Go
-package contract.
-
-No Rust-only behavior was found to remove. The existing Rust isolation
-metadata deliberately keeps unsupported enum values separate from storage
-capability, and the cluster transaction seam documents its remaining
-locking/read differences rather than pretending parity. Implementing only
-one provider or timestamp optimization would violate the package-atomic
-transcreation rule and could change conflict/linearizability semantics, so no
-partial production fix was dispatched. The complete Go package is recorded
-as an explicit SEED/boundary; future work must join session, storage,
-snapshot, metrics, and retry owners before claiming parity.
+package. Live variable validation and transaction state belong to tidb-session;
+cluster transaction seams belong to tidb-server/tidb-exec. The disconnected
+isolation_state copy and its private harness have been retired. They supplied
+no evidence for the live provider lifecycle. Preserve the complete original Go
+inventory above and consult the current structural register for remaining
+snapshot, retry, locking and timestamp obligations. This cleanup establishes
+no package acceptance or new transaction behavior.
 
 ## Validation and risk
 

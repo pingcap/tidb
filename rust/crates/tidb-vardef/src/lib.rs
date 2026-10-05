@@ -26,8 +26,8 @@
 //! SCOPE (documented, not yet the whole `vardef` package): the name constants
 //! (521), the `Def*` defaults (395), and the mode enums are ported; constants
 //! are script-extracted and byte-verified against the Go source. `ScopeFlag`
-//! and the sysvar `TypeFlag` already live in `tidb-exec`
-//! (`sysvar_scope`/`sysvar_type`). Still DEFERRED from the full package: the
+//! and sysvar type metadata are consumed by `tidb-session::sysvar`; the
+//! disconnected `tidb-exec` copies have been retired. Still DEFERRED: the
 //! remainder of the mutable `var (...)` block of runtime-tunable global sysvar
 //! backing stores, apart from the two ANALYZE defaults and plan-replayer
 //! retention setting above (many need

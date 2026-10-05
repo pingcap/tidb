@@ -1,0 +1,233 @@
+{
+  "base": "b843662dc1655b4e695a01a161a7b656a7ca0d7b",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire nine disconnected session/statement models and nine private harnesses; preserve actual session, transaction, wire and Domain owners.",
+  "modules": [
+    "stale_tso",
+    "stmt_cache",
+    "session_status",
+    "topn_slow_query",
+    "txn_read_ts",
+    "isolation_state",
+    "noop_read_only",
+    "sysvar_scope",
+    "sysvar_type"
+  ],
+  "removed": [
+    {
+      "path": "rust/crates/tidb-exec/src/stale_tso.rs",
+      "lines": 101,
+      "sha256": "e177c0a539e432ec9cfa18b34d5a2a13315293c0ad9eefccb4fe814009afb64e",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/stale_tso_source.rs",
+      "lines": 87,
+      "sha256": "dca1ea85e52c4ca7f0a2d5889a6b4968957cc5c6be1909bd99869cd67435e5ba",
+      "tests": [
+        "get_stale_tso_evaluates_once_and_caches_the_value",
+        "set_if_not_exist_keeps_the_first_evaluator",
+        "evaluator_errors_are_returned_and_not_cached",
+        "reset_drops_the_evaluator_and_the_cached_value"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/stmt_cache.rs",
+      "lines": 154,
+      "sha256": "52b8c260b8684720da00d926c411c5c5ff01d513a7751e224301df05341b8edb",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/stmt_cache_source.rs",
+      "lines": 114,
+      "sha256": "227c9a6d5e47bf75db293dc588042c9350b10f51b5e733952b5230f2d1f49ecc",
+      "tests": [
+        "get_or_store_keeps_the_first_value",
+        "get_or_evaluate_runs_the_evaluator_once_and_never_caches_errors",
+        "reset_in_clears_one_key_and_reset_clears_all",
+        "value_accessors_mirror_the_source_type_assertions"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/session_status.rs",
+      "lines": 84,
+      "sha256": "7fe7aadce0db3a846165f27fa5bfd5c55c5229f3513344bb2f0248bd301192cb",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/session_status_source.rs",
+      "lines": 58,
+      "sha256": "3f1932b9734055b10b20a424aa986ea98c180d9edc5b063c54558e133c29a3d6",
+      "tests": [
+        "default_status_is_autocommit_and_flag_updates_preserve_unrelated_bits",
+        "clearing_an_absent_flag_is_idempotent_and_multi_bit_queries_match_source_any_bit"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/topn_slow_query.rs",
+      "lines": 443,
+      "sha256": "94f82dfbf45a69dacf37f088ccf531df3d93656a7e747d08a0a4f95a525b181b",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/topn_slow_query_source.rs",
+      "lines": 177,
+      "sha256": "1c2ab577eb21f66b29534983dd81cd2141953269f519099f963ce35ea9a3df10",
+      "tests": [
+        "push_matches_source",
+        "remove_expired_matches_source",
+        "queue_matches_source"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/txn_read_ts.rs",
+      "lines": 84,
+      "sha256": "899b8e2a7f1f2eda297be288711c0d18de3a620f3a358cecbc18170f8fdf0028",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/txn_read_ts_source.rs",
+      "lines": 69,
+      "sha256": "0e88dfd22b1f20812451fabc3b8eaeb26640ca570f4037e5df60cf6c2c37ca60",
+      "tests": [
+        "use_marks_timestamp_consumed_without_changing_value",
+        "setting_a_new_timestamp_refreshes_consumption",
+        "cleanup_resets_only_a_used_nonzero_timestamp",
+        "peek_is_non_consuming_and_default_is_zero"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/isolation_state.rs",
+      "lines": 177,
+      "sha256": "2c06b1cefae585fa567997156d08e0a200a2401f93fa004b01b14360cfadb499",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/isolation_state_source.rs",
+      "lines": 113,
+      "sha256": "387d6b144fb13455c2c5070778bfd572afef9698491d34377419d84739a1b327",
+      "tests": [
+        "enum_normalization_matches_type_enum_names_and_ordinals",
+        "enum_keeps_source_values_separate_from_storage_capability",
+        "one_shot_state_matches_source_boundary_transitions",
+        "default_one_shot_state_is_empty_and_stable"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/noop_read_only.rs",
+      "lines": 200,
+      "sha256": "85635d0b0341a48673eeb3765f63b5daaa8dc80c56ce15f8d603c37a84d3cf03",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/noop_read_only_source.rs",
+      "lines": 183,
+      "sha256": "39e438fe2b6aa29d9862f84527c209ac7d73ef77b074caab9ec8acba8814d8ea",
+      "tests": [
+        "read_only_noop_registry_preserves_names_aliases_and_scope",
+        "read_only_noop_policy_matches_session_and_global_modes"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/sysvar_scope.rs",
+      "lines": 89,
+      "sha256": "fe2b7ed4e7e7cb18e98950089431b4f19a301e2c240e715741ade41bd2df3d03",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/sysvar_scope_source.rs",
+      "lines": 51,
+      "sha256": "87d5a77adf8bf0ad7d3c8c3c04daa072ce99736f234cfda4015d97d6ebf1fecc",
+      "tests": [
+        "sysvar_scope_string_matches_source_order_and_zero_case",
+        "sysvar_scope_preserves_raw_bits_and_unknown_bit_rendering"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/sysvar_type.rs",
+      "lines": 58,
+      "sha256": "5978730895f1544b3dddb6d93a4b1ec918c89711a1f86bdb29596dbf2b9d4052",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/sysvar_type_source.rs",
+      "lines": 47,
+      "sha256": "0dcb80edf0b013d2251500e707e6c824c9c8672c7e8bb03e08ef77b9a571e4cb",
+      "tests": [
+        "sysvar_type_preserves_source_discriminants",
+        "sysvar_type_keeps_byte_backed_unknown_values_visible"
+      ]
+    }
+  ],
+  "source_test_lines_removed": 2289,
+  "tests_removed": 27,
+  "verification": {
+    "retained_inputs_unchanged": 3546,
+    "retained_changed": [
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-session/src/varsutil.rs",
+      "rust/crates/tidb-vardef/src/lib.rs"
+    ],
+    "two_doc_headers_executable_bytes_unchanged": true,
+    "live_owner_sha256": {
+      "rust/crates/tidb-domain/src/topn_slow_query.rs": "b8b3fda2d4149519e12b63fa38baf7486502853b99e4434c9f43619d1db37f6d",
+      "rust/crates/tidb-session/src/tests_domain_topn_slow_query_source.rs": "607b31c2a714baf0e80e39a8101a1e8671051ec205a9dec58d1c81bae2f28e65",
+      "rust/crates/tidb-session/src/vars.rs": "edf533482469e9363d323013675a8faa16479dc012d70757a3c6d37cde881249",
+      "rust/crates/tidb-session/src/sysvar.rs": "a4cbad395e5e01aee7c0d8bedd854d28741dd775ca05a0bff439496a4e731c3d",
+      "rust/crates/tidb-server/src/wire_status.rs": "8113dcb946c30533221c918ff81e96e03e768cf6e2b4d9895d7a841c4e37c644"
+    }
+  },
+  "registration": {
+    "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs",
+    "sha256": "2146a5c2999fc43223cb0288534495aab8223d8e6cd3a6b066e5956f52e7d660",
+    "modules": 86,
+    "retired_harnesses_absent": true
+  },
+  "go_artifacts": {
+    "pkg/sessionctx/stmtctx/stmtctx.go": "acbf45b26731986d7cfd4047fb97577538e8e1a8e733683ab35f25d7adbc3aa7",
+    "pkg/sessionctx/stmtctx/stmtctx_test.go": "3d663e91269adaf0b5263a215b8c53eddc24508b124a4c116406780e6288ef43",
+    "pkg/sessionctx/variable/session.go": "bf69a13a39f9353aebd777836cb48a97fd75e6f965b581683fc5e422746607c9",
+    "pkg/sessionctx/variable/noop.go": "16d281056ddd0791bffe87a868f10ff6af690d127815b2a73fe4bc5a6d54fab0",
+    "pkg/sessionctx/variable/varsutil.go": "420c025a6c6ad35ba76929c00dd5257ee6b34a57830fd292f6409f4d29dd13e8",
+    "pkg/sessionctx/vardef/tidb_vars.go": "25605b4582f87027c73f9459dda4bcaa7a2dad1106b1a68b1bbb9f2987667551",
+    "pkg/domain/topn_slow_query.go": "3833ff96b4fc831c3e837ad740dfd9bad6f0d58fd970464e819a13e86f85f353",
+    "pkg/domain/topn_slow_query_test.go": "99874be072d744e96c881c2b28de0008b66519be3aae447e063f2ca4975dea14",
+    "pkg/domain/domain.go": "990c426f07898dd18bed7b2de86b6751c19f677527a0a068f80ef893934cffe8"
+  },
+  "ownership": [
+    "Go StatementContext owns cache/stale timestamp installation, read and reset. The private Rust StmtCache/StaleTsoProvider have no statement lifecycle consumers; original Go integration obligations remain.",
+    "Go SessionVars owns status flags, TxnReadTS and one-shot isolation. Actual Rust transaction/read state and validation remain in tidb-session::vars/sysvar/variables; wire flags remain in tidb-server::wire_status. These executable inputs and tests remain unchanged.",
+    "NoopReadOnly consumes the private ScopeFlag only. Both are disconnected from live registry validation. Go vardef scope/type and original scope-string obligations remain; the retired harness cannot establish their integration.",
+    "Go Domain owns the slow-query store and worker. Rust tidb-domain::topn_slow_query is the live store; its four internal tests and the session tests remain byte-identical, covering the original push/expiry/queue vectors. The second tidb-exec store only served its private harness.",
+    "Comment-only matches in varsutil/vardef and a misleading isolation reachability claim were corrected. No new source behavior, dependency or test framework."
+  ],
+  "validation": {
+    "all_targets": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-session -p tidb-vardef -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "runtime": "Not rerun: unreachable deletion; retained executable bytes unchanged apart from removed namespace declarations.",
+    "publication": "Normal precommit must run the locked tidb-server build; repeat immediately before push. Actual post-commit results are recorded in external final-handoff.json."
+  },
+  "limits": [
+    "86 tracked / 30 repaired / 56 unresolved; finding statuses unchanged.",
+    "No full Go suite, live TiKV, measured speedup or complete Go-package acceptance.",
+    "Go/Rust naming differences alone do not justify deleting correctness tests."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/session-model-cleanup",
+  "log_sha256": {
+    "all-target-check.log": "d82efef8adb52baf1f9b8cbe2f5d6f85930dd6b68c34fbd9c85fea1f83161cdc",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "reference-traces.json": "6b79fdaed70616bc32b1265bbb228e38bb6a02241dfccecdca3feb765cda99be",
+    "retained-verification.json": "050be3ce51a62350bb26128963bfa229828c67f95547c96606968236a49bc428"
+  }
+}

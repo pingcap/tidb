@@ -311,11 +311,10 @@ names are `offline_mode`, `read_only`, `super_read_only`,
   *normalized* value, so the ordinal and lower-case spellings are refused with
   it; the two accepted levels store and read back unchanged, on both spellings
   of the variable name. Pinned in `tests_global_vars.rs`.
-* Still open, and deliberately not faked: nothing downstream reads the stored
-  level. `tidb-exec/src/isolation_state.rs` is now reachable from a correct
-  SET, but the executor does not consult it — a `READ-COMMITTED` session still
-  runs at the tier's one isolation. That is why both spellings are classified
-  as SET/validation-only rather than runtime behavior.
+* The disconnected `tidb-exec` isolation metadata copy has since been retired.
+  Its earlier reachability claim was incorrect: live validation and transaction
+  state use `tidb-session`. Consult the current structural register for provider
+  and storage-isolation gaps; this historical SET result is not runtime proof.
 
 ### Rank 2 — validation contract inverted or absent
 

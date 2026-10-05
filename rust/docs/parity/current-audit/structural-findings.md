@@ -1,6 +1,6 @@
 # Remaining structural mismatches, maintained 2026-10-05
 
-Latest cleanup: [five disconnected DDL/restore models](ddl-model-cleanup-validation.json). All finding dispositions remain unchanged.
+Latest cleanup: [nine disconnected session/statement models](session-model-cleanup-validation.json). All finding dispositions remain unchanged.
 
 
 Current evidence and cleanup receipts are indexed in [README.md](README.md). [Unregistered source-test cleanup](orphan-test-cleanup-validation.json) leaves every finding disposition unchanged. The [JSON register](structural-findings.json) owns finding counts and dispositions; dated receipts retain their original verification limits.

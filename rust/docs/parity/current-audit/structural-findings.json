@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "ddl-model-cleanup-validation.json",
-    "scope": "Five unused DDL/restore models, three private harnesses and 19 tests removed; 3564 retained inputs and five concurrent MDL files byte-identical. Four real mixed-harness tests retained. Finding statuses/counts unchanged."
+    "receipt": "session-model-cleanup-validation.json",
+    "scope": "Nine disconnected session/statement models, nine private harnesses and 27 tests removed; 3546 retained inputs byte-identical, only declarations and two doc headers changed. Finding statuses/counts unchanged."
   },
   "test_cleanup_history": [
     {
@@ -933,6 +933,10 @@
     {
       "receipt": "session-helper-cleanup-validation.json",
       "scope": "Eleven unused session/executor modules, ten private harnesses, 30 tests and stale documentation removed; 3573 retained inputs byte-identical. All finding statuses/counts unchanged."
+    },
+    {
+      "receipt": "ddl-model-cleanup-validation.json",
+      "scope": "Five unused DDL/restore models, three private harnesses and 19 tests removed; 3564 retained inputs and five concurrent MDL files byte-identical. Four real mixed-harness tests retained. Finding statuses/counts unchanged."
     }
   ],
   "repair_history": [

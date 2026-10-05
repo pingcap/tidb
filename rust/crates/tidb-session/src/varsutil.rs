@@ -18,8 +18,8 @@
 //! This is a seed of the `variable` package, not its completion. Already
 //! owned elsewhere and deliberately not duplicated here: `TiDBOptOn` and the
 //! ON/OFF conversions (`tidb-exec/src/option_values.rs`),
-//! `checkIsolationLevel` (`isolation_state.rs`), `checkReadOnly`
-//! (`noop_read_only.rs`), and `GlobalSystemVariableInitialValue`
+//! live isolation/read-only validation (`variables.rs`/`sysvar.rs`), and
+//! `GlobalSystemVariableInitialValue`
 //! (`tidb-vardef/src/global_sysvar_initial.rs`). The hook-calling helpers
 //! (`switchDDL`/`switchStats`) ride Go's function-pointer registration in
 //! `tidb_vars.go` and stay with that integration seam.
