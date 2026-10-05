@@ -18,10 +18,6 @@
 //! SEED of `pkg/planner/core`. `LogicalMemTable` was a
 //! `LogicalPlan` placeholder arm before this batch.
 //!
-//! The crate's `logical_mem_table` identity leaf is KEPT rather than merged:
-//! `difftests/planner-tests/tests/logical_mem_table.rs` consumes its
-//! `LogicalMemTableIdentity`/`MemTableColumnIdentity` from OUTSIDE this crate.
-//!
 //! Go's own framing of what makes this operator special: some memory tables
 //! want to OWN their predicates. `SELECT * FROM cluster_log WHERE type='tikv'
 //! AND address='192.16.5.32'` should send one log-search request to that TiKV

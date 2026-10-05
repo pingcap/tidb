@@ -71,12 +71,6 @@
 //! no operator is skeletal. There is no placeholder variant; a later Go
 //! operator must add a typed arm and update every exhaustive match.
 //!
-//! Four of those operators have an identity leaf elsewhere in this crate —
-//! [`crate::logical_mem_table`], [`crate::logical_show`],
-//! [`crate::logical_show_ddl_jobs`] and [`crate::logical_table_dual`] — which
-//! is KEPT rather than merged, because `difftests/planner-tests` consumes each
-//! from outside this crate.
-//!
 //! # The rules that run over the tree
 //!
 //! Three modules beside this one carry the optimizer, and they are layered:

@@ -19,10 +19,6 @@
 //! SEED of `pkg/planner/core`. `LogicalShow` was a
 //! `LogicalPlan` placeholder arm before this batch.
 //!
-//! The crate's `logical_show` identity leaf is KEPT rather than merged:
-//! `difftests/planner-tests/tests/logical_show.rs` consumes its
-//! `LogicalShowIdentity`/`ShowColumnIdentity` from OUTSIDE this crate.
-//!
 //! # Narrowings, by name
 //!
 //! * `ShowContents.Tp ast.ShowStmtType`. `pkg/parser/ast`'s show-statement

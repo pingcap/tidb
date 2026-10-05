@@ -67,10 +67,6 @@ pub fn gen_expand(plan: LogicalPlan) -> LogicalPlan {
 }
 
 /// Go `ResolveExpand` (`rule_resolve_grouping_expand.go:54`), Go rule #34.
-///
-/// [`crate::resolve_grouping_expand`] carries the same traversal over a
-/// toy tree and is KEPT — `difftests/planner-tests` consumes it from outside
-/// this crate.
 #[derive(Debug)]
 pub struct ResolveExpand;
 

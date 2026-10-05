@@ -19,11 +19,6 @@
 //! [`crate::logical`] carrying only `RowCount`; this file gives it its member
 //! bodies.
 //!
-//! The crate's `logical_table_dual` identity leaf is KEPT rather than merged:
-//! `difftests/planner-tests/tests/logical_table_dual.rs` consumes its
-//! `LogicalTableDualIdentity`/`ColumnIdentity` from OUTSIDE this crate, so
-//! deleting it would break a gate this batch does not own.
-//!
 //! Go's own note on the schema, kept because it is a correctness caveat rather
 //! than an implementation detail: a dual is often built with NO schema at all
 //! (`buildTableDual()`), which means "outputting 0/1 row with zero column".

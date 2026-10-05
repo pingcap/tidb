@@ -1,72 +1,90 @@
-# Retire disconnected planner rule models
+# Remove disconnected logical-operator models
 
-This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
-indexed in parity/current-audit/README.md; Git preserves historical source.
+This living ExecPlan follows root PLANS.md. Earlier receipts remain indexed in
+parity/current-audit/README.md. Git preserves retired source and prior plans.
 
 ## Purpose / Big Picture
 
-Remove eight unused rule models and their nine private harnesses together.
-Preserve real logical-plan rules and migrate the useful childless-TableDual
-regression into an existing real-plan test. Reduce compiled inputs without
-claiming measured speedup or complete Go package acceptance.
+
+Remove unused normalized operator copies and private test harnesses as one
+batch. The shared logical-plan tree remains the implementation owner. Success
+means fewer compiled inputs with all retained production code and useful test
+bodies unchanged; no measured speedup or complete package acceptance is claimed.
 
 ## Context and Orientation
 
-Base 3781259475fb31754186f7b86b083bc0d4b656c5 on /workspace/tidb hparser-integration.
-Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed; native client remains
-cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1. Retire rule_set, rule_type,
-topn_push_down, derive_topn_from_window, push_down_sequence, condition_to_dual,
-eliminate_empty_selection and eliminate_unionall_dual_item at the crate root.
-Keep their real logical/ owners, whose names overlap. Go's rule wrappers invoke
-shared LogicalPlan methods; private miniature trees do not implement that path.
+
+Base 89417915aff3596dd9b5a30361532133027337ab on /workspace/tidb hparser-integration.
+Fresh Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed; native client remains
+cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1. The thirteen crate-root models are
+logical_union_all, logical_max_one_row, logical_top_n, logical_table_dual,
+logical_sequence, logical_show, logical_show_ddl_jobs, logical_limit,
+logical_sort, logical_mem_table, logical_schema_producer, logical_cte_table and
+resolve_grouping_expand. These independent representations have no production
+callers. Shared logical/ implementations and logical_lock/data_source owners
+are retained. Go's generated hash methods belong to actual logical operators;
+tests of normalized identity tokens do not validate those operators.
 
 ## Progress
 
-- [x] Refresh refs and trace scoped imports and owner symbols across tracked Rust sources.
-- [x] Remove eight models, nine harnesses and 30 private tests (1,471 source/test lines).
-- [x] Migrate the childless-TableDual case and remove stale ownership/coverage claims.
-- [x] Grouped all-target check, migrated regression (1 passed), lint, 3,658 unchanged retained inputs and self-review.
-- [ ] Normal commit with actual locked-build hook, fresh build immediately before push, remote verification and Cloud handoff.
+
+- [x] Refresh refs, inspect Go owners and trace all tracked Rust references.
+- [x] Remove thirteen models and thirteen private harnesses; trim ten adapter tests from the mixed hash harness while preserving its two real-owner test bodies.
+- [x] Remove stale ownership and complete-suite claims.
+- [x] Grouped checks, 3,631 unchanged retained inputs, two byte-identical retained test bodies, fresh registration, lint and self-review.
+- [ ] Actual precommit build, fresh prepush build, normal push, remote verification and Cloud draft handoff.
 
 ## Milestones and Plan of Work
 
-Delete the complete private dependency group, including difftests outside the
-owning crate. Retain real planner owners and their tests. Replace obsolete
-adapter claims in mixed historical receipts without discarding original Go
-obligations. Record deletion hashes and upstream anchors in the cleanup receipt.
+
+Inventory complete dependency groups before deleting them. Remove root module
+declarations and their difftests together; trim only the private portion of
+logicalop_hash64_equals_source.rs. Remove obsolete comments from six real-owner
+files and correct the historical b089 receipt. Record deletion hashes and Go
+artifact obligations in operator-model-cleanup-validation.json. No original Go
+test, dependency, maintained script or production method changes.
 
 ## Validation and Acceptance
 
-Source /workspace/.cloud-setup/env.sh in each shell. From rust/ run the affected
-planner, difftest-planner-tests and server all-target locked check together.
-Run the existing a_sequence_is_pushed_through_a_unary_operator test containing
-the migrated TableDual case. From root run make lint and git diff --check.
-Verify retained inputs: only eight lib declarations, five comment-only source
-edits and the additive existing-test extension may differ. Fresh generated
-registrations must exclude all nine deleted harnesses. Normal commit must run
-hooks/pre-commit through core.hooksPath=hooks and pass cd rust && cargo build
---locked -p tidb-server; repeat immediately before every authorized push.
+
+Activate source /workspace/.cloud-setup/env.sh in each build shell. From rust/:
+
+    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets
+
+From repository root run make lint and git diff --check. Verify every retained
+source/manifest/script hash: only lib.rs declarations, six comment-only files
+and the mixed test harness may differ. Its two retained function bodies must
+be byte-identical. Fresh generated test registration must drop thirteen private
+harnesses while retaining logicalop_hash64_equals_source. No runtime test rerun
+is required for pure unreachable deletion with unchanged retained behavior.
+Normal commit must run the actual executable hooks/pre-commit selected by
+core.hooksPath=hooks, including cd rust && cargo build --locked -p tidb-server.
+Repeat that locked build immediately before each push and verify remote SHA.
 
 ## Surprises & Discoveries
 
-The real UnionAll owner's comment alleging divergent adapter change flags was
-stale: an earlier adapter repair had already fixed the flag. Remove the stale
-claim, not the real rule. The childless-TableDual guard exercised a toy tree;
-move its useful shape to the real rule's existing unary-sequence regression.
+
+The hash harness mixes ten tests of normalized identity copies with two tests
+of real Projection and SchemaProducer implementations. Deleting it wholesale
+would remove valid coverage. Keep those two tests unchanged. ColumnIdentity
+and SortByItem matches elsewhere belong to independent retained owners.
 
 ## Decision Log
 
-Keep behavioral and Rust correctness tests on retained implementations. Delete
-private tests with their unreachable models. No source behavior, dependencies,
-maintained scripts or original Go tests change. Decision date: 2026-10-05 UTC.
-The migrated regression establishes structural coverage, not the Go SQL test's
-full pipeline coverage. No new harness or permanent script is introduced.
+
+Delete disconnected models together with their private consumers; retain shared
+hashing, real logical operators and all their tests. The cleanup removes 3,178 source/test lines and 71
+test functions without weakening retained assertions. Date: 2026-10-05 UTC.
+No new harness or permanent script is introduced. Keep full Go package/test
+obligations separate from retired Rust adapter claims.
 
 ## Outcomes & Retrospective
 
-Evidence: parity/current-audit/rule-model-cleanup-validation.json. Registers
-remain 86 tracked / 30 repaired / 56 unresolved: cleanup is not finding closure.
-Before-images and final publication handoff: /workspace/.cloud-setup/rule-model-cleanup.
-Recover individual files with git show 3781259475fb31754186f7b86b083bc0d4b656c5:<path>
-into a temporary file before reviewing restoration. Preserve concurrent work;
-never reset or force-push. Full Go suites, live TiKV and performance are unverified.
+
+Evidence: parity/current-audit/operator-model-cleanup-validation.json. Register
+counts remain 86 tracked / 30 repaired / 56 unresolved. No behavioral finding
+closure, full Go suite, live TiKV validation or measured performance claim.
+Before-images and final publication handoff are under
+/workspace/.cloud-setup/operator-model-cleanup. Recover individual files with
+git show 89417915aff3596dd9b5a30361532133027337ab:<path> into a temporary file
+before reviewing restoration. Preserve concurrent work and never force-push.

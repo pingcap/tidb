@@ -1,0 +1,345 @@
+{
+  "base": "89417915aff3596dd9b5a30361532133027337ab",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire thirteen unused normalized logical-operator models and their thirteen private difftests; trim ten private cases from a mixed hash harness, preserving its two real-owner test bodies.",
+  "modules": [
+    "logical_union_all",
+    "logical_max_one_row",
+    "logical_top_n",
+    "logical_table_dual",
+    "logical_sequence",
+    "logical_show",
+    "logical_show_ddl_jobs",
+    "logical_limit",
+    "logical_sort",
+    "logical_mem_table",
+    "logical_schema_producer",
+    "logical_cte_table",
+    "resolve_grouping_expand"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-planner/src/logical_union_all.rs",
+      "lines": 119,
+      "sha256": "c7a0ed07aeac86a9e1262252e23fa6f9bd65f11c3026d3f9e60f5f35fbc58cfa",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_max_one_row.rs",
+      "lines": 60,
+      "sha256": "294351ee20949af3ebc8f7851003c1c84e4f0bf68d32cbb949e2e7e5f8e37c1e",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_top_n.rs",
+      "lines": 242,
+      "sha256": "a646b52830c6662ece871e3e5a5a378830c1073ff5c8eafa884f957af9911cfc",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_table_dual.rs",
+      "lines": 134,
+      "sha256": "5c8f12b04d56d80abeb6742a75bc98afb2dc471f6bf2c4213c8712169c55b48e",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_sequence.rs",
+      "lines": 60,
+      "sha256": "08d85afca4ef81cfa06b0c797cbc0e64b089b10d10dc662df6c90cd0c0c526f8",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_show.rs",
+      "lines": 119,
+      "sha256": "b98913211d922443133d0b9d70a6a4437ba0af2e4d019360401d99bca16d8d49",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_show_ddl_jobs.rs",
+      "lines": 118,
+      "sha256": "46b62cc73c13e54c60986ad05b1c39af9c352abd127b77175cb74d1a2c3cebd6",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_limit.rs",
+      "lines": 214,
+      "sha256": "872c1e5441c78d9ba11cbbc41e60aa6864a3f7198a923626fd462c81be686236",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_sort.rs",
+      "lines": 140,
+      "sha256": "1595e6112a555862d8e24e30ba059749ee1e2c3da0a3fe158e16992ee854d4fe",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_mem_table.rs",
+      "lines": 154,
+      "sha256": "2910a6be43a0d951d392839d1ffed666630333b97cdc54e90d1ba39b2f19a653",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_schema_producer.rs",
+      "lines": 118,
+      "sha256": "e069456a4810613a95ff76f23a5a4f15c76a9aed7027252b2f079e11ddebbf69",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_cte_table.rs",
+      "lines": 136,
+      "sha256": "626a3f38f185270250884e356e593ecb386d637fe5418662d4eb44bc38f6f37a",
+      "tests": [
+        "false_single_reload_retains_existing_stats",
+        "true_single_reload_replaces_with_seed_stats",
+        "non_single_reload_vectors_are_false_reload",
+        "missing_existing_stats_installs_even_a_nil_seed"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/resolve_grouping_expand.rs",
+      "lines": 149,
+      "sha256": "4d136027e61d5ae823259ec309fc0f1e9073cf56fdbe1db32840c445c3633d2f",
+      "tests": []
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_union_all.rs",
+      "lines": 65,
+      "sha256": "a0ba078db1c377a7371b1e70a2879d0c18d031bb87e7c714e77b64196235ad51",
+      "tests": [
+        "matching_schema_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "nil_and_present_empty_schema_are_distinct",
+        "normalized_type_fingerprint_is_part_of_schema_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_max_one_row.rs",
+      "lines": 52,
+      "sha256": "52b7be37c4798917b5bba98ddb23516e933b987e4979e11424c639f05f52f08f",
+      "tests": [
+        "matching_plan_ids_have_equal_hash_and_identity",
+        "different_plan_ids_change_hash_and_equality",
+        "zero_and_negative_plan_ids_remain_source_integer_values"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_top_n.rs",
+      "lines": 199,
+      "sha256": "7769b3d2c6d9dbaf87ef49a6dafe1e4af4122d5f5adf16fd772be24d9bc8b323",
+      "tests": [
+        "matching_top_n_metadata_have_equal_hash_and_identity",
+        "by_item_column_identity_changes_hash_and_equality",
+        "by_item_direction_changes_hash_and_equality",
+        "partition_column_direction_offset_and_count_are_identity_fields",
+        "prefer_limit_to_cop_changes_hash_and_equality",
+        "nil_and_present_empty_optional_fields_are_distinct"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_table_dual.rs",
+      "lines": 69,
+      "sha256": "3602cbd101489c69be24c2fa1faca332192e2fd9433871ad55a6f3a65999c1c8",
+      "tests": [
+        "matching_schema_and_row_count_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "row_count_changes_hash_and_equality",
+        "nil_and_present_empty_schema_are_distinct",
+        "explain_info_preserves_source_rowcount_text"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_sequence.rs",
+      "lines": 61,
+      "sha256": "f0a68a69d96f340a33699df15b2c22f0d475ee9042871f27403f853d20f8872e",
+      "tests": [
+        "matching_plan_ids_have_equal_hash_and_identity",
+        "different_plan_ids_change_hash_and_equality",
+        "signed_plan_ids_remain_source_integer_values",
+        "sequence_tag_and_plan_id_are_both_hashed"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_show.rs",
+      "lines": 63,
+      "sha256": "fe1b18d81ff070afaa46e7cd2f6368b4c50186a9d235a143c9924009a3422fd7",
+      "tests": [
+        "matching_schema_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "nil_and_present_empty_schema_are_distinct",
+        "normalized_type_fingerprint_is_part_of_schema_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_show_ddl_jobs.rs",
+      "lines": 67,
+      "sha256": "7797a327a18578fa06f45cce82fd7193f9bf55a82c2be71c2a4e75fccbb5e401",
+      "tests": [
+        "matching_schema_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "nil_and_present_empty_schema_are_distinct",
+        "normalized_type_fingerprint_is_part_of_schema_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_limit.rs",
+      "lines": 113,
+      "sha256": "6d3cc477ad8f01b30520393edfe20a187b66bccc1e75287ad89d6c1d0acfb7af",
+      "tests": [
+        "matching_partition_and_limits_have_equal_hash_and_identity",
+        "partition_column_identity_changes_hash_and_equality",
+        "partition_direction_changes_hash_and_equality",
+        "offset_and_count_changes_hash_and_equality",
+        "nil_and_present_empty_partition_by_are_distinct",
+        "explain_info_preserves_source_offset_count_text"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_sort.rs",
+      "lines": 72,
+      "sha256": "35f84a053474a044dc5fd99c564cc438fcfdda3d787bb0f02e9928d44e3359b2",
+      "tests": [
+        "matching_by_items_have_equal_hash_and_identity",
+        "nil_and_present_empty_by_items_are_distinct",
+        "by_item_column_identity_changes_hash_and_equality",
+        "by_item_direction_changes_hash_and_equality",
+        "by_item_type_fingerprint_is_part_of_normalized_expression_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_mem_table.rs",
+      "lines": 100,
+      "sha256": "291d09412f1af25bfa8b18443240b19be4471cfdc85835d243ca3c3f425ce417",
+      "tests": [
+        "matching_mem_table_metadata_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "db_name_is_case_folded_and_part_of_identity",
+        "table_info_nil_and_ids_are_distinct_identity_fields",
+        "normalized_type_fingerprint_is_part_of_schema_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_schema_producer.rs",
+      "lines": 63,
+      "sha256": "c4d7151ef08e8b334bbf41dfba73b27605cc1b00ce0144eec3b27b38aa697efd",
+      "tests": [
+        "matching_schema_have_equal_hash_and_identity",
+        "schema_column_identity_changes_hash_and_equality",
+        "nil_and_present_empty_schema_are_distinct",
+        "normalized_type_fingerprint_is_part_of_column_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_cte_table.rs",
+      "lines": 46,
+      "sha256": "11f78b8e3d15ea5c69d59af2745dc8d95193189779b63e3ec13936a2cfc4a738",
+      "tests": [
+        "reload_false_keeps_existing_stats_and_reports_no_change",
+        "reload_true_installs_seed_stats_and_reports_change",
+        "only_single_reload_entries_are_considered"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/resolve_grouping_expand.rs",
+      "lines": 83,
+      "sha256": "424fc5c27ca1436f874eaa60dd936f99f8de0e3ed2240c610148cae4c335f9ee",
+      "tests": [
+        "visits_nested_children_before_generating_expand_levels",
+        "appends_levels_to_existing_generation_state",
+        "leaves_non_expand_nodes_and_child_order_unchanged",
+        "source_rule_name_is_stable"
+      ]
+    }
+  ],
+  "trimmed_harness": {
+    "path": "rust/crates/tidb-planner/tests/logicalop_hash64_equals_source.rs",
+    "before_sha256": "3a2a1afe69340fd339077d415bbe0b75285550da9e542591c7216b9ad66f4312",
+    "removed_tests": [
+      "topn_hash64_equals_covers_by_items_partition_offset_count_and_cop_flag",
+      "table_dual_hash64_equals_tracks_schema_and_row_count",
+      "sort_hash64_equals_separates_nil_empty_and_directional_by_items",
+      "show_ddl_jobs_hash64_equals_tracks_producer_schema",
+      "show_hash64_equals_tracks_producer_schema",
+      "sequence_hash64_equals_pins_the_unique_plan_id",
+      "union_all_hash64_equals_tracks_producer_schema",
+      "mem_table_hash64_equals_tracks_schema_db_name_and_table_info_id",
+      "max_one_row_hash64_equals_pins_the_unique_plan_id",
+      "limit_hash64_equals_tracks_partition_by_offset_and_count"
+    ],
+    "retained_tests": [
+      "projection_hash64_equals_tracks_exprs_flags_and_schema",
+      "schema_producer_hash64_equals_over_real_schema_columns"
+    ],
+    "lines_removed": 362
+  },
+  "tests_removed": 71,
+  "source_test_lines_removed": 3178,
+  "caller_evidence": "All tracked Rust references traced by module path and exported symbols. No production consumers; remaining ColumnIdentity and SortByItem uses belong to independent retained owners. Real logical/ operators, hashing library, lock/data-source owners and their tests remain.",
+  "go_ownership": "Go generated Hash64/Equals live on actual logicalop operators sharing schema and expression owners. Retired copies hash normalized IDs/fingerprints without production callers; CTE statistics and Expand copies likewise operate on private models. Their tests cannot establish shared-plan parity.",
+  "upstream_obligations": {
+    "inventory": "/workspace/.cloud-setup/operator-model-cleanup/upstream-artifacts.json",
+    "artifact_count": 44,
+    "sha256": "59154efd5807a7144b72f88930745190e91ac6e3601ac4199539930757629e39",
+    "scope": "All logicalop subtree source/generated/build/test/support artifacts plus the core ResolveExpand owner. Complete core package obligations remain unverified.",
+    "key_anchors": [
+      "pkg/planner/core/operator/logicalop/hash64_equals_generated.go",
+      "pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go",
+      "pkg/planner/core/operator/logicalop/logical_cte_table.go",
+      "pkg/planner/core/rule_resolve_grouping_expand.go"
+    ]
+  },
+  "validation": {
+    "status": "passed; actual commit and prepush gates follow",
+    "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets",
+    "all_target_check": "passed",
+    "lint_command": "make lint",
+    "lint": "passed",
+    "diff_check": "passed",
+    "retained_inputs": {
+      "unchanged_files": 3631,
+      "allowed_source_edits": [
+        "rust/crates/tidb-planner/src/lib.rs",
+        "rust/crates/tidb-planner/src/logical/mem_table.rs",
+        "rust/crates/tidb-planner/src/logical/mod.rs",
+        "rust/crates/tidb-planner/src/logical/rule_resolve_expand.rs",
+        "rust/crates/tidb-planner/src/logical/show.rs",
+        "rust/crates/tidb-planner/src/logical/show_ddl_jobs.rs",
+        "rust/crates/tidb-planner/src/logical/table_dual.rs",
+        "rust/crates/tidb-planner/tests/logicalop_hash64_equals_source.rs"
+      ],
+      "six_real_owner_code_bodies_identical": true,
+      "two_retained_test_bodies_identical": true,
+      "registration": [
+        {
+          "package": "tidb-planner",
+          "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+          "sha256": "33e9d17ab473fa565cca020543cd049d72a424d33ca3460034889908d73f0a55"
+        },
+        {
+          "package": "difftest-planner-tests",
+          "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+          "sha256": "5f2911746003be0881686c4480f4bb99f2d6bbecc7fdd84b0a53a5373bfff7f3"
+        }
+      ],
+      "unexpected_changes": []
+    },
+    "self_review": "Only module declarations, six comment-only ownership corrections and private test deletion outside removed files; both real-owner test bodies are byte-identical. No executable production changes.",
+    "logs": "/workspace/.cloud-setup/operator-model-cleanup",
+    "log_sha256": {
+      "check.log": "0e0450bb0401efe9e3d2138f3e2524850e5ae2c5989452a77b8c597b23ebdb33",
+      "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  },
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "changed": false
+  },
+  "limits": [
+    "No finding closure or complete package acceptance",
+    "No measured speedup",
+    "No runtime suite rerun for unreachable deletion with unchanged retained behavior",
+    "Full Go suites and live TiKV not run"
+  ]
+}
