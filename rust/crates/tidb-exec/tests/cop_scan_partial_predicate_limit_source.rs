@@ -93,6 +93,11 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
 struct Observation {
     request_concurrency: isize,
     request_limit_size: u64,
+    max_execution_time_ms: u64,
+    busy_threshold_ns: i64,
+    read_timeout_ms: u64,
+    adaptive_labels: Vec<tidb_txnkv::StoreLabel>,
+    adaptive_mode_after_adjustment: tidb_txnkv::ReplicaReadType,
     /// Go `SessionVars.GetReplicaRead()` carried by RequestBuilder.
     replica_read: tidb_txnkv::ReplicaReadType,
     /// Direction carried by the DistSQL request, which orders region tasks.
@@ -179,6 +184,15 @@ impl QueryTransport for FakeTransport {
         observation.request_concurrency = metadata.concurrency;
         observation.request_limit_size = metadata.limit_size;
         observation.replica_read = metadata.replica_read;
+        observation.max_execution_time_ms = metadata.max_execution_time_ms;
+        observation.busy_threshold_ns = metadata.store_busy_threshold_ns;
+        observation.read_timeout_ms = metadata.tikv_client_read_timeout_ms;
+        let mut adjusted = metadata.clone();
+        if let Some(adjuster) = metadata.closest_replica_read_adjuster.as_ref() {
+            adjuster.adjust(&mut adjusted, 1);
+        }
+        observation.adaptive_mode_after_adjustment = adjusted.replica_read;
+        observation.adaptive_labels = adjusted.match_store_labels.clone();
         observation.request_desc = metadata.desc;
         observation.scan_desc = scan.desc.unwrap_or(false);
         observation.primary_column_ids = scan.primary_column_ids.clone();
@@ -725,4 +739,99 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         observation.request_desc,
         "DistSQL must visit region tasks backwards for global order"
     );
+}
+
+#[test]
+fn adaptive_small_scan_and_execution_deadline_reach_coprocessor() {
+    let (catalog, region) = fixture();
+    let ctx = StmtContext::for_query()
+        .with_replica_read(tidb_txnkv::ReplicaReadType::ClosestAdaptive)
+        .with_stats_load_policy(0, true, 731);
+    let rows = run_select_on("SELECT id FROM t LIMIT 1", &catalog, &ctx).unwrap();
+    assert_eq!(rows.len(), 1);
+    let observations = region.observations.lock().unwrap();
+    let observation = &observations[0];
+    assert_eq!(observation.max_execution_time_ms, 731);
+    assert_eq!(
+        observation.adaptive_mode_after_adjustment,
+        tidb_txnkv::ReplicaReadType::Leader
+    );
+}
+
+#[test]
+fn adaptive_small_scan_falls_back_after_region_tasks_exist() {
+    let (catalog, region) = fixture();
+    let ctx =
+        StmtContext::for_query().with_replica_read(tidb_txnkv::ReplicaReadType::ClosestAdaptive);
+    run_select_on("SELECT id FROM t LIMIT 1", &catalog, &ctx).unwrap();
+    assert_eq!(
+        region.observations.lock().unwrap()[0].adaptive_mode_after_adjustment,
+        tidb_txnkv::ReplicaReadType::Leader
+    );
+}
+
+#[test]
+fn coprocessor_read_policy_preserves_large_reads_and_explicit_modes() {
+    use tidb_executor::remote_scan::CoprocessorReadPolicy;
+    for (mode, threshold, expected, labels, sql, row_count) in [
+        (
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            4096,
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            1,
+            "SELECT id FROM t",
+            20,
+        ),
+        (
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            4096,
+            tidb_txnkv::ReplicaReadType::Leader,
+            0,
+            "SELECT id FROM t LIMIT 1",
+            1,
+        ),
+        (
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            0,
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            1,
+            "SELECT id FROM t LIMIT 1",
+            1,
+        ),
+        (
+            tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+            i64::MAX,
+            tidb_txnkv::ReplicaReadType::Leader,
+            0,
+            "SELECT id FROM t LIMIT 1",
+            1,
+        ),
+        (
+            tidb_txnkv::ReplicaReadType::Follower,
+            i64::MAX,
+            tidb_txnkv::ReplicaReadType::Follower,
+            0,
+            "SELECT id FROM t LIMIT 1",
+            1,
+        ),
+    ] {
+        let (catalog, region) = fixture();
+        let context = StmtContext::for_query()
+            .with_replica_read(mode)
+            .with_coprocessor_read_policy(CoprocessorReadPolicy {
+                closest_read_threshold: threshold,
+                busy_threshold_ns: 1234,
+                read_timeout_ms: 731,
+            });
+        let rows = run_select_on(sql, &catalog, &context).unwrap();
+        assert_eq!(rows.len(), row_count);
+        let observations = region.observations.lock().unwrap();
+        let observation = &observations[0];
+        assert_eq!(
+            (observation.busy_threshold_ns, observation.read_timeout_ms),
+            (1234, 731)
+        );
+        assert_eq!(observation.adaptive_mode_after_adjustment, expected);
+        assert_eq!(observation.adaptive_labels.len(), labels);
+    }
 }

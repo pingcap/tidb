@@ -1137,6 +1137,7 @@ impl KvTable {
         };
         let (key_ranges, range_hints) =
             Self::table_reader_handle_key_ranges(self.table_id, handles)?;
+        let statement = statement.for_lookup_batch(handles.len());
         let context = RowDecodeContext::legacy_default(zone);
         let materialization = if keep
             .iter()
@@ -1168,7 +1169,7 @@ impl KvTable {
             false,
             true,
             &context,
-            statement,
+            &statement,
             crate::remote_scan::PushdownReadEngine::TiKv,
             0,
             Some(&key_ranges),

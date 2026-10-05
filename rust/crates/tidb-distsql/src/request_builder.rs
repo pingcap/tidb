@@ -465,6 +465,15 @@ impl RequestBuilder {
         self
     }
 
+    /// Attach Go's request adjuster; it runs after region tasks are built.
+    pub fn set_closest_replica_read_adjuster(
+        &mut self,
+        adjuster: Option<Arc<dyn tidb_txnkv::CoprocessorRequestAdjuster>>,
+    ) -> &mut Self {
+        self.request.closest_replica_read_adjuster = adjuster;
+        self
+    }
+
     /// Builds immutable request metadata once.
     pub fn build(&mut self) -> Result<KvRequestMetadata, KvRequestBuildError> {
         if self.used {

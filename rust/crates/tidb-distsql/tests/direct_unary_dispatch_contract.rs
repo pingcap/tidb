@@ -747,6 +747,9 @@ fn closest_replica_policy_with_labels_reaches_the_live_selector() {
 fn closest_adjuster_receives_region_task_count_before_replica_selection() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let calls = Arc::new(RwLock::new(Vec::new()));
+    let before_miss = tidb_distsql::metrics::COPR_CLOSEST_READ
+        .with_label_values(&["miss"])
+        .get();
     let adjusted = Arc::new(AtomicUsize::new(0));
     let observed = adjusted.clone();
     let mut request = metadata("a", "z");
@@ -770,6 +773,12 @@ fn closest_adjuster_receives_region_task_count_before_replica_selection() {
     let mut result = select_result(&mut runtime, &transport_request(request));
     while result.next_raw().unwrap().is_some() {}
     assert_eq!(adjusted.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        tidb_distsql::metrics::COPR_CLOSEST_READ
+            .with_label_values(&["miss"])
+            .get(),
+        before_miss + 1.0
+    );
     assert_eq!(calls.read().unwrap().len(), 2);
     assert!(calls
         .read()

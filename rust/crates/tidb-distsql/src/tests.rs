@@ -196,7 +196,7 @@ fn test_request_builder_maps_session_settings_without_transport() {
     context.request.explicit_request_source_type = "client".to_owned();
     context.request.store_batch_size = 32;
     context.request.resource_group_name = "olap".to_owned();
-    context.request.load_based_replica_read_threshold_ms = 7;
+    context.request.load_based_replica_read_threshold_ns = 7;
     context.request.tikv_client_read_timeout_ms = 100;
     context.request.max_execution_time_ms = 250;
     context.request.max_keys_read = 1_000;
@@ -215,7 +215,7 @@ fn test_request_builder_maps_session_settings_without_transport() {
     assert_eq!(metadata.request_source.explicit_source_type, "client");
     assert_eq!(metadata.store_batch_size, 32);
     assert_eq!(metadata.resource_group_name, "olap");
-    assert_eq!(metadata.store_busy_threshold_ms, 7);
+    assert_eq!(metadata.store_busy_threshold_ns, 7);
     assert_eq!(metadata.tikv_client_read_timeout_ms, 100);
     assert_eq!(metadata.max_execution_time_ms, 250);
     assert_eq!(metadata.max_keys_read, 1_000);

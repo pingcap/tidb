@@ -130,8 +130,8 @@ pub struct RequestContext {
     pub execute_batch_tasks_serially: bool,
     /// Resource group name.
     pub resource_group_name: String,
-    /// Load-based replica-read threshold in milliseconds.
-    pub load_based_replica_read_threshold_ms: u64,
+    /// Load-based replica-read threshold in nanoseconds.
+    pub load_based_replica_read_threshold_ns: i64,
     /// TiKV client read timeout in milliseconds.
     pub tikv_client_read_timeout_ms: u64,
     /// Maximum execution time in milliseconds.
@@ -166,7 +166,7 @@ impl Default for RequestContext {
             allow_batch_task_data_merge: false,
             execute_batch_tasks_serially: false,
             resource_group_name: "default".to_owned(),
-            load_based_replica_read_threshold_ms: 0,
+            load_based_replica_read_threshold_ns: 0,
             tikv_client_read_timeout_ms: 0,
             max_execution_time_ms: 0,
             max_keys_read: 0,

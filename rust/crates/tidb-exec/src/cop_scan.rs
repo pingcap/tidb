@@ -700,6 +700,9 @@ where
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             replica_read: request.statement.replica_read,
+            read_policy: request.statement.read_policy.clone(),
+            estimated_net_bytes: request.statement.estimated_net_bytes,
+            max_execution_time_ms: request.statement.max_execution_time_ms,
             priority: request.statement.priority,
             not_fill_cache: request.statement.not_fill_cache,
             dist_sql_scan_concurrency: request.statement.dist_sql_scan_concurrency,
@@ -760,6 +763,9 @@ struct RemoteScanPlan {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this request.
     replica_read: tidb_distsql::ReplicaReadType,
+    read_policy: tidb_executor::remote_scan::CoprocessorReadPolicy,
+    estimated_net_bytes: f64,
+    max_execution_time_ms: u64,
     /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)` for this request.
     priority: tidb_distsql::Priority,
     /// Go `StmtCtx.NotFillCache` for this request.
@@ -791,6 +797,40 @@ fn scan_result<T>(task: impl FnOnce() -> Result<T, String>) -> Result<T, String>
     })
 }
 
+/// Go executor.newClosestReadAdjuster. The number of tasks is known only
+/// after region splitting; paging/retries retain the resulting request.
+fn closest_read_adjuster(
+    mode: tidb_distsql::ReplicaReadType,
+    bytes: f64,
+    threshold: i64,
+    zone: String,
+) -> Option<Arc<dyn tidb_txnkv::CoprocessorRequestAdjuster>> {
+    if mode != tidb_distsql::ReplicaReadType::ClosestAdaptive {
+        return None;
+    }
+    Some(Arc::new(
+        move |request: &mut tidb_txnkv::Request, count: usize| {
+            let per_task = bytes / count as f64;
+            // Go amd64 converts non-finite/out-of-range float64 to MinInt64.
+            let estimate = if !per_task.is_finite() || per_task >= 9_223_372_036_854_775_808.0 {
+                i64::MIN
+            } else {
+                per_task as i64
+            };
+            if estimate >= threshold {
+                request.match_store_labels.push(tidb_txnkv::StoreLabel {
+                    key: "zone".to_owned(),
+                    value: zone.clone(),
+                });
+                true
+            } else {
+                request.replica_read = tidb_distsql::ReplicaReadType::Leader;
+                false
+            }
+        },
+    ))
+}
+
 fn open_scan<F>(
     factory: &Arc<F>,
     plan: RemoteScanPlan,
@@ -808,15 +848,15 @@ where
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
     // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
     //
-    // The remaining `SetFromSessionVars` fields (request source, task id,
-    // max_execution_time, tidb_kv_read_timeout, the runaway checker) are
-    // session variables no `StmtContext` carries yet. The scan concurrency,
-    // resource group, priority, and `NotFillCache` ride the statement and
-    // are therefore copied from this request rather than the stock context.
+    // Copy the retained statement policy, including timeout/hint and busy
+    // thresholds, rather than recreating session defaults on the worker.
     let mut context = DistSqlContext::new();
     context.request.dist_sql_concurrency = plan.dist_sql_scan_concurrency;
     context.request.resource_group_name = plan.resource_group_name;
     context.request.replica_read = plan.replica_read;
+    context.request.load_based_replica_read_threshold_ns = plan.read_policy.busy_threshold_ns;
+    context.request.tikv_client_read_timeout_ms = plan.read_policy.read_timeout_ms;
+    context.request.max_execution_time_ms = plan.max_execution_time_ms;
     context.request.priority = plan.priority;
     context.request.not_fill_cache = plan.not_fill_cache;
     context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
@@ -828,6 +868,16 @@ where
         context.request.paging.max_size = context.request.paging.max_size.max(min_size);
     }
     let mut builder = RequestBuilder::from_context(&context);
+    if plan.replica_read.is_closest_read() {
+        builder
+            .set_read_replica_scope(tidb_config::config_tree::config::get_txn_scope_from_config());
+    }
+    builder.set_closest_replica_read_adjuster(closest_read_adjuster(
+        plan.replica_read,
+        plan.estimated_net_bytes,
+        plan.read_policy.closest_read_threshold,
+        tidb_config::config_tree::config::get_txn_scope_from_config(),
+    ));
     // Go's `RequestBuilder.SetTableHandles` preserves one row-count hint per
     // grouped range. Keep the ordinary no-hint path for full/table scans and
     // refuse misaligned metadata rather than attaching a hint to the wrong
@@ -1186,6 +1236,45 @@ mod tests {
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
     use tidb_expr::expression::Expression;
+
+    #[test]
+    fn adaptive_read_threshold_is_per_task_and_preserves_existing_labels() {
+        for (bytes, tasks, hit) in [
+            (8191.9, 2, false),
+            (8192.0, 2, true),
+            (8192.0, 3, false),
+            (0.0, 0, false),
+        ] {
+            let mut request = tidb_txnkv::Request::default();
+            request.replica_read = tidb_distsql::ReplicaReadType::ClosestAdaptive;
+            request.match_store_labels.push(tidb_txnkv::StoreLabel {
+                key: "rack".into(),
+                value: "r1".into(),
+            });
+            let adjuster =
+                closest_read_adjuster(request.replica_read, bytes, 4096, "zone-a".into()).unwrap();
+            assert_eq!(adjuster.adjust(&mut request, tasks), hit);
+            assert_eq!(request.match_store_labels.len(), if hit { 2 } else { 1 });
+            assert_eq!(
+                request.replica_read,
+                if hit {
+                    tidb_distsql::ReplicaReadType::ClosestAdaptive
+                } else {
+                    tidb_distsql::ReplicaReadType::Leader
+                }
+            );
+            if hit {
+                assert_eq!(request.match_store_labels[1].value, "zone-a");
+            }
+        }
+        for mode in [
+            tidb_distsql::ReplicaReadType::Leader,
+            tidb_distsql::ReplicaReadType::Follower,
+            tidb_distsql::ReplicaReadType::Closest,
+        ] {
+            assert!(closest_read_adjuster(mode, 1e9, 1, "z".into()).is_none());
+        }
+    }
 
     #[test]
     fn registered_storage_errors_reach_coprocessor_rows_and_chunks() {

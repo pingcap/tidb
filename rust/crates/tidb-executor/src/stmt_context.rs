@@ -515,6 +515,7 @@ pub struct StmtContextData {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this statement.
     replica_read: ReplicaReadType,
+    coprocessor_read_policy: crate::remote_scan::CoprocessorReadPolicy,
     /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
     /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
     /// `ResetContextOfStmt` copies off the AST and
@@ -1783,6 +1784,13 @@ context_configuration! {
         self
     }
 
+    /// Retain the session's coprocessor read policy for this statement.
+    #[must_use]
+    pub fn with_coprocessor_read_policy(mut self, policy: crate::remote_scan::CoprocessorReadPolicy) -> Self {
+        self.coprocessor_read_policy = policy;
+        self
+    }
+
     /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
     #[must_use]
     pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
@@ -1953,6 +1961,7 @@ impl StmtContext {
             time_zone: None,
             resource_group_name: session.resource_group_name,
             replica_read: ReplicaReadType::Leader,
+            coprocessor_read_policy: Default::default(),
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
@@ -3420,6 +3429,23 @@ impl StmtContext {
     #[must_use]
     pub fn resource_group_name(&self) -> &str {
         &self.resource_group_name
+    }
+
+    /// Settings shared by all coprocessor scans in this statement.
+    #[must_use]
+    pub fn coprocessor_read_policy(&self) -> &crate::remote_scan::CoprocessorReadPolicy {
+        &self.coprocessor_read_policy
+    }
+
+    /// Go GetMaxExecutionTime: the session/hint deadline applies only to SELECT.
+    /// Keep the raw value for statistics loading, which has its own policy.
+    #[must_use]
+    pub fn max_execution_time_ms(&self) -> u64 {
+        if self.statement_class == StatementClass::Select {
+            self.max_execution_time_ms
+        } else {
+            0
+        }
     }
 
     /// Returns Go `SessionVars.GetReplicaRead()`.

@@ -481,9 +481,14 @@ impl CopReadTaskRuntime {
         // Go copr.Send adjusts once after region tasks have been built. The
         // adjusted metadata is retained across paging and region retries.
         let mut metadata = metadata.clone();
-        if let Some(adjuster) = metadata.closest_replica_read_adjuster.clone() {
-            adjuster.adjust(&mut metadata, envelopes.len());
-        }
+        let read_type = match metadata.closest_replica_read_adjuster.clone() {
+            Some(adjuster) if adjuster.adjust(&mut metadata, envelopes.len()) => "hit",
+            Some(_) => "miss",
+            None => "null",
+        };
+        crate::metrics::COPR_CLOSEST_READ
+            .with_label_values(&[read_type])
+            .inc();
         let ema = Arc::new(ReadBytesEma::new(seed_read_bytes));
         let tasks: Vec<LogicalCopReadTask> = envelopes
             .into_iter()

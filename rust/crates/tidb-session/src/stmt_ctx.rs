@@ -101,6 +101,7 @@ pub(crate) struct StatementVarSnapshot {
     remove_orderby_in_subquery: bool,
     pub(crate) mem_quota: i64,
     replica_read: tidb_executor::ReplicaReadType,
+    coprocessor_read_policy: tidb_executor::remote_scan::CoprocessorReadPolicy,
     isolation_read_engines: String,
     init_chunk_size: usize,
     max_chunk_size: usize,
@@ -953,6 +954,26 @@ impl Session {
                         .unwrap_or_default()
                 }),
             replica_read: self.vars.replica_read(),
+            coprocessor_read_policy: tidb_executor::remote_scan::CoprocessorReadPolicy {
+                closest_read_threshold: self
+                    .vars
+                    .get_system("tidb_adaptive_closest_read_threshold")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(4096),
+                busy_threshold_ns: self
+                    .vars
+                    .get_system("tidb_load_based_replica_read_threshold")
+                    .ok()
+                    .and_then(|value| tidb_config::configtypes::parse_go_duration(&value).ok())
+                    .unwrap_or(1_000_000_000),
+                read_timeout_ms: self
+                    .vars
+                    .get_system("tikv_client_read_timeout")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+            },
             isolation_read_engines: self
                 .vars
                 .get_system("tidb_isolation_read_engines")
@@ -1336,6 +1357,7 @@ impl Session {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
+                    .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
                     .with_dist_sql_scan_concurrency(
                         self.vars
                             .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
@@ -1404,6 +1426,7 @@ impl Session {
                 .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(tidb_executor::ReplicaReadType::Leader)
+                .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
                 .with_lazy_clock(snapshot.timestamp, zone)
                 .with_sql_mode(snapshot.scanner_sql_mode)
                 .with_ddl_job_context(
@@ -1999,6 +2022,68 @@ mod tests {
             session.statement_context(false).dist_sql_scan_concurrency(),
             3
         );
+    }
+
+    #[test]
+    fn coprocessor_read_policy_retains_settings_and_hint_deadline() {
+        let mut session = Session::new();
+        let initial = session.statement_context(false);
+        assert_eq!(initial.coprocessor_read_policy(), &Default::default());
+        session
+            .run("SET tidb_adaptive_closest_read_threshold = 8193")
+            .unwrap();
+        session
+            .run("SET tidb_load_based_replica_read_threshold = '1.234567s'")
+            .unwrap();
+        session.run("SET tikv_client_read_timeout = 731").unwrap();
+        session.run("SET max_execution_time = 919").unwrap();
+        let retained = session.statement_context(false);
+        assert_eq!(
+            retained.coprocessor_read_policy().closest_read_threshold,
+            8193
+        );
+        assert_eq!(
+            retained.coprocessor_read_policy().busy_threshold_ns,
+            1_234_567_000
+        );
+        assert_eq!(retained.coprocessor_read_policy().read_timeout_ms, 731);
+        assert_eq!(retained.max_execution_time_ms(), 919);
+        for class in [
+            tidb_executor::StatementClass::Insert,
+            tidb_executor::StatementClass::Update,
+            tidb_executor::StatementClass::Delete,
+            tidb_executor::StatementClass::Other,
+            tidb_executor::StatementClass::LoadData,
+        ] {
+            assert_eq!(
+                retained
+                    .clone()
+                    .with_statement_class(class)
+                    .max_execution_time_ms(),
+                0
+            );
+        }
+        assert_eq!(session.statement_context(true).max_execution_time_ms(), 0);
+        session
+            .run("SET tidb_adaptive_closest_read_threshold = 0")
+            .unwrap();
+        session
+            .run("SET tidb_load_based_replica_read_threshold = '999us'")
+            .unwrap();
+        session.run("SET tikv_client_read_timeout = 0").unwrap();
+        let next = session.statement_context(false);
+        assert_eq!(next.coprocessor_read_policy().closest_read_threshold, 0);
+        assert_eq!(next.coprocessor_read_policy().busy_threshold_ns, 999_000);
+        assert_eq!(next.coprocessor_read_policy().read_timeout_ms, 0);
+        assert_eq!(
+            retained.coprocessor_read_policy().closest_read_threshold,
+            8193
+        );
+        assert_eq!(initial.coprocessor_read_policy(), &Default::default());
+        session.stmt_hints.has_max_execution_time = true;
+        session.stmt_hints.max_execution_time = 17;
+        assert_eq!(session.statement_context(false).max_execution_time_ms(), 17);
+        assert_eq!(session.statement_context(true).max_execution_time_ms(), 0);
     }
 
     #[test]

@@ -1,0 +1,181 @@
+{
+  "date": "2026-10-05",
+  "scope": "Connected O13/N03 coprocessor request policy: retained session settings, physical response estimates, per-handle lookup estimates, adaptive selection, precise busy durations, deadlines and counters. Existing-owner maintenance; both findings remain partial.",
+  "baseline": {
+    "tidb": "5259eff918f07518ce7706ee7d706d9d3dc69d73",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "06b4ccc2735ecf89ed57136241cb7b7d204d6c07"
+  },
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 28,
+    "partial": 28
+  },
+  "rechecked_findings": [
+    "O13",
+    "N03"
+  ],
+  "other_findings": "Other54 unresolved findings retain prior evidence; no full-register reproduction.",
+  "before_failures": [
+    {
+      "test": "adaptive_small_scan_and_execution_deadline_reach_coprocessor",
+      "actual": "max_execution_time=0",
+      "expected": "731"
+    },
+    {
+      "test": "adaptive_small_scan_falls_back_after_region_tasks_exist",
+      "actual": "ClosestAdaptive",
+      "expected": "Leader"
+    },
+    {
+      "test": "closest_adjuster_receives_region_task_count_before_replica_selection",
+      "actual": "miss counter delta=0",
+      "expected": "1"
+    }
+  ],
+  "changes": [
+    "Retain adaptive threshold/busy duration/read timeout in cached statement settings and propagate query/DML contexts.",
+    "Carry effective SELECT session/hint execution deadlines into DistSQL dispatch; Go GetMaxExecutionTime excludes non-SELECT classes and leaves their separate statement timeout policy unchanged.",
+    "Use shared planner response-width arithmetic, underlying histogram collection, output columns and reader cardinality; table/covering-index/lookup and direct index-merge partial producers integrated.",
+    "Scale table-side lookup estimate by actual batch handle count before building table requests.",
+    "Install adaptive callback once region-task count is known; small reads use leader, large reads append configured zone without discarding existing labels. Explicit closest reads receive configured replica scope.",
+    "Count hit/miss/null decisions; preserve adjusted metadata through existing retry/paging runtime.",
+    "Remove millisecond-only busy-duration handoff and reconversion; all session/builder callers retain Go nanoseconds until task wire encoding. No tests removed or new harness added."
+  ],
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-exec -p tidb-distsql --test all --no-fail-fast -- adaptive_small_scan closest_adjuster_receives_region_task_count --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL: three behavioral regressions",
+      "log": "before.log",
+      "sha256": "18756195cf33d42b195eede6fb1ebf0fed5a6bda9ed0a5760a1071d6aadf6e91"
+    },
+    {
+      "command": "cargo test --locked -p tidb-planner -p tidb-executor -p tidb-session -p tidb-exec -p tidb-distsql --lib --no-fail-fast -- cop_read coprocessor_read_policy cop_scan::tests row_size request_builder distsql_scan_concurrency --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 18 cases, one existing scaling case ignored",
+      "log": "owner-tests.log",
+      "sha256": "2d435730d207b6494bf527777f77041a7d8acf5be2cf453b5ae061c73a6250c3"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec -p tidb-distsql --test all --no-fail-fast -- cop_scan_partial_predicate_limit_source direct_unary_dispatch_contract request_builder_source region_task_builder_source direct_unary_retry_budget tikv_rpc_contract_source --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 75 cases",
+      "log": "transport-tests-final.log",
+      "sha256": "4f0240f0fed812e31cdd79c019363ffdd697970c968fa816dd5e4e0355e64ad5"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "lint.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-planner -p tidb-distsql -p tidb-executor --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "check-final.log",
+      "sha256": "f66d3879f884ba7d7a0e5c4f90a81d81526d863fdd4dbfb2c5287874901d034e"
+    },
+    {
+      "command": "git diff --check; normalized changed-region rustfmt; JSON/Markdown count and disposition comparison",
+      "result": "PASS"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib coprocessor_read_policy -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL at unpublished initial batch commit: SELECT cap leaked to DML",
+      "log": "deadline-before.log",
+      "sha256": "8d4e7c711838bac6194e193815039abfaa43f2592c19e3b89d2326a3a1b69404"
+    },
+    {
+      "command": "cargo test --locked -p tidb-session --lib coprocessor_read_policy -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 1 previously counted case, expanded across statement classes",
+      "log": "deadline-after.log",
+      "sha256": "02378ef7dfb28dfcc2b09346dca995cec7f96d230e519699c3ea5cf8af76b7b3"
+    },
+    {
+      "command": "cargo test --locked -p tidb-exec --test all -- adaptive_small_scan coprocessor_read_policy --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 3 previously counted cases",
+      "log": "deadline-transport-after.log",
+      "sha256": "d2bb09500731fbb79b1cbe11fcc33c2e7b14ba9daa5d7dda91b0b2cfe8d3e3e0"
+    },
+    {
+      "command": "cargo check --locked -p tidb-session -p tidb-executor -p tidb-exec --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "deadline-check.log",
+      "sha256": "b062e6bd7d8276d9bfc8b703219458b1e069d2656c550796fc5175208df2be2a"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "lint-final.log",
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    }
+  ],
+  "distinct_rust_passes": 93,
+  "ignored": [
+    "cop_paging::cop_read_task_runtime::tests::transferring_read_tasks_scales_with_task_count: existing opt-in scaling test; not run under competing build load."
+  ],
+  "limitations": [
+    "Point/batch snapshot adjusters and index-join/other dynamic reader size producers remain unresolved.",
+    "Complete local/stale transaction scopes and task-build-error metric accounting remain open.",
+    "No full Go suites, complete package inventory acceptance, live multi-zone/multi-node TiKV, TLS, performance or new-task restoration validation.",
+    "Transport tests exercise production SQL/request/runtime paths with existing RPC fixtures; they are not a live TiKV cluster."
+  ],
+  "recovered_validation_errors": [
+    "Initial Cargo command from repository root ignored rust/.cargo settings; stopped its Cargo/rustc children and reran from rust before any production edits.",
+    "First check found getters inserted inside setter-only macro; relocated getters to ordinary implementation.",
+    "New test initially used wrong metadata unit field, then attempted to move through Deref; corrected units and cloned the observed labels. No assertions disabled."
+  ],
+  "publication": {
+    "policy": "User authorized normal commit/push to pingcap/tidb hparser-integration; native unchanged.",
+    "precommit": "Actual hooks/pre-commit must run cd rust && cargo build --locked -p tidb-server.",
+    "prepush": "Same locked build immediately before push; verify remote SHA.",
+    "status": "Pending; final results recorded in /workspace/.cloud-setup/cop-read-policy-batch/final-handoff.json."
+  },
+  "external_logs": "/workspace/.cloud-setup/cop-read-policy-batch",
+  "source_manifest": {
+    "rust/crates/tidb-distsql/src/context.rs": "ebf90a3e6ca29068b3c6dac8ab24b85a4063dc7debf1019b9061b8aa532b95c1",
+    "rust/crates/tidb-distsql/src/cop_paging/cop_read_task_runtime.rs": "125597232f52cbc0edf490d8c21157978fb01177c9e358211f7d8f12b9e6de8b",
+    "rust/crates/tidb-distsql/src/kv_request.rs": "faaa4c4d10e9e11de47baf2460d84f8d1261f8b19820591832a29d533c8bef9c",
+    "rust/crates/tidb-distsql/src/request.rs": "65cc9193a36c119654170060173b777073873b25dfcf3bbb19032bf7fb38ad0f",
+    "rust/crates/tidb-distsql/src/request_builder.rs": "b945298bf23f62bec2e31cba69995ec61b2b9e9840a7b80be38aa74f7d3b49a1",
+    "rust/crates/tidb-distsql/src/tests.rs": "1ddec3e98630ba1301abe78d81617cd5a2c270e269a9141559412ccbc8057a0f",
+    "rust/crates/tidb-distsql/tests/direct_unary_dispatch_contract.rs": "9f7466141d9f33e0db2d8cf3c2fd0c92b258170af5f23241b3a88438287624d9",
+    "rust/crates/tidb-exec/src/cop_scan.rs": "d0f64334df17f5ea6eb38eea656df0bbadc1b5c60c4a3420226e1eed17ee6469",
+    "rust/crates/tidb-exec/tests/cop_scan_partial_predicate_limit_source.rs": "42394f00c25721f37442daf2051b92381316c1994b12c2d42bcac08b76d6ca33",
+    "rust/crates/tidb-executor/src/driver/physical_builder.rs": "7a6c8516f91820545661f878c5561184a95578405517d4773aab9d2296aff727",
+    "rust/crates/tidb-executor/src/kv_table/table_scan.rs": "50be9a27bc1e0cd5187fbbacd10001a1aa336c624d231e74ffdb447b0d6c398b",
+    "rust/crates/tidb-executor/src/remote_scan.rs": "eee0d63a3d461f7289940d7d7ffee731641984b0343f4493b1063e13fba09649",
+    "rust/crates/tidb-executor/src/stmt_context.rs": "fd8a8cfdfe5b5d99be329191a7b78e7024db14a8de69e699a8411ccca94dead6",
+    "rust/crates/tidb-planner/src/physical/mod.rs": "d4fc5e53b83d4af8912dc736440392646ddd69b22236fc0080e2236eb2854721",
+    "rust/crates/tidb-planner/src/physical/tests.rs": "f50db69283d68b486cf1a352f320dadb935a9c066a1ef1ab76578c46588fd9d7",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "015f20d34dd713afcd896fe91b0dae78ed25e23f74d8c313fcfb7978a3d632af"
+  },
+  "self_review": "Verified all renamed duration producers/consumers migrated; remaining millisecond fields are TiKV wire task fields. Reader estimates use retained root cardinality and output schema while histograms come from the scan. Statement snapshots cover query and DML contexts. Mandatory local/stale scope and snapshot limitations remain explicit. No dependency/lock/native edits. Final Go GetMaxExecutionTime review caught non-SELECT deadline leakage before push; the new regression fails at initial batch commit and passes after the accessor gate, including hints. Publication gates are repeated for the corrected tree.",
+  "deadline_review": {
+    "source": "Go sessionctx/variable/session.go::GetMaxExecutionTime and session/test/variable/variable_test.go non-SELECT/hint assertions",
+    "before_revision": "790deddbe79b34d1cf792857e96976a21cc6a2d9 (unpublished initial batch commit)",
+    "before": "New non-SELECT assertion failed: 919 != 0; push pipeline was stopped and remote remained 5259eff918.",
+    "after": "Accessor returns zero for Insert, Update, Delete, Other and LoadData while preserving SELECT session/hint values. Raw statistics-load policy is unchanged.",
+    "distinct_case_count": "Extended an existing case; repeated four affected passing cases are not added to the 93 distinct batch cases."
+  }
+}

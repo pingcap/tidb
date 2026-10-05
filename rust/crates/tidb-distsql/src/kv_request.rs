@@ -106,8 +106,7 @@ impl KvRequestMetadata {
         self.allow_batch_task_data_merge = session.allow_batch_task_data_merge;
         self.execute_batch_tasks_serially = session.execute_batch_tasks_serially;
         self.resource_group_name = session.resource_group_name;
-        self.store_busy_threshold_ns =
-            (session.store_busy_threshold_ms as i64).wrapping_mul(1_000_000);
+        self.store_busy_threshold_ns = session.store_busy_threshold_ns;
         self.tikv_client_read_timeout_ms = session.tikv_client_read_timeout_ms;
         self.max_execution_time_ms = session.max_execution_time_ms;
         self.max_keys_read = session.max_keys_read;

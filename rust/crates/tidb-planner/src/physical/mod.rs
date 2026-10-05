@@ -3928,6 +3928,44 @@ impl PhysicalPlan {
         self.base().base.stats_info()
     }
 
+    /// Go reader GetAvgRowSize using the output schema and the underlying
+    /// scan's full histogram collection (`physicalop.GetTblStats`).
+    #[must_use]
+    pub fn cop_avg_row_size(&self, encoded_key: bool, enable_chunk_rpc: bool) -> f64 {
+        use crate::cardinality::row_size::{get_avg_row_size, RowSizeColumn};
+        let mut scan = self;
+        while !matches!(scan, Self::TableScan(_) | Self::IndexScan(_)) {
+            let Some(child) = scan.children().first() else {
+                break;
+            };
+            scan = child;
+        }
+        let hist = scan.stats_info().and_then(StatsInfo::hist_coll);
+        let columns: Vec<_> = self
+            .schema()
+            .into_iter()
+            .flat_map(|schema| &schema.columns)
+            .map(|column| RowSizeColumn {
+                stats: hist.and_then(|hist| hist.column(column.unique_id)),
+                estimated_width: 0.0,
+            })
+            .collect();
+        get_avg_row_size(
+            &columns,
+            hist.is_none_or(|hist| hist.pseudo()),
+            hist.map_or(0, |hist| hist.realtime_count()),
+            encoded_key,
+            false,
+            enable_chunk_rpc,
+        )
+    }
+
+    /// Go reader GetNetDataSize, before splitting into region tasks.
+    #[must_use]
+    pub fn cop_net_data_size(&self, encoded_key: bool, enable_chunk_rpc: bool) -> f64 {
+        self.stats_count().unwrap_or(0.0) * self.cop_avg_row_size(encoded_key, enable_chunk_rpc)
+    }
+
     /// Go `SetStats(s)` (`<12th>`).
     pub fn set_stats(&mut self, stats: Option<StatsInfo>) {
         self.base_mut().base.set_stats(stats);

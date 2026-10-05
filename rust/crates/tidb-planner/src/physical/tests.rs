@@ -2420,3 +2420,44 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
     }
     assert_eq!(*correlation.data.unwrap().read().unwrap(), Datum::Int(7));
 }
+
+#[test]
+fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
+    use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
+    use crate::stats_info::HistColl;
+    let mut table = scan(1, &[1, 2]);
+    table.set_stats(Some(StatsInfo::new(100.0, []).with_hist_coll(
+        HistColl::new(
+            false,
+            100,
+            [
+                (
+                    1,
+                    RowSizeColumnStats::new(RowSizeType::LongLong, 800, 0, 100.0, true),
+                ),
+                (
+                    2,
+                    RowSizeColumnStats::new(RowSizeType::Variable, 1600, 0, 100.0, false),
+                ),
+            ],
+        ),
+    )));
+    let mut filtered = selection(2, table);
+    filtered
+        .base_mut()
+        .base
+        .set_schema(Some(Schema::new(vec![Column::new(
+            2,
+            FieldType::new(FieldTypeCode::VarString),
+        )])));
+    filtered.set_stats(Some(StatsInfo::new(3.0, [])));
+    // Go AvgColSizeChunkFormat: 16 - log2(16) + 8, plus a null bitmap bit.
+    assert_eq!(filtered.cop_avg_row_size(false, true), 20.125);
+    assert_eq!(filtered.cop_net_data_size(false, true), 60.375);
+    assert_eq!(filtered.cop_avg_row_size(false, false), 17.0);
+    assert_eq!(filtered.cop_net_data_size(false, false), 51.0);
+    let mut pseudo = scan(3, &[1, 2]);
+    pseudo.set_stats(Some(StatsInfo::new(2.0, [])));
+    assert_eq!(pseudo.cop_net_data_size(false, true), 32.5);
+    assert_eq!(pseudo.cop_net_data_size(true, false), 36.0);
+}

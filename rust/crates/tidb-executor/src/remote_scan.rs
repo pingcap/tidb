@@ -544,6 +544,14 @@ pub struct PushdownStatementContext {
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
     pub replica_read: tidb_distsql::ReplicaReadType,
+    /// Retained settings, independent of later SET statements.
+    pub read_policy: CoprocessorReadPolicy,
+    /// Go reader GetNetDataSize; supplied by the retained physical plan.
+    pub estimated_net_bytes: f64,
+    /// Go table reader average row size for a later index lookup batch.
+    pub lookup_avg_row_bytes: Option<f64>,
+    /// Effective statement deadline, including MAX_EXECUTION_TIME hints.
+    pub max_execution_time_ms: u64,
     /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`: the statement's
     /// own priority modifier projected onto KV's three values.
     pub priority: tidb_distsql::Priority,
@@ -576,6 +584,10 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
+            read_policy: CoprocessorReadPolicy::default(),
+            estimated_net_bytes: 0.0,
+            lookup_avg_row_bytes: None,
+            max_execution_time_ms: 0,
             priority: tidb_distsql::Priority::NoPriority,
             not_fill_cache: false,
             dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
@@ -603,6 +615,10 @@ impl PushdownStatementContext {
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
+            read_policy: ctx.coprocessor_read_policy().clone(),
+            estimated_net_bytes: 0.0,
+            lookup_avg_row_bytes: None,
+            max_execution_time_ms: ctx.max_execution_time_ms(),
             priority: kv_priority(ctx.statement_priority()),
             not_fill_cache: ctx.not_fill_cache(),
             dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
@@ -610,6 +626,23 @@ impl PushdownStatementContext {
             div_precision_increment: ctx.div_precision_increment(),
             staged_writes: ctx.staged_writes_handle(),
         }
+    }
+
+    /// Retain the response estimate computed from the physical reader subtree.
+    #[must_use]
+    pub fn with_estimated_net_bytes(mut self, bytes: f64) -> Self {
+        self.estimated_net_bytes = bytes;
+        self
+    }
+
+    /// Derive the table request estimate from this batch's actual handle count.
+    #[must_use]
+    pub fn for_lookup_batch(&self, count: usize) -> Self {
+        let mut statement = self.clone();
+        if let Some(avg) = self.lookup_avg_row_bytes {
+            statement.estimated_net_bytes = avg * count as f64;
+        }
+        statement
     }
 
     /// Binds the physical scan whose TiKV execution summary owns this read.
@@ -630,6 +663,27 @@ const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_distsql::Pri
         tidb_ast::StatementPriority::Low => tidb_distsql::Priority::Low,
         tidb_ast::StatementPriority::High => tidb_distsql::Priority::High,
         tidb_ast::StatementPriority::Delayed => tidb_distsql::Priority::Delayed,
+    }
+}
+
+/// Session policy consumed by Go's DistSQL request builder and read adjuster.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoprocessorReadPolicy {
+    /// Minimum estimated response bytes per region for closest-adaptive reads.
+    pub closest_read_threshold: i64,
+    /// Go duration converted to nanoseconds; converted only when a TiKV task is built.
+    pub busy_threshold_ns: i64,
+    /// Session `tikv_client_read_timeout`, in milliseconds; zero uses the client default.
+    pub read_timeout_ms: u64,
+}
+
+impl Default for CoprocessorReadPolicy {
+    fn default() -> Self {
+        Self {
+            closest_read_threshold: tidb_vardef::defaults::DEF_ADAPTIVE_CLOSEST_READ_THRESHOLD,
+            busy_threshold_ns: 1_000_000_000,
+            read_timeout_ms: 0,
+        }
     }
 }
 
@@ -838,6 +892,18 @@ mod tests {
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::run_prepared_select_for_test;
     use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
+
+    #[test]
+    fn cop_read_lookup_batches_use_their_table_width_and_handle_count() {
+        let statement = PushdownStatementContext {
+            estimated_net_bytes: 1_000_000.0,
+            lookup_avg_row_bytes: Some(32.125),
+            ..Default::default()
+        };
+        assert_eq!(statement.for_lookup_batch(8).estimated_net_bytes, 257.0);
+        assert_eq!(statement.for_lookup_batch(2).estimated_net_bytes, 64.25);
+        assert_eq!(statement.estimated_net_bytes, 1_000_000.0);
+    }
 
     /// The committed half of a cluster read, shared by the snapshot the
     /// session reads through and by the coprocessor below it.

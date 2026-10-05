@@ -91,6 +91,7 @@ struct BuildState {
     /// the region request; the local cursor has no request, so the scan build
     /// consumes it here. Set only while the reader's own subtree is built.
     index_scan_limit: Option<u64>,
+    reader_net_bytes: Option<f64>,
     /// One task-local replacement for the retained index-merge table scan.
     table_task_source: Option<(i32, Box<dyn Executor>)>,
     /// Reader subplans use coprocessor expression semantics.
@@ -762,6 +763,7 @@ fn build_table_scan(
     scan: &PhysicalTableScan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
+    net_bytes: Option<f64>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .physical_kv_table_by_id(scan.table_id)
@@ -795,7 +797,16 @@ fn build_table_scan(
         meta(ctx, plan, schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
         RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
+        PushdownStatementContext::from_stmt(ctx)
+            .with_plan_id(i64::from(scan.base.base.id()))
+            .with_estimated_net_bytes(net_bytes.unwrap_or_else(|| {
+                plan.cop_net_data_size(
+                    false,
+                    tidb_config::tikvcfg::get_global_config()
+                        .tikv_client
+                        .enable_chunk_rpc,
+                )
+            })),
     );
     // Dynamic prune mode keeps ONE logical scan whose read is restricted to
     // the partitions the planner selected -- the statement's own `PARTITION
@@ -1532,8 +1543,17 @@ fn build_reader(
     let plan =
         embedded.ok_or_else(|| DriverError::unsupported("a physical reader has no pushed plan"))?;
     let previous = std::mem::replace(&mut state.in_reader, true);
+    let old_bytes = state.reader_net_bytes.replace(
+        plan.cop_net_data_size(
+            embedded_index_scan(plan).is_some(),
+            tidb_config::tikvcfg::get_global_config()
+                .tikv_client
+                .enable_chunk_rpc,
+        ),
+    );
     let result = build_with_state(plan, catalog, ctx, state);
     state.in_reader = previous;
+    state.reader_net_bytes = old_bytes;
     result
 }
 
@@ -1914,6 +1934,7 @@ fn build_index_reader(
     expect_cnt: Option<u64>,
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
+    net_bytes: Option<f64>,
     adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
     adaptive_runtime: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
     catalog: &Catalog,
@@ -2011,7 +2032,19 @@ fn build_index_reader(
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
+        {
+            let chunk_rpc = tidb_config::tikvcfg::get_global_config()
+                .tikv_client
+                .enable_chunk_rpc;
+            let mut statement = PushdownStatementContext::from_stmt(ctx)
+                .with_plan_id(i64::from(scan.base.base.id()))
+                .with_estimated_net_bytes(
+                    net_bytes.unwrap_or_else(|| index_plan.cop_net_data_size(true, chunk_rpc)),
+                );
+            statement.lookup_avg_row_bytes =
+                table_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
+            statement
+        },
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
@@ -4312,7 +4345,15 @@ fn build_index_merge_reader(
                     ranges,
                     RowDecodeContext::for_query(ctx),
                     PushdownStatementContext::from_stmt(ctx)
-                        .with_plan_id(i64::from(scan.base.base.id())),
+                        .with_plan_id(i64::from(scan.base.base.id()))
+                        .with_estimated_net_bytes(
+                            partial.cop_net_data_size(
+                                true,
+                                tidb_config::tikvcfg::get_global_config()
+                                    .tikv_client
+                                    .enable_chunk_rpc,
+                            ),
+                        ),
                 );
                 source.set_lookup_concurrency(ctx.index_lookup_concurrency());
                 source.set_lookup_size(ctx.index_lookup_size());
@@ -4837,7 +4878,9 @@ fn build_with_state(
             "shuffle receiver has no owning worker",
         )),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
-        PhysicalPlan::TableScan(scan) => build_table_scan(plan, scan, catalog, ctx),
+        PhysicalPlan::TableScan(scan) => {
+            build_table_scan(plan, scan, catalog, ctx, state.reader_net_bytes)
+        }
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
             plan,
@@ -4849,6 +4892,7 @@ fn build_with_state(
             None,
             false,
             state.index_scan_limit.take(),
+            state.reader_net_bytes,
             None,
             None,
             catalog,
@@ -4912,6 +4956,7 @@ fn build_with_state(
                 reader.pushed_limit,
                 reader.paging.then_some(reader.expect_cnt),
                 reader.index_lookup_push_down,
+                None,
                 None,
                 state
                     .adaptive_limit_reader
