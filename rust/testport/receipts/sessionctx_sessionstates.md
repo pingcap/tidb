@@ -40,6 +40,12 @@ The Go master delta from the earlier pinned source
 
 ## Rust ownership and explicit boundary
 
+Historical comparison at the revision above. The unused timing model and its
+private test were removed in the 2026-10-05
+[session cleanup](../../docs/parity/current-audit/session-leaf-cleanup-validation.json).
+It had no runtime consumer. The original inventory and Go validation below
+remain historical evidence; they do not establish current Cloud validation.
+
 Rust has session-state fields threaded through selected session/executor
 contexts and a `tidb-exec::session_token_timing` owner for the classic and
 Starter timing constants. It does not yet own Go's dependency-closed

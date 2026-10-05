@@ -182,3 +182,67 @@ Nine live Apply tests, affected all-target checks, lint and diff review pass.
 The actual hook and fresh prepush gate remain required; publication evidence
 belongs in Cloud `dead-leaf-cleanup/final-handoff.json`. No finding status or
 package acceptance is changed by removing unused seed models.
+
+## Unused session and statement models
+
+
+Base `075db57c2cfbde5a6d1b01ceac980bbfcd6e2b62`; refreshed Go master `b36c940a4332c866d8b0e2afde88f5e7c2fd7fed`.
+Remove ten unconsumed models and their dedicated private test files from
+`rust/crates/tidb-exec`, plus their `src/lib.rs` exports. The modules are
+setvar_hint_restore, sysvar_error, read_consistency, txn_running_state, lazy_txn_state, nextgen_readonly_vars, session_token_timing, charset_variable_groups, session_context_key, alternative_plan_signals. This removes compiled surface that cannot affect SQL.
+The original Go session, statement and variable package obligations remain;
+no unresolved finding is closed by deleting isolated models.
+
+### Progress
+
+
+- [x] Trace module names and all exported top-level symbols across tracked Rust source, manifests and scripts; only the dedicated tests consume these exports.
+- [x] Inspect all selected bodies and original Go source/test anchors at refreshed master; remove ten modules, ten test files and ten exports in one batch.
+- [x] Affected all-target checks and lint pass; all 3,760 retained source/manifest/script files are identical, and generated test registration drops all ten removed modules.
+- [ ] Commit through the actual server-build hook, rebuild immediately before push, verify remote SHA and refresh Cloud recovery/configuration.
+
+### Surprises & Discoveries
+
+
+The SET_VAR map seed never participates in hint application. Actual application
+and restoration live in tidb-session `variables.rs` and `warnings.rs`, with
+SQL tests in `tests_binding.rs`, `tests_fix_control.rs` and
+`tests_session_var_hooks.rs`. Keep these and the live charset tests unchanged.
+The remaining deleted models only format integers, duplicate constants, or
+simulate state with booleans; none owns a live transaction or authentication
+lifecycle. Go master advanced while this batch began; client-go selection is
+unchanged. Earlier audit evidence is not retroactively marked revalidated.
+
+### Decision Log
+
+
+Remove unused source and its private tests together, rather than keeping
+exported but unconsumed compatibility examples. Retain original Go anchors in
+[the receipt](parity/current-audit/session-leaf-cleanup-validation.json) so
+future package work can recover the requirements without counting these models
+as implemented lifecycle coverage. Retain Rust-specific correctness tests and
+active operational safety checks. No new harness or deletion-only tests.
+
+### Validation and recovery
+
+
+Source `/workspace/.cloud-setup/env.sh`. In `rust/`, run
+`CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets`.
+At repository root run `make lint` and `git diff --check`. Hash every retained
+Rust source, manifest and script against the clean base (except ten removed
+exports in lib.rs); unchanged bodies establish that live paths and retained
+test assertions were not weakened. The shared aggregate-tests build script
+must stop registering deleted tests automatically. No behavioral test rerun is
+needed for disconnected model deletion. Use the receipt's git-show recovery
+command for individual removed files, never reset the checkout. Normal commit
+and fresh prepush `cd rust && cargo build --locked -p tidb-server` are mandatory.
+
+### Outcomes & Retrospective
+
+
+Ten models, ten test files and 18 private tests are removed (1,146 file lines
+plus ten exports). Grouped checks and lint pass; no live runtime or retained
+test body changes. Publication evidence belongs in Cloud
+`session-leaf-cleanup/final-handoff.json`. Retire the redundant sessionstates audit plan and mark its retained source
+inventory receipt historical; the deleted timing seed was never a runtime
+owner. No runtime speedup or measured compile-time improvement is claimed.
