@@ -732,10 +732,7 @@ impl Session {
                 leader_read: self.effective_replica_read(self.vars.replica_read())
                     == tidb_executor::ReplicaReadType::Leader,
                 staleness: read_staleness,
-                historical_read: self
-                    .vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
-                    .is_ok_and(|value| !value.is_empty()),
+                historical_read: self.vars.snapshot_ts() != 0,
                 max_keys_read: self.vars.max_keys_read(true),
                 policy: index_lookup_push_down_policy,
             };

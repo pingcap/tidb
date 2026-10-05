@@ -1,0 +1,641 @@
+{
+  "date": "2026-10-04",
+  "integration_start": "0605c85276c8228153b1d0f31aaa578ec3146b10",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_head": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "findings": [
+    "S04",
+    "I04",
+    "N03"
+  ],
+  "counts_unchanged": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 30,
+    "partial": 26
+  },
+  "scope": [
+    "Validate snapshot SET through existing store authority, current independent GC read and historical schema owner.",
+    "Retain SET-selected schema across row reads; drop it on zero/default and preserve it with typed TS rollback on load/validation error.",
+    "Refuse snapshot SET/DEFAULT during stale transactions with Go error 1568.",
+    "Migrate raw snapshot-string runtime policies to typed SnapshotTS.",
+    "Use shared effective schema-version resolver before historical cache hits and full-load publication."
+  ],
+  "baseline": {
+    "wire": {
+      "phase": "before-expanded",
+      "binary_sha256": "688936ff875da6b1254cd4d0a4b0a83c2e985380a50fb723f7aa2eb062291301",
+      "checks": [
+        {
+          "name": "missing GC safepoint fails at SET",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "future fails at SET",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "failed SET retains previous effective timestamp",
+          "pass": false,
+          "error": [
+            1105,
+            "cannot set read timestamp to a future time, readTS: 469541452625477632, currentTS: 469541190549110784"
+          ]
+        },
+        {
+          "name": "old snapshot fails at SET",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "malformed GC time fails at SET",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "stale transaction rejects snapshot assignment",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "stale transaction rejects snapshot DEFAULT",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "refused assignment preserves stale rows",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "snapshot selects historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "DEFAULT restores current schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              20,
+              7
+            ]
+          ]
+        },
+        {
+          "name": "SET schema load preserves ordinary uncommitted writes",
+          "pass": true,
+          "actual": [
+            [
+              30
+            ]
+          ]
+        },
+        {
+          "name": "ordinary rollback retains current committed rows",
+          "pass": true,
+          "actual": [
+            [
+              20
+            ]
+          ]
+        },
+        {
+          "name": "failed first SET leaves zero effective timestamp",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "staleness gate uses restored typed timestamp",
+          "pass": false,
+          "error": [
+            1105,
+            "tidb_snapshot should be clear before setting tidb_read_staleness"
+          ]
+        },
+        {
+          "name": "prepared SET retains historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "same effective timestamp skips repeated GC validation",
+          "pass": true
+        },
+        {
+          "name": "new selection reads current GC row despite old pin",
+          "pass": false,
+          "error": "succeeded"
+        },
+        {
+          "name": "GC rejection retains old historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        }
+      ],
+      "passed": 8,
+      "failed": 10
+    },
+    "wire_log": "/workspace/.cloud-setup/snapshot-validation-batch/before-expanded-wire.log",
+    "wire_log_sha256": "974f4e9099c1f791dc70da4c47c3dc7ef27eda4ae751ba0485cc700761fa570a",
+    "cache": {
+      "command": "cargo test --locked -p tidb-exec --lib historical_read_batch_version_cache -- --test-threads=1",
+      "exit": 101,
+      "failed": 1,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/baseline-cache.log",
+      "log_sha256": "e3202253f9852f82709a3f8e8029960cd534c8ec93503514f0232b9d67c8c74c",
+      "method": "Original HEAD catalog_watch and catalog_reload production code with the expanded existing regression; other crate working changes remained. The version assertion fails with left 11, right 10."
+    }
+  },
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-exec -p tidb-session -p tidb-server --lib -- catalog_watch::tests:: catalog_reload::tests:: tests_core::transactions:: tests_prepared_plan_cache:: historical_read_batch_ index_lookup_pushdown_uses_one_typed_statement_snapshot cluster_session_node::tests::transactions:: cluster_session_node::tests::prepared_transactions:: cluster_session_node::tests::autocommit_transactions:: --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/tests.log",
+      "log_sha256": "d17d6489ee124d505ee032de4e07753a190ec7d0cf81af99fe76cac5632ea3e9"
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-session -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/check.log",
+      "log_sha256": "9e6ea44f6837fb86ca5ad072b8555bfab9e2bdeb952a64506c32821dc222a3f6"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/lint.log",
+      "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/locked-build.log",
+      "log_sha256": "95c99ca24efabf78ff3c1b9990416ae21ee4ed44fb08d75eb20a97a27d615e25"
+    },
+    {
+      "command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/snapshot-validation-batch/wire.py after /workspace/tidb/rust/target/debug/tidb-server",
+      "cwd": "/workspace/tidb",
+      "exit_code": 0,
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/after-wire.log",
+      "log_sha256": "fb8a4f1cc45eb3b0bb473094c2298cd1174007cef8a0df6d88239d502a724820"
+    }
+  ],
+  "rust_cases": {
+    "tidb-exec": 10,
+    "tidb-server": 66,
+    "tidb-session": 79,
+    "total": 155
+  },
+  "wire": {
+    "phase": "after",
+    "binary_sha256": "a27f62aca4b7ecd3fc9d88289b5799006641d7ae90d66e4e077a21b1d7047bc2",
+    "checks": [
+      {
+        "name": "missing GC safepoint fails at SET",
+        "pass": true,
+        "error": [
+          1105,
+          "can not get 'tikv_gc_safe_point'"
+        ]
+      },
+      {
+        "name": "future fails at SET",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot set read timestamp to a future time, readTS: 469541676449792000, currentTS: 469541414415630336"
+        ]
+      },
+      {
+        "name": "failed SET retains previous effective timestamp",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "old snapshot fails at SET",
+        "pass": true,
+        "error": [
+          8055,
+          "Snapshot is older than GC safe point 2006-01-02 22:04:05 +0000 +00:00"
+        ]
+      },
+      {
+        "name": "malformed GC time fails at SET",
+        "pass": true,
+        "error": [
+          1105,
+          "string \"invalid\" doesn't has a prefix that matches format \"20060102-15:04:05.000 -0700\""
+        ]
+      },
+      {
+        "name": "stale transaction rejects snapshot assignment",
+        "pass": true,
+        "error": [
+          1568,
+          "Transaction characteristics can't be changed while a transaction is in progress"
+        ]
+      },
+      {
+        "name": "stale transaction rejects snapshot DEFAULT",
+        "pass": true,
+        "error": [
+          1568,
+          "Transaction characteristics can't be changed while a transaction is in progress"
+        ]
+      },
+      {
+        "name": "SET expression error precedes transaction refusal",
+        "pass": true,
+        "error": [
+          3140,
+          "Invalid JSON text: The document root must not be followed by other values."
+        ]
+      },
+      {
+        "name": "refused assignment preserves stale rows",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "snapshot selects historical schema",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "DEFAULT restores current schema",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            20,
+            7
+          ]
+        ]
+      },
+      {
+        "name": "SET schema load preserves ordinary uncommitted writes",
+        "pass": true,
+        "actual": [
+          [
+            30
+          ]
+        ]
+      },
+      {
+        "name": "ordinary rollback retains current committed rows",
+        "pass": true,
+        "actual": [
+          [
+            20
+          ]
+        ]
+      },
+      {
+        "name": "failed first SET leaves zero effective timestamp",
+        "pass": true,
+        "error": [
+          1105,
+          "cannot set read timestamp to a future time, readTS: 469541676449792000, currentTS: 469541414572130304"
+        ]
+      },
+      {
+        "name": "staleness gate uses restored typed timestamp",
+        "pass": true
+      },
+      {
+        "name": "prepared SET retains historical schema",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      },
+      {
+        "name": "same effective timestamp skips repeated GC validation",
+        "pass": true
+      },
+      {
+        "name": "new selection reads current GC row despite old pin",
+        "pass": true,
+        "error": [
+          8055,
+          "Snapshot is older than GC safe point 2030-01-02 22:04:05 +0000 +00:00"
+        ]
+      },
+      {
+        "name": "GC rejection retains old historical schema",
+        "pass": true,
+        "actual": [
+          [
+            1,
+            10
+          ]
+        ]
+      }
+    ],
+    "passed": 19,
+    "failed": 0
+  },
+  "intermediate_failures": [
+    {
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/interrupted-tests.log",
+      "exit": 143,
+      "outcome": "Interrupted before executing tests after external edit-script cwd error; not validation."
+    },
+    {
+      "log": "/workspace/.cloud-setup/snapshot-validation-batch/test-compile-failure.log",
+      "exit": 101,
+      "outcome": "Two test unwrap_err calls required Debug on QueryResult; use err().unwrap() without weakening assertions."
+    }
+  ],
+  "review_followup": {
+    "wire": {
+      "phase": "before-order-fix",
+      "binary_sha256": "b50c1b5bc176741ab7bdcdbc4eace5db64ce8c0159406fa4a08b4b7c4ed20386",
+      "checks": [
+        {
+          "name": "missing GC safepoint fails at SET",
+          "pass": true,
+          "error": [
+            1105,
+            "can not get 'tikv_gc_safe_point'"
+          ]
+        },
+        {
+          "name": "future fails at SET",
+          "pass": true,
+          "error": [
+            1105,
+            "cannot set read timestamp to a future time, readTS: 469541580725026816, currentTS: 469541318668582912"
+          ]
+        },
+        {
+          "name": "failed SET retains previous effective timestamp",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "old snapshot fails at SET",
+          "pass": true,
+          "error": [
+            8055,
+            "Snapshot is older than GC safe point 2006-01-02 22:04:05 +0000 +00:00"
+          ]
+        },
+        {
+          "name": "malformed GC time fails at SET",
+          "pass": false,
+          "error": [
+            1105,
+            "string \"invalid\" doesn't has a prefix that matches format \"20060102-15:04:05.000 -0700\""
+          ]
+        },
+        {
+          "name": "stale transaction rejects snapshot assignment",
+          "pass": true,
+          "error": [
+            1568,
+            "Transaction characteristics can't be changed while a transaction is in progress"
+          ]
+        },
+        {
+          "name": "stale transaction rejects snapshot DEFAULT",
+          "pass": true,
+          "error": [
+            1568,
+            "Transaction characteristics can't be changed while a transaction is in progress"
+          ]
+        },
+        {
+          "name": "SET expression error precedes transaction refusal",
+          "pass": false,
+          "error": [
+            1568,
+            "Transaction characteristics can't be changed while a transaction is in progress"
+          ]
+        },
+        {
+          "name": "refused assignment preserves stale rows",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "snapshot selects historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "DEFAULT restores current schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              20,
+              7
+            ]
+          ]
+        },
+        {
+          "name": "SET schema load preserves ordinary uncommitted writes",
+          "pass": true,
+          "actual": [
+            [
+              30
+            ]
+          ]
+        },
+        {
+          "name": "ordinary rollback retains current committed rows",
+          "pass": true,
+          "actual": [
+            [
+              20
+            ]
+          ]
+        },
+        {
+          "name": "failed first SET leaves zero effective timestamp",
+          "pass": true,
+          "error": [
+            1105,
+            "cannot set read timestamp to a future time, readTS: 469541580725026816, currentTS: 469541318809092096"
+          ]
+        },
+        {
+          "name": "staleness gate uses restored typed timestamp",
+          "pass": true
+        },
+        {
+          "name": "prepared SET retains historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        },
+        {
+          "name": "same effective timestamp skips repeated GC validation",
+          "pass": true
+        },
+        {
+          "name": "new selection reads current GC row despite old pin",
+          "pass": true,
+          "error": [
+            8055,
+            "Snapshot is older than GC safe point 2030-01-02 22:04:05 +0000 +00:00"
+          ]
+        },
+        {
+          "name": "GC rejection retains old historical schema",
+          "pass": true,
+          "actual": [
+            [
+              1,
+              10
+            ]
+          ]
+        }
+      ],
+      "passed": 17,
+      "failed": 2
+    },
+    "findings": [
+      "One introduced error-ordering regression: move stale-transaction refusal after expression evaluation; the retained native regression asserts Go ErrInvalidJSONText 3140.",
+      "One probe false negative: exception tuple repr escaped an apostrophe; compare the actual wire error message instead.",
+      "The initial new assertion incorrectly expected 3141. Go JSON_EXTRACT coerces to JSON through ParseBinaryJSONFromString and ErrInvalidJSONText (3140); the corrected assertion follows those sources. See order-test-failure.log (65 passed, one failed server case)."
+    ]
+  },
+  "source_evidence": [
+    {
+      "path": "pkg/expression/builtin_json.go",
+      "sha256": "f8e5b1e3f5e2e3c58f559e74fecc6322c077c874a3e384e7d3062f4f5eca6edd"
+    },
+    {
+      "path": "pkg/expression/builtin_cast.go",
+      "sha256": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5"
+    },
+    {
+      "path": "pkg/types/json_binary.go",
+      "sha256": "aa86fce5fbaaa7225eac4d2c45fe445f88c3e7a4bb7097634e93129385577541"
+    },
+    {
+      "path": "pkg/types/json_constants.go",
+      "sha256": "50b5fb966e4dcbf71b99b843f2fbb371592a6ddd0987ca0b1d59c662c6b78497"
+    },
+    {
+      "path": "pkg/errno/errcode.go",
+      "sha256": "253bf807024e96343a1acf24b74a365a07cef7915351e24b25ebff824e5b9208"
+    },
+    {
+      "path": "pkg/executor/set.go",
+      "sha256": "88e1af9d91e146a3e1abda147faa15f761f12b99bc56f1f4595cce3131a60e70"
+    },
+    {
+      "path": "pkg/util/gcutil/gcutil.go",
+      "sha256": "403d73bea7e1b2cb092dffcabf3fb412f42f54e2aa4ce2f869c00bacbc14490c"
+    },
+    {
+      "path": "pkg/meta/meta.go",
+      "sha256": "bf0d42835251e79cd000f1260520a2d4f557b73481dd8fc23b91c11af15bfa93"
+    },
+    {
+      "path": "pkg/infoschema/issyncer/loader.go",
+      "sha256": "36e3e74281e5e3a09b484b93a705f91320dd417b8e6a00616f61826657151bed"
+    },
+    {
+      "path": "pkg/infoschema/cache.go",
+      "sha256": "1ba13eb6314991c8214525958666419e854aab0b1eb879e0899e05fc16d0bc16"
+    },
+    {
+      "path": "pkg/domain/domain.go",
+      "sha256": "990c426f07898dd18bed7b2de86b6751c19f677527a0a068f80ef893934cffe8"
+    },
+    {
+      "path": "pkg/sessionctx/variable/variable.go",
+      "sha256": "9311863a87a3baefc5669014f0cc060bec4bbfc940ae200609b0345f4d2ecdd4"
+    },
+    {
+      "path": "pkg/sessionctx/variable/varsutil.go",
+      "sha256": "420c025a6c6ad35ba76929c00dd5257ee6b34a57830fd292f6409f4d29dd13e8"
+    },
+    {
+      "path": "pkg/executor/test/txn/txn_test.go",
+      "sha256": "f062f0da42b8fd3c5156d6afaf117a7636e1123f3b0549eb934c9b6b36d54912"
+    },
+    {
+      "path": "pkg/executor/test/executor/executor_test.go",
+      "sha256": "71da39576d12cb70d11d203455b2d55ea3cd1cc28e87dbe9fb309b5a6ee69e4e"
+    }
+  ],
+  "limits": [
+    "No complete Go package acceptance; named parent findings remain partial. Other 53 unresolved findings retain prior evidence.",
+    "Full timestamp-range and empty-version continuity cache, lazy InfoSchema V2 and byte cache remain unimplemented.",
+    "Ordinary active-transaction snapshot provider switching, full SafeTS topology, one-shot/external timestamp entrypoints and complete native oracle validation remain unaccepted.",
+    "Storeless standalone sessions retain their prior local-history fallback and do not gain production SET validation.",
+    "No GC worker activation, full Go/Rust suites, multi-node TiKV or performance benchmarks.",
+    "Previously recorded metadata/planner/DDL failures remain enabled and were not rerun by this scoped batch.",
+    "Normal hook/commit, verified local recovery and draft readback are recorded after commit in external final-handoff.json; no push or dry run."
+  ]
+}

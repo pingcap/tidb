@@ -16,6 +16,13 @@ use tidb_executor::DriverError;
 
 use crate::Session;
 
+impl Session {
+    /// Used by the independent restricted snapshot selected by the storage owner.
+    pub fn validate_snapshot_gc(&mut self, ts: u64) -> Result<(), DriverError> {
+        tidb_gcutil::validate_snapshot(self, ts).map_err(driver_error)
+    }
+}
+
 impl tidb_gcutil::Context for Session {
     type Error = DriverError;
 

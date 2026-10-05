@@ -3292,39 +3292,103 @@ impl ClusterSessionFactory {
             let historical_slot = Arc::clone(&slot);
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
-            session.set_historical_read_provider(Arc::new(move |ts, resource_group| {
+            session.set_historical_read_provider(Arc::new(move |ts, resource_group, schema| {
                 let hold = Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts));
                 let snapshot = transactions
                     .open_snapshot_at(ts, resource_group)
                     .map_err(tidb_executor::DriverError::unsupported)?;
+                let (catalog, snapshot) = if let Some(schema) = schema {
+                    (schema.clone(), snapshot)
+                } else {
+                    let mut metadata = SnapshotMetaSnapshot::new(snapshot);
+                    let capacity = globals
+                        .get("tidb_schema_version_cache_limit")
+                        .ok()
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(16);
+                    let loaded = historical_catalog
+                        .historical_at(&mut metadata, capacity)
+                        .map_err(|error| {
+                            tidb_executor::DriverError::unsupported(error.to_string())
+                        })?;
+                    let built = cluster_session_catalog_with_templates(
+                        &loaded,
+                        &historical_storage,
+                        None,
+                        auto_ids.as_ref(),
+                        &historical_storage,
+                        None,
+                    );
+                    (built.catalog, metadata.into_snapshot())
+                };
+                // SET retains schema only; each read binds its own native snapshot.
+                drop(
+                    historical_slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .bind(snapshot),
+                );
+                Ok(tidb_session::HistoricalRead {
+                    catalog,
+                    timestamp_hold: hold,
+                })
+            }));
+        }
+        {
+            let transactions = Arc::clone(&self.transactions);
+            let catalogs = Arc::clone(&self.catalog);
+            let connection_storage = storage.clone();
+            let auto_ids = Arc::clone(&self.auto_ids);
+            let globals = self.global_vars.clone();
+            session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
+                let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
+                let snapshot = transactions
+                    .open_snapshot_at(ts, resource_group)
+                    .map_err(tidb_executor::DriverError::unsupported)?;
+                if validate {
+                    // Go uses restricted SQL at current time, independent of the
+                    // user's transaction, staged writes and previous snapshot pin.
+                    let mut slot = SwappableSnapshot::new();
+                    drop(
+                        slot.bind(
+                            transactions
+                                .open_snapshot(resource_group)
+                                .map_err(tidb_executor::DriverError::unsupported)?,
+                        ),
+                    );
+                    let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(slot));
+                    let current_storage = ClusterTableStorage::new(MutationBuffer::new(), handle);
+                    let built = cluster_session_catalog_with_templates(
+                        &catalogs.load(),
+                        &current_storage,
+                        None,
+                        auto_ids.as_ref(),
+                        &current_storage,
+                        None,
+                    );
+                    let mut restricted = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+                    restricted.validate_snapshot_gc(ts)?;
+                }
                 let mut metadata = SnapshotMetaSnapshot::new(snapshot);
                 let capacity = globals
                     .get("tidb_schema_version_cache_limit")
                     .ok()
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(16);
-                let loaded = historical_catalog
+                let loaded = catalogs
                     .historical_at(&mut metadata, capacity)
                     .map_err(|error| tidb_executor::DriverError::unsupported(error.to_string()))?;
                 let built = cluster_session_catalog_with_templates(
                     &loaded,
-                    &historical_storage,
+                    &connection_storage,
                     None,
                     auto_ids.as_ref(),
-                    &historical_storage,
+                    &connection_storage,
                     None,
                 );
-                // Metadata and data retain exactly the same snapshot owner.
-                drop(
-                    historical_slot
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .bind(metadata.into_snapshot()),
-                );
-                Ok(tidb_session::HistoricalRead {
-                    catalog: built.catalog,
-                    timestamp_hold: hold,
-                })
+                drop(metadata);
+                drop(hold);
+                Ok(built.catalog)
             }));
         }
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));

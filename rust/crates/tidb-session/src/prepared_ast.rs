@@ -149,12 +149,11 @@ impl Session {
             }
         }
         let sql_select_limit = self.vars.get_system("sql_select_limit");
-        let snapshot = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT);
         let read_staleness = self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
         let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
-            && !snapshot.is_ok_and(|value| !value.is_empty() && value.parse::<u64>() != Ok(0))
+            && self.vars.snapshot_ts() == 0
             && !read_staleness
                 .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
         .then(|| {

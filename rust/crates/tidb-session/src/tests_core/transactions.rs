@@ -579,3 +579,87 @@ fn historical_read_batch_snapshot_numeric_and_exclusive_settings_follow_go() {
     session.run("SET tidb_snapshot=DEFAULT").unwrap();
     assert_eq!(session.vars().snapshot_ts(), 0);
 }
+
+#[test]
+fn snapshot_selection_retains_schema_and_rolls_back_effective_ts_on_failure() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE snapshot_schema (v INT)").unwrap();
+    session
+        .run("INSERT INTO snapshot_schema VALUES (7)")
+        .unwrap();
+    let historical = session.shared_catalog().lock().unwrap().clone();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&calls);
+    session.set_snapshot_schema_provider(Arc::new(move |ts, group, validate| {
+        observed
+            .lock()
+            .unwrap()
+            .push((ts, group.to_owned(), validate));
+        if ts == 200 {
+            return Err(DriverError::unsupported("schema unavailable"));
+        }
+        Ok(historical.clone())
+    }));
+    session.set_historical_read_provider(Arc::new(|_, _, schema| {
+        Ok(HistoricalRead {
+            catalog: schema.expect("read must use the SET-time schema").clone(),
+            timestamp_hold: Arc::new(()),
+        })
+    }));
+    session.run("SET tidb_snapshot=100").unwrap();
+    assert!(
+        !session.in_transaction(),
+        "SET must not open a user transaction"
+    );
+    assert!(session.run("SET tidb_snapshot=200").is_err());
+    assert_eq!(session.vars().snapshot_ts(), 100);
+    assert_eq!(
+        session.vars().get_system("tidb_snapshot").unwrap(),
+        "200",
+        "Go rolls back the typed timestamp, not its assigned system string"
+    );
+    assert_eq!(
+        session.run("SELECT * FROM snapshot_schema").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(7)]])
+    );
+    session.run("SET tidb_snapshot=100").unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            (100, "default".into(), true),
+            (200, "default".into(), true),
+            (100, "default".into(), false),
+        ]
+    );
+    session.run("SET tidb_snapshot=DEFAULT").unwrap();
+    assert!(session.snapshot_schema.is_none());
+    assert_eq!(session.vars().snapshot_ts(), 0);
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        3,
+        "clearing does not call storage"
+    );
+    assert!(session.run("SET tidb_snapshot=200").is_err());
+    assert_eq!(session.vars().snapshot_ts(), 0);
+    assert!(
+        session.prepared_plan_cache_environment().is_some(),
+        "cache policy uses effective TS after failed SET"
+    );
+    assert!(
+        !session
+            .statement_context(false)
+            .index_lookup_push_down_session()
+            .historical_read
+    );
+    session.run("SET tidb_read_staleness=-1").unwrap();
+    session
+        .run("SET tidb_read_staleness=0, tidb_snapshot=0")
+        .unwrap();
+    assert!(
+        !session
+            .statement_context(false)
+            .index_lookup_push_down_session()
+            .historical_read,
+        "numeric zero clears planner historical-read policy"
+    );
+}

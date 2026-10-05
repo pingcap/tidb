@@ -451,6 +451,8 @@ impl Session {
         // scope (`GlobalSysvars::store`), so a DEFAULT or a value written
         // through either lands where the read path looks.
         let is_node_wide = is_global || is_instance;
+        let is_snapshot = !is_node_wide && assignment.name.eq_ignore_ascii_case("tidb_snapshot");
+        let old_snapshot_ts = self.vars.snapshot_ts();
         let value = match &assignment.value {
             // Go restores a variable to its registry default by clearing the
             // session (or global) override.
@@ -486,6 +488,9 @@ impl Session {
                         .reset_instance(&assignment.name)
                         .map_err(var_error)?;
                 } else {
+                    if is_snapshot {
+                        self.check_snapshot_change_in_transaction()?;
+                    }
                     // go's scope check runs BEFORE the DEFAULT restore, so the
                     // session-read-only variable refuses even `= DEFAULT`
                     // with ErrReadOnlyVariable (1621).
@@ -506,6 +511,9 @@ impl Session {
                     // (captured: after `SET rand_seed1 = 19`, two DEFAULTs make
                     // the next `RAND()` exactly 0).
                     self.seed_rand_from_sysvar(&assignment.name)?;
+                    if is_snapshot {
+                        self.load_snapshot_schema_after_set(old_snapshot_ts)?;
+                    }
                 }
                 return Ok(());
             }
@@ -513,6 +521,10 @@ impl Session {
         };
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
+        if is_snapshot {
+            // Go evaluates the expression before checking transaction state.
+            self.check_snapshot_change_in_transaction()?;
+        }
         self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;
         self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
@@ -587,6 +599,9 @@ impl Session {
             .vars
             .set_system(&assignment.name, value.clone())
             .map_err(var_error)?;
+        if is_snapshot {
+            self.load_snapshot_schema_after_set(old_snapshot_ts)?;
+        }
         if truncated {
             self.warn_truncated_var(&assignment.name, &value);
         }
@@ -606,6 +621,37 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    fn check_snapshot_change_in_transaction(&self) -> Result<(), DriverError> {
+        if self.historical_read_ts().is_some() {
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                tidb_error::mysql::errcode::ErrCantChangeTxCharacteristics,
+                "Transaction characteristics can't be changed while a transaction is in progress",
+            )));
+        }
+        Ok(())
+    }
+
+    fn load_snapshot_schema_after_set(&mut self, old_ts: u64) -> Result<(), DriverError> {
+        let ts = self.vars.snapshot_ts();
+        if ts == 0 {
+            self.snapshot_schema = None;
+            return Ok(());
+        }
+        let Some(provider) = &self.snapshot_schema_provider else {
+            return Ok(());
+        };
+        match provider(ts, self.current_resource_group(), ts != old_ts) {
+            Ok(schema) => {
+                self.snapshot_schema = Some((ts, schema));
+                Ok(())
+            }
+            Err(error) => {
+                self.vars.restore_snapshot_ts(old_ts);
+                Err(error)
+            }
+        }
     }
 
     fn apply_workload_repository_global(&self, name: &str, value: &str) -> Result<(), DriverError> {

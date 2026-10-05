@@ -3196,12 +3196,10 @@ impl Session {
             return self.validate_snapshot_statement(stmt);
         }
 
-        if let Ok(snapshot) = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT) {
-            if !snapshot.is_empty() && snapshot.parse::<u64>() != Ok(0) {
-                return Err(DriverError::unsupported(
-                    "reading at @@tidb_snapshot is not supported yet",
-                ));
-            }
+        if self.vars.snapshot_ts() != 0 {
+            return Err(DriverError::unsupported(
+                "reading at @@tidb_snapshot is not supported yet",
+            ));
         }
         if let Ok(staleness) = self
             .vars

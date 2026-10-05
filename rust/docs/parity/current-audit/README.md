@@ -1,13 +1,13 @@
 # Structural parity audit: current evidence
 
-Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [historical reads](historical-read-batch-validation.json). Latest build/test cleanup: [receipt](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
+Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [snapshot validation and schema ownership](snapshot-validation-batch-validation.json). Latest build/test cleanup: [receipt](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
 
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../historical-read-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../snapshot-validation-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](historical-read-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](snapshot-validation-batch-validation.json): exact source/log identities and verification limits.
 
 Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `19a56ccda1e128218cd33c69709038219aced9bc` at this checkpoint.
 

@@ -2297,6 +2297,12 @@ impl Default for SessionVars {
 }
 
 impl SessionVars {
+    /// Restore only Go's typed SnapshotTS after failed storage/schema validation.
+    /// SetExecutor leaves the system-variable string as assigned.
+    pub(crate) fn restore_snapshot_ts(&mut self, ts: u64) {
+        self.snapshot_ts = ts;
+    }
+
     /// The snapshot selected by SET tidb_snapshot; zero clears the pin.
     pub fn snapshot_ts(&self) -> u64 {
         self.snapshot_ts
@@ -3187,7 +3193,15 @@ impl SessionVars {
         if !def.has_session_scope() {
             return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
         }
-        let lookup = |sibling: &str| self.get_system(sibling).ok();
+        // Go validates siblings through typed SessionVars fields. The textual
+        // snapshot value can differ after SetExecutor rolls back a failed SET.
+        let lookup = |sibling: &str| {
+            if sibling.eq_ignore_ascii_case("tidb_snapshot") {
+                Some(self.snapshot_ts.to_string())
+            } else {
+                self.get_system(sibling).ok()
+            }
+        };
         let validated = def
             .validate_in_scope_with_lookup(&value, SCOPE_SESSION, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;

@@ -39,7 +39,11 @@ pub struct HistoricalRead {
 
 /// Domain/storage callback shared by explicit and one-statement historical reads.
 pub type HistoricalReadProvider =
-    dyn Fn(u64, &str) -> Result<HistoricalRead, DriverError> + Send + Sync;
+    dyn Fn(u64, &str, Option<&Catalog>) -> Result<HistoricalRead, DriverError> + Send + Sync;
+
+/// SET-time validation and schema loading, without replacing the active row snapshot.
+pub type SnapshotSchemaProvider =
+    dyn Fn(u64, &str, bool) -> Result<Catalog, DriverError> + Send + Sync;
 
 /// An open transaction's state.
 ///
@@ -469,6 +473,15 @@ impl Session {
         self.historical_read_provider = Some(provider);
     }
 
+    /// Installs the store's SET-time schema loader. The boolean requests timestamp
+    /// and GC validation when a new nonzero timestamp is selected, as in Go SetExecutor.
+    pub fn set_snapshot_schema_provider(
+        &mut self,
+        provider: std::sync::Arc<SnapshotSchemaProvider>,
+    ) {
+        self.snapshot_schema_provider = Some(provider);
+    }
+
     /// Timestamp retained by the current read-only historical transaction.
     pub fn historical_read_ts(&self) -> Option<u64> {
         self.txn.as_ref().and_then(|txn| txn.stale_read_ts)
@@ -480,7 +493,12 @@ impl Session {
     pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
         let mut historical_hold = None;
         let snapshot = if let Some(provider) = &self.historical_read_provider {
-            let read = provider(ts, self.current_resource_group())?;
+            let schema = self
+                .snapshot_schema
+                .as_ref()
+                .filter(|(selected, _)| *selected == ts)
+                .map(|(_, catalog)| catalog);
+            let read = provider(ts, self.current_resource_group(), schema)?;
             historical_hold = Some(read.timestamp_hold);
             read.catalog
         } else {

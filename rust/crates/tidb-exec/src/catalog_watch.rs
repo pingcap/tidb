@@ -129,7 +129,7 @@ impl SharedCatalog {
         snapshot: &mut S,
         capacity: usize,
     ) -> Result<Arc<ClusterCatalog>, crate::cluster_catalog::ClusterCatalogError> {
-        let version = crate::cluster_catalog::read_schema_version(snapshot)?;
+        let version = crate::catalog_reload::schema_version_with_non_empty_diff(snapshot)?;
         let found = {
             let mut versions = self
                 .historical
@@ -147,7 +147,11 @@ impl SharedCatalog {
             return Ok(found);
         }
         // No shared cache lock spans storage RPCs.
-        let loaded = Arc::new(crate::cluster_catalog::load_cluster_catalog(snapshot)?);
+        let mut loaded = crate::cluster_catalog::load_cluster_catalog(snapshot)?;
+        // The reserved counter may be ahead of the committed schema diff.
+        // Use the same effective version as the live reload owner.
+        loaded.schema_version = version;
+        let loaded = Arc::new(loaded);
         let mut versions = self
             .historical
             .lock()
@@ -475,13 +479,18 @@ mod tests {
         struct Snapshot {
             version: i64,
             scans: usize,
+            diff: Option<Vec<u8>>,
         }
         impl crate::cluster_catalog::MetaSnapshot for Snapshot {
             fn get(
                 &mut self,
-                _: &[u8],
+                key: &[u8],
             ) -> Result<Option<Vec<u8>>, crate::cluster_catalog::ClusterCatalogError> {
-                Ok(Some(self.version.to_string().into_bytes()))
+                if key == tidb_meta::key::schema_version_kv_key() {
+                    Ok(Some(self.version.to_string().into_bytes()))
+                } else {
+                    Ok(self.diff.clone())
+                }
             }
             fn scan_prefix(
                 &mut self,
@@ -498,6 +507,7 @@ mod tests {
         let mut snapshot = Snapshot {
             version: 7,
             scans: 0,
+            diff: Some(b"{}".to_vec()),
         };
         let old = shared.historical_at(&mut snapshot, 3).unwrap();
         assert_eq!(old.schema_version, 7);
@@ -544,6 +554,42 @@ mod tests {
             11
         );
         assert_eq!(shared.historical.lock().unwrap().len(), 2);
+
+        // Go meta.GetSchemaVersionWithNonEmptyDiff: version 11 was reserved
+        // at this timestamp, but its diff was not yet published. The later
+        // cached version 11 must not leak into the older snapshot.
+        snapshot.diff = None;
+        assert_eq!(
+            shared
+                .historical_at(&mut snapshot, 2)
+                .unwrap()
+                .schema_version,
+            10
+        );
+        snapshot.version = 9;
+        assert_eq!(
+            shared
+                .historical_at(&mut snapshot, 2)
+                .unwrap()
+                .schema_version,
+            8,
+            "full historical loads use the effective version too"
+        );
+        snapshot.version = 0;
+        assert_eq!(
+            shared
+                .historical_at(&mut snapshot, 2)
+                .unwrap()
+                .schema_version,
+            0
+        );
+        snapshot.version = 11;
+        snapshot.diff = Some(b"invalid diff".to_vec());
+        assert!(
+            shared.historical_at(&mut snapshot, 2).is_err(),
+            "a cached schema cannot suppress metadata decoding errors"
+        );
+        assert_eq!(shared.load().schema_version, 11);
     }
 
     fn catalog_at(version: i64) -> ClusterCatalog {

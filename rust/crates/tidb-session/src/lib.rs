@@ -687,6 +687,8 @@ pub struct Session {
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     historical_read_provider: Option<Arc<txn::HistoricalReadProvider>>,
+    snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
+    snapshot_schema: Option<(u64, Catalog)>,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
@@ -948,6 +950,8 @@ impl Session {
             session_index_usage_collector: None,
             data_lock_waits: None,
             historical_read_provider: None,
+            snapshot_schema_provider: None,
+            snapshot_schema: None,
             column_stats_usage: None,
             analyze_status: None,
             table_storage_stats: None,
@@ -1162,7 +1166,7 @@ pub mod session_vars;
 mod stmt_ctx;
 mod table_privilege;
 mod txn;
-pub use txn::{HistoricalRead, HistoricalReadProvider};
+pub use txn::{HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider};
 mod user_table;
 pub mod util_config;
 mod variables;

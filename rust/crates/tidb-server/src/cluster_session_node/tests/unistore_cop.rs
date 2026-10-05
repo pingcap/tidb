@@ -10121,6 +10121,21 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
         "transaction protects time between reads"
     );
+    for sql in [
+        format!("SET tidb_snapshot='{ts}'"),
+        "SET tidb_snapshot=DEFAULT".into(),
+    ] {
+        assert_eq!(session.execute(&sql).err().unwrap().code, 1568);
+    }
+    assert_eq!(
+        session
+            .execute("SET tidb_snapshot=JSON_EXTRACT('invalid', '$')")
+            .err()
+            .unwrap()
+            .code,
+        3140,
+        "SET evaluates before refusing transaction changes"
+    );
     assert!(session.execute_write("UPDATE t SET v=30").is_err());
     assert!(session.execute("SELECT * FROM t FOR UPDATE").is_err());
     assert!(session
@@ -10137,7 +10152,25 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {future}"))
         .is_err());
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&future));
+    assert!(session
+        .execute(&format!("SET tidb_snapshot='{ts}'"))
+        .err()
+        .unwrap()
+        .message
+        .contains("can not get 'tikv_gc_safe_point'"));
+    rows(
+        &mut session,
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')",
+    );
     rows(&mut session, &format!("SET tidb_snapshot='{ts}'"));
+    assert!(
+        !tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&ts),
+        "idle snapshot SET retains schema, not an active native timestamp"
+    );
+    assert!(session
+        .execute(&format!("SET tidb_snapshot='{future}'"))
+        .is_err());
+    assert_eq!(session.session.vars().snapshot_ts(), ts);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
