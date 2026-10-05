@@ -128,14 +128,3 @@ pub fn mock_table_append_index(table: &Table) {
         },
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use super::new_mock_statistics_table;
-
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_value_may_be_ignored_like_go() {
-        new_mock_statistics_table(0, 0, false, false, false);
-    }
-}

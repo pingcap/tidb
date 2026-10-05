@@ -363,12 +363,4 @@ mod tests {
         assert_eq!(source, source_before);
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn private_estimate_symbols_compile() {
-        calculate_estimate_ndv(1, 1, 1, 1);
-        let _ = calculate_estimate_ndv;
-        let _ = estimate_global_singleton_in_range;
-        let _ = merge_copied_fm_sketch;
-    }
 }

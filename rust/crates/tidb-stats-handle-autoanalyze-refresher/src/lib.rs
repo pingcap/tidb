@@ -361,28 +361,6 @@ mod tests {
         }
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_refresher_query_returns_can_be_ignored() {
-        Worker::new(1);
-        let worker = Worker::new(1);
-        worker.running_jobs();
-        worker.max_concurrency();
-
-        let source = Arc::new(EmptySource {
-            inventory_reads: AtomicUsize::new(0),
-            version: AtomicU64::new(1),
-        });
-        let queue = AnalysisPriorityQueue::new(source);
-        queue.initialize().expect("empty queue initializes");
-        Refresher::new(Arc::clone(&queue), 1);
-        let refresher = Refresher::new(queue, 1);
-        refresher.running_jobs();
-        refresher.is_queue_initialized();
-        refresher.len();
-        refresher.close();
-    }
-
     struct TestJob {
         table_id: i64,
         started: Option<mpsc::Sender<i64>>,

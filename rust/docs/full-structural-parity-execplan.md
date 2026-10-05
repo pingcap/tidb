@@ -1,8 +1,8 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [historical-read plan](historical-read-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [snapshot-validation plan](snapshot-validation-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
-User instruction: **Do not push or run push dry runs.** Keep validated commits local in the existing Cloud checkouts, preserve concurrent changes, and run the actual locked-build commit hook. Publication and a future push require their own authorized steps.
+Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
 ## Purpose and acceptance
 

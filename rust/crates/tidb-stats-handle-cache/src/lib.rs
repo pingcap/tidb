@@ -579,24 +579,6 @@ mod tests {
     }
 
     #[test]
-    #[deny(unused_must_use)]
-    fn go_cache_returns_may_be_ignored_like_go() {
-        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
-        cache.len();
-        cache.values();
-        cache.cost();
-        cache.version();
-        cache.copy_and_update(&[], &[]);
-
-        let cache = StatsCacheImpl::with_cache(Arc::new(cache));
-        cache.next_check_version_with_offset(Duration::ZERO);
-        cache.mem_consumed();
-        cache.max_table_stats_version();
-        cache.values();
-        cache.len();
-    }
-
-    #[test]
     fn source_get_put_and_version() {
         let cache = StatsCache::from_inner(Box::new(MapCache::new()));
         assert!(cache.get(1).is_none());

@@ -492,33 +492,6 @@ mod tests {
         ));
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        let restricted = Arc::new(MockRestrictedSqlExecutor::new());
-        restricted
-            .expect()
-            .exec_restricted_sql(|_, _, _, _| Ok((Vec::new(), Vec::new())));
-        let context = Context::new(restricted);
-        let generator = Generator::new(|| 45, |_| {});
-        let (track, untrack) = callbacks(
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::new(Mutex::new(Vec::new())),
-        );
-
-        auto_analyze(
-            &context,
-            &generator,
-            track,
-            untrack,
-            2,
-            false,
-            "analyze table %n",
-            &[SqlArg::from("t")],
-        );
-        parse_auto_analyze_ratio("0.5");
-    }
-
     #[test]
     fn source_kill_in_windows_propagates_the_interruption_and_releases_the_id() {
         let restricted = Arc::new(MockRestrictedSqlExecutor::new());

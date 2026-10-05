@@ -249,15 +249,6 @@ mod tests {
         }
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        let session_pool: Arc<dyn SessionPool<dyn SessionContext>> = Arc::new(FakeSessionPool {
-            close_count: AtomicUsize::new(0),
-        });
-        StatsPool::new(session_pool);
-    }
-
     #[test]
     fn worker_pool_runs_accepted_tasks_and_ignores_post_close_tasks() {
         let pool = StatsWorkerPool::default();

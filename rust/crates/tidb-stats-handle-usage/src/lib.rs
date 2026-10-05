@@ -581,41 +581,6 @@ mod tests {
 
     use tidb_model::{IndexInfo, TableInfo};
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_usage_returns_may_be_ignored_like_go() {
-        TableDeltaMap::new();
-        let table_delta = TableDeltaMap::new();
-        table_delta.get_delta_and_reset();
-        table_delta.snapshot();
-
-        StatsUsage::new();
-        let stats_usage = StatsUsage::new();
-        stats_usage.get_usage_and_reset();
-
-        SessionStatsList::new();
-        let sessions = SessionStatsList::new();
-        sessions.new_session_stats_item();
-        sessions.session_table_delta();
-        sessions.session_stats_usage();
-        let pending = sessions.begin_table_delta_dump();
-        pending.pending_table_ids(&[]);
-
-        need_dump_stats_delta(
-            false,
-            TableDelta::default(),
-            SystemTime::UNIX_EPOCH,
-            Some(1),
-        );
-
-        StatsUsageHandle::new();
-        let handle = StatsUsageHandle::new();
-        handle.new_session_stats_item();
-        handle.new_session_index_usage_collector();
-        handle.get_index_usage(1, 1);
-        handle.session_stats_list();
-    }
-
     fn column(table_id: i64, column_id: i64) -> TableItemID {
         TableItemID {
             table_id,

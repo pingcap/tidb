@@ -239,12 +239,6 @@ mod tests {
         }
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        TableInfoGetter::new();
-    }
-
     #[test]
     fn ordinary_lookup_falls_back_to_partition_search() {
         let info_schema = MockInfoSchema::fixture(false);

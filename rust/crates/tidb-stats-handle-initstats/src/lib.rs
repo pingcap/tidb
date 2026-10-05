@@ -200,15 +200,3 @@ fn load_stats(inner: Arc<WorkerInner>) {
         );
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        let value = super::AtomicF64::new(0.0);
-        value.load();
-        super::get_concurrency();
-        super::RangeWorker::new("init", |_| Ok(()), 0, 1, 0.0);
-    }
-}

@@ -416,13 +416,6 @@ mod tests {
 
     use super::*;
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        duration_to_ts(0);
-        is_special_global_index(&IndexInfo::default(), &TableInfo::default());
-    }
-
     #[derive(Default)]
     struct RecordingExecutor {
         calls: Mutex<Vec<String>>,

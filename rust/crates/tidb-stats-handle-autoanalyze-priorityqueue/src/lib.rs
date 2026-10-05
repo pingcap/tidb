@@ -2547,67 +2547,6 @@ mod tests {
     }
 
     #[test]
-    #[deny(unused_must_use)]
-    fn go_priority_queue_returns_can_be_ignored() {
-        let context = Arc::new(MockJobContext::default());
-        let analysis_job = job(1, 1.0);
-        analysis_job.table_id();
-        analysis_job.weight();
-        analysis_job.indicators();
-        analysis_job.has_newly_added_index();
-        analysis_job.is_dynamic_partitioned();
-        analysis_job.as_json();
-        analysis_job.analyze(context.as_ref());
-
-        let calculator = PriorityCalculator;
-        calculator.calculate_weight(&analysis_job);
-        calculator.special_event(&analysis_job);
-
-        JobHeap::new();
-        let heap = JobHeap::new();
-        heap.is_empty();
-        heap.len();
-
-        AnalysisPriorityQueue::new(context.clone());
-        let queue = AnalysisPriorityQueue::new(context.clone());
-        queue.is_initialized();
-        queue.running_jobs();
-        let running = RunningAnalysisJob {
-            job: job(2, 1.0),
-            queue: Arc::downgrade(&queue),
-        };
-        running.table_id();
-        running.analyze();
-
-        AnalysisJobFactory::new(0.5, 10 << 18, 2, 0);
-        let factory = AnalysisJobFactory::new(0.5, 10 << 18, 2, 0);
-        let table_stats = stats(3, 5, 100, 60);
-        factory.change_percentage(&table_stats);
-        factory.last_analysis_duration(&table_stats);
-        factory.table_size(&table_stats);
-        factory.partition_indicators(&table_stats, &HashMap::new());
-
-        let start = DateTime::parse_from_rfc3339("1970-01-01T22:00:00+00:00").unwrap();
-        let end = DateTime::parse_from_rfc3339("1970-01-01T06:00:00+00:00").unwrap();
-        AutoAnalysisTimeWindow::new(start, end);
-        let window = AutoAnalysisTimeWindow::new(start, end);
-        window.is_within_time_window(Utc::now());
-        PartitionIdAndName::new("p0", 3);
-
-        average_analysis_duration(Some(1.0));
-        last_failed_analysis_duration(Some(1));
-        valid_to_analyze(NO_RECORD, NO_RECORD);
-
-        let ordinary = NonPartitionedTableAnalysisJob::default();
-        ordinary.analyze_table_sql();
-        ordinary.analyze_index_sql("idx");
-        let static_partition = StaticPartitionedTableAnalysisJob::default();
-        static_partition.analyze_partition_sql();
-        static_partition.analyze_partition_index_sql("idx");
-        partition_sql("analyze table %n.%n partition", "", 1);
-    }
-
-    #[test]
     fn source_heap_add_update_delete_peek_and_pop() {
         let mut heap = JobHeap::new();
         for item in [job(1, 10.0), job(2, 1.0), job(3, 11.0), job(4, 30.0)] {

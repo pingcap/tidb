@@ -134,18 +134,6 @@ mod tests {
 
     use super::*;
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        Generator::new(|| 1, |_| {});
-
-        let list = AutoAnalyzeProcessList::default();
-        list.all();
-        list.contains(1);
-
-        AutoAnalyzeTracker::new(Arc::new(|_, _| Ok(())), Arc::new(|_| {}));
-    }
-
     #[test]
     fn generator_delegates_get_and_release() {
         let released = Arc::new(AtomicU64::new(0));

@@ -158,15 +158,6 @@ mod tests {
     use super::*;
     use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table;
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        MapCache::new();
-
-        let cache = MapCache::new();
-        cache.keys();
-    }
-
     #[test]
     fn source_put_replace_delete_and_copy() {
         let cache = MapCache::new();

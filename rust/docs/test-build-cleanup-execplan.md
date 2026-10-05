@@ -55,3 +55,32 @@ Preserve both working trees, native source, current build artifacts and unpublis
 Implementation checkpoint: 14 modules contain 13,829 lines and 370 tests. Normal server dependency metadata includes all 14 before the change. Source comparison confirms every retained module is byte-identical after removing only its inner cfg attribute. Two nonbehavioral registered cases and one already-unregistered helper are removed. Grouped validation is complete; counts and unresolved findings are unchanged.
 
 Validation discovery: the first grouped run passed 408 cases and failed seven. All seven reproduce on the unchanged pre-cleanup session binary. Four assertions are stale: a fixed sysvar total, missing system schemas in SHOW DATABASES, equating a captured fixture size to every served table, and Rust-only cast_signed EXPLAIN text. Correct those while preserving ordering/lookup, all captured CREATE TABLE rows, predicate placement and SQL-result checks. Three other failures remain enabled: a blanket CLUSTER_LOG scan without required predicates and two information-schema fixed-column append panics. They are outside this build/test cleanup and are not reported as passing.
+
+## Statistics discard-check removal, 2026-10-05
+
+
+This continuation starts at 99e291a3ac726791d0d66dad9e1af245c6fc6dd5. Freshly fetched Go master remains 93a01d31f6da205ae4bf376825293903a6899fdb. The user requests removal of obsolete tests, checks, code and documentation in a batch. Remove the statistics family's 32 tests whose only acceptance condition is the Rust `unused_must_use` lint, and the now-empty initstats and cache-testutil test modules. These tests discard values instead of asserting Go results, state transitions or error behavior. Production APIs and existing Rust safety/behavioral tests stay unchanged. The removed initstats and autoanalyze-exec attribute-only audit plans retain their before-images in Git; their laptop commands and completed one-off gates are not current startup instructions.
+
+### Progress
+
+
+- [x] Review all 32 bodies across 12 statistics crates; record exact names and before-image hashes.
+- [x] Remove discard-only checks and the two empty test modules together, plus two obsolete one-off audit plans.
+- [x] Verify all 258 retained test registrations and bodies in touched files and all production code are unchanged; 364 grouped cases and final all-target checks pass.
+- [x] Repository lint and self-review pass; source inventory and exact commands are recorded.
+- [ ] Run the actual locked server-build commit hook; record the resulting commit and operational outcome in the external handoff.
+
+### Milestones and validation
+
+
+The removal milestone eliminates compile-only discard checks without changing statistics behavior. The verification milestone compares retained function bodies and test registration, runs `cargo test --locked` with all twelve affected `-p` selections and `--lib --tests -- --test-threads=1` from `rust/`, and runs the same package selections with `cargo check --locked --all-targets`. Source `/workspace/.cloud-setup/env.sh`, use one build job, and keep source frozen during Cargo execution. Run `make lint` from repository root. Commit normally so `hooks/pre-commit` runs `cd rust && cargo build --locked -p tidb-server`. No new regression is needed for removing checks that make no behavioral assertion. A zero-test initstats library is compilation evidence only; retained handle consumers exercise its APIs. Logs and exact commands belong to `/workspace/.cloud-setup/statistics-test-cleanup`; the durable receipt belongs to `parity/current-audit/statistics-test-cleanup-validation.json`.
+
+### Discoveries, decisions and recovery
+
+
+The return-discard checks also allocate sketches, spawn worker owners and execute mock ANALYZE paths without asserting outcomes. Existing neighboring tests assert those outcomes. Remove this redundant work without weakening production lint settings or deleting Go fixtures. Keep historical package receipts and unresolved failures; cleanup does not accept a Go package or repair a finding. The old plan sections above are dated historical records. Current publication is authorized but GitHub denied the last push with HTTP 403; do not retry without changed access evidence. Recover removed files from this continuation's starting commit without resetting other work.
+
+### Outcomes
+
+
+The twelve affected crates pass 364 behavioral cases, with no failures or ignored cases. Three zero-case targets provide compilation evidence only. The final all-target check and repository lint pass. Two unused imports exposed by removal are cleaned up, including the entire empty cache-testutil module. The receipt records exact removed names, hashes and commands; finding counts stay unchanged. Two obsolete test executable copies free 529,458,520 bytes, with replacements and historical logs retained. No speedup measurement is claimed from source or test-count reduction alone.

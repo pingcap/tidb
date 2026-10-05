@@ -51,12 +51,6 @@ impl LeaseGetter for StatsLease {
 mod tests {
     use super::{LeaseGetter, StatsLease};
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn source_return_values_may_be_ignored_like_go() {
-        StatsLease::new(0);
-    }
-
     #[test]
     fn signed_duration_round_trips_atomically() {
         let lease = StatsLease::new(1_000_000_000);
