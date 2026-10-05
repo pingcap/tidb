@@ -1622,8 +1622,74 @@ fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
 /// session consumes the complete auto-analyze option set, invokes the system
 /// process tracker, releases the allocated process ID, and publishes the
 /// ordinary version-2 statistics result.
+struct ObservedSystemAnalyze {
+    inner: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
+    processes: tidb_session::process::ProcessRegistry,
+    kill: Option<bool>,
+    factory: std::sync::Weak<ClusterSessionFactory>,
+    observed: Arc<AtomicBool>,
+    interrupted: Arc<AtomicBool>,
+}
+
+impl crate::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
+    fn execute(
+        &self,
+        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        killer: &tidb_util::sqlkiller::SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
+    {
+        let process = self
+            .processes
+            .snapshot()
+            .into_iter()
+            .find(|row| row.id == 9_000)
+            .expect("running system task is visible to the shared manager");
+        assert!(process
+            .info
+            .as_deref()
+            .unwrap()
+            .to_ascii_lowercase()
+            .starts_with("analyze table"));
+        self.observed.store(true, Ordering::SeqCst);
+        if let Some(query) = self.kill {
+            let factory = self.factory.upgrade().unwrap();
+            let mut admin = factory.open_session(session_context(87)).unwrap();
+            let kind = if query { "QUERY" } else { "CONNECTION" };
+            rows(&mut admin, &format!("KILL {kind} 9000"));
+            self.interrupted
+                .store(killer.handle_signal().is_some(), Ordering::SeqCst);
+        }
+        self.inner.execute(
+            statement,
+            resource_group,
+            approximate_counts,
+            killer,
+            historical_stats_enabled,
+            jobs,
+        )
+    }
+}
+
+#[test]
+fn internal_process_batch_auto_analyze_kill_query() {
+    run_tracked_auto_analyze(Some(true));
+}
+
+#[test]
+fn internal_process_batch_auto_analyze_kill_connection() {
+    run_tracked_auto_analyze(Some(false));
+}
+
 #[test]
 fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
+    run_tracked_auto_analyze(None);
+}
+
+fn run_tracked_auto_analyze(kill: Option<bool>) {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let factory = stack.factory;
@@ -1652,6 +1718,8 @@ fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
     );
     rows(&mut client, "SET GLOBAL tidb_enable_analyze_snapshot = ON");
 
+    let observed = Arc::new(AtomicBool::new(false));
+    let interrupted = Arc::new(AtomicBool::new(false));
     let tracked = Arc::new(AtomicBool::new(false));
     let untracked = Arc::new(AtomicBool::new(false));
     let released = Arc::new(AtomicU64::new(0));
@@ -1660,21 +1728,40 @@ fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
     tidb_stats_handle_util::call_with_sctx(
         pool.as_ref(),
         |context| {
+            context
+                .with_session(|session| {
+                    session.analyze = Arc::new(ObservedSystemAnalyze {
+                        inner: Arc::clone(&session.analyze),
+                        processes: factory.processes(),
+                        kill,
+                        factory: Arc::downgrade(&factory),
+                        observed: Arc::clone(&observed),
+                        interrupted: Arc::clone(&interrupted),
+                    });
+                    Ok(())
+                })
+                .unwrap();
+            let (register, unregister) = super::super::system_process_trackers(factory.processes());
             let released_by_generator = Arc::clone(&released);
             let generator = tidb_stats_handle_util::Generator::new(
-                || 9_001,
+                || 9_000,
                 move |id| released_by_generator.store(id, Ordering::SeqCst),
             );
             let tracked_by_callback = Arc::clone(&tracked);
-            let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, _| {
-                assert_eq!(id, 9_001);
+            let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
+                assert_eq!(id, 9_000);
+                assert!(
+                    !(&*process as &dyn std::any::Any).is::<()>(),
+                    "restricted ANALYZE must hand the tracker its live session"
+                );
                 tracked_by_callback.store(true, Ordering::SeqCst);
-                Ok(())
+                register(id, process)
             });
             let untracked_by_callback = Arc::clone(&untracked);
             let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(move |id| {
-                assert_eq!(id, 9_001);
+                assert_eq!(id, 9_000);
                 untracked_by_callback.store(true, Ordering::SeqCst);
+                unregister(id);
             });
             analyzed = tidb_stats_handle_autoanalyze_exec::auto_analyze(
                 context,
@@ -1694,11 +1781,25 @@ fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
         &[],
     )
     .expect("auto analyze uses a system session");
-    assert!(analyzed);
+    assert_eq!(analyzed, kill.is_none());
+    assert!(observed.load(Ordering::SeqCst));
+    assert_eq!(
+        interrupted.load(Ordering::SeqCst),
+        kill.is_some(),
+        "SQL KILL must reach ANALYZE, not merely cause another failure"
+    );
+    assert!(!factory
+        .processes()
+        .snapshot()
+        .iter()
+        .any(|row| row.id == 9_000));
     assert!(tracked.load(Ordering::SeqCst));
     assert!(untracked.load(Ordering::SeqCst));
-    assert_eq!(released.load(Ordering::SeqCst), 9_001);
-    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(9_001));
+    assert_eq!(released.load(Ordering::SeqCst), 9_000);
+    assert!(!tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(9_000));
+    if kill.is_some() {
+        return;
+    }
     assert_eq!(
         displayed(rows(
             &mut client,

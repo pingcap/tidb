@@ -293,6 +293,8 @@ pub trait TlsManager: Send + Sync {
 #[derive(Clone)]
 pub struct ProcessRegistry {
     entries: Arc<Mutex<HashMap<u64, SharedProcessEntry>>>,
+    internal: Arc<Mutex<HashMap<usize, SharedProcessEntry>>>,
+    systems: Arc<Mutex<HashMap<u64, SystemProcess>>>,
     tls: Arc<Mutex<Option<Arc<dyn TlsManager>>>>,
     transaction_history: Arc<tidb_exec::txn_summary::TransactionHistoryRecorder>,
 }
@@ -301,6 +303,8 @@ impl Default for ProcessRegistry {
     fn default() -> Self {
         Self {
             entries: Arc::default(),
+            internal: Arc::default(),
+            systems: Arc::default(),
             tls: Arc::default(),
             transaction_history: Arc::clone(&tidb_exec::txn_summary::RECORDER),
         }
@@ -357,17 +361,101 @@ impl ProcessRegistry {
     }
 
     fn with_entry<R>(&self, id: u64, access: impl FnOnce(&mut ProcessEntry) -> R) -> Option<R> {
-        let entry = self.lock().get(&id).cloned()?;
+        let entry = self.lock().get(&id).cloned().or_else(|| {
+            self.systems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&id)
+                .map(|process| Arc::clone(&process.entry))
+        })?;
         let mut entry = entry
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(access(&mut entry))
     }
 
-    fn entry_snapshot(&self) -> Vec<(u64, SharedProcessEntry)> {
+    fn client_entry_snapshot(&self) -> Vec<(u64, SharedProcessEntry)> {
         self.lock()
             .iter()
             .map(|(&id, entry)| (id, Arc::clone(entry)))
+            .collect()
+    }
+
+    fn entry_snapshot(&self) -> Vec<(u64, SharedProcessEntry)> {
+        let mut entries = self.client_entry_snapshot();
+        let clients = entries
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<std::collections::HashSet<_>>();
+        entries.extend(
+            self.systems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .filter(|(id, _)| !clients.contains(id))
+                .map(|(&id, process)| (id, Arc::clone(&process.entry))),
+        );
+        entries
+    }
+
+    /// Go SysProcesses.Track: publish the actual internal session, rejecting an occupied ID.
+    pub fn track_system_process(&self, id: u64, process: SystemProcess) -> Result<(), String> {
+        let mut systems = self
+            .systems
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if systems
+            .get(&id)
+            .is_some_and(|old| !Arc::ptr_eq(&old.entry, &process.entry))
+        {
+            return Err(format!("The ID is in use: {id}"));
+        }
+        process.cancellation.reset();
+        systems.insert(id, process);
+        Ok(())
+    }
+
+    /// Retires only task publication; the pooled session remains reusable.
+    pub fn untrack_system_process(&self, id: u64) {
+        let process = self
+            .systems
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id);
+        if let Some(process) = process {
+            process.cancellation.reset();
+        }
+    }
+
+    /// Go GetInternalSessionStartTSList, separate from visible clients/system tasks.
+    pub fn internal_session_start_ts(&self) -> Vec<u64> {
+        let excluded = self
+            .systems
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(id, _)| {
+                tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(**id)
+            })
+            .map(|(_, process)| Arc::as_ptr(&process.entry) as usize)
+            .collect::<std::collections::HashSet<_>>();
+        let entries = self
+            .internal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(key, _)| !excluded.contains(key))
+            .map(|(_, entry)| Arc::clone(entry))
+            .collect::<Vec<_>>();
+        entries
+            .into_iter()
+            .filter_map(|entry| {
+                let ts = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .cur_txn_start_ts;
+                (ts != 0).then_some(ts)
+            })
             .collect()
     }
 
@@ -410,6 +498,7 @@ impl ProcessRegistry {
         self.lock().insert(id, Arc::clone(&entry));
         ProcessGuard {
             registry: self.clone(),
+            internal_owner: None,
             id,
             entry,
         }
@@ -417,11 +506,17 @@ impl ProcessRegistry {
 
     /// Internal sessions retain transaction history without entering the client list.
     pub fn register_internal(&self, id: u64, db: String) -> ProcessGuard {
-        Self {
+        let mut guard = Self {
             transaction_history: Arc::clone(&self.transaction_history),
             ..Self::default()
         }
-        .register(id, String::new(), String::new(), db, None)
+        .register(id, String::new(), String::new(), db, None);
+        self.internal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(Arc::as_ptr(&guard.entry) as usize, Arc::clone(&guard.entry));
+        guard.internal_owner = Some(self.clone());
+        guard
     }
 
     /// Records one execution in transaction history and publishes its process
@@ -531,7 +626,7 @@ impl ProcessRegistry {
     #[must_use]
     pub fn transaction_snapshot(&self) -> Vec<TransactionRow> {
         let mut rows = self
-            .entry_snapshot()
+            .client_entry_snapshot()
             .into_iter()
             .filter_map(|(id, entry)| {
                 let entry = entry
@@ -612,10 +707,25 @@ impl ProcessRegistry {
     /// answers OK. (`ErrNoSuchThread`/1094 is raised by `EXPLAIN FOR
     /// CONNECTION`, not by `KILL`.)
     pub fn kill(&self, id: u64, query: bool) -> bool {
-        let target = match self.with_entry(id, |entry| entry.kill.clone()) {
-            Some(target) => target,
-            None => return false,
+        let client = self.lock().get(&id).cloned();
+        let Some(client) = client else {
+            // Serialize interruption with UnTrack's reset, like Go SysProcesses.
+            let systems = self
+                .systems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(process) = systems.get(&id) {
+                // Go KillSysProcess always interrupts the query, even for KILL CONNECTION.
+                process.cancellation.cancel();
+                return true;
+            }
+            return false;
         };
+        let target = client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .kill
+            .clone();
         let Some(target) = target else {
             return true;
         };
@@ -680,7 +790,11 @@ impl ProcessRegistry {
 
 impl SessionManager for ProcessRegistry {
     fn show_process_list(&self) -> Vec<Arc<ProcessInfo>> {
-        let ids = self.lock().keys().copied().collect::<Vec<_>>();
+        let ids = self
+            .entry_snapshot()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
         ids.into_iter()
             .filter_map(|id| self.process_info(id))
             .collect()
@@ -694,8 +808,17 @@ impl SessionManager for ProcessRegistry {
 /// Removes one connection from the process list when its session is dropped.
 pub struct ProcessGuard {
     registry: ProcessRegistry,
+    internal_owner: Option<ProcessRegistry>,
     id: u64,
     entry: SharedProcessEntry,
+}
+
+/// Live internal-session capability carried through restricted SQL tracking.
+/// The process entry is shared; cancellation never locks the running SQL session.
+#[derive(Clone)]
+pub struct SystemProcess {
+    entry: SharedProcessEntry,
+    cancellation: Arc<tidb_executor::StatementCancellation>,
 }
 
 /// Retained physical transaction observation, independent of statement publication.
@@ -779,6 +902,17 @@ impl ProcessGuard {
         self.id
     }
 
+    /// Captures the live entry and the current command's cancellation lifetime.
+    pub fn system_process(
+        &self,
+        cancellation: tidb_executor::StatementCancellation,
+    ) -> SystemProcess {
+        SystemProcess {
+            entry: Arc::clone(&self.entry),
+            cancellation: Arc::new(cancellation),
+        }
+    }
+
     /// The registry this connection is registered in.
     #[must_use]
     pub const fn registry(&self) -> &ProcessRegistry {
@@ -848,6 +982,24 @@ impl Drop for ProcessGuard {
     fn drop(&mut self) {
         self.transaction_observer().finished();
         self.registry.lock().remove(&self.id);
+        if let Some(owner) = &self.internal_owner {
+            owner
+                .internal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&(Arc::as_ptr(&self.entry) as usize));
+            owner
+                .systems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|_, process| {
+                    let retained = !Arc::ptr_eq(&process.entry, &self.entry);
+                    if !retained {
+                        process.cancellation.reset();
+                    }
+                    retained
+                });
+        }
     }
 }
 
@@ -869,6 +1021,91 @@ mod tests {
         fn kill_connection(&self) {
             self.connections.fetch_add(1, Ordering::AcqRel);
         }
+    }
+
+    #[test]
+    fn internal_process_batch_shares_entries_without_exposing_idle_pool_sessions() {
+        let registry = ProcessRegistry::default();
+        let mut session = crate::Session::new();
+        let guard = registry.register_internal(71, "test".into());
+        let observer = guard.transaction_observer();
+        observer.activated(123);
+        session.attach_process(71, guard);
+        assert_eq!(registry.internal_session_start_ts(), vec![123]);
+        assert!(registry.snapshot().is_empty());
+        assert!(registry.transaction_snapshot().is_empty());
+        let process = session.system_process().unwrap();
+        registry.track_system_process(901, process.clone()).unwrap();
+        registry.track_system_process(901, process).unwrap();
+        let _statement = session.retain_process_statement("ANALYZE TABLE test.t");
+        assert_eq!(
+            registry.snapshot()[0].info.as_deref(),
+            Some("ANALYZE TABLE test.t")
+        );
+        assert_eq!(registry.snapshot()[0].id, 901);
+        assert_eq!(registry.get_process_info(901).unwrap().id, 901);
+        assert_eq!(registry.show_process_list().len(), 1);
+        assert!(registry.transaction_snapshot().is_empty());
+        tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(901);
+        let excluded = registry.internal_session_start_ts();
+        tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(901);
+        assert!(excluded.is_empty());
+        registry.untrack_system_process(901);
+        assert!(registry.snapshot().is_empty());
+        assert_eq!(registry.internal_session_start_ts(), vec![123]);
+        drop(session);
+        assert!(registry.internal_session_start_ts().is_empty());
+    }
+
+    #[test]
+    fn internal_process_batch_kills_both_modes_without_poisoning_reused_sessions() {
+        let registry = ProcessRegistry::default();
+        let mut session = crate::Session::new();
+        session.attach_process(72, registry.register_internal(72, String::new()));
+        for query in [true, false] {
+            registry
+                .track_system_process(902, session.system_process().unwrap())
+                .unwrap();
+            let memory = session.routed_statement_memory();
+            assert!(memory.sql_killer().handle_signal().is_none());
+            assert!(registry.kill(902, query));
+            assert!(memory.sql_killer().handle_signal().is_some());
+            registry.untrack_system_process(902);
+            assert!(!registry.kill(902, query));
+        }
+        let _fresh_command = session.begin_query_cancellation();
+        let memory = session.routed_statement_memory();
+        assert!(memory.sql_killer().handle_signal().is_none());
+    }
+
+    #[test]
+    fn internal_process_batch_rejects_conflicting_ids_and_retires_dropped_sessions() {
+        let registry = ProcessRegistry::default();
+        let mut first = crate::Session::new();
+        let mut second = crate::Session::new();
+        // Internal membership follows session identity, not a possibly reused connection ID.
+        first.attach_process(1, registry.register_internal(1, String::new()));
+        second.attach_process(1, registry.register_internal(1, String::new()));
+        first.transaction_observer().unwrap().activated(10);
+        second.transaction_observer().unwrap().activated(20);
+        registry
+            .track_system_process(903, first.system_process().unwrap())
+            .unwrap();
+        assert_eq!(
+            registry
+                .track_system_process(903, second.system_process().unwrap())
+                .unwrap_err(),
+            "The ID is in use: 903"
+        );
+        drop(first);
+        assert!(registry.snapshot().is_empty());
+        assert_eq!(registry.internal_session_start_ts(), vec![20]);
+        registry
+            .track_system_process(903, second.system_process().unwrap())
+            .unwrap();
+        drop(second);
+        assert!(registry.snapshot().is_empty());
+        assert!(registry.internal_session_start_ts().is_empty());
     }
 
     #[test]

@@ -1216,6 +1216,13 @@ impl Session {
         self.session_memory.begin_query_cancellation()
     }
 
+    /// Captures the internal session's live process and a fresh cancellation scope.
+    pub fn system_process(&self) -> Option<process::SystemProcess> {
+        self.process
+            .as_ref()
+            .map(|guard| guard.system_process(self.begin_query_cancellation()))
+    }
+
     /// The live transaction timestamp authority used by storage integration.
     #[must_use]
     pub fn current_tso(&self) -> tidb_executor::CurrentTso {

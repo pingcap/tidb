@@ -245,6 +245,16 @@ pub struct StatementCancellation {
 }
 
 impl StatementCancellation {
+    /// Resets the current internal task at Track/UnTrack boundaries. A stale
+    /// handle cannot clear the cancellation of a reused session's next task.
+    pub fn reset(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation == self.generation {
+            state.requested = false;
+            self.killer.reset();
+        }
+    }
+
     /// Interrupts the command that owns this handle.
     pub fn cancel(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());

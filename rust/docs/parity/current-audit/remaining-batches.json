@@ -141,6 +141,23 @@
         },
         "receipt": "historical-read-batch-validation.json",
         "scope": "Historical timestamp/schema/data ownership, version cache, active timestamp lifetime and snapshot setting consumers; complete packages remain unaccepted."
+      },
+      "latest_internal_process_maintenance": {
+        "date": "2026-10-05",
+        "integration_start": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+        "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+        "findings": [
+          "I01",
+          "N04",
+          "O09"
+        ],
+        "statuses": {
+          "I01": "partial",
+          "N04": "partial",
+          "O09": "partial"
+        },
+        "receipt": "internal-process-batch-validation.json",
+        "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
       }
     },
     {
@@ -256,6 +273,23 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "Complete configuration/native defaults, HTTP/TLS/shutdown, transaction-state diagnostics, dynamic providers and remote fanout remain unaccepted."
+      },
+      "latest_internal_process_maintenance": {
+        "date": "2026-10-05",
+        "integration_start": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+        "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+        "findings": [
+          "I01",
+          "N04",
+          "O09"
+        ],
+        "statuses": {
+          "I01": "partial",
+          "N04": "partial",
+          "O09": "partial"
+        },
+        "receipt": "internal-process-batch-validation.json",
+        "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
       }
     },
     {
@@ -410,6 +444,23 @@
         ],
         "complete_package_acceptance": false,
         "remaining": "Complete configuration/native defaults, HTTP/TLS/shutdown, transaction-state diagnostics, dynamic providers and remote fanout remain unaccepted."
+      },
+      "latest_internal_process_maintenance": {
+        "date": "2026-10-05",
+        "integration_start": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+        "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+        "findings": [
+          "I01",
+          "N04",
+          "O09"
+        ],
+        "statuses": {
+          "I01": "partial",
+          "N04": "partial",
+          "O09": "partial"
+        },
+        "receipt": "internal-process-batch-validation.json",
+        "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
       }
     },
     {
@@ -436,18 +487,19 @@
   ],
   "latest_evidence": {
     "date": "2026-10-05",
-    "integration_start": "853d55127a8991f19756d79348fd17a43b4c3fb9",
+    "integration_start": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+    "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
     "findings": [
-      "O13",
-      "N03",
-      "T02"
+      "I01",
+      "N04",
+      "O09"
     ],
     "statuses": {
-      "O13": "partial",
-      "N03": "partial",
-      "T02": "partial"
+      "I01": "partial",
+      "N04": "partial",
+      "O09": "partial"
     },
-    "receipt": "snapshot-read-policy-batch-validation.json",
-    "scope": "Connected O13/N03 snapshot-read maintenance: point/batch/prepared policy and estimates, deferred/MaxTS/explicit carriers, physical read timeout and independent native snapshot resource-group ownership. T02 leader-only adapter fallback freshly confirmed; no whole-package or non-leader routing acceptance."
+    "receipt": "internal-process-batch-validation.json",
+    "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
   }
 }

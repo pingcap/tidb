@@ -162,6 +162,7 @@ impl ClusterServerSession {
         analyze_snapshot: Option<bool>,
         partition_prune_mode: &str,
     ) -> Result<WriteOutcome, SqlQueryError> {
+        let _process_statement = self.session.retain_process_statement(sql);
         self.rebuild_catalog_if_stale();
         let parsed = self
             .session

@@ -126,3 +126,5 @@ B09/B05 coprocessor policy now connects O13/N03 settings, reader estimates, adap
 B02 shared write policy now retains binary/temporal numeric diagnostics, charset error precedence and UPDATE source-row ordinals. The obsolete executor replay harness was migrated to the session rollback suite. See [validation](write-diagnostics-batch-validation.json). K03/E03 remain partial for the explicitly retained structural and conversion obligations.
 
 The K03/X01 [JSON numeric batch](json-numeric-batch-validation.json) connects the shared datatype source owner to table writes, scalar casts, bitwise operands and numeric JSON cast batches. Both parents remain partial; broader temporal/generated/ANALYZE and complete SQL/PB signature/kernel obligations remain.
+
+B03/B05/B09 share the [internal-process repair](internal-process-batch-validation.json): one live internal-session entry supplies tracked-task visibility, local cancellation and internal timestamp diagnostics. N04, I01 and O09 remain partial; remote dispatch, other providers, lazy schema V2 and full exclusion/package obligations remain. Physical timestamp holds remain conservative.

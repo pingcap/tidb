@@ -2627,3 +2627,5 @@ P03/P06 now share native and adapter metadata, keyspace, discovery and TSO chann
 
 
 The [snapshot plan](snapshot-read-policy-batch-execplan.md) and [receipt](parity/current-audit/snapshot-read-policy-batch-validation.json) connect O13/N03 SQL policy, retained point estimates, deferred/MaxTS/explicit/prepared lifetimes and native timeout/resource groups. Native read overrides no longer replace prewrite/commit groups. T02 now has a concrete leader-only adapter fallback to repair at the shared routing owner. All three parents remain partial; counts stay 86 tracked, 30 repaired and 56 unresolved. No full-package, live multi-node or performance acceptance is claimed.
+
+The 2026-10-05 [internal-process batch](internal-process-batch-execplan.md) connects I01/N04/O09 through shared session entries, scoped system-task publication and cancellation, and leased internal timestamp diagnostics. See [receipt](parity/current-audit/internal-process-batch-validation.json). All three parents remain partial; no package acceptance or GC activation. Counts remain 86 tracked /30 repaired /56 unresolved; other53 unresolved roots are not freshly re-audited.

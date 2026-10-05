@@ -3515,6 +3515,35 @@ struct ClusterStatsSessionState {
     registered: std::sync::atomic::AtomicBool,
 }
 
+fn system_process_trackers(
+    processes: ProcessRegistry,
+) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UntrackSysProc) {
+    let tracking = processes.clone();
+    let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
+        let process = (&*process as &dyn std::any::Any)
+            .downcast_ref::<tidb_session::process::SystemProcess>()
+            .ok_or_else(|| stats_session_error("invalid system process owner"))?;
+        tracking
+            .track_system_process(id, process.clone())
+            .map_err(stats_session_error)
+    });
+    let untrack: tidb_sqlexec::UntrackSysProc =
+        Arc::new(move |id| processes.untrack_system_process(id));
+    (track, untrack)
+}
+
+struct SystemSessionExecution<'a> {
+    session: &'a mut ClusterServerSession,
+    connection_id: u64,
+}
+
+impl Drop for SystemSessionExecution<'_> {
+    fn drop(&mut self) {
+        self.session.connection_id = self.connection_id;
+        self.session.session.set_connection_id(self.connection_id);
+    }
+}
+
 struct SysProcessTrackGuard {
     process_id: u64,
     untrack: tidb_sqlexec::UntrackSysProc,
@@ -3593,7 +3622,13 @@ impl ClusterStatsSessionState {
             ));
         }
         let track_guard = if let Some(track) = option.track_sys_proc.as_ref() {
-            track(option.track_sys_proc_id, Arc::new(()))?;
+            let process = self.with_session(|session| {
+                session
+                    .session
+                    .system_process()
+                    .ok_or_else(|| stats_session_error("system session has no process owner"))
+            })?;
+            track(option.track_sys_proc_id, Arc::new(process))?;
             option
                 .untrack_sys_proc
                 .clone()
@@ -3605,7 +3640,19 @@ impl ClusterStatsSessionState {
             None
         };
         let result = self.with_session(|session| {
-            session
+            let execution = SystemSessionExecution {
+                connection_id: session.connection_id,
+                session,
+            };
+            if option.track_sys_proc.is_some() {
+                execution.session.connection_id = option.track_sys_proc_id;
+                execution
+                    .session
+                    .session
+                    .set_connection_id(option.track_sys_proc_id);
+            }
+            execution
+                .session
                 .run_auto_analyze_sql(sql, option.analyze_snapshot, &option.partition_prune_mode)
                 .map_err(|error| stats_session_error(error.message))?;
             Ok((Vec::new(), Vec::new()))
@@ -4232,8 +4279,9 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
             |context| {
                 let process_id = context.connection_id()?;
                 let generator = tidb_stats_handle_util::Generator::new(move || process_id, |_| {});
-                let track: tidb_sqlexec::TrackSysProc = Arc::new(|_, _| Ok(()));
-                let untrack: tidb_sqlexec::UntrackSysProc = Arc::new(|_| {});
+                let (track, untrack) = system_process_trackers(
+                    self.factory().map_err(stats_session_error)?.processes(),
+                );
                 let arguments = arguments
                     .iter()
                     .map(|argument| tidb_util::sqlescape::SqlArg::from(argument.as_str()))

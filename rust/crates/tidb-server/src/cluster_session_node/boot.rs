@@ -479,8 +479,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
                         .into_iter()
                         .map(|process| process.cur_txn_start_ts),
                 );
+                let internal = processes.internal_session_start_ts();
                 let version =
                     TimestampFutureWait::wait(PdCapability::timestamp_future(opener.pd())?)?;
+                let now = std::time::UNIX_EPOCH + Duration::from_millis(version >> 18);
+                for ts in internal {
+                    let _ = tidb_txnkv::print_long_time_internal_txn(now, ts, false);
+                    active.push(ts);
+                }
                 let max_wait = globals
                     .get("tidb_gc_max_wait_time")
                     .map_err(|error| format!("{error:?}"))?

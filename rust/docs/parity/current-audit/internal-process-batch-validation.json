@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-05",
+  "base": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "I01/N04/O09 existing-owner maintenance across internal sessions, visible system tasks, cancellation and minimum-start-TS diagnostics. No complete Go package acceptance.",
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses": {
+    "I01": "partial",
+    "N04": "partial",
+    "O09": "partial"
+  },
+  "other_unresolved_roots_freshly_reproduced": false,
+  "go_source_inputs": {
+    "pkg/domain/domain.go": "990c426f07898dd18bed7b2de86b6751c19f677527a0a068f80ef893934cffe8",
+    "pkg/server/server.go": "8ea1540e489100eb5278eea57a6d96446288fdadeee39cc1f5e59f6ae300942c",
+    "pkg/server/stat_test.go": "c78557ff5590fbc1abaaaba2f4e5e120a7f9237e0b1824a6fecc934b785d5325",
+    "pkg/session/session.go": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3",
+    "pkg/domain/infosync/info.go": "e5de2dcd47afb7bb9b6a9035dd26574eb80d6f582f1804a6d0eb6e510a6b5bcb",
+    "pkg/executor/simple.go": "f90475274996ea4015c84436c3dc0c3db603e2c623e020188059f8f476748332"
+  },
+  "rust_source_inputs": {
+    "rust/crates/tidb-executor/src/mem_quota.rs": "f3a3ef2d7f32c25f5274693105a546a44cedb8240e405e426fcf482ef5a6e07a",
+    "rust/crates/tidb-server/src/cluster_session_node/boot.rs": "0fbb7765f29d6b0c1d053d6ddc1ce65151a8f195ae448d5c06d34747491771f9",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "f6a9803fc4f598e0548303a888bd3a83cf72cf8aea8c683d0836688452c6c6f0",
+    "rust/crates/tidb-server/src/cluster_session_node/statistics.rs": "e67c967698fa91ea58dd3275960d043a7f757bd14104d8274d33c89602cebe8c",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs": "f295e8a30cbb908d632157a9ef917a5eadc9bf3859f93a89d3c9dbba37ad6042",
+    "rust/crates/tidb-session/src/lib.rs": "5bd1f1eacf94feca6627b15f722880bb7ff6e7281cbf3839a58d746062a52aba",
+    "rust/crates/tidb-session/src/process.rs": "02e1fbb98e94227f5e2d456c81e907f6f9e674a8f2737d0c230d439065fc06bd"
+  },
+  "contracts": [
+    "Pooled internal sessions register by live entry identity, independent of possibly repeated connection IDs; dropping the session retires membership.",
+    "Scoped system tasks publish their actual process entry to process-list/info consumers. Idle internal sessions and all internal transactions remain excluded from the client/TIDB_TRX directory.",
+    "Restricted ANALYZE carries the live process capability instead of unit; the priority-queue production caller installs real Track/UnTrack callbacks.",
+    "Task ID collisions reject distinct entries; the same entry can be tracked again. Task identity is installed during SQL execution and restored even during unwinding.",
+    "Local KILL QUERY and KILL CONNECTION reach the actual physical ANALYZE killer; both interrupt a system task without closing the pooled session.",
+    "Track/UnTrack resets the current cancellation generation; a stale handle cannot reset a later command. System interruption and untracking serialize without locking the executing SQL session.",
+    "The leased timestamp reporter snapshots the internal directory before PD time, emits the shared long-running internal-session diagnostic and includes nonzero eligible timestamps. Active auto-analyze is excluded from the internal-directory leg; physical holds remain conservative."
+  ],
+  "removed": [
+    "No-op production auto-analyze tracking callbacks",
+    "Unit-valued restricted-execution process payload",
+    "Visibility/cancellation disconnect between tracked tasks and their internal session"
+  ],
+  "before": {
+    "original_source_regressions_failed": 1,
+    "test": "auto_analyze_exec_uses_live_tracking_and_current_session_like_go",
+    "failure": "restricted ANALYZE must hand the tracker its live session",
+    "method": "Existing integration suite extended before production changes; original callback panic is caught by auto-analyze, and the outer tracked assertion fails.",
+    "log": "/workspace/.cloud-setup/internal-process-batch/before.log"
+  },
+  "intermediate": {
+    "reproduced_failure": "internal_process_batch_kills_both_modes_without_poisoning_reused_sessions",
+    "cause": "Newly wired cancellation remained latched across a pooled-session reuse; repaired with Go Track/UnTrack reset semantics.",
+    "review": "Serialized system interruption/reset and made interruption evidence visible outside auto-analyze panic recovery."
+  },
+  "validation": {
+    "rust": {
+      "passed": 56,
+      "failed": 0,
+      "ignored": 0,
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session -p tidb-server -p tidb-executor --lib --no-fail-fast -- internal_process_batch process::tests tests_grants::processlist auto_analyze mem_quota::tests --test-threads=1"
+    },
+    "check": {
+      "result": "passed",
+      "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session -p tidb-server -p tidb-executor --all-targets"
+    },
+    "lint": {
+      "result": "passed",
+      "command": "make lint"
+    },
+    "formatting": "Changed regions normalized with rustfmt; unrelated pre-existing formatting preserved.",
+    "diff_check": "passed",
+    "sql_integration": "Real unistore ANALYZE plus separate SQL sessions issuing KILL QUERY / KILL CONNECTION. No real TCP test in this batch."
+  },
+  "logs": {
+    "before.log": "d18ca6852fc071b86a776f0f8ea77db4dfd1de60259cebaf4c8f83971ea7ae06",
+    "after.log": "8253f8d0b78abdf077db01fd202a9e52da59b115328fc8d47115cd1599d7d88b",
+    "final-tests.log": "1ca74294a1f7a98ad7e5837f33bf78f68bedd3ddb038643b3cf04ad6e3f39e73",
+    "review-tests.log": "ca6a2cb78f7aebc4d0541e3c2d6749a14f598191995cddbaea2df8d9be31a624",
+    "check.log": "7a7a453df344c3feabc3df057107fe22b6f06f502bb0fd9b24b3aaa1165b6557",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+  },
+  "environment_maintenance": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/73f1f4778ac71b6d/out/cluster_session_smoke",
+      "bytes": 381383976
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/ace6360cd167a88b/out/mysql_bootstrap",
+      "bytes": 297928000
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/4d8a9d83b4c3da09/out/tidb_session-4d8a9d83b4c3da09",
+      "bytes": 279462264
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-txnkv/5289a595a151738b/out/all-5289a595a151738b",
+      "bytes": 281229776
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/391aed3997226b39/out/tidb_executor-391aed3997226b39",
+      "bytes": 248899896
+    }
+  ],
+  "remaining": [
+    "N04 remote server-ID discovery and TiPB KILL dispatch",
+    "I01 other runtime providers, CPU/arbitration observations and remote retrieval",
+    "O09 lazy InfoSchema V2/recent-schema tracking, DDL exclusion and complete source exclusion semantics; physical holds remain conservative",
+    "Complete upstream package source/test/generated/platform/fixture acceptance"
+  ],
+  "not_run": [
+    "Full Go suites",
+    "Live multi-node TiKV/Go-peer GC",
+    "Performance measurements",
+    "Fresh environment restore"
+  ],
+  "publication": "Actual precommit locked tidb-server build and a fresh locked build immediately before push are mandatory. Results follow in external final-handoff.json after commit; this receipt does not pre-claim future publication gates."
+}
