@@ -241,6 +241,7 @@ const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
 pub struct SchemaSyncAck {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    global_watch_thread: Option<std::thread::JoinHandle<()>>,
     syncer_context: SchemaVersionContext,
     syncer_thread: Option<std::thread::JoinHandle<()>>,
     syncer: Arc<dyn SchemaVersionSyncer>,
@@ -297,8 +298,35 @@ impl SchemaSyncAck {
             }
         };
 
-        let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
+        // Go's SyncLoop reloads immediately on GlobalVersionCh. Keep the
+        // lease/2 reloader as the correctness backstop, but consume the
+        // schema-version watch and nudge it for the same prompt path.
         let stop = Arc::new(AtomicBool::new(false));
+        let global_watch_stop = Arc::clone(&stop);
+        let global_watch_syncer = Arc::clone(&syncer);
+        let global_watch_context = syncer_context.clone();
+        let global_watch_waker = reload_waker.clone();
+        let global_watch_thread = match std::thread::Builder::new()
+            .name("schema-global-reload-watch".to_owned())
+            .spawn(move || {
+                run_global_version_watch_loop(
+                    global_watch_syncer.as_ref(),
+                    &global_watch_context,
+                    &global_watch_waker,
+                    &global_watch_stop,
+                );
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                stop.store(true, Ordering::SeqCst);
+                syncer_context.cancel();
+                let _ = syncer_thread.join();
+                syncer.close();
+                return Err(error.to_string());
+            }
+        };
+
+        let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
         let stop_seen = Arc::clone(&stop);
         let tick = tick.max(MDL_CHECK_LOOK_DURATION);
         let ack_syncer = Arc::clone(&syncer);
@@ -324,6 +352,8 @@ impl SchemaSyncAck {
             Ok(thread) => thread,
             Err(error) => {
                 syncer_context.cancel();
+                stop.store(true, Ordering::SeqCst);
+                let _ = global_watch_thread.join();
                 let _ = syncer_thread.join();
                 syncer.close();
                 return Err(error.to_string());
@@ -332,6 +362,7 @@ impl SchemaSyncAck {
         Ok(Self {
             stop,
             thread: Some(thread),
+            global_watch_thread: Some(global_watch_thread),
             syncer_context,
             syncer_thread: Some(syncer_thread),
             syncer,
@@ -348,6 +379,9 @@ impl Drop for SchemaSyncAck {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.syncer_context.cancel();
+        if let Some(thread) = self.global_watch_thread.take() {
+            let _ = thread.join();
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -355,6 +389,28 @@ impl Drop for SchemaSyncAck {
             let _ = thread.join();
         }
         self.syncer.close();
+    }
+}
+
+/// Forwards Go's `GlobalVersionCh` events to the catalog reload waker.
+///
+/// The receiver is reacquired after a closed watch because the etcd syncer
+/// replaces its channel when `watch_global_schema_ver` re-establishes it.
+fn run_global_version_watch_loop(
+    syncer: &dyn SchemaVersionSyncer,
+    context: &SchemaVersionContext,
+    reload_waker: &CatalogReloadWaker,
+    stop: &AtomicBool,
+) {
+    while !stop.load(Ordering::SeqCst) {
+        match syncer
+            .global_version_ch()
+            .recv_timeout(Duration::from_millis(50))
+        {
+            Recv::Item(_) => reload_waker.nudge(),
+            Recv::Timeout => {}
+            Recv::Closed => syncer.watch_global_schema_ver(context),
+        }
     }
 }
 
@@ -381,7 +437,7 @@ fn run_ack_loop<C, L, P>(
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
     // Keep rows loaded by the schema-reload path. MDL checks run every tick,
     // but Go does not rescan the system table for every check.
-    let mut mdl_jobs = Vec::new();
+    let mut mdl_jobs: Vec<MdlJob> = Vec::new();
     let mut scanned_version: Option<i64> = None;
     let mut next_mdl_scan = Instant::now();
     let mut retry_mdl_scan = false;
@@ -435,12 +491,8 @@ fn run_ack_loop<C, L, P>(
                 reload_pass,
                 last_reload_pass,
             ) {
-                match load_mdl_jobs(
-                    opener,
-                    timeout,
-                    &catalog.load(),
-                    min_job_id_refresher.current_min_job_id(),
-                ) {
+                let min_job_id = min_job_id_refresher.current_min_job_id();
+                match load_mdl_jobs(opener, timeout, &catalog.load(), min_job_id) {
                     Ok(jobs) => {
                         scanned_version = Some(loaded);
                         last_reload_pass = Some(reload_pass);
@@ -643,6 +695,50 @@ mod tests {
     use super::*;
     use tidb_exec::catalog_watch::{CatalogReloadPass, CatalogReloader};
     use tidb_exec::cluster_catalog::ClusterCatalog;
+    use tidb_schemaver::mem_syncer::MemSyncer;
+
+    #[test]
+    fn global_version_event_nudges_catalog_reloader() {
+        let syncer = Arc::new(MemSyncer::new());
+        let context = SchemaVersionContext::background();
+        syncer.init(&context).unwrap();
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .expect("reloader");
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher_stop = Arc::clone(&stop);
+        let watcher_syncer: Arc<dyn SchemaVersionSyncer> = syncer.clone();
+        let watcher_context = context.clone();
+        let watcher = std::thread::spawn({
+            let waker = reloader.waker();
+            move || {
+                run_global_version_watch_loop(
+                    watcher_syncer.as_ref(),
+                    &watcher_context,
+                    &waker,
+                    &watcher_stop,
+                );
+            }
+        });
+
+        syncer.owner_update_global_version(&context, 8).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while reloader.stats().nudged == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(reloader.stats().nudged, 1);
+
+        stop.store(true, Ordering::SeqCst);
+        context.cancel();
+        watcher.join().unwrap();
+    }
 
     /// Go `mustReload`: a reload that fails is asked for again until one
     /// succeeds -- here the pass fails twice before it answers.
