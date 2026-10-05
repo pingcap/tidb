@@ -14,7 +14,7 @@
 
 //! Source-backed tests for analyze-worker panic classification.
 
-use tidb_exec::analyze_panic_error::{
+use tidb_executor::analyze::panic_recovery::{
     get_analyze_panic_error, is_analyze_worker_panic, AnalyzePanicError, AnalyzePanicValue,
     GLOBAL_PANIC_ANALYZE_MEMORY_EXCEED,
 };

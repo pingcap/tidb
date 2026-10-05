@@ -28,8 +28,6 @@
 
 pub mod analysis_policy;
 pub mod analyze_jobs;
-pub mod analyze_results;
-pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
 pub mod builder;
@@ -56,7 +54,6 @@ pub mod overlap_geometry;
 pub mod row_estimate;
 pub mod row_sample_collector;
 pub mod sample_bytes;
-pub mod sample_collector;
 pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod sorted_builder;
@@ -73,8 +70,6 @@ pub use analyze_jobs::{
     go_zero_time, AnalyzeJob, AnalyzeProgress, AnalyzeStatusJob, JobType, ANALYZE_FAILED,
     ANALYZE_FINISHED, ANALYZE_PENDING, ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
-pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
-pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
 pub use builder::{
@@ -141,12 +136,6 @@ pub use row_sample_collector::{
 };
 pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
-};
-pub use sample_collector::{
-    legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
-    sort_legacy_sample_items, LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError,
-    LegacySampleCollector, LegacySampleCollectorProto, LegacySampleItem, LegacySampleRng,
-    EMPTY_SAMPLE_ITEM_SIZE,
 };
 pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
 pub use scalar_geometry::{

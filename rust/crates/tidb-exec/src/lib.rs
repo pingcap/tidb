@@ -53,7 +53,6 @@
 pub mod account_policy;
 pub mod adapter;
 pub mod aggregate;
-pub mod analyze_panic_error;
 pub mod auto_pre_split;
 pub use tidb_executor::base_join_probe;
 pub mod bit_agg;

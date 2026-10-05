@@ -797,8 +797,8 @@
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "read-plan-cleanup-validation.json",
-    "scope": "Four unused read-planning adapters, four private harnesses and 24 tests removed; 3537 retained inputs, remaining single-reader code and four prepared tests byte-identical. Finding statuses/counts unchanged."
+    "receipt": "analyze-model-cleanup-validation.json",
+    "scope": "Three unused analyze/statistics models, three private harnesses, 29 tests and one obsolete panic export removed; 3530 retained inputs and eight retained test bodies unchanged. Finding statuses/counts unchanged."
   },
   "test_cleanup_history": [
     {
@@ -941,6 +941,10 @@
     {
       "receipt": "session-model-cleanup-validation.json",
       "scope": "Nine disconnected session/statement models, nine private harnesses and 27 tests removed; 3546 retained inputs byte-identical, only declarations and two doc headers changed. Finding statuses/counts unchanged."
+    },
+    {
+      "receipt": "read-plan-cleanup-validation.json",
+      "scope": "Four unused read-planning adapters, four private harnesses and 24 tests removed; 3537 retained inputs, remaining single-reader code and four prepared tests byte-identical. Finding statuses/counts unchanged."
     }
   ],
   "repair_history": [

@@ -1,0 +1,172 @@
+{
+  "base": "d8f414241052b47cc5f98652a211e0a14bb5e828",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire three unused analyze/statistics models, three private harnesses and one obsolete panic re-export; preserve live sampling, persistence and panic recovery.",
+  "modules": [
+    "analyze_results",
+    "analyze_table_id",
+    "sample_collector",
+    "analyze_panic_error"
+  ],
+  "removed": [
+    {
+      "path": "rust/crates/tidb-stats/src/analyze_results.rs",
+      "lines": 89,
+      "sha256": "98bd3ecf74bd36a32cb0b0e1d43f1876034d981f78aed1c44c2f2aabc818c07b",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/analyze_results_source.rs",
+      "lines": 117,
+      "sha256": "5d3d9374bb5af480c711deb6590b49e2f08f2e5f03412ba7dcec4a2385a8754d",
+      "tests": [
+        "source_result_releases_fm_and_destroys_every_histogram_only",
+        "source_outer_result_destroys_every_inner_result_and_keeps_metadata"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-stats/src/analyze_table_id.rs",
+      "lines": 74,
+      "sha256": "5c1d93bd9d5000eee5a070caeb9e099511c9ebc283223a54acf3746ba49dcc92",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/analyze_table_id_source.rs",
+      "lines": 50,
+      "sha256": "47d9b151ee05c6fabe0105dca21c9c166e08f7464719abd553e64b4857841517",
+      "tests": [
+        "source_non_partition_identity_uses_table_id",
+        "source_partition_identity_uses_partition_id",
+        "source_equals_compares_both_ids_and_nil_shape"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-stats/src/sample_collector.rs",
+      "lines": 447,
+      "sha256": "8e8f3c8b4ace83cd2d03c43364ba0fea53ea80bbbb2d27ae3d217bcfbd101236",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-stats/tests/sample_collector_source.rs",
+      "lines": 686,
+      "sha256": "20cb550ad7e931db2b75ccb65d901fcf98362730011db4259786cc5a78b3597b",
+      "tests": [
+        "source_sample_constants_match_go_64_bit_layout_and_length_gate",
+        "source_sort_is_stable_and_total_size_reads_datum_get_bytes",
+        "source_sort_returns_the_last_comparator_error_on_go_schedule",
+        "source_collect_null_nonnull_and_destroy_boundaries_match",
+        "source_collect_null_wraps_and_returns_before_every_other_mutation",
+        "source_collect_error_and_nil_fm_expose_go_partial_receiver_mutation",
+        "source_nonpositive_legacy_reservoir_still_draws_uint64",
+        "source_merge_combines_counts_sketches_and_reservoir_input",
+        "source_proto_round_trip_filters_only_oversized_samples",
+        "source_proto_accepts_nil_fm_but_to_proto_normalizes_it_to_empty_message",
+        "source_extract_topn_zero_and_frequency_boundaries_match",
+        "source_extract_topn_zero_returns_before_reading_or_mutating_the_collector",
+        "source_calc_total_size_empty_resets_the_accumulator",
+        "source_extract_topn_keeps_the_two_thirds_candidate_tail",
+        "source_extract_topn_error_exposes_completed_prefix_mutation",
+        "source_sample_builder_collects_pk_columns_and_stops_on_empty_chunk",
+        "source_sample_builder_checks_zero_fields_only_after_nonempty_chunk",
+        "source_sample_builder_skips_prepare_and_fm_encoding_for_null",
+        "source_sample_builder_collator_gate_and_index_order_match",
+        "source_sample_builder_cms_dimensions_require_two_positive_operands",
+        "source_row_to_datums_uses_field_count_not_physical_width"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/analyze_panic_error.rs",
+      "lines": 20,
+      "sha256": "0a47a4ceb2fc4c42518fd97ec06a489d443d1c1c2f074d49c7f16ccc1ebd30db",
+      "tests": []
+    }
+  ],
+  "partial_removals": {
+    "pkg_statistics_go_tests_source.rs": "Retired final TestSampleSerial section: three legacy tests and private fixture/imports. Six retained test bodies byte-identical.",
+    "analyze_panic_error_source.rs": "Only import changed: same shared panic owner now imported directly; two test bodies byte-identical."
+  },
+  "source_test_lines_removed": 1650,
+  "tests_removed": 29,
+  "verification": {
+    "retained_inputs_unchanged": 3530,
+    "retained_changed": [
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-exec/tests/analyze_panic_error_source.rs",
+      "rust/crates/tidb-stats/src/lib.rs",
+      "rust/crates/tidb-stats/tests/pkg_statistics_go_tests_source.rs"
+    ],
+    "six_mixed_test_bodies_unchanged": true,
+    "two_panic_test_bodies_unchanged": true,
+    "panic_tests_import_same_shared_owner_directly": true,
+    "live_owner_sha256": {
+      "rust/crates/tidb-stats/src/row_sample_collector.rs": "36a88a9a1f22375dfc166f0085a3b95ee0c6ff9838a285443064534c25acb8d1",
+      "rust/crates/tidb-stats/src/independent_index_analyze.rs": "ceee0d579d91b08444114ec1cbd4d0179a1b5314f79b95fe70165ffc7068ce1f",
+      "rust/crates/tidb-stats/src/global_stats.rs": "97b4ce76510989c2dcf473c38ae0683027d0e794f615b0af18bf15ee52f4c363",
+      "rust/crates/tidb-exec/src/cluster_stats_write.rs": "75623045efb6151d79e9199709432975725d73703a607daae43f09344a26c4d9",
+      "rust/crates/tidb-executor/src/analyze/panic_recovery.rs": "6aec66b38536cad21cb788740efd2f5fc26459964a9436a261f81382c4164345"
+    }
+  },
+  "registration": {
+    "tidb-stats": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-stats/9cc12b548869aa64/out/all_tests.rs",
+      "sha256": "3ddb308c3f8564ad177a72a05f62d1c3a872c02c1f82f91024b1e0f0500d97c5",
+      "modules": 28,
+      "fresh": true,
+      "retired_harnesses_absent": true,
+      "retained_harness": "pkg_statistics_go_tests_source"
+    },
+    "tidb-exec": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs",
+      "sha256": "bfe51f3531e17a8148c59596d197fcefec58f54897972728ef896ab484f09b70",
+      "modules": 85,
+      "fresh": true,
+      "retired_harnesses_absent": true,
+      "retained_harness": "analyze_panic_error_source"
+    }
+  },
+  "go_artifacts": {
+    "pkg/statistics/analyze.go": "7171f0e546c26df7d69223dab9ee2dd9c91777346257c4e58456be9dddd4541c",
+    "pkg/statistics/sample.go": "ca172dd554f88f9512e9d25183a949ad065185b045253823552bd4e6479538f1",
+    "pkg/statistics/sample_test.go": "0a73cd00654e09fe948aaefba50a252d7db196319946795ed5da61faef4613d7",
+    "pkg/statistics/table.go": "6bc57392140c8d5a0d523396ce0592d6fa3fd6b58d61496e6af44f349d5de454",
+    "pkg/executor/analyze_utils.go": "a025a42d94fcf338f98fbbe64c3ba8a3df1dd734bd099b09d9c6a7f009387d3f",
+    "pkg/executor/analyze_utils_test.go": "5ecf190feb1927e75b6cf3d77313134ca80c58a57aaa34799ba12b4ff3e59053"
+  },
+  "ownership": [
+    "Go AnalyzeResults/AnalyzeResult carries real sampled histograms and persistence metadata and releases pooled storage. The disconnected generic Rust HistogramProbe lifecycle model was never used by cluster_analyze or cluster_stats_write.",
+    "AnalyzeTableId had no consumer outside the retired AnalyzeResults model and its private tests. Actual table/partition identifiers in current analyze execution and persistence remain unchanged.",
+    "Go SampleBuilder owns the legacy per-column collection path. All LegacySampleBuilder/Collector/Item/proto entrypoints in Rust were only consumed by private tests. Current row sampling, independent-index analysis, sorted histogram building, global merge and version/eligibility policies retain all live callers.",
+    "The mixed statistics harness retains six version/histogram/weighted-sampling tests byte-identical. Original Go TestSampleSerial and its collection/merge/proto obligations remain; deletion is not acceptance.",
+    "The obsolete tidb-exec panic namespace only re-exported tidb-executor::analyze::panic_recovery. Both retained tests now import that same owner directly; classification assertions and production recovery callers are unchanged."
+  ],
+  "validation": {
+    "all_targets": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-stats -p tidb-exec -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "runtime": "Not rerun: disconnected-model deletion; retained test bodies unchanged and import redirected to the identical shared owner.",
+    "publication": "Normal precommit must run cd rust && cargo build --locked -p tidb-server; repeat immediately before push. Actual post-commit gates live in external final-handoff.json."
+  },
+  "limits": [
+    "86 tracked / 30 repaired / 56 unresolved: finding dispositions unchanged.",
+    "No full Go suite, live TiKV, complete package acceptance or measured speedup.",
+    "Original Go sampling/lifecycle/fixture obligations remain."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/analyze-model-cleanup",
+  "log_sha256": {
+    "all-target-check.log": "e7a6e82b513069afd28eb95a60e9b31d4855ffb4fcefa72d8d4fd7ba96de1f9d",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "reference-traces.json": "f94178ab3c6b37ebfbaa9fdb99f4d9e57e44d9860761d3c8c81d927d07ece91c",
+    "retained-verification.json": "0f4732dfa1ad107e6a87c275364b438b56310557a324ea5a8dea863f16a45584",
+    "removed-mixed-tail.rs": "bc6c4f78ecc0dca60f1b0e5a8325447169648e17a0043183af4e9a06e7d9308f"
+  }
+}
