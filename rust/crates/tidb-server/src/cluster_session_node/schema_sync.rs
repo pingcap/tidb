@@ -403,13 +403,33 @@ fn run_global_version_watch_loop(
     stop: &AtomicBool,
 ) {
     while !stop.load(Ordering::SeqCst) {
-        match syncer
-            .global_version_ch()
-            .recv_timeout(Duration::from_millis(50))
-        {
-            Recv::Item(_) => reload_waker.nudge(),
-            Recv::Timeout => {}
-            Recv::Closed => syncer.watch_global_schema_ver(context),
+        handle_global_version_recv(
+            syncer
+                .global_version_ch()
+                .recv_timeout(Duration::from_millis(50)),
+            syncer,
+            context,
+            reload_waker,
+        );
+    }
+}
+
+fn handle_global_version_recv(
+    recv: Recv<tidb_schemaver::WatchEvent>,
+    syncer: &dyn SchemaVersionSyncer,
+    context: &SchemaVersionContext,
+    reload_waker: &CatalogReloadWaker,
+) {
+    match recv {
+        Recv::Item(_) => reload_waker.nudge(),
+        Recv::Timeout => {}
+        Recv::Closed => {
+            // Go's SyncLoop handles the watch result before rebuilding a
+            // closed channel: every close is a reload request, even when
+            // the replacement watch cannot replay the event that caused
+            // the close.
+            reload_waker.nudge();
+            syncer.watch_global_schema_ver(context);
         }
     }
 }
@@ -738,6 +758,43 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         context.cancel();
         watcher.join().unwrap();
+    }
+
+    #[test]
+    fn closed_global_version_watch_nudges_before_rewatch() {
+        let syncer = Arc::new(MemSyncer::new());
+        let context = SchemaVersionContext::background();
+        syncer.init(&context).unwrap();
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .expect("reloader");
+        let closed = {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            drop(sender);
+            tidb_schemaver::SharedRecv::new(receiver)
+        };
+        let waker = reloader.waker();
+
+        // A closed etcd watch is the path that previously only re-established
+        // the channel, leaving the catalog on the lease/2 fallback.
+        handle_global_version_recv(
+            closed.recv_timeout(Duration::ZERO),
+            syncer.as_ref(),
+            &context,
+            &waker,
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while reloader.stats().nudged == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(reloader.stats().nudged, 1);
     }
 
     /// Go `mustReload`: a reload that fails is asked for again until one
