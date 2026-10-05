@@ -310,18 +310,6 @@ fn test_float_codec() {
     }
 }
 
-/// Go `bytes_test.go::TestFastSlowFastReverse`.
-///
-/// skipped-reason: exercises the internal unaligned-load fast reverse path
-/// (`fastReverseBytes` / `supportsUnaligned`); neither is part of the Rust
-/// bytes module's public surface, whose observable behavior is pinned by the
-/// golden vectors in `test_bytes_codec_go_vectors` below.
-#[test]
-fn test_fast_slow_fast_reverse_unreachable_from_rust_surface() {
-    // The equivalent invariant (encoding is an involution of byte order) is
-    // covered by every round trip in this module; nothing further to assert.
-}
-
 /// Go `bytes_test.go::TestBytesCodec` — exact golden encodings, both
 /// directions, plus the error-decode inputs.
 #[test]

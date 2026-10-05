@@ -12,18 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/foreign_key_test.go` family (part6 items 323–330 of
-//! the package's `func Test*`/`func Benchmark*` declarations, sorted by file
-//! and line), read from `origin/master`.
-//!
-//! The Go tests drive two racing sessions against the online-DDL job queue
-//! (`beforeRunOneJobStep` parks one job while the other session's statement
-//! lands mid-schema-state), then assert the error the loser must see. This
-//! tier has no job queue and no schema states, so each port pins the
-//! serialized contract the race ultimately depends on — the errno the
-//! constraint machinery must produce once the competing DDL has landed — and
-//! every divergence found while porting is written in the test's comment
-//! rather than papered over.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::Datum;
 use tidb_executor::driver::Catalog;
@@ -421,42 +411,6 @@ fn foreign_key_enforces_child_side_and_cascades_once_public() {
     assert_eq!(rows_text(&rows), vec![vec!["2", "2"], vec!["3", "3"]]);
     let rows = run_select_on("select * from t2 order by id", &mut catalog, &ctx).unwrap();
     assert_eq!(rows_text(&rows), vec![vec!["2", "2"], vec!["3", "3"]]);
-}
-
-// The write-only halves of Go's TestAddForeignKey3 (pkg/ddl/foreign_key_test.go:401-410):
-// at StateWriteOnly and StateWriteReorganization the half-born constraint
-// RESTRICTS the parent-side delete with planner:1451 instead of cascading,
-// and both tables keep every row.
-//
-// go-parity-gap: schema states do not exist in this tier, so a constraint is
-// either absent or fully public; the restricting half-state is not
-// reproducible.
-#[test]
-#[ignore = "go-parity-gap: the write-only state restricts a parent delete with 1451 instead of cascading; no schema states here"]
-fn add_foreign_key_write_only_state_restricts_parent_delete() {
-    // Contract (pkg/ddl/foreign_key_test.go:403-410): `delete from t1 where
-    // id = 1` fails [planner:1451]Cannot delete or update a parent row: a
-    // foreign key constraint fails (`test`.`t2`, CONSTRAINT `fk_1` FOREIGN
-    // KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE) at both write
-    // states, and `select * from t1/t2 order by id` keep 1/2/3.
-}
-
-// --- TestForeignKeyInWriteOnlyMode (pkg/ddl/foreign_key_test.go:407) ---
-//
-// Go creates `child (... foreign key (pid) references parent(id) on delete
-// cascade)` and, from a session holding the OLD schema while the job sits in
-// StateDeleteOnly, requires every DML against `child` to fail with
-// `Table 'test.child' doesn't exist` — the not-yet-public table is invisible
-// to the other session, which is precisely what the state machine buys.
-//
-// go-parity-gap: schema states and the job queue that drives them do not
-// exist in this tier, so the invisible-table window cannot be reproduced.
-#[test]
-#[ignore = "go-parity-gap: DeleteOnly schema-state visibility needs the DDL job queue"]
-fn foreign_key_in_write_only_mode_hides_the_table() {
-    // Contract (pkg/ddl/foreign_key_test.go:422-436): insert / update /
-    // delete / joined delete against a DeleteOnly child all report
-    // "Table 'test.child' doesn't exist".
 }
 
 // --- TestFix59705 (pkg/ddl/foreign_key_test.go:445) ---

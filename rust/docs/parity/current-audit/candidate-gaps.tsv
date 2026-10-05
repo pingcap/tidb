@@ -53,7 +53,6 @@ rust/crates/tidb-executor/src/generated_column.rs	726	"this generated-column exp
 rust/crates/tidb-executor/src/hash_agg/builder.rs	152	"aggregate executor for {name} is not implemented"
 rust/crates/tidb-executor/src/index_merge_reader.rs	1361	"index merge intersection with an order-by is not implemented (Go: fetchLoopIntersectionWithOrderBy)",
 rust/crates/tidb-executor/src/tests_admin_check_admintest_source.rs	146	/// go-parity-gap: the EXPLAIN-shape assertions (the query with
-rust/crates/tidb-executor/src/tests_admin_check_admintest_source.rs	318	// go-parity-gap: goleak/config suite bootstrap; no behavior.
 rust/crates/tidb-executor/src/tests_ddl_masking_policy_ddl_gaps.rs	17	//! Masking-policy DDL and its system-table state are not implemented, so this
 rust/crates/tidb-executor/src/tests_executor_suite_statements_source.rs	23	//! are recorded as `#[ignore]` go-parity-gap tests, never approximated.
 rust/crates/tidb-executor/src/tests_hashagg_aggregate_suite_source.rs	241	/// go-parity-gap: the `desc analyze` DISK-column assertions (the HashAgg
@@ -62,108 +61,12 @@ rust/crates/tidb-executor/src/tests_required_rows_source.rs	326	// go-parity-gap
 rust/crates/tidb-executor/src/tests_required_rows_source.rs	340	// go-parity-gap: the ported `crate::sort::SortExec::next` appends sorted rows
 rust/crates/tidb-executor/src/view.rs	496	"a LATERAL derived table is not supported yet",
 rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	570	// --- go-parity-gap documentaries -------------------------------------------------
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	576	// go-parity-gap: needs the DDL job queue's beforeRunOneJobStep/parallel-run
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	588	// go-parity-gap: the Go error ("[ddl:8200]Unsupported modify column: oldCol
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	601	// go-parity-gap: ADD PRIMARY KEY is refused outright by this tier ("this
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	602	// index kind is not supported yet"), so neither the race nor the 8200
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	612	// go-parity-gap: vector indexes need the TiFlash replica mock
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	625	// go-parity-gap: columnar (inverted) indexes need the same TiFlash mock +
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	636	// go-parity-gap: ADD/DROP PRIMARY KEY statements are refused by this tier,
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	649	// go-parity-gap: DROP/ALTER SCHEMA have no runner in this tier — only the
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	661	// go-parity-gap: CREATE DATABASE has no runner in this tier, so the
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	671	// go-parity-gap: serial ADD COLUMN, grouped ADD COLUMNS, ADD INDEX, and
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	688	// go-parity-gap: needs the afterGetSchemaAndTableByIdent failpoint to hold
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	701	// go-parity-gap: ALTER SCHEMA ... CHARSET has no runner; only
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	713	// go-parity-gap: needs the truncate-vs-add-column job race whose loser sees
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	726	// go-parity-gap: needs runTestInSchemaState's failpoint hooks to run the
-rust/crates/tidb-executor/tests/db_change_ddl_conflicts_source.rs	738	// go-parity-gap: the six rename-conflict scenarios need the
 rust/crates/tidb-executor/tests/db_integration_ddl_types_source.rs	1320	// --- go-parity-gap documentaries -------------------------------------------------
 rust/crates/tidb-executor/tests/db_integration_ddl_types_source.rs	1322	// go-parity-gap: needs the afterRunOneJobStep failpoint to strip a job's
 rust/crates/tidb-executor/tests/db_integration_ddl_types_source.rs	1334	// go-parity-gap: needs the afterWaitSchemaSynced failpoint to run a
 rust/crates/tidb-executor/tests/db_integration_ddl_types_source.rs	1450	// go-parity-gap: the second half of TestCreateTableTooLarge needs
-rust/crates/tidb-executor/tests/ddl_executor_nokit_killflag_source.rs	87	// go-parity-gap: the pending-table-threshold wait loop is not transcreated.
-rust/crates/tidb-executor/tests/ddl_executor_nokit_killflag_source.rs	89	#[ignore = "go-parity-gap: executor.waitPendingTableThreshold is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	191	// go-parity-gap (documented divergence): the tier's MODIFY/CHANGE carrier
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	200	#[ignore = "go-parity-gap: pk-guard fires only for non-integer targets, narrowing does no row validation, generated-column refusals absent"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	216	// go-parity-gap: no failpoint seam and no job queue — the tier's
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	220	#[ignore = "go-parity-gap: no failpoint injection seam for halfway-cancelled DDL jobs"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	233	// go-parity-gap: no backfill reorg machinery and no failpoint seam.
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	235	#[ignore = "go-parity-gap: index backfill reorg and its failpoint seam are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	247	// go-parity-gap: no region splitting, no backfill workers, no failpoints.
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	249	#[ignore = "go-parity-gap: region-split backfill with injected run errors is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	262	// go-parity-gap: no schema-syncer/validator/lease machinery in this tier.
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	264	#[ignore = "go-parity-gap: no schema validator or lease-out-of-date detection (8027) in this tier"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	277	// go-parity-gap: global-id allocation has no failure seam in this tier.
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	279	#[ignore = "go-parity-gap: global-id allocation has no injectable failure seam"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	291	// go-parity-gap: no RunDDLJob panic-recovery seam and no fast-create-table
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	294	#[ignore = "go-parity-gap: RunDDLJob panic recovery (8214) has no carrier here"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	304	// go-parity-gap: same missing panic-recovery seam.
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	306	#[ignore = "go-parity-gap: RunDDLJob panic recovery (8214) has no carrier here"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	318	// go-parity-gap: no safe-point/GC interaction and no partition-level
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	321	#[ignore = "go-parity-gap: safe-point-expiry during partition backfill is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	334	// go-parity-gap: the tier's ADD PARTITION runner has no failure seam (the
-rust/crates/tidb-executor/tests/ddl_fail_injection_source.rs	339	#[ignore = "go-parity-gap: ADD PARTITION has no injectable failure to leave the meta untouched against"]
-rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	149	// go-parity-gap: `detectAndUpdateJobVersion` (pkg/ddl/ddl.go:975), its
-rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	154	#[ignore = "go-parity-gap: detectAndUpdateJobVersion (pkg/ddl/ddl.go:975) and its server-info polling are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	167	// go-parity-gap: the DDL-side worker pool over `ngaut/pools` is not
-rust/crates/tidb-executor/tests/ddl_internal_helper_fns_source.rs	172	#[ignore = "go-parity-gap: the ngaut/pools-backed DDL worker pool (pkg/ddl/ddl_workerpool.go) is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	67	// go-parity-gap: the mysql.tidb_ddl_job queue — addDDLJobs, GetAllDDLJobs,
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	70	#[ignore = "go-parity-gap: the mysql.tidb_ddl_job queue (addDDLJobs/GetAllDDLJobs/IterAllDDLJobs) is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	83	// go-parity-gap: the job queues and their merge are not transcreated.
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	85	#[ignore = "go-parity-gap: the mysql.tidb_ddl_job queue is not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	101	// go-parity-gap: scheduler failpoints, the job table and the cancel-retry
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	104	#[ignore = "go-parity-gap: DDL job scheduling, admin-cancel retry and failpoints are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	117	// go-parity-gap: the job queue that serializes CREATE VIEW deliveries is not
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	120	#[ignore = "go-parity-gap: CREATE VIEW jobs are not enqueued or serialized in this tier"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	135	// go-parity-gap: job history records (mysql.tidb_ddl_history, BinlogInfo.
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	138	#[ignore = "go-parity-gap: no DDL job history or FinishedTS recording in this tier"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	153	// go-parity-gap: the session table-lock registry
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	157	#[ignore = "go-parity-gap: session table locks and HandleLockTablesOnSubmit/Finish are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	173	// go-parity-gap: the external workload manager registration hooks
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	177	#[ignore = "go-parity-gap: external-workload TTL registration hooks are not transcreated"]
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	192	// go-parity-gap: the DDL job runner and its failpoints do not exist in this
-rust/crates/tidb-executor/tests/ddl_job_queue_executor_source.rs	195	#[ignore = "go-parity-gap: the DDL job runner and beforeRunOneJobStep failpoints are not transcreated"]
-rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	135	// go-parity-gap: the sysvar DEFINITION lives in tidb-session's catalog
-rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	140	#[ignore = "go-parity-gap: no SHOW/SET GLOBAL variable surface in this tier"]
-rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	157	// go-parity-gap: no job queue, no GetAllDDLJobs, no merging, and no
-rust/crates/tidb-executor/tests/fast_create_table_lifecycle_source.rs	160	#[ignore = "go-parity-gap: fast-create-table job merging and the job queue are not transcreated"]
-rust/crates/tidb-executor/tests/fk_alter_meta_and_privilege_source.rs	883	// go-parity-gap: this tier has no privilege/auth carrier (no user
-rust/crates/tidb-executor/tests/fk_alter_meta_and_privilege_source.rs	887	#[ignore = "go-parity-gap: no auth carrier; Go's 1142 REFERENCES denial is not reproducible"]
-rust/crates/tidb-executor/tests/fk_alter_meta_and_privilege_source.rs	900	// go-parity-gap: no privilege/auth carrier.
-rust/crates/tidb-executor/tests/fk_alter_meta_and_privilege_source.rs	902	#[ignore = "go-parity-gap: no auth carrier; Go's 1142 REFERENCES denial is not reproducible"]
 rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	317	// go-parity-gap: this tier's ADD FOREIGN KEY auto-creates the covering index
 rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	321	#[ignore = "go-parity-gap: ALTER ADD FOREIGN KEY auto-creates the covering index where Go refuses with the missing-index error"]
-rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	431	// go-parity-gap: schema states do not exist in this tier, so a constraint is
-rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	435	#[ignore = "go-parity-gap: the write-only state restricts a parent delete with 1451 instead of cascading; no schema states here"]
-rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	452	// go-parity-gap: schema states and the job queue that drives them do not
-rust/crates/tidb-executor/tests/foreign_key_ddl_owner_checks_source.rs	455	#[ignore = "go-parity-gap: DeleteOnly schema-state visibility needs the DDL job queue"]
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	107	// go-parity-gap: schema states and the dual-version table views they need do
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	110	#[ignore = "go-parity-gap: DeleteOnly/WriteOnly schema-state views of a table under ADD/DROP INDEX need the DDL job queue"]
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	125	// go-parity-gap: there is no backfill progress tracking, no `admin show ddl
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	128	#[ignore = "go-parity-gap: backfill row-count progress and `admin show ddl jobs` are not transcreated"]
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	145	#[ignore = "go-parity-gap: nextgen-only var guards; Go itself skips these tests on a classic kernel"]
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	161	// go-parity-gap: neither the DDL reorg cop context nor the storage fetch and
-rust/crates/tidb-executor/tests/index_change_add_drop_lifecycle_source.rs	166	#[ignore = "go-parity-gap: DDL reorg cop context plus FetchChunk4Test and ConvertRowToHandleAndIndexDatum are not wired"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	148	// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is refused by this tier
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	149	// ("this index kind is not supported yet"), so none of the four shapes can
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	152	#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	455	// go-parity-gap: analyze-during-DDL, its timeout plumbing, failpoints and
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	458	#[ignore = "go-parity-gap: analyze-during-DDL scheduling and stats_meta publication are not transcreated"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	470	// go-parity-gap: the job-table write-conflict retry and analyze owner
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	473	#[ignore = "go-parity-gap: the DDL job-table retry and analyze owner lifecycle are not transcreated"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	487	// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is unsupported in this
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	494	#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	506	// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is unsupported in this
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	509	#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	588	// go-parity-gap: physical region splits (SPLIT TABLE / pre-split regions
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	591	#[ignore = "go-parity-gap: SPLIT TABLE region bookkeeping is not transcreated"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	903	// go-parity-gap: the GLOBAL index option is not honored here — the add
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	909	#[ignore = "go-parity-gap: the GLOBAL index option is not honored (the add behaves as if GLOBAL were absent)"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	969	// go-parity-gap: `DROP PRIMARY KEY` is refused by this tier ("this ALTER
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	970	// TABLE action is not supported yet"), so neither shape can run.
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	972	#[ignore = "go-parity-gap: ALTER TABLE DROP PRIMARY KEY is unsupported in this tier"]
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	987	// go-parity-gap: the multi-spec ALTER here applies each spec as it goes
-rust/crates/tidb-executor/tests/index_modify_add_index_source.rs	992	#[ignore = "go-parity-gap: multi-spec ALTER is not atomic (i1 vanishes on a failed drop) and duplicate drops report 1091 instead of 8200"]
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	42	// go-parity-gap: no failpoints; `CREATE INDEX ... GLOBAL` answers 1105
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	43	// "this index kind is not supported yet" (measured); `admin check` has no
 rust/crates/tidb-executor/tests/partition_global_index_version_source.rs	66	// go-parity-gap: `CREATE INDEX ... GLOBAL` unported (1105, measured), the
@@ -179,20 +82,6 @@ rust/crates/tidb-executor/tests/partition_pk_global_index_source.rs	259	// "not 
 rust/crates/tidb-executor/tests/partition_pk_global_index_source.rs	283	// go-parity-gap: `ALTER TABLE ... PARTITION BY` answers 1105 "not supported
 rust/crates/tidb-executor/tests/partition_truncate_issue57780_source.rs	29	// go-parity-gap: the assertion is `dom.InfoSchema().SchemaMetaVersion()`
 rust/crates/tidb-executor/tests/sequence_function_values_source.rs	875	// go-parity-gap: the multi-row empty-list form `values (),(),...` that Go's
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	196	// go-parity-gap: this tier's ALTER/driver treats LOCK specs as no-ops
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	201	#[ignore = "go-parity-gap: table-lock meta (TableLockInfo) is never persisted in this tier"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	337	// go-parity-gap: batch CREATE TABLE is a JOB-level action (the job queue
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	342	#[ignore = "go-parity-gap: ActionCreateTables batch jobs and job-history failpoints are not transcreated"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	394	// go-parity-gap: neither ALTER action is lowered by this tier's runner
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	398	#[ignore = "go-parity-gap: ALTER TTL INFO/REMOVE actions and history-job assertions are not transcreated"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	414	// go-parity-gap: schema states and the job queue that walks them do not
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	418	#[ignore = "go-parity-gap: the rename's intermediate schema state needs the DDL job queue"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	474	// go-parity-gap: schema states do not exist in this tier; a drop here
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	478	#[ignore = "go-parity-gap: the drop's DeleteOnly/WriteOnly visibility window needs schema states"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	543	// go-parity-gap: `information_schema.partitions` is not served by this tier
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	548	#[ignore = "go-parity-gap: no information_schema.partitions surface and no EXCHANGE PARTITION"]
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	562	// go-parity-gap: the refresh seam (`testutil.RefreshMeta` /
-rust/crates/tidb-executor/tests/table_lifecycle_job_source.rs	568	#[ignore = "go-parity-gap: no meta-KV-vs-infoschema refresh seam in this tier"]
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	107	// go-parity-gap: no SET TIFLASH REPLICA carrier, no UpdateTableReplicaInfo,
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	120	// go-parity-gap: no mock TiFlash status server, no SET TIFLASH REPLICA
 rust/crates/tidb-executor/tests/tiflash_replica_test_source.rs	134	// go-parity-gap: documented divergence — this tier answers the generic 1105
@@ -208,70 +97,7 @@ rust/crates/tidb-expr/src/tests/compare_time_builtin_rows_source.rs	187	// go-pa
 rust/crates/tidb-expr/src/tests/expression_null_const_source.rs	18	//! their go-parity-gap reasons.
 rust/crates/tidb-expr/src/tests/helper_current_timestamp_source.rs	182	// go-parity-gap carriers (Go tests without any Rust-side counterpart yet)
 rust/crates/tidb-expr/src/tests/vectorizable_and_chunk_eval_source.rs	18	//! go-parity-gap reason.
-rust/crates/tidb-meta/tests/meta_test_go_parity.rs	50	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 ListTablesWithSpecialAttribute pipeline"]
-rust/crates/tidb-meta/tests/meta_test_go_parity.rs	63	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 TableByID/TableByName/FindTableByPartitionID"]
-rust/crates/tidb-meta/tests/meta_test_go_parity.rs	76	#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchema policy/group/FK/temp-table catalogs"]
 rust/crates/tidb-metadef/tests/model_parity_source.rs	410	/// this port uses `TruncateTableArgs{FKCheck: true}` — go-parity-gap:
-rust/crates/tidb-planner/tests/cascades_drive_legacy_planner_source.rs	35	#[ignore = "go-parity-gap: needs testkit mock-store session + SetEnableCascadesPlanner var + explain format='brief' rendering; the cascades driver itself is unported"]
-rust/crates/tidb-planner/tests/cascades_drive_legacy_planner_source.rs	52	#[ignore = "go-parity-gap: needs live dual-engine EXPLAIN comparison (session vars, analyze pipeline, correlated-subquery build); unported surface"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	80	#[ignore = "go-parity-gap: pins zyedidia/generic/hashmap key-hash/equality split as used by legacy Group.hash2GroupExpr; the crate has no transcreation of that container"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	98	#[ignore = "go-parity-gap: needs legacy Group.Insert + list-backed equivalence runs + pointer-stamped .group on GroupExpression; unported"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	116	#[ignore = "go-parity-gap: needs legacy Group.Delete list/map unlink semantics over real HashEqualer-hashed expressions; unported"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	133	#[ignore = "go-parity-gap: legacy Group HashEquals dispatch (typed interface assertion incl. nil handling, group.go:89-104) has no Rust carrier"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	150	#[ignore = "go-parity-gap: needs legacy GroupExpression.Hash64/Equals over ordered Inputs plus owner-group pointer identity; unported"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	171	#[ignore = "go-parity-gap: Memo.Init bottom-up build over real logical plans + failpoint MockPlanSkipMemoDeriveStats + pointer-keyed parent maps are unported"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	184	#[ignore = "go-parity-gap: needs Memo.Init conversion of real logicalop trees under failpoint; Rust carries only the id generator and marks"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	199	#[ignore = "go-parity-gap: needs mm.NewGroupExpression over a real LogicalLimit plus InsertGroupExpression group creation; unported"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	218	#[ignore = "go-parity-gap: group-merge machinery (mergeGroup/replaceGEChild/Check-invariants over intrusive lists) is entirely outside the crate boundary"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	236	#[ignore = "go-parity-gap: recursive upward merge cascade (limit-offset equality triggering second merge) lives in unported Memo.mergeGroup internals"]
-rust/crates/tidb-planner/tests/cascades_memo_group_dedup_merge_source.rs	255	#[ignore = "go-parity-gap: IteratorLP DFS over legacy memo groups with CopyIn-grown equivalence classes and GetPlanIDsHash composites are unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	40	#[ignore = "go-parity-gap: needs old-cascades GetEnforcerRules over property.PhysicalProperty.SortItems plus memo.NewGroupWithSchema; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	53	#[ignore = "go-parity-gap: OrderEnforcer.NewProperty (enforcer_rules.go:58-63) has no Rust carrier outside crate::enforce's physical-op seam"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	68	#[ignore = "go-parity-gap: Convert2Group + implGroup cost-limited search need the whole logical-plan builder and implementation-rule set"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	82	#[ignore = "go-parity-gap: Convert2Group group-property initialization is unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	96	#[ignore = "go-parity-gap: fillGroupStats recursive stat derivation over real plans is unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	113	#[ignore = "go-parity-gap: needs enumerate-paths exploration over real DataSource plus the possible-properties fixpoint; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	129	#[ignore = "go-parity-gap: pluggable ResetTransformationRules + explore loop bookkeeping are unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	145	#[ignore = "go-parity-gap: golden stringer_suite books over live explore pipeline; no renderer or plan converter exists here"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	160	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	175	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	189	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	199	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	210	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	220	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	232	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	242	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	254	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	266	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	278	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	289	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	300	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	311	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	323	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	334	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_old_optimize_transformation_golden_source.rs	347	#[ignore = "go-parity-gap: transformation_rules_suite goldens over live exploration; unported"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	45	#[ignore = "go-parity-gap: legacy-cascades Memo + Binder machinery (failpoint-built groups over real logical plans, pointer identity checks) are unported"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	61	#[ignore = "go-parity-gap: needs Binder's StrBuffer trace output wired to legacy memo internals; unported"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	73	#[ignore = "go-parity-gap: Binder.holder bookkeeping over legacy memo roots is unported"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	86	#[ignore = "go-parity-gap: single-group legacy Memo.Init path plus Binder next-selection are unported"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	101	#[ignore = "go-parity-gap: pinned-root-expression semantics (Holder anchoring across Next calls) live in unported Binder state"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	118	#[ignore = "go-parity-gap: multi-equivalent enumeration order and stack-trace restoration need legacy Binder+Memo internals"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	133	#[ignore = "go-parity-gap: Any-pattern first-match-only semantics depend on unported anyHasBeenMatched/Memo state"]
-rust/crates/tidb-planner/tests/cascades_rule_binder_decorrelateapply_source.rs	149	#[ignore = "go-parity-gap: dual-Any collapse semantics need the same unported Any-matching core"]
-rust/crates/tidb-planner/tests/cascades_task_scheduler_stack_source.rs	130	#[ignore = "go-parity-gap: pins Go unsafe.Sizeof values (ptr=8, slice header=24, iface slot=16) plus Push(nil); Rust Vec<Box<dyn StackTask>> representation differs by construction"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	44	#[ignore = "go-parity-gap: needs the live-testkit session/executor, slow-query log and statements_summary stores plus the tipb.ExplainData codec -- none ported into tidb-planner"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	64	#[ignore = "go-parity-gap: needs live testkit + partitioned-stats planner execution and the tipb.ExplainData fields DiscardedDueToTooLong/WithRuntimeStats/Main/Ctes; the size gate itself lives in the unported stmtsummary/slow-log boundary"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	82	#[ignore = "go-parity-gap: same missing machinery as too_long_binary_plan (live testkit planner + tipb.ExplainData codec); no Rust equivalent of MaxEncodedPlanSizeInBytes comparison exists"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	99	#[ignore = "go-parity-gap: prepared-statement execution path (prepare/execute protocol, session plan cache) is not ported; decoding requires tipb.ExplainData"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	115	#[ignore = "go-parity-gap: EXPLAIN ANALYZE 'verbose' rendering, tidb_decode_binary_plan built-in and the running executor that produces runtime stats are all unported"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	131	#[ignore = "go-parity-gap: no slow-query log file writer exists on the Rust side (the format string the test greps for lives in pkg/util/logutil slow-log emitter)"]
-rust/crates/tidb-planner/tests/casetest_binary_plan_suite_source.rs	150	#[ignore = "go-parity-gap: casetest golden suite over live testkit output (+RunTestUnderCascades dual-caller) and the tipb.ExplainOperator tree are unported"]
-rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	41	#[ignore = "go-parity-gap: RunTestUnderCascades dual-mode execution needs the live session/executor stack; explain format='plan_tree' rendering over real plans is unported"]
-rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	60	#[ignore = "go-parity-gap: needs Preprocess/Build/LogicalOptimizeTest pipeline, Memo.Init stat derivation (up-down group-NDV propagation) and FD extraction -- all unported; Rust memo leaf keeps only ids/marks"]
-rust/crates/tidb-planner/tests/casetest_cascades_memo_suite_source.rs	77	#[ignore = "go-parity-gap: same missing pipeline as derive_stats_memo_group_states_golden (no plan builder, no stat propagation, no live session)"]
-rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	35	#[ignore = "go-parity-gap: correlated scalar/ANY subquery execution requires the unported session+executor; grouping and PARTITION BY HASH handling likewise"]
-rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	53	#[ignore = "go-parity-gap: needs live SQL execution plus the stmtCtx alternative-decorrelate flag plumbing; neither exists here"]
-rust/crates/tidb-planner/tests/casetest_correlated_subquery_suite_source.rs	72	#[ignore = "go-parity-gap: decimal(65,20) formatting + FROM-dual correlated execution are part of the unported executor"]
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	44	#[ignore = "go-parity-gap: needs live MPP costing with TiFlash replica meta injection and the three-stage distinct-agg physical shaping"]
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	58	#[ignore = "go-parity-gap: multi-distinct three-stage MPP rewrite lives only inside the unported optimizer/implementation set"]
 rust/crates/tidb-planner/tests/casetest_enforce_mpp_rollup_distinct_source.rs	70	#[ignore = "go-parity-gap: null-aware semi-join MPP pushdown decisions and their warnings are unported"]
@@ -305,128 +131,6 @@ rust/crates/tidb-planner/tests/casetest_mpp_integration_suite_source.rs	267	#[ig
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	41	#[ignore = "go-parity-gap: needs CreateMockStore session+executor for explain analyze rows and recursive-CTE execution; enableParallelApply decision logic is unported"]
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	52	#[ignore = "go-parity-gap: RunTestUnderCascades live planning with hint-driven IndexJoin choice plus plan_tree printing and warning capture"]
 rust/crates/tidb-planner/tests/casetest_parallel_apply_suite_source.rs	65	#[ignore = "go-parity-gap: outerExpectedCnt estimation and KeepOrder selection in exhaustPhysicalPlans4LogicalApply are unported; assertions also compare executor outputs"]
-rust/crates/tidb-planner/tests/logicalop_hash64_expand_apply_join_agg_source.rs	319	/// go-parity-gap: Go pins that a NON-NIL EMPTY `EqualConditions` slice hashes
-rust/crates/tidb-planner/tests/logicalop_hash64_expand_apply_join_agg_source.rs	344	/// go-parity-gap: the embedded-JOIN half of the Go sequence replays through
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	147	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	155	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	162	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	172	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	178	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	184	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	191	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	198	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	205	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	212	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	219	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	226	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	233	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	240	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	247	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	254	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	263	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	269	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	275	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	282	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	288	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	294	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	300	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	307	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	313	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	319	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	325	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	331	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	337	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	346	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	352	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	358	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	365	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	371	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	377	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	383	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	390	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	396	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	402	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	408	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	414	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	420	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	429	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	435	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	441	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	448	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	455	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	461	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	467	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	474	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	481	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	487	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	493	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	500	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	507	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	516	#[ignore = "go-parity-gap: prepared plan-cache execution needs PrepareStmt/ExecutePreparedStmt over a live session"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	525	#[ignore = "go-parity-gap: prepared plan-cache execution needs PrepareStmt/ExecutePreparedStmt over a live session"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	531	#[ignore = "go-parity-gap: prepared plan-cache execution needs PrepareStmt/ExecutePreparedStmt over a live session"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	539	#[ignore = "go-parity-gap: prepared plan-cache execution needs PrepareStmt/ExecutePreparedStmt over a live session"]
-rust/crates/tidb-planner/tests/tests_partition_range_family_plan_cache_benchmarks_source.rs	545	#[ignore = "go-parity-gap: prepared plan-cache execution needs PrepareStmt/ExecutePreparedStmt over a live session"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	121	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	128	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	134	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	140	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	146	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	153	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	159	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	165	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	171	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	177	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	183	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	192	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	199	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	205	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	211	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	217	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	223	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	229	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	235	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	241	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	247	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	253	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	259	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	265	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	273	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	279	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	285	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	291	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	297	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	303	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	309	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	315	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	321	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	327	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	333	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	339	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	345	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	353	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	359	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	365	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	371	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	377	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	383	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	389	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	395	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	401	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	407	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	413	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	419	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	425	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	433	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	439	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	445	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	451	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	457	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	463	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	469	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	475	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	481	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
-rust/crates/tidb-planner/tests/tests_partition_scheme_plan_cache_benchmarks_source.rs	487	#[ignore = "go-parity-gap: non-prepared plan-cache execution benchmarks need session/executor"]
 rust/crates/tidb-protocol/src/error_conversion.rs	43	/// Feature is not supported yet.
 rust/crates/tidb-server/src/cluster_session_node/mod.rs	6868	"{feature} is not supported yet"
 rust/crates/tidb-server/src/mysql_connection.rs	259	/// such as `COM_FIELD_LIST` that this bounded node has not implemented.

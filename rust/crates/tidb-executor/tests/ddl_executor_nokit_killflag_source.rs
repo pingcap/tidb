@@ -12,21 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/executor_nokit_test.go` family (part6 items 306–313
-//! of the package's `func Test*`/`func Benchmark*` declarations, sorted by
-//! file and line), read from `origin/master`.
-//!
-//! The Go tests exercise unexported executor helpers: the kill-flag plumbing
-//! (`isSessionDone`, `convertKillFlag`, `waitPendingTableThreshold`) and the
-//! DDL-cancel error classifier, plus the CREATE-TABLE job merger. The pure DDL
-//! helpers are transcreated in `tidb-executor::ddl`; the wait loop and job
-//! queue remain deferred. The
-//! job-merger family (`buildQueryStringFromJobs`, `mergeCreateTableJobs`,
-//! `mergeCreateTableJobsOfSameSchema`, `isUndroppableTable`) IS transcreated
-//! — in the `tidb-exec` crate (`src/ddl_job_merge.rs`), which depends on this
-//! crate and therefore cannot be exercised from here; its upstream ports live
-//! beside it and are verified out-of-gate (see the b105 receipt). Each Go
-//! test's disposition is recorded below; nothing is approximated.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_util::dbterror;
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
@@ -75,22 +62,6 @@ fn convert_kill_flag_maps_one_to_query_interrupted() {
     assert!(convert_kill_flag(0).is_ok());
     let error = convert_kill_flag(1).unwrap_err();
     assert!(dbterror::exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&error)));
-}
-
-// --- TestWaitPendingTableThresholdAbortsOnKill
-//     (pkg/ddl/executor_nokit_test.go:51) ---
-//
-// Go requires `(&executor{}).waitPendingTableThreshold` on a killed session
-// to return `finished=true, forceCheck=false, killed=1`, and the killed flag
-// to convert to `ErrQueryInterrupted`.
-//
-// go-parity-gap: the pending-table-threshold wait loop is not transcreated.
-#[test]
-#[ignore = "go-parity-gap: executor.waitPendingTableThreshold is not transcreated"]
-fn wait_pending_table_threshold_aborts_on_kill() {
-    // Contract (pkg/ddl/executor_nokit_test.go:51-60): with
-    // QueryInterrupted armed, the wait reports finished with killed=1 and no
-    // forced check.
 }
 
 // --- TestIsRetryableDDLCancelErr (pkg/ddl/executor_nokit_test.go:62) ---

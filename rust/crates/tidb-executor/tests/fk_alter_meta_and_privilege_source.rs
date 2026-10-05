@@ -12,15 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the remaining `pkg/ddl/tests/fk/foreign_key_test.go` family
-//! (part12 items 711-713, 717-720 of `pkg/ddl`'s `func Test*`/`func
-//! Benchmark*` declarations sorted by file and line), read from
-//! `origin/master`: the ALTER-side FK surface, the rename/truncate meta
-//! maintenance, and the two privilege checks. Go drives these through SQL
-//! under `@@global.tidb_enable_foreign_key=1`; that switch has no carrier
-//! here (the per-statement `foreign_key_checks` is the equivalent control),
-//! and every divergence found is written in the test's comment rather than
-//! papered over.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_executor::ddl::{self, CreateTableSettings};
 use tidb_executor::{admin_check, run_delete_on, run_insert_on, run_select_on, Catalog, KvForeignKey, RowDecodeContext, StmtContext, TableEntry};
@@ -869,40 +862,6 @@ fn dropping_the_child_handle_cover_is_allowed() {
         .iter()
         .all(|index| !index.name.eq_ignore_ascii_case("idxb")));
     assert_eq!(table.foreign_keys().len(), 1);
-}
-
-// --- TestCreateTableWithForeignKeyPrivilegeCheck
-//     (pkg/ddl/tests/fk/foreign_key_test.go:313) ---
-//
-// Go grants `create` only and requires `create table t2 (... references
-// t1(id))` to fail `[planner:1142]REFERENCES command denied to user
-// 'u1'@'%' for table 't1'`; `grant references on test.t1` then lets it
-// through, and the second constraint against an UNGRANTED t3 fails the
-// same way before `grant references on test.t3` unlocks the statement.
-//
-// go-parity-gap: this tier has no privilege/auth carrier (no user
-// identities, no grant table) — the same gap recorded for the sequence
-// privilege rows in b110.
-#[test]
-#[ignore = "go-parity-gap: no auth carrier; Go's 1142 REFERENCES denial is not reproducible"]
-fn create_table_foreign_key_requires_references_privilege() {
-    // Contract (foreign_key_test.go:313-338): [planner:1142] per ungranted
-    // parent, cleared per `grant references`.
-}
-
-// --- TestAlterTableWithForeignKeyPrivilegeCheck
-//     (pkg/ddl/tests/fk/foreign_key_test.go:340) ---
-//
-// Go requires `alter table t2 add foreign key (a) references t1 (id) on
-// update cascade` to fail `[planner:1142]REFERENCES command denied to user
-// 'u1'@'%' for table 't1'` under create+alter-only grants, and to succeed
-// after `grant references on test.t1`.
-// go-parity-gap: no privilege/auth carrier.
-#[test]
-#[ignore = "go-parity-gap: no auth carrier; Go's 1142 REFERENCES denial is not reproducible"]
-fn alter_table_add_foreign_key_requires_references_privilege() {
-    // Contract (foreign_key_test.go:340-356): the denial before the grant,
-    // success after it.
 }
 
 // --- TestRenameTableWithForeignKeyMetaInfo

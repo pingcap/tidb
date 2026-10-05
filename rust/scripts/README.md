@@ -59,9 +59,11 @@ Test-only modules are gated at their parent declarations so ordinary server buil
 
 Go test cases and their fixtures are the correctness reference. Do not add
 Rust source-shape, call-count, file-size, or historical test-count gates.
-Statistics discard-return lint tests are retired; use the existing owning
-statistics/handle behavioral suites. Do not treat absence of a Rust lint
-annotation as SQL or lifecycle parity.
+Statistics discard-return lint tests and comment-only test/benchmark shells
+are retired; use the existing owning behavioral suites. Original Go obligations
+remain in the cleanup receipts, not as empty executable test registrations.
+Do not treat absence of a Rust lint annotation or an empty passing test as SQL
+or lifecycle parity.
 
 ## Shared SQL server checks
 

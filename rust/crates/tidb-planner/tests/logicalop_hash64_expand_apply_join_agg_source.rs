@@ -12,35 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of `pkg/planner.part13` items exercised against the GENERATED
-//! `Hash64`/`Equals` identities of four plan operators:
-//! `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go`
-//! `TestLogicalExpandHash64Equals` (:585), `TestLogicalApplyHash64Equals`
-//! (:676), `TestLogicalJoinHash64Equals` (:734) and
-//! `TestLogicalAggregationHash64Equals` (:804) on `origin/master`.
-//!
-//! Every Go assertion sequence ("build two equal operators; mutate ONE field
-//! group; hash and equality must flip; restoring must flip them back") is
-//! replayed against the real operators' transcribed hash bodies
-//! (`pkg/planner/core/operator/logicalop/hash64_equals_generated.go`, read
-//! from origin/master):
-//! * `LogicalExpand.Hash64` (:249) folds the producer schema, the distinct
-//!   group-by columns/exprs, `DistinctSize`, the rollup grouping sets, the
-//!   level projections and `GID`/`GPos` — mirrored by
-//!   [`tidb_planner::logical::expand::LogicalExpand::hash64`].
-//! * `LogicalJoin.Hash64` (:25) folds the producer schema, `JoinType`,
-//!   `EqualConditions`/`NAEQConditions` and left/right/other conditions —
-//!   mirrored by [`tidb_planner::logical::join::LogicalJoin::hash64`].
-//! * `LogicalAggregation.Hash64` (:138) folds the producer schema, the agg
-//!   descriptors, `GroupByItems` and `PossibleProperties` — whose Go body
-//!   delegates to `PossiblePropertiesInfo.Hash64`
-//!   (`pkg/planner/core/base/plan_base.go:391-408`: `Orders` folded NESTEDLY,
-//!   `HasTiFlash` deliberately excluded, see its field comment :387).
-//! * `LogicalApply.Hash64` (:200) exists in Go only — the Rust operator does
-//!   not carry a hash surface yet (gap-documented below).
-//!
-//! Only equality RELATIONS are pinned, never absolute digests. Deviations are
-//! documented per test.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
@@ -310,53 +283,6 @@ fn join_hash64_equals_tracks_join_type_condition_order_and_other_conditions() {
     let p2 = build(LogicalJoinType::Inner, 1, 2, true, Vec::new());
     assert_eq!(p1.hash64(None), p2.hash64(None));
     assert!(p1.equals(None, &p2, None));
-}
-
-/// GO PARITY GAP port of
-/// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:787-801`
-/// (the tail of `TestLogicalJoinHash64Equals`).
-///
-/// go-parity-gap: Go pins that a NON-NIL EMPTY `EqualConditions` slice hashes
-/// and equals DIFFERENTLY from a NIL one
-/// (`hash64_equals_generated.go:31-34` writes NotNilFlag+len before any
-/// element), with `la1.EqualConditions=[]` vs `la2.EqualConditions=nil`
-/// requiring NOT-equal digests (:794-795). The Rust `LogicalJoin` stores plain
-/// `Vec`s with no absent marker, so both states fold identically and the
-/// assertion cannot be expressed without inventing production surface.
-#[test]
-#[ignore]
-fn logical_join_hash64_equals_pins_nil_versus_empty_equal_conditions() {
-    // p1.equal_conditions = [] (Go: non-nil empty), p2.equal_conditions = nil.
-    //
-    // What a faithful port would assert once the operator gains Go's
-    // nil-marker framing (generated Hash64 :31-34, Equals :88-91):
-    //     assert_ne!(p1.hash64(None), p2.hash64(None));
-    //     assert!(!p1.equals(None, &p2, None));
-    //     // restore p2.equal_conditions = [] (empty):
-    //     assert_eq!(p1.hash64(None), p2.hash64(None));
-    //     assert!(p1.equals(None, &p2, None));
-}
-
-/// GO PARITY GAP port of
-/// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:676
-/// TestLogicalApplyHash64Equals`.
-///
-/// go-parity-gap: the embedded-JOIN half of the Go sequence replays through
-/// `LogicalJoin::hash64`/`equals` exactly as the preceding test pins it, but
-/// the APPLY-SPECIFIC arms — `CorCols` swapped col3->col2 (:713-717),
-/// `NoDecorrelate` toggled (:719-723), and their restoration (:725-728), hashed
-/// by `LogicalApply.Hash64` (`hash64_equals_generated.go:200-215`) — have NO
-/// Rust counterpart: `logical::apply::LogicalApply` exposes neither `Hash64`
-/// nor `Equals`, and adding one would be production code outside this batch's
-/// scope.
-#[test]
-#[ignore]
-fn logical_apply_hash64_equals_tracks_correlated_columns_and_no_decorrelate_flag() {
-    // What a faithful port would run once the operator carries the generated
-    // identity:
-    //   two Applies sharing Join{Inner, [eq(col1,col2)]} and CorCols=[col3]
-    //   are equal; CorCols=[col2] breaks both halves; restoring col3 and
-    //   flipping NoDecorrelate=true breaks both; restoring restores both.
 }
 
 /// GO PORT of

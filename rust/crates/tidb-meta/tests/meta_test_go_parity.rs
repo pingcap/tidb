@@ -12,14 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Remaining slices of Go `pkg/meta/meta_test.go` that no other Rust test in
-//! this crate pins. Every other `func TestXxx` in that file is already ported;
-//! see `rust/testport/receipts/b039.md` for the full mapping table.
-//!
-//! The three ignored functions below depend on the session-bootstrap +
-//! InfoSchemaV2 pipeline, which lives outside the `tidb-meta` crate. They are
-//! recorded as go-parity gaps rather than approximated with hand-rolled
-//! stand-ins.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_meta::transaction::{MemoryTransaction, Mutator};
 
@@ -36,44 +30,4 @@ fn meta_starter_bootstrap_round_trip() {
     assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
     meta.finish_starter_bootstrap(10).unwrap();
     assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
-}
-
-/// Go `TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap`
-/// (`pkg/meta/meta_test.go:1109`): create a database plus a table carrying
-/// partition / TiFlash-replica / table-lock / placement-policy / TTL /
-/// affinity attributes through the meta mutator, run full session bootstrap,
-/// and assert `InfoSchema.ListTablesWithSpecialAttribute` returns exactly that
-/// table for each of the six attribute selectors. Requires session
-/// bootstrap (`session.BootstrapSession`) and the InfoSchemaV2 cache, neither
-/// of which exists in this workspace yet.
-#[test]
-#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 ListTablesWithSpecialAttribute pipeline"]
-fn infoschema_v2_special_attribute_correctness_after_bootstrap() {
-    // Golden assertions live verbatim in Go pkg/meta/meta_test.go:1109.
-}
-
-/// Go `TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap`
-/// (`pkg/meta/meta_test.go:1201`): after persisting a database and a
-/// partitioned table and bootstrapping a session, exercise every InfoSchemaV2
-/// lookup path -- `TableByID` (byID traversal), `TableByName` (byName),
-/// cached `TableByID`, `SchemaByName`, `SchemaByID`, and
-/// `FindTableByPartitionID` (pid2tid) -- and require identical metadata.
-/// Requires the same session-bootstrap + InfoSchemaV2 infrastructure.
-#[test]
-#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchemaV2 TableByID/TableByName/FindTableByPartitionID"]
-fn infoschema_v2_data_fields_correctness_after_bootstrap() {
-    // Golden assertions live verbatim in Go pkg/meta/meta_test.go:1201.
-}
-
-/// Go `TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap`
-/// (`pkg/meta/meta_test.go:1284`): persist a policy, two resource groups, a
-/// database, an FK-bearing table with a placement-policy reference and a
-/// local-temporary table, bootstrap a session, and verify `AllPlacementPolicies`,
-/// `AllResourceGroups` (sorted by name), `GetTableReferredForeignKeys`, and
-/// `HasTemporaryTable`. Requires the same session-bootstrap + InfoSchema
-/// surface.
-#[test]
-#[ignore = "go-parity-gap: needs session.BootstrapSession + InfoSchema policy/group/FK/temp-table catalogs"]
-fn infoschema_misc_fields_correctness_after_bootstrap() {
-    // Golden assertions live verbatim in Go pkg/meta/meta_test.go:1284.
 }

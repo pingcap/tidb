@@ -12,18 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/index_change_test.go` family (part6 items 331–334)
-//! and `pkg/ddl/index_cop_test.go` (item 335) of the package's `func
-//! Test*`/`func Benchmark*` declarations sorted by file and line, read from
-//! `origin/master`.
-//!
-//! Go's TestIndexChange observes the ADD/DROP INDEX jobs THROUGH their schema
-//! states, running raw-table DML against the delete-only, write-only and
-//! public versions of the table mid-job. This tier has no schema states, so
-//! the state-machine halves are `#[ignore]`d documentaries; the serialized
-//! outer contract — add an index over populated rows, read through it, drop
-//! it, and find the meta clean — is asserted live against the storage-backed
-//! catalog.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::Datum;
 use tidb_executor::driver::Catalog;
@@ -94,78 +84,4 @@ fn index_change_add_then_drop_rebuilds_and_clears_the_index() {
         table.indexes().is_empty(),
         "Go: index should have been dropped (pkg/ddl/index_change_test.go:165)"
     );
-}
-
-// The write-only halves of Go's TestIndexChange
-// (pkg/ddl/index_change_test.go:52-165): against the DeleteOnly/WriteOnly/
-// Public table versions captured mid-job, Go requires — insert (4,4) on the
-// delete-only table writes NO index entry; insert (5,5) and update (4,4)->
-// (4,1) on the write-only table DO write entries; the public backfill
-// completes the missing ones; and on the way down, drop-write-only keeps
-// entries readable while drop-delete-only stops writing them.
-//
-// go-parity-gap: schema states and the dual-version table views they need do
-// not exist in this tier.
-#[test]
-#[ignore = "go-parity-gap: DeleteOnly/WriteOnly schema-state views of a table under ADD/DROP INDEX need the DDL job queue"]
-fn index_change_schema_state_probes() {
-    // Contract (pkg/ddl/index_change_test.go:172-345
-    // checkAddWriteOnlyForAddIndex/checkAddPublicForAddIndex/
-    // checkDropWriteOnly/checkDropDeleteOnly): per-state index-entry
-    // visibility exactly as the Go helpers assert them.
-}
-
-// --- TestAddIndexRowCountUpdate (pkg/ddl/index_change_test.go:394) ---
-//
-// Go backfills an ADD INDEX with one reorg worker, fast reorg off and
-// dist-task off, and via the afterHandleBackfillTask failpoint requires
-// `admin show ddl jobs` to report a monotonically growing row count (> 0)
-// for the running job.
-//
-// go-parity-gap: there is no backfill progress tracking, no `admin show ddl
-// jobs`, and no failpoint hook in this tier.
-#[test]
-#[ignore = "go-parity-gap: backfill row-count progress and `admin show ddl jobs` are not transcreated"]
-fn add_index_row_count_update_is_visible_mid_backfill() {
-    // Contract (pkg/ddl/index_change_test.go:394-436): while the add-index
-    // job runs, its row count column grows past zero.
-}
-
-// --- TestFastReOrgAlwaysEnabledOnNextGen (pkg/ddl/index_change_test.go:438)
-//     and TestReadOnlyVarsInNextGen (:449) ---
-//
-// Both tests skip themselves unless the binary is a NEXT-GEN kernel build
-// (`if kerneltype.IsClassic() { t.Skip }`), so on a classic checkout —
-// which this workspace is — they execute nothing. They pin that
-// `tidb_ddl_enable_fast_reorg`, `tidb_max_dist_task_nodes`,
-// `tidb_ddl_reorg_max_write_speed` and `tidb_ddl_disk_quota` are read-only
-// next-gen globals whose SET fails with "setting ... is not supported in the
-// next generation of TiDB".
-#[test]
-#[ignore = "go-parity-gap: nextgen-only var guards; Go itself skips these tests on a classic kernel"]
-fn fast_reorg_and_ddl_vars_are_read_only_on_nextgen() {
-    // Contract (pkg/ddl/index_change_test.go:438-460, nextgen builds only):
-    // SET GLOBAL on those four variables fails with the not-supported error.
-}
-
-// --- TestAddIndexFetchRowsFromCoprocessor
-//     (pkg/ddl/index_cop_test.go:35) ---
-//
-// Go builds a single-index reorg cop context for three table shapes
-// (non-clustered, pk-is-handle clustered, common-handle clustered), fetches
-// the table's rows through the coprocessor between the record-prefix bounds,
-// and requires each row to convert to (handle, index datums) with the
-// expected handle values: _tidb_rowid 1..8 for the non-clustered shape, the
-// a-values 0..7 for pk-is-handle.
-//
-// go-parity-gap: neither the DDL reorg cop context nor the storage fetch and
-// row->(handle, index datum) conversion half (FetchChunk4Test /
-// ConvertRowToHandleAndIndexDatum against a live store) is wired into the
-// runtime.
-#[test]
-#[ignore = "go-parity-gap: DDL reorg cop context plus FetchChunk4Test and ConvertRowToHandleAndIndexDatum are not wired"]
-fn add_index_fetch_rows_from_coprocessor_reads_expected_handles() {
-    // Contract (pkg/ddl/index_cop_test.go:35-107): one (handle, index
-    // datum) pair per row, handles 1..8 (non-clustered) / 0..7
-    // (pk-is-handle) / 8 common-handle rows.
 }

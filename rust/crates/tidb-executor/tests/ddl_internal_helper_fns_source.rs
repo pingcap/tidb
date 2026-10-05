@@ -12,28 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/ddl_test.go` unit-test family (part6 items 301–304
-//! of the package's `func Test*`/`func Benchmark*` declarations, sorted by
-//! file and line) plus `pkg/ddl/ddl_workerpool_test.go` (item 305), read from
-//! `origin/master`.
-//!
-//! These Go tests call package-INTERNAL helpers directly
-//! (`findNextNonTouchedPartitionID`, `mergeContinuousKeyRanges`,
-//! `detectAndUpdateJobVersion`, `setGlobalIndexVersion`, the DDL worker
-//! pool). Helpers that have a direct metadata owner are asserted live below;
-//! queue- and cluster-lifecycle helpers remain `#[ignore]`d documentaries.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_executor::ddl::{merge_continuous_key_ranges, KeyRangeMayExclude};
-use tidb_executor::StmtContext;
 use tidb_model::{GoSharedSlice, PartitionDefinition, PartitionInfo};
 use tidb_txnkv::{Key, KeyRange};
-
-/// A `StmtContext` exists so this module keeps a crate-level dependency even
-/// when every test in it is an ignored documentary.
-#[test]
-fn module_compiles_against_the_public_api() {
-    let _ctx = StmtContext::for_query();
-}
 
 // --- TestFindNextNonTouchedPartitionID (pkg/ddl/ddl_test.go:323) ---
 //
@@ -134,44 +118,4 @@ fn merge_continuous_key_ranges_drops_excluded_and_coalesces_rest() {
         output(&[range(1, 2, true), range(2, 3, false), range(3, 4, true)]),
         vec![(vec![2], vec![3])]
     );
-}
-
-// --- TestDetectAndUpdateJobVersion (pkg/ddl/ddl_test.go:475) ---
-//
-// Go resets `model.JobVerInUse` to V1 and `GlobalIndexV1Supported` to false,
-// then runs the cluster-version negotiation: with no peers, the job version
-// follows `testargsv1.ForceV1` (V1 when forced, else V2) and the global-index
-// flag turns true; with mocked `serverinfo` peers it stays V1 while any peer
-// reports an unknown/invalid/pre-8.4 version, upgrades to V2 once all peers
-// are >= 8.4.0, and flips `GlobalIndexV1Supported` only once all peers are
-// >= 8.5.x — re-evaluated periodically until stable (7 iterations).
-//
-// go-parity-gap: `detectAndUpdateJobVersion` (pkg/ddl/ddl.go:975), its
-// etcd-backed server-info polling and the failpoint hooks are not
-// transcreated; only the `JobVersion` enum and the in-use accessor exist
-// (tidb-model::job_enums, tested there).
-#[test]
-#[ignore = "go-parity-gap: detectAndUpdateJobVersion (pkg/ddl/ddl.go:975) and its server-info polling are not transcreated"]
-fn detect_and_update_job_version_negotiates_cluster_versions() {
-    // Contract (pkg/ddl/ddl.go:975-1042 + pkg/ddl/ddl_test.go:475-584):
-    // V1 while any peer is unknown/old, V2 when all peers >= 8.4.0, and
-    // GlobalIndexV1Supported only when all peers support global index v1.
-}
-
-// --- TestDDLWorkerPool (pkg/ddl/ddl_workerpool_test.go:25) ---
-//
-// Go wraps a `pools.ResourcePool` (capacity 1, idle 2) in the DDL worker
-// pool and requires `available()==1` fresh, `==0` after `close()`, and still
-// `0` after `put(nil)` (a nil worker is not returned to a closed pool).
-//
-// go-parity-gap: the DDL-side worker pool over `ngaut/pools` is not
-// transcreated. The workspace's `worker_pool` module is a different design —
-// a process-global pool for parallel executor sub-tasks with no
-// per-DDL-worker resource lifecycle — and cannot answer this contract.
-#[test]
-#[ignore = "go-parity-gap: the ngaut/pools-backed DDL worker pool (pkg/ddl/ddl_workerpool.go) is not transcreated"]
-fn ddl_worker_pool_available_close_and_put_semantics() {
-    // Contract (pkg/ddl/ddl_workerpool_test.go:25-40): fresh pool reports
-    // its capacity, close drains availability, put(nil) after close is a
-    // no-op.
 }

@@ -45,3 +45,21 @@ Removed 19 obsolete plans, ten unique redundant/nonbehavioral cases, 26 duplicat
 
 
 Recover selected removed files from the base commit into a separate path and review before restoring. Preserve concurrent work and never reset or force-push. After the normal commit, refresh and verify the unpublished bundle and saved Cloud draft without changing network or credential settings.
+
+## Comment-only harness continuation
+
+
+Current base: 17a3095068e7f14c363f90e41a6d65437ea6072c; refreshed Go master remains 93a01d31f6da205ae4bf376825293903a6899fdb. Remove the remaining comment-only test bodies across codec, executor, expression, metadata and planner in one batch, including empty benchmark documentary modules and the obsolete DDL compile marker. Keep every executable behavioral test body unchanged. The Go contracts remain outstanding; record exact removed names, original lines and source hashes in comment-test-cleanup-validation.json, with Git recovery at the base. Historical comments claiming whole owners are absent are not current findings.
+
+Remove stale receipt mapping rows and current candidate rows referring to the retired shells, retaining their Go identities in the cleanup receipt. Delete modules that contain no code after removal. Do not add a permanent cleanup script or test-count gate. No production algorithm, Go fixture, native client or dependency changes belong in this batch.
+
+- [x] Inspect the complete selected class and refresh comparison refs.
+- [x] Remove 260 entries, ten empty modules and stale mappings; verify all 178 retained executable test bodies byte-for-byte.
+- [x] Grouped affected all-target checks, 26 codec cases, one metadata case, root lint and diff review pass.
+- [ ] Commit through the actual locked-server hook, repeat the locked build immediately before authorized push and verify the remote SHA; refresh reusable startup state.
+
+Validation from rust/ after activating /workspace/.cloud-setup/env.sh: cargo check --locked -p tidb-codec -p tidb-executor -p tidb-expr -p tidb-meta -p tidb-planner --all-targets; cargo test --locked -p tidb-codec --lib -- tests::go_codec_port; cargo test --locked -p tidb-meta --test all -- meta_test_go_parity --test-threads=1. Use CARGO_BUILD_JOBS=1. Root make lint and git diff --check complete the batch checks. These are harness deletions, not SQL fixes: exact retained-body comparison and test-target compilation establish preservation without linking every large suite. Full Go/Rust suites, live clusters and performance are not claimed.
+
+Discovery: the earlier empty-shell cleanup matched truly empty braces, leaving 259 comment-only bodies (including two false-passing tests and 120 ignored benchmark shells). The unrelated compile-only DDL marker also survives beside real helper tests. Go's codec bytes test and DDL worker-pool test contain real assertions; empty Rust names do not implement them. Removing registration therefore does not accept their original package obligations.
+
+Continuation outcome: 260 nonbehavioral entries, ten empty modules, 261 stale mapping rows and 296 candidate rows removed. Two obsolete benchmark reports are reduced to recovery references. All 178 retained test bodies are byte-identical; grouped compilation, 27 behavioral tests and root lint pass. Publication must complete the actual hook/fresh locked-build gates; the Cloud comment-test-cleanup/final-handoff.json records the exact result. No speedup measurement or new parity acceptance is claimed.

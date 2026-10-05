@@ -12,19 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/db_integration_test.go` family (part3 items 153–180
-//! of the package's `func Test*`/`func Benchmark*` declarations, sorted by
-//! file and line), read from `origin/master`.
-//!
-//! The Go tests run whole statements through a mock-store TiDB and inspect
-//! either the surviving rows, `SHOW CREATE TABLE`, or `TableInfo` read back
-//! through the domain. This tier exposes the statement runners
-//! (`run_create_table_on`, `run_alter_table_in`, the DML/SELECT drivers) and
-//! the storage-backed catalog they populate, so a row-visible or errno-visible
-//! contract is asserted directly; contracts that live in `SHOW CREATE TABLE`
-//! text, `information_schema` retrievers, or direct meta mutation are named
-//! as gaps. Every divergence found while porting is written in the test's
-//! comment rather than papered over.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::{Charset, Datum, FieldTypeCode, FieldTypeFlags};
 use tidb_executor::driver::Catalog;
@@ -1339,30 +1328,6 @@ fn modify_column_refuses_binary_charset_conversion_without_mutation() {
 
 // --- go-parity-gap documentaries -------------------------------------------------
 
-// go-parity-gap: needs the afterRunOneJobStep failpoint to strip a job's
-// newest arg (simulating a v1→v2 job-version owner change mid-reorg), which
-// is DDL job-args machinery this tier does not model
-// (pkg/ddl/db_integration_test.go:143::TestModifyColumnOldColumnIDNotFound).
-#[test]
-#[ignore]
-fn modify_column_old_column_id_not_found() {
-    // Contract to restore: MODIFY a varchar(16) survives an owner change
-    // whose job args lost their last element; the write-reorg phase still
-    // completes.
-}
-
-// go-parity-gap: needs the afterWaitSchemaSynced failpoint to run a
-// two-table UPDATE inside a schema state of the ADD COLUMN job — concurrency
-// plus multi-table DML machinery outside this batch's tier
-// (pkg/ddl/db_integration_test.go:398::TestUpdateMultipleTable).
-#[test]
-#[ignore]
-fn update_multiple_table_mid_ddl() {
-    // Contract to restore: while `alter table t1 add column c3 bigint
-    // default 9` runs, an UPDATE over t1,t2 lands in WriteOnly state and the
-    // final t1 rows read "8 1 9", "8 2 9".
-}
-
 #[test]
 // The parser rejects empty charset/collation tokens before the executor, so
 // the Go 1115/1273 empty-value halves remain documentary gaps. The accepted
@@ -1465,14 +1430,4 @@ fn create_table_column_limit_matches_go() {
     )
     .expect("raising the Go-compatible limit admits the same column count");
     assert!(catalog.contains_in("test", "t_with_limit"));
-}
-
-// go-parity-gap: the second half of TestCreateTableTooLarge needs
-// kv.ErrEntryTooLarge from a metadata entry over the mem-spec limit. The
-// in-process catalog has no metadata transaction-size backend to exercise.
-#[test]
-#[ignore]
-fn create_table_too_large_entry_limit() {
-    // Contract to restore: after TableColumnCountLimit is raised, the same
-    // CREATE with 12 000 columns fails while writing the metadata entry.
 }

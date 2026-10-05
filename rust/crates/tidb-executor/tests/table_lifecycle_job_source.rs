@@ -12,21 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of `pkg/ddl/table_test.go` (part12 items 666-676 of the package's
-//! `func Test*`/`func Benchmark*` declarations sorted by file and line),
-//! read from `origin/master`.
-//!
-//! Go drives these lifecycles by submitting raw DDL jobs through
-//! `ddl.ExecutorForTest::DoDDLJobWrapper` against a bootstrapped mock store,
-//! asserting job history (`checkJobWithHistory`), table state
-//! (`testCheckTableState`) and the persisted meta after each job. This tier
-//! has no job queue, no job history and no schema states: each port runs the
-//! same statement through the tier's serialized DDL runners
-//! (`run_create_table_in`, `run_drop_table_in`, `run_truncate_table_in`,
-//! `run_rename_table_in`, `run_alter_table_in`, `run_create_view_in`) and
-//! reads the resulting storage-backed meta. The job-history halves are named
-//! in each test's comment; where they are the test's only observable the
-//! test is an explicit gap. Nothing is approximated.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_executor::ddl::{self, CreateTableSettings};
 use tidb_executor::{run_insert_on, run_select_on, StmtContext};
@@ -187,24 +174,6 @@ fn table_create_duplicate_drop_truncate_rename_round_trip() {
     ));
 }
 
-// The LOCK TABLE leg of Go's TestTable (pkg/ddl/table_test.go:233-254, the
-// `testLockTable` helper plus `checkTableLockedTest` at `:256`): the job
-// stores `model.TableLockInfo` on the table meta — one session entry
-// (server id + connection id), the lock type `TableLockWrite`, state
-// `TableLockStatePublic` — read straight back from a fresh meta txn.
-//
-// go-parity-gap: this tier's ALTER/driver treats LOCK specs as no-ops
-// (`ddl/alter_table.rs:331` strips them before dispatch, mirroring Go's
-// spec-removal, but no lock registry or `TableLockInfo` write exists), so
-// the persisted lock meta is not reproducible.
-#[test]
-#[ignore = "go-parity-gap: table-lock meta (TableLockInfo) is never persisted in this tier"]
-fn lock_table_persists_the_session_lock_on_the_meta() {
-    // Contract (pkg/ddl/table_test.go:256-272): after the LOCK TABLE job,
-    // meta.Lock has one session {serverID, connectionID}, Tp
-    // TableLockWrite, state TableLockStatePublic.
-}
-
 // --- TestCreateView (pkg/ddl/table_test.go:288) ---
 //
 // Go submits `ActionCreateView` for `v` over table `t`, then replaces `v`
@@ -327,25 +296,6 @@ fn rename_tables_moves_both_pairs_in_one_statement() {
     assert_eq!(catalog.table_names("test_table").unwrap(), vec!["tt1", "tt2"]);
 }
 
-// --- TestCreateTables (pkg/ddl/table_test.go:487) ---
-//
-// Go pre-allocates 3 global ids, builds one `ActionCreateTables`
-// (`model.BatchCreateTableArgs`) job carrying s1/s2/s3, submits it, and —
-// with the `mockGetJobByIDFail` failpoint armed once — requires the job to
-// succeed and all three tables to resolve.
-//
-// go-parity-gap: batch CREATE TABLE is a JOB-level action (the job queue
-// merges fast-create-table submissions into it); neither the job nor
-// `ddl.GetAllDDLJobs`-style inspection exists in this tier, and the runner
-// accepts a single CREATE TABLE statement.
-#[test]
-#[ignore = "go-parity-gap: ActionCreateTables batch jobs and job-history failpoints are not transcreated"]
-fn batch_create_tables_lands_all_three_tables() {
-    // Contract (pkg/ddl/table_test.go:487-535): one batch job creates s1,
-    // s2 and s3; the injected get-job-by-id failure (first call only) does
-    // not fail the batch; all three tables resolve from the infoschema.
-}
-
 // --- TestAlterTTL (pkg/ddl/table_test.go:537), create half ---
 //
 // Go builds `t` with two DATETIME columns and `TTLInfo{ColumnName: c0,
@@ -384,43 +334,6 @@ fn create_table_stores_the_ttl_options_on_the_meta() {
         "Go: ast.TimeUnitDay on the created meta"
     );
     assert!(ttl.enable, "Go defaults TTL_ENABLE to ON at create");
-}
-
-// The ALTER half of Go's TestAlterTTL (pkg/ddl/table_test.go:569-617):
-// `ActionAlterTTLInfo` moves the TTL to column `d2` with `INTERVAL 1 YEAR`
-// and the history job's TableInfo reflects it; `ActionAlterTTLRemove` then
-// empties `historyJob.BinlogInfo.TableInfo.TTLInfo` entirely.
-//
-// go-parity-gap: neither ALTER action is lowered by this tier's runner
-// (`ddl/alter_table.rs` refuses them in the catch-all arm), and the
-// assertions Go makes read the JOB HISTORY, which does not exist here.
-#[test]
-#[ignore = "go-parity-gap: ALTER TTL INFO/REMOVE actions and history-job assertions are not transcreated"]
-fn alter_ttl_moves_and_then_removes_the_ttl_info() {
-    // Contract (pkg/ddl/table_test.go:569-617): after the first job,
-    // historyJob.BinlogInfo.TableInfo.TTLInfo == {d2, "1", YEAR}; after the
-    // second, it is empty.
-}
-
-// --- TestRenameTableIntermediateState (pkg/ddl/table_test.go:621) ---
-//
-// Go renames db1.t through four round trips (within db1, then across to
-// db2), and on the `afterWaitSchemaSynced` failpoint — parked at
-// StateWriteReorganization→public — probes DML from a second session: at
-// the intermediate state the OLD name is already invisible
-// (`[schema:1146]Table 'db1.t' doesn't exist`) while the NEW name accepts
-// the insert, and the final `select` shows the row under the new name only.
-//
-// go-parity-gap: schema states and the job queue that walks them do not
-// exist in this tier — a rename here is atomic, so the
-// old-name-invisible/new-name-visible window cannot be reproduced.
-#[test]
-#[ignore = "go-parity-gap: the rename's intermediate schema state needs the DDL job queue"]
-fn rename_table_intermediate_state_hides_the_old_name() {
-    // Contract (pkg/ddl/table_test.go:621-677): at StateWriteReorganization
-    // public, insert into the old name reports
-    // "[schema:1146]Table 'db1.t' doesn't exist", insert into the new name
-    // succeeds, and the final select reads the row only under the new name.
 }
 
 // --- TestCreateSameTableOrDBOnOwnerChange (pkg/ddl/table_test.go:679) ---
@@ -462,24 +375,6 @@ fn same_table_or_database_is_creatable_exactly_once() {
         "Go: infoschema.ErrDatabaseExists (1007) for every loser; the tier's \
          create_database reports the collision as false"
     );
-}
-
-// --- TestDropTableAccessibleInInfoSchema (pkg/ddl/table_test.go:758) ---
-//
-// Go drops `t` and, on the `beforeRunOneJobStep` failpoint at
-// StateDeleteOnly and StateWriteOnly, resolves `test.t` from the live
-// infoschema — the dropped table stays accessible until its state reaches
-// `StateNone` (both probes collect NoError, and errs is non-empty).
-//
-// go-parity-gap: schema states do not exist in this tier; a drop here
-// removes the name atomically, so the still-accessible window cannot be
-// reproduced.
-#[test]
-#[ignore = "go-parity-gap: the drop's DeleteOnly/WriteOnly visibility window needs schema states"]
-fn dropped_table_stays_accessible_until_state_none() {
-    // Contract (pkg/ddl/table_test.go:758-784): during both early states,
-    // infoschema.TableByName("test", "t") succeeds; the probes fire at least
-    // once.
 }
 
 // --- TestCreateViewTwice (pkg/ddl/table_test.go:786) ---
@@ -530,44 +425,4 @@ fn a_second_create_view_of_one_name_collides() {
     )
     .expect_err("Go: the second session's create view fails while the first is in flight");
     assert_eq!(error.clone().to_mysql_error().code, 1050);
-}
-
-// --- TestIssue59238 (pkg/ddl/table_test.go:810) ---
-//
-// Go creates a range-partitioned table with an index, reads
-// `select distinct create_time from information_schema.partitions`, then
-// TRUNCATEs partition p1 and EXCHANGEs partition p1 with t1 — the distinct
-// create_time set must NOT change across either operation (partition
-// create-times are preserved).
-//
-// go-parity-gap: `information_schema.partitions` is not served by this tier
-// (`driver/infoschema_meta.rs` has no partitions table) and EXCHANGE
-// PARTITION is not lowered by the ALTER runner, so the create_time
-// invariants are not observable.
-#[test]
-#[ignore = "go-parity-gap: no information_schema.partitions surface and no EXCHANGE PARTITION"]
-fn partition_create_times_survive_truncate_and_exchange() {
-    // Contract (pkg/ddl/table_test.go:810-830): the distinct create_time
-    // rows are identical after `alter table t truncate partition p1` and
-    // again after `alter table t exchange partition p1 with table t1`.
-}
-
-// --- TestRefreshMetaBasic (pkg/ddl/table_test.go:832) ---
-//
-// Go creates two placement policies and database test1 under p1, rewrites
-// t1's name to t2 directly in the META KV (bypassing infoschema), requires
-// the infoschema to still 404 t2, then `testutil.RefreshMeta` refreshes it:
-// the schema version moves +1 and t2 resolves.
-//
-// go-parity-gap: the refresh seam (`testutil.RefreshMeta` /
-// `ddl.RefreshMeta`), the placement-policy-placed database bootstrapping and
-// the raw meta-KV mutation helper (`testutil.GetTableInfoByTxn`) are not
-// transcreated; this tier's catalog has no infoschema/meta split to refresh
-// across.
-#[test]
-#[ignore = "go-parity-gap: no meta-KV-vs-infoschema refresh seam in this tier"]
-fn refresh_meta_publishes_out_of_band_meta_rewrites() {
-    // Contract (pkg/ddl/table_test.go:832-878): after the out-of-band rename,
-    // TableByName("test1", "t2") fails "Table 'test1.t2' doesn't exist";
-    // after RefreshMeta the version is old+1 and t2 resolves.
 }

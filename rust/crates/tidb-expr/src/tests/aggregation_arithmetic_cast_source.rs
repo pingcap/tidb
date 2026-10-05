@@ -12,15 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Batch b066 ports of `pkg/expression.part1` (`func Test*` items 1–60 on
-//! `origin/master`, sorted by file path then line). Each test re-derives its
-//! intent from the Go source it exercises.
-//!
-//! The slice spans `pkg/expression/aggregation/*_test.go`, top-level
-//! `bench_test.go`, `builtin_arithmetic*_test.go` and the first fourteen
-//! functions of `builtin_cast_test.go`. Aggregation DESCRIPTOR tests whose
-//! home already exists (`aggregation/tests.rs`) are listed in the receipt as
-//! verified pre-existing ports; this module adds what was missing.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use std::cell::RefCell;
 
@@ -518,39 +511,10 @@ fn test_vectorized_builtin_arithmetic_func() {
     );
 }
 
-#[test]
-#[ignore = "go-parity-gap: the Rust owner has no separate vectorized evaluator tier (one row-based path covers both); scalar DECIMAL overflow expression text is pinned by test_decimal_err_overflow, while this vectorized-only differential remains unobservable"]
-fn test_vectorized_decimal_err_overflow() {
-    // Go: plus/minus/mul/div over 8.1e80 DECIMAL columns errors with
-    // "[types:1690]DECIMAL value is out of range in '(Column#0 <op> Column#0)'".
-}
-
 // ---------------------------------------------------------------------
 // Go aggregation/agg_to_pb_test.go::{TestAggFunc2Pb, TestAggFuncSumIntToPb,
 // TestAggFuncMaxMinCountToPb}
 // ---------------------------------------------------------------------
-
-#[test]
-#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported -- tidb-proto's select.proto projection carries none of the ~25 aggregate ExprType values, so PB round-trips cannot be modeled in this crate"]
-fn test_agg_func_2_pb() {
-    // Go marshals each of SUM/COUNT/AVG/GROUP_CONCAT/MAX/MIN/FIRSTROW
-    // (both distinct modes) to tipb.Expr JSON and byte-compares the wire
-    // shape per store type.
-}
-
-#[test]
-#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported -- tidb-proto's select.proto projection lacks ExprType_SumInt"]
-fn test_agg_func_sum_int_to_pb() {
-    // Go asserts sum_int lowers to tipb.ExprType_SumInt on TiFlash and TiKV
-    // with has_distinct copied through unchanged.
-}
-
-#[test]
-#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported; tidb-proto lacks aggregate ExprType members"]
-fn test_agg_func_max_min_count_to_pb() {
-    // Go asserts max_count/min_count lower to tipb.ExprType_MaxCount /
-    // ExprType_MinCount on TiFlash.
-}
 
 // ---------------------------------------------------------------------
 // Go aggregation/aggregation_test.go — the mock-coprocessor EVALUATOR half
@@ -611,14 +575,6 @@ gap_evaluator!(
     test_max_min_count,
     "max_count/min_count return (extreme_value, extreme_count) pairs over complete and final-mode descriptors."
 );
-
-#[test]
-#[ignore = "go-parity-gap: util.go's createDistinctChecker (the EVALUATOR half) is not ported in tidb-expr; the workspace's checker lives in the executor crates outside this batch's gate scope"]
-fn test_distinct() {
-    // createDistinctChecker(ctx).Check returns true when the value tuple is
-    // seen for the first time: {1,1}+T {1,1}+F {1,2}+T {1,2}+F {1,nil}+T
-    // {1,nil}+F.
-}
 
 // ---------------------------------------------------------------------
 // Go aggregation/aggregation_test.go::TestCheckAggPushDownMaxMinCount
@@ -2473,11 +2429,4 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
             assert!(ctx.0.borrow().is_empty());
         }
     }
-}
-
-#[test]
-#[ignore = "go-parity-gap: ARRAY-typed field types (tp.SetArray(true)) and the cast-as-array function class are not ported; BuildCastFunctionWithCheck on an array target has no equivalent"]
-fn test_cast_array_func() {
-    // Go casts JSON arrays to array(fieldtype) targets: identity succeeds,
-    // mismatched element types fail per row.
 }

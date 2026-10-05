@@ -12,17 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port ledger for `pkg/planner/cascades/task` (`pkg/planner.part2` items
-//! 118-120 on `origin/master`).
-//!
-//! TWO tests are real functional ports over [`tidb_planner::task_scheduler`]
-//! (transcreation of `pkg/planner/cascades/task/task_scheduler.go`) and
-//! [`tidb_planner::task_stack`] (transcreation of
-//! `pkg/planner/cascades/task/task.go`, whose pooled-capacity contract this
-//! crate externalizes into explicit constructors — see the part3 sibling
-//! `cascades_task_stack_source.rs` for the benchmark shapes). ONE test pins Go
-//! runtime memory layout (`unsafe.Sizeof`) that has no honest Rust carrier and
-//! stays a documentary gap.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_planner::task_scheduler::{SimpleTaskScheduler, Task};
 use tidb_planner::task_stack::{StackTask, TaskStack};
@@ -115,20 +106,4 @@ fn task_stack_pooled_lifecycle_drains_lifo_and_retains_capacity() {
     ts.destroy();
     assert_eq!(ts.len(), 0);
     assert_eq!(ts.capacity(), 4);
-}
-
-/// GO PORT of `pkg/planner/cascades/task/task_test.go:39 TestTaskStack`.
-///
-/// Re-derived contract: Go pins pointer/slice-header/interface word sizes via
-/// `unsafe.Sizeof` — the Stack POINTER is 8 bytes (:46-47), the slice header
-/// holding cap+len+array address is 24 bytes (:48-50), and each interface slot
-/// inside `tasks` (two machine words allowing nil entries pushed at :51-53)
-/// is 16 bytes (:54-58). These are Go runtime representation contracts; the
-/// Rust carrier stores `Vec<Box<dyn StackTask>>` with different layout and no
-/// pushable-nil slot, so the assertions have no honest equivalent here.
-#[test]
-#[ignore = "go-parity-gap: pins Go unsafe.Sizeof values (ptr=8, slice header=24, iface slot=16) plus Push(nil); Rust Vec<Box<dyn StackTask>> representation differs by construction"]
-fn task_stack_go_memory_layout_pins_sizeof_values() {
-    // Go asserts Sizeof(newSS)==8, Sizeof(newSS.tasks)==24 and per-slot ==16
-    // after pushing nil, &TestTaskImpl{1}, nil (task_test.go:45-59).
 }

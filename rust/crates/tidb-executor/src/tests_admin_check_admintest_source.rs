@@ -305,15 +305,3 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
         assert_eq!(checked, 1);
     }
 }
-
-/// Go `admintest/main_test.go:27::TestMain` and (with the same shape)
-/// `aggregate/main_test.go:25::TestMain`: `testsetup.SetupForCommonTest`,
-/// global config tweaks, `autoid.SetStep(5000)` (admintest) and the goleak
-/// verification wrapper.
-///
-/// No behavior to pin: this tier's tests bootstrap themselves and have no
-/// goroutine-leak audit, so the carrier records the disposition.
-#[test]
-fn admintest_and_aggregate_mains_are_suite_bootstrap() {
-    // go-parity-gap: goleak/config suite bootstrap; no behavior.
-}

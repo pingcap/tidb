@@ -12,21 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ports of the `pkg/ddl/index_modify_test.go` family (part6 items 336–360
-//! of the package's `func Test*`/`func Benchmark*` declarations, sorted by
-//! file and line), read from `origin/master`.
-//!
-//! Go runs `alter table … add index` in a GOROUTINE and mutates rows WHILE
-//! the online backfill runs, then requires the rebuilt index to hold exactly
-//! the surviving rows. This tier has no concurrent backfill, so every port
-//! runs the statements serialized and pins the end-state contract the Go
-//! test finally asserts — the index serves exactly the surviving keys, in
-//! order, and `admin check` agrees. Row sets keep Go's deterministic values
-//! (start -10, the discrete-key pattern, the MaxInt64-half value, the 2038
-//! duplicate) with the random 100-batch loops reduced, and each reduction is
-//! named in the test's comment. Divergences found while porting (anonymous
-//! index suffix generation, multi-spec ALTER atomicity, unsupported ADD/DROP
-//! PRIMARY KEY, GLOBAL index options) are documented, never papered over.
+//! Behavioral tests retained from Go. Removed documentary entries are
+//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::Datum;
 use tidb_executor::driver::Catalog;
@@ -136,24 +123,6 @@ fn check_via_index_and_admin(catalog: &mut Catalog, ctx: &StmtContext, expected:
     let mut table = kv_table(catalog, "test", "test_add_index");
     admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(ctx))
         .expect("Go: admin check table test_add_index");
-}
-
-// --- TestAddPrimaryKey1 .. TestAddPrimaryKey4
-//     (pkg/ddl/index_modify_test.go:63/67/78/84) ---
-//
-// Go runs `testAddIndex(…, "primary")`: `alter table test_add_index add
-// primary key c3_index(c3)` over plain and partitioned (range, hash,
-// range-columns) shapes.
-//
-// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is refused by this tier
-// ("this index kind is not supported yet"), so none of the four shapes can
-// run their Go statement.
-#[test]
-#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-fn add_primary_key_over_plain_and_partitioned_tables() {
-    // Contract (pkg/ddl/index_modify_test.go:200-340): after the add, the
-    // primary key over c3 serves `select c1 … where c3 >= -10 order by c1`
-    // with every surviving key, on all four shapes.
 }
 
 // --- TestAddIndex1 (pkg/ddl/index_modify_test.go:95) ---
@@ -445,74 +414,6 @@ fn add_index_for_generated_column_serves_the_computed_values() {
         .expect("Go: admin check table gcai_table");
 }
 
-// --- TestAnalyzeStuck (pkg/ddl/index_modify_test.go:379) ---
-//
-// Go enables `tidb_stats_update_during_ddl`, parks `beforeAnalyzeTable` past
-// `DefaultCumulativeTimeout` and requires the ADD INDEX (and the following
-// MODIFY COLUMN) to finish anyway, with stats_meta rows appearing for the
-// table.
-//
-// go-parity-gap: analyze-during-DDL, its timeout plumbing, failpoints and
-// stats_meta publication are not transcreated in this tier.
-#[test]
-#[ignore = "go-parity-gap: analyze-during-DDL scheduling and stats_meta publication are not transcreated"]
-fn analyze_stuck_does_not_block_add_index() {
-    // Contract (pkg/ddl/index_modify_test.go:379-446): the add index
-    // finishes despite the stuck analyze; stats_meta rows exist afterwards.
-}
-
-// --- TestAnalyzeOwnerResignNoReRun (pkg/ddl/index_modify_test.go:448) ---
-//
-// Go simulates a write-conflict on mysql.tidb_ddl_job during
-// analyzeTableDone and requires the analyze to run exactly once for the
-// re-run job.
-//
-// go-parity-gap: the job-table write-conflict retry and analyze owner
-// lifecycle are not transcreated.
-#[test]
-#[ignore = "go-parity-gap: the DDL job-table retry and analyze owner lifecycle are not transcreated"]
-fn analyze_owner_resign_does_not_re_run_analyze() {
-    // Contract (pkg/ddl/index_modify_test.go:448-483): a resigning analyze
-    // owner never re-runs the table analyze for the same job.
-}
-
-// --- TestAddPrimaryKeyRollback1 (pkg/ddl/index_modify_test.go:485) ---
-//
-// Go inserts 2048 rows plus duplicates of c3=2038..2047 and requires
-// `alter table t1 add primary key c3_index (c3)` to fail with
-// `[kv:1062]Duplicate entry '2038' for key 't1.PRIMARY'`, leaving no
-// PRIMARY index behind; after the duplicates are deleted the same statement
-// succeeds.
-//
-// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is unsupported in this
-// tier, so neither the failure nor the success leg can run. The duplicate
-// DETECTION half of the contract is pinned live by
-// `add_unique_index_rollback_reports_1062_and_leaves_no_index`, which drives
-// the same rows through `CREATE UNIQUE INDEX` (the rollback machinery Go
-// exercises is the index-build one this tier does implement).
-#[test]
-#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-fn add_primary_key_rollback_reports_1062_and_leaves_no_index() {
-    // Contract (pkg/ddl/index_modify_test.go:485-491 + testAddIndexRollback):
-    // duplicate c3 values fail the build with 1062 naming 't1.PRIMARY'; the
-    // meta carries no PRIMARY afterwards; a cleaned table accepts the add.
-}
-
-// --- TestAddPrimaryKeyRollback2 (pkg/ddl/index_modify_test.go:493) ---
-//
-// Same statement over rows whose c3 carries NULLs: Go expects
-// `[ddl:1138]Invalid use of NULL value` — a primary key may not hold NULL.
-//
-// go-parity-gap: `ALTER TABLE … ADD PRIMARY KEY` is unsupported in this
-// tier (the 1138 check rides on it).
-#[test]
-#[ignore = "go-parity-gap: ALTER TABLE ADD PRIMARY KEY is unsupported in this tier"]
-fn add_primary_key_rollback_reports_1138_for_null_values() {
-    // Contract (pkg/ddl/index_modify_test.go:493-498 + testAddIndexRollback
-    // hasNullValsInKey): NULL key values fail the build with 1138 and no
-    // index is left behind.
-}
-
 // --- TestAddUniqueIndexRollback (pkg/ddl/index_modify_test.go:500) ---
 //
 // Go builds rows 0..2047 on c3 plus ten duplicates (c3 = 2038..2047) and
@@ -575,24 +476,6 @@ fn add_unique_index_rollback_reports_1062_and_leaves_no_index() {
     assert!(table.indexes().iter().any(|index| index.name == "c3_index"));
     let mut table = table;
     admin_check::check_table(&mut table, None, &RowDecodeContext::for_query(&ctx)).unwrap();
-}
-
-// --- TestAddIndexWithSplitTable (pkg/ddl/index_modify_test.go:575) and
-//     TestAddIndexWithShardRowID (:581) ---
-//
-// Both drive `testAddIndexWithSplitTable`: AUTO_RANDOM(4) primary key (or
-// SHARD_ROW_ID_BITS) plus `SPLIT TABLE … REGIONS 16`, an add-index over 100
-// rows, and — through the WithDDLChecker store — a verification that the
-// split boundaries were respected.
-//
-// go-parity-gap: physical region splits (SPLIT TABLE / pre-split regions
-// bookkeeping) do not exist in this tier.
-#[test]
-#[ignore = "go-parity-gap: SPLIT TABLE region bookkeeping is not transcreated"]
-fn add_index_with_split_table_respects_region_boundaries() {
-    // Contract (pkg/ddl/index_modify_test.go:575-682): after the split and
-    // the add index, every region of the table holds the keys its bounds
-    // imply and the index covers all 100 rows.
 }
 
 // --- TestAddAnonymousIndex (pkg/ddl/index_modify_test.go:684) ---
@@ -891,28 +774,6 @@ fn add_index_with_pk_serves_reads_through_the_new_index() {
     assert_eq!(rows_text(&rows), vec![vec!["1", "2", "3"]]);
 }
 
-// --- TestAddGlobalIndex (pkg/ddl/index_modify_test.go:795) ---
-//
-// Go adds `unique index p_a (a) global` over a range-partitioned table,
-// requires `indexInfo.Global`, and reads each row back THROUGH the global
-// index decoding the partition id out of the key (checkGlobalIndexRow);
-// then a global nonclustered PRIMARY KEY, a global non-unique key, a 64-way
-// hash table, and a duplicate-insert case whose global add must fail
-// `[kv:1062]Duplicate entry '1' for key 't.idx'`.
-//
-// go-parity-gap: the GLOBAL index option is not honored here — the add
-// refuses with "Global Index is needed for index 'p_a', … and GLOBAL is not
-// given as IndexOption" as if the option were absent — and the key-layout
-// decoding of checkGlobalIndexRow (partition id in the value) has no
-// counterpart.
-#[test]
-#[ignore = "go-parity-gap: the GLOBAL index option is not honored (the add behaves as if GLOBAL were absent)"]
-fn add_global_index_keeps_partition_ids_out_of_the_key() {
-    // Contract (pkg/ddl/index_modify_test.go:795-981): global unique/non-
-    // unique indexes over partitioned tables, per-row key decoding with pid,
-    // and the 1062 duplicate refusal.
-}
-
 // --- TestDropIndexes (pkg/ddl/index_modify_test.go:983, shape 1) ---
 //
 // Go creates `test_drop_indexes (id int, c1 int, c2 int, primary key(id)
@@ -959,40 +820,6 @@ fn drop_indexes_multi_spec_removes_every_named_index() {
         rows.iter().map(|row| datum_text(&row[0])).collect::<Vec<_>>(),
         vec!["95", "96", "97", "98", "99"]
     );
-}
-
-// Go's TestDropIndexes shapes 2/3 (pkg/ddl/index_modify_test.go:994-1002)
-// drop the PRIMARY KEY (`alter table … drop primary key, drop index i1` /
-// `… drop primary key, drop index i1, drop index i2`) over nonclustered
-// integer and varchar primary keys.
-//
-// go-parity-gap: `DROP PRIMARY KEY` is refused by this tier ("this ALTER
-// TABLE action is not supported yet"), so neither shape can run.
-#[test]
-#[ignore = "go-parity-gap: ALTER TABLE DROP PRIMARY KEY is unsupported in this tier"]
-fn drop_indexes_with_drop_primary_key_shapes() {
-    // Contract (pkg/ddl/index_modify_test.go:994-1002 + testDropIndexes):
-    // after the drop, only the named secondary keys remain, and the table's
-    // rows stay readable.
-}
-
-// Go's testDropIndexesIfExists
-// (pkg/ddl/index_modify_test.go:1032-1063): `drop index i1, drop index i3`
-// fails 1091 WITHOUT dropping i1 (the multi-spec job is atomic — the next
-// statement still drops i1 by name); `drop index i1, drop index if exists
-// i3` then succeeds filing a Note for i3; and every duplicate-drop spelling
-// (`drop i2, drop i2`, with `if exists` in either position) is refused as
-// unsupported DDL (8200).
-//
-// go-parity-gap: the multi-spec ALTER here applies each spec as it goes
-// (a failed `drop i1, drop i3` LEAVES i1 dropped, so the follow-up cannot be
-// reproduced), and duplicate index drops report 1091 instead of Go's 8200
-// unsupported-DDL refusal.
-#[test]
-#[ignore = "go-parity-gap: multi-spec ALTER is not atomic (i1 vanishes on a failed drop) and duplicate drops report 1091 instead of 8200"]
-fn drop_indexes_if_exists_atomicity_and_duplicate_detection() {
-    // Contract (pkg/ddl/index_modify_test.go:1032-1063): 1091 without side
-    // effects; if-exists Notes; duplicate drops 8200.
 }
 
 // Go's testDropIndexesFromPartitionedTable
