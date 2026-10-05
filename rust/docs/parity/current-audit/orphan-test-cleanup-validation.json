@@ -1,0 +1,194 @@
+{
+  "base": "da5f2ac9a7874429a7d7d36e85606ea54b285508",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Unregistered source-test cleanup only; no runtime behavior or package acceptance change.",
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-executor/src/tests_aggfuncs_variance_sum_percentile_source.rs",
+      "lines": 390,
+      "explicit_tests": 7,
+      "empty_macro_placeholders": 0,
+      "sha256": "1fdc7deade53f82eca485fa229ffbdce75d7da97e4a66fe4c7c3cf9759614a01",
+      "go_anchors": [
+        "pkg/executor/aggfuncs/aggfunc_test.go:795",
+        "pkg/executor/aggfuncs/builder.go:297",
+        "pkg/executor/aggfuncs/func_percentile_test.go:35::TestPercentile",
+        "pkg/executor/aggfuncs/func_percentile_test.go:51::TestFix26807",
+        "pkg/executor/aggfuncs/func_percentile_test.go:63::TestFix40463",
+        "pkg/executor/aggfuncs/func_sum_test.go:50::TestSum",
+        "pkg/executor/aggfuncs/func_varpop.go:66",
+        "pkg/executor/aggfuncs/func_varpop.go:71",
+        "pkg/executor/aggfuncs/func_varpop_test.go:37::TestVarpop"
+      ],
+      "recovery": "git show da5f2ac9a7874429a7d7d36e85606ea54b285508:rust/crates/tidb-executor/src/tests_aggfuncs_variance_sum_percentile_source.rs"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tests_ddl_b104_source.rs",
+      "lines": 64,
+      "explicit_tests": 1,
+      "empty_macro_placeholders": 0,
+      "sha256": "1cca027ab1835d0b8818cb010be8a0e17b2c4bde30d95a08ebd21469fac303fc",
+      "go_anchors": [
+        "pkg/ddl/db_table_test.go:876::TestDropTables"
+      ],
+      "recovery": "git show da5f2ac9a7874429a7d7d36e85606ea54b285508:rust/crates/tidb-executor/src/tests_ddl_b104_source.rs"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tests_explain_analyze_gaps.rs",
+      "lines": 63,
+      "explicit_tests": 1,
+      "empty_macro_placeholders": 0,
+      "sha256": "66aa05e47245c402dc9d5a52e66083bdd87daf05f61285c97a66b9822b909678",
+      "go_anchors": [
+        "pkg/executor/explain_test.go",
+        "pkg/executor/explain_test.go:552::TestExplainFormatPlanTree",
+        "pkg/planner/core/common_plans.go:712"
+      ],
+      "recovery": "git show da5f2ac9a7874429a7d7d36e85606ea54b285508:rust/crates/tidb-executor/src/tests_explain_analyze_gaps.rs"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tests_issue21441_union_all_source.rs",
+      "lines": 81,
+      "explicit_tests": 1,
+      "empty_macro_placeholders": 0,
+      "sha256": "beddcf71b9ee208cdac54d639b76a3aa715bb74dee7034a65c2899491f00842c",
+      "go_anchors": [
+        "pkg/executor/executor_failpoint_test.go:395::TestIssue21441",
+        "pkg/executor/executor_failpoint_test.go:404",
+        "pkg/executor/unionexec/union.go:155"
+      ],
+      "recovery": "git show da5f2ac9a7874429a7d7d36e85606ea54b285508:rust/crates/tidb-executor/src/tests_issue21441_union_all_source.rs"
+    },
+    {
+      "path": "rust/crates/tidb-session/src/tests_session_part5_source.rs",
+      "lines": 509,
+      "explicit_tests": 11,
+      "empty_macro_placeholders": 49,
+      "sha256": "5bbb4fa87da8410f322e97b6d6344c5ff950d72056d9dd902591519490e153f2",
+      "go_anchors": [
+        "pkg/session/test/privileges/main_test.go:29::TestMain",
+        "pkg/session/test/privileges/privileges_test.go:26::TestSkipWithGrant",
+        "pkg/session/test/privileges/privileges_test.go:47::TestSessionAuth",
+        "pkg/session/test/resourcegrouptest/resource_group_test.go:25::TestResourceGroupHintInTxn",
+        "pkg/session/test/schematest/main_test.go:29::TestMain",
+        "pkg/session/test/schematest/schema_test.go:105::TestTableReaderChunk",
+        "pkg/session/test/schematest/schema_test.go:158::TestInsertExecChunk",
+        "pkg/session/test/schematest/schema_test.go:193::TestUpdateExecChunk",
+        "pkg/session/test/schematest/schema_test.go:230::TestDeleteExecChunk",
+        "pkg/session/test/schematest/schema_test.go:260::TestDeleteMultiTableExecChunk",
+        "pkg/session/test/schematest/schema_test.go:312::TestIndexLookUpReaderChunk",
+        "pkg/session/test/schematest/schema_test.go:377::TestTxnSize",
+        "pkg/session/test/schematest/schema_test.go:393::TestValidationRecursion",
+        "pkg/session/test/schematest/schema_test.go:57::TestPrepareStmtCommitWhenSchemaChanged",
+        "pkg/session/test/schematest/schema_test.go:83::TestRetrySchemaChangeForEmptyChange",
+        "pkg/session/test/session_test.go:1073::TestIssue60266",
+        "pkg/session/test/session_test.go:1123::TestProcessInfoForStaleReadAutoCommit",
+        "pkg/session/test/session_test.go:1158::TestGetDBNames",
+        "pkg/session/test/session_test.go:133::TestLoadSchemaFailed",
+        "pkg/session/test/session_test.go:188::TestWriteOnMultipleCachedTable",
+        "pkg/session/test/session_test.go:229::TestFixSetTiDBSnapshotTS",
+        "pkg/session/test/session_test.go:253::TestPrepareZero",
+        "pkg/session/test/session_test.go:270::TestPrimaryKeyAutoIncrement",
+        "pkg/session/test/session_test.go:295::TestParseWithParams",
+        "pkg/session/test/session_test.go:334::TestDoDDLJobQuit",
+        "pkg/session/test/session_test.go:362::TestProcessInfoIssue22068",
+        "pkg/session/test/session_test.go:379::TestPerStmtTaskID",
+        "pkg/session/test/session_test.go:396::TestStmtHints",
+        "pkg/session/test/session_test.go:477::TestRollbackOnCompileError",
+        "pkg/session/test/session_test.go:512::TestResultField",
+        "pkg/session/test/session_test.go:533::TestResultType",
+        "pkg/session/test/session_test.go:547::TestFieldText",
+        "pkg/session/test/session_test.go:578::TestMatchIdentity",
+        "pkg/session/test/session_test.go:61::TestSchemaCheckerSQL",
+        "pkg/session/test/session_test.go:625::TestHandleAssertionFailureForPartitionedTable",
+        "pkg/session/test/session_test.go:641::TestRandomBinary",
+        "pkg/session/test/session_test.go:674::TestSQLModeOp",
+        "pkg/session/test/session_test.go:690::TestRequestSource",
+        "pkg/session/test/session_test.go:749::TestEmptyInitSQLFile",
+        "pkg/session/test/session_test.go:764::TestInitSystemVariable",
+        "pkg/session/test/session_test.go:818::TestInitUsers",
+        "pkg/session/test/session_test.go:926::TestBootstrapSQLWithExtension",
+        "pkg/session/test/session_test.go:998::TestErrorHappenWhileInit",
+        "pkg/session/test/temporarytabletest/main_test.go:29::TestMain",
+        "pkg/session/test/temporarytabletest/temporary_table_test.go:226::TestLocalTemporaryTableDelete",
+        "pkg/session/test/temporarytabletest/temporary_table_test.go:320::TestSchemaCheckerTempTable",
+        "pkg/session/test/temporarytabletest/temporary_table_test.go:35::TestLocalTemporaryTableUpdate",
+        "pkg/session/test/tidb_test.go:30::TestParseErrorWarn",
+        "pkg/session/test/txn/main_test.go:29::TestMain",
+        "pkg/session/test/txn/txn_test.go:131::TestTxnLazyInitialize",
+        "pkg/session/test/txn/txn_test.go:188::TestDisableTxnAutoRetry",
+        "pkg/session/test/txn/txn_test.go:286::TestAutoCommitRespectsReadOnly",
+        "pkg/session/test/txn/txn_test.go:324::TestTxnRetryErrMsg",
+        "pkg/session/test/txn/txn_test.go:346::TestErrorRollback",
+        "pkg/session/test/txn/txn_test.go:378::TestInTrans",
+        "pkg/session/test/txn/txn_test.go:40::TestAutocommit",
+        "pkg/session/test/txn/txn_test.go:424::TestCommitTSOrderCheck",
+        "pkg/session/test/txn/txn_test.go:438::TestMemBufferSnapshotRead",
+        "pkg/session/test/txn/txn_test.go:483::TestMemBufferCleanupMemoryLeak",
+        "pkg/session/test/txn/txn_test.go:509::TestPanicOnRollbackKilledTxn"
+      ],
+      "recovery": "git show da5f2ac9a7874429a7d7d36e85606ea54b285508:rust/crates/tidb-session/src/tests_session_part5_source.rs"
+    }
+  ],
+  "totals": {
+    "files": 5,
+    "source_lines": 1107,
+    "explicit_tests": 21,
+    "empty_macro_placeholders": 49
+  },
+  "registration_evidence": [
+    "No other tracked Rust source, manifest, Python or shell file references any removed module name.",
+    "Both crate manifests disable automatic integration targets and use scripts/aggregate-tests.rs; that build script enumerates tests/, never these src/ files.",
+    "Crate roots and all remaining source, build scripts, manifests and lockfiles are byte-identical to base."
+  ],
+  "obligations": "Every Go declaration remains an obligation, including removed session placeholders. Source anchors below are historical locations; complete original sources and reasons are recoverable with the recorded git show commands. Removal is not proof that a behavior is repaired, redundant or covered elsewhere. b104 ignored declarations previously retired remain recoverable in the base receipt.",
+  "limits": [
+    "No compiler or runtime speedup is claimed: these files were unreachable.",
+    "No new behavioral tests or full Go/cluster/performance suites run for this deletion.",
+    "Structural counts unchanged: 86 tracked, 30 repaired, 56 unresolved (28 open, 28 partial)."
+  ],
+  "validation": {
+    "profile": "Ready for source cleanup; behavior and complete package acceptance unchanged",
+    "source_isolation": {
+      "retained_source_manifest_lock_script_files_identical": 3802,
+      "remaining_registration_references": [],
+      "finding_records_unchanged": 86,
+      "counts_unchanged": {
+        "tracked": 86,
+        "unresolved": 56,
+        "repaired": 30,
+        "open": 28,
+        "partial": 28
+      }
+    },
+    "gates": [
+      {
+        "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-executor -p tidb-session --all-targets",
+        "exit_code": 0,
+        "log_sha256": "0a17aae0a50c996947dcd78735c92225731291547366fadbab919b53cac2d2dc"
+      },
+      {
+        "command": "make lint",
+        "exit_code": 0,
+        "log_sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      }
+    ],
+    "publication": "Actual precommit and fresh prepush locked server builds are required. Their outcomes and exact remote SHA are recorded after execution in /workspace/.cloud-setup/orphan-test-cleanup/final-handoff.json; this precommit receipt does not preclaim them."
+  },
+  "go_anchor_review": {
+    "unique_anchors": 76,
+    "named_declarations": 68,
+    "missing_current_paths_or_symbols": [
+      "pkg/session/test/session_test.go:1158::TestGetDBNames"
+    ],
+    "basis": "Refreshed Go master export; historical line numbers are not used as acceptance evidence.",
+    "relocated_declarations": {
+      "pkg/session/test/session_test.go:1158::TestGetDBNames": "pkg/util/metricsutil/db_labels_test.go:29::TestGetDBNames"
+    },
+    "unresolved_paths_or_symbols_after_relocation": []
+  }
+}

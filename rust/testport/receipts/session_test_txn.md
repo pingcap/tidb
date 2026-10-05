@@ -1,5 +1,10 @@
 # `pkg/session/test/txn` — complete Go-master parity boundary receipt
 
+Historical receipt: the unregistered source carrier referenced below has since
+been removed. Its commands are historical, not current validation instructions.
+See [cleanup evidence](../../docs/parity/current-audit/orphan-test-cleanup-validation.json).
+The package's original transaction obligations remain open.
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 

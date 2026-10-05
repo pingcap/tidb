@@ -77,3 +77,48 @@ Base 1432306a5b7c64e46d8cd49dc1b32ffedb6a50d4 and freshly fetched Go master 93a0
 From rust/ with /workspace/.cloud-setup/env.sh active, run CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-executor -p tidb-session --lib -- json_and_percentile_merge_spill_reset_follow_go approx_percentile json_agg tests_json --test-threads=1, then cargo check --locked -p tidb-exec -p tidb-executor -p tidb-server --all-targets. Run make lint and git diff --check from root. Keep existing Rust safety/Go lifecycle tests. The deleted private nonfinite-before-mutation assertion and native-size identities do not prove Go error timing or memory accounting; those original obligations remain unaccepted. Recover removed source from the base commit, never reset concurrent work.
 
 Aggregate cleanup discovery: an older percentile source test file is not registered, so it is not executable coverage. The exact 1..=28 maximum-selection vector was therefore moved into the live partial test and rerun successfully. Go memory accounting, full error timing, original package variants and performance acceptance remain separate obligations. Three dead models (508 source lines) and thirteen private tests are retired; production behavior is unchanged.
+
+## Unregistered executor/session source-test continuation
+
+Base: `da5f2ac9a7874429a7d7d36e85606ea54b285508`; fresh Go master remains `93a01d31f6da205ae4bf376825293903a6899fdb`.
+Remove five unreachable source files together with stale current-coverage claims.
+Every remaining Rust source, manifest, build script and registered test remains
+unchanged. This reduces misleading material, not compiler time. No complete Go
+package or finding is accepted by this cleanup.
+
+### Progress
+
+- [x] Trace registration across tracked source, manifests and shared test generator.
+- [x] Remove five files (1,107 lines), 21 explicit tests and 49 empty macro placeholders.
+- [x] Preserve original Go anchors, before hashes and Git recovery commands; condense two stale receipts.
+- [x] Grouped affected all-target checks, root lint and source-isolation verification pass (3,802 retained files identical).
+- [x] Prepare publication through the actual locked-build hook and fresh prepush gate; final outcome must be read from Cloud orphan-test-cleanup/final-handoff.json.
+
+### Discoveries and decisions
+
+The initial textual scan counted 22 test attributes; one belongs to a macro
+that emits 49 empty ignored tests. Actual unreachable declarations are 21
+explicit tests plus those 49 placeholders. Cargo's shared generator only scans
+`tests/`; these files are in `src/` and have no module registration. Do not
+restore stale fixture APIs merely to run previously unreachable tests. Keep
+Go obligations explicit, including transaction concurrency and percentile
+variant/error behavior; the prior live HashAgg test already carries the exact
+1..=28 percentile maximum vector.
+
+### Validation and recovery
+
+From `rust/` with the Cloud environment active, run `CARGO_BUILD_JOBS=1 cargo check
+--locked -p tidb-executor -p tidb-session --all-targets`; run `make lint` and
+`git diff --check` at root. Verify all retained `.rs`, manifests and build
+scripts against base. No new SQL fix or regression is introduced. Follow the
+actual precommit and fresh prepush locked server build requirements. Recover
+individual files using the receipt's `git show` commands without resetting
+concurrent changes. Exact outcomes are in
+[the receipt](parity/current-audit/orphan-test-cleanup-validation.json); final
+publication outcome belongs in Cloud `orphan-test-cleanup/final-handoff.json`.
+
+Outcome: five unreachable files and two obsolete receipt narratives are retired.
+All 68 named Go declarations were found in current master after resolving
+`TestGetDBNames` to `pkg/util/metricsutil/db_labels_test.go`; original Go
+obligations and all 86 finding dispositions remain unchanged. No behavioral
+test execution or compile-time improvement is claimed for this deletion.

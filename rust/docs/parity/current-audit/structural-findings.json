@@ -808,8 +808,8 @@
     "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
   },
   "latest_test_cleanup": {
-    "receipt": "aggregate-leaf-cleanup-validation.json",
-    "scope": "Remove three unused JSON/percentile models and thirteen private tests; migrate distinctive vectors into the existing live HashAgg merge/spill/reset test module. Finding dispositions unchanged."
+    "receipt": "orphan-test-cleanup-validation.json",
+    "scope": "Remove five unregistered source-test files and stale current-coverage claims; preserve Go obligations and finding dispositions."
   },
   "test_cleanup_history": [
     {
@@ -924,6 +924,10 @@
       "date": "2026-10-04 America/Los_Angeles",
       "receipt": "comment-test-cleanup-validation.json",
       "scope": "Remove 260 nonbehavioral test entries, ten empty modules and stale receipt/candidate mappings; retain 178 executable test bodies byte-for-byte. Finding dispositions unchanged."
+    },
+    {
+      "receipt": "aggregate-leaf-cleanup-validation.json",
+      "scope": "Remove three unused JSON/percentile models and thirteen private tests; migrate distinctive vectors into the existing live HashAgg merge/spill/reset test module. Finding dispositions unchanged."
     }
   ],
   "repair_history": [
