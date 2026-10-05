@@ -543,8 +543,7 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 	}
 }
 
-// checkIndexJoinInnerTaskWithAgg checks if join key set, together with the inner columns that
-// join inequalities may turn into scan ranges, is subset of group by items.
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
 // Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
 // Current limitation:
 // This check currently relies on UniqueID matching between:
@@ -581,26 +580,6 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinP
 	for _, key := range indexJoinProp.InnerJoinKeys {
 		if expression.ExprFromSchema(key, dataSourceSchema) {
 			innerKeysFromDataSource[key.UniqueID] = struct{}{}
-		}
-	}
-	// Inequalities in the join's other conditions can also become scan ranges below the
-	// aggregation (see indexJoinPathBuildColManager), e.g. `a.c2 > t1.c2` with index(c1, c2).
-	// Such a range filters rows before they are aggregated, so the inner column must be a
-	// grouping key as well.
-	for _, cond := range indexJoinProp.OtherConditions {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		switch sf.FuncName.L {
-		case ast.LT, ast.LE, ast.GT, ast.GE:
-		default:
-			continue
-		}
-		for _, arg := range sf.GetArgs() {
-			if col, ok := arg.(*expression.Column); ok && expression.ExprFromSchema(col, dataSourceSchema) {
-				innerKeysFromDataSource[col.UniqueID] = struct{}{}
-			}
 		}
 	}
 	if len(innerKeysFromDataSource) > len(groupByCols) {
