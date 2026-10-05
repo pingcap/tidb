@@ -110,6 +110,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		if options != nil {
 			options.S3.WebIdentitySessionDuration = s3Options.WebIdentitySessionDuration
+			options.S3.Region = s3Options.Region
 		}
 		s3Options.SetForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {

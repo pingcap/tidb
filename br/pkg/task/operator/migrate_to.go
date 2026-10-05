@@ -94,7 +94,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 	if err != nil {
 		return err
 	}
-	st, err := objstore.New(context.Background(), backend, &storeapi.Options{
+	st, err := objstore.New(ctx, backend, &storeapi.Options{
 		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
 	})
 	if err != nil {

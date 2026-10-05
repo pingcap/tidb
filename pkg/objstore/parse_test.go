@@ -599,10 +599,12 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 
 func TestParseBackendS3WebIdentitySessionDuration(t *testing.T) {
 	options := &BackendOptions{}
-	backend, err := ParseBackend("s3://bucket/prefix?web-identity-session-duration=3h", options)
+	backend, err := ParseBackend("s3://bucket/prefix?web-identity-session-duration=3h&region=us-east-2", options)
 	require.NoError(t, err)
 	require.Equal(t, "bucket", backend.GetS3().GetBucket())
+	require.Equal(t, "us-east-2", backend.GetS3().GetRegion())
 	require.Equal(t, 3*time.Hour, options.S3.WebIdentitySessionDuration)
+	require.Equal(t, "us-east-2", options.S3.Region)
 }
 
 func TestParseBackendS3InvalidWebIdentitySessionDuration(t *testing.T) {
