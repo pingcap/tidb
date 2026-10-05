@@ -373,9 +373,10 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		}
 
 		opts := storeapi.Options{
-			NoCredentials:            cfg.NoCreds,
-			SendCredentials:          cfg.SendCreds,
-			CheckS3ObjectLockOptions: true,
+			NoCredentials:              cfg.NoCreds,
+			SendCredentials:            cfg.SendCreds,
+			WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+			CheckS3ObjectLockOptions:   true,
 		}
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
@@ -2092,9 +2093,10 @@ func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storeapi
 		httpClient = objstore.GetDefaultHTTPClient(cfg.MetadataDownloadBatchSize)
 	}
 	return storeapi.Options{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-		HTTPClient:      httpClient,
+		NoCredentials:              cfg.NoCreds,
+		SendCredentials:            cfg.SendCreds,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+		HTTPClient:                 httpClient,
 	}
 }
 

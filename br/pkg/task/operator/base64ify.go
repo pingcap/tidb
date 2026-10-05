@@ -22,8 +22,9 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 	}
 
 	store, err := objstore.New(ctx, s, &storeapi.Options{
-		SendCredentials:          cfg.LoadCerd,
-		CheckS3ObjectLockOptions: true,
+		SendCredentials:            cfg.LoadCerd,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+		CheckS3ObjectLockOptions:   true,
 	})
 	if err != nil {
 		return err

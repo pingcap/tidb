@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 func (cfg *MigrateToConfig) getTargetVersion(migs stream.Migrations) (int, bool) {
@@ -93,7 +94,9 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 	if err != nil {
 		return err
 	}
-	st, err := objstore.Create(context.Background(), backend, false)
+	st, err := objstore.New(context.Background(), backend, &storeapi.Options{
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+	})
 	if err != nil {
 		return err
 	}

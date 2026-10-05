@@ -300,9 +300,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+			b.err = err
+			return nil
+		}
 	case "gs", "gcs":
-		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = err
+			return nil
+		}
 
 	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
 	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.

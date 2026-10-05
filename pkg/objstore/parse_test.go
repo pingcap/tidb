@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -594,4 +595,18 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
 	require.NoError(t, err)
 	require.True(t, s.GetS3().ForcePathStyle)
+}
+
+func TestParseBackendS3WebIdentitySessionDuration(t *testing.T) {
+	options := &BackendOptions{}
+	backend, err := ParseBackend("s3://bucket/prefix?web-identity-session-duration=3h", options)
+	require.NoError(t, err)
+	require.Equal(t, "bucket", backend.GetS3().GetBucket())
+	require.Equal(t, 3*time.Hour, options.S3.WebIdentitySessionDuration)
+}
+
+func TestParseBackendS3InvalidWebIdentitySessionDuration(t *testing.T) {
+	_, err := ParseBackend("s3://bucket/prefix?web-identity-session-duration=3hours", &BackendOptions{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "web-identity-session-duration")
 }

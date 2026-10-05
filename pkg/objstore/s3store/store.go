@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	osscredentials "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -57,12 +58,27 @@ const (
 )
 
 // NewS3Storage initialize a new s3 storage for metadata.
+func webIdentitySessionDurationOptions(duration time.Duration) func(*stscreds.WebIdentityRoleOptions) {
+	return func(options *stscreds.WebIdentityRoleOptions) {
+		options.Duration = duration
+	}
+}
+
+// NewS3Storage creates an S3 external storage instance from its backend and options.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *s3like.Storage, errRet error) {
 	qs := *backend
 	gcsS3Compatible := isGCSS3Compatible(&qs)
 
 	// Start with default configuration loading
 	var configOpts []func(*config.LoadOptions) error
+	webIdentitySessionDuration := opts.WebIdentitySessionDuration
+	if webIdentitySessionDuration == 0 {
+		webIdentitySessionDuration = s3like.DefaultWebIdentitySessionDuration
+	}
+	if err := s3like.ValidateWebIdentitySessionDuration(webIdentitySessionDuration); err != nil {
+		return nil, err
+	}
+	configOpts = append(configOpts, config.WithWebIdentityRoleCredentialOptions(webIdentitySessionDurationOptions(webIdentitySessionDuration)))
 
 	// Set region (use default if not specified)
 	region := qs.Region

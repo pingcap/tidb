@@ -461,9 +461,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	client.SetSkipChecksum(skipChecksum)
 
 	opts := storeapi.Options{
-		NoCredentials:            cfg.NoCreds,
-		SendCredentials:          cfg.SendCreds,
-		CheckS3ObjectLockOptions: true,
+		NoCredentials:              cfg.NoCreds,
+		SendCredentials:            cfg.SendCreds,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+		CheckS3ObjectLockOptions:   true,
 	}
 	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 		return errors.Trace(err)

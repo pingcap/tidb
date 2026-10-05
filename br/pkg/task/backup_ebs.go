@@ -124,8 +124,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	client := backup.NewBackupClient(ctx, mgr)
 
 	opts := storeapi.Options{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
+		NoCredentials:              cfg.NoCreds,
+		SendCredentials:            cfg.SendCreds,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
 	}
 	if err = client.SetStorageAndCheckNotInUse(ctx, backend, &opts); err != nil {
 		return errors.Trace(err)

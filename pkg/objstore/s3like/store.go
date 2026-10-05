@@ -54,16 +54,21 @@ const (
 	// S3ExternalID is the key for the external ID used in S3 operations.
 	S3ExternalID = "external-id"
 
-	s3EndpointOption     = "s3.endpoint"
-	s3RegionOption       = "s3.region"
-	s3StorageClassOption = "s3.storage-class"
-	s3SseOption          = "s3.sse"
-	s3SseKmsKeyIDOption  = "s3.sse-kms-key-id"
-	s3ACLOption          = "s3.acl"
-	s3ProviderOption     = "s3.provider"
-	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3." + S3ExternalID
-	s3ProfileOption      = "s3.profile"
+	s3EndpointOption                   = "s3.endpoint"
+	s3RegionOption                     = "s3.region"
+	s3StorageClassOption               = "s3.storage-class"
+	s3SseOption                        = "s3.sse"
+	s3SseKmsKeyIDOption                = "s3.sse-kms-key-id"
+	s3ACLOption                        = "s3.acl"
+	s3ProviderOption                   = "s3.provider"
+	s3RoleARNOption                    = "s3.role-arn"
+	s3ExternalIDOption                 = "s3." + S3ExternalID
+	s3WebIdentitySessionDurationOption = "s3.web-identity-session-duration"
+	s3ProfileOption                    = "s3.profile"
+	// DefaultWebIdentitySessionDuration preserves the AWS SDK one-hour default.
+	DefaultWebIdentitySessionDuration = time.Hour
+	minWebIdentitySessionDuration     = 15 * time.Minute
+	maxWebIdentitySessionDuration     = 12 * time.Hour
 	// max number of retries when meets error
 	maxErrorRetries = 3
 	// the maximum number of byte to read for seek.
@@ -135,22 +140,31 @@ func (rs *Storage) GetBucketPrefix() storeapi.BucketPrefix {
 
 // S3BackendOptions contains options for s3 storage.
 type S3BackendOptions struct {
-	Endpoint              string `json:"endpoint" toml:"endpoint"`
-	Region                string `json:"region" toml:"region"`
-	StorageClass          string `json:"storage-class" toml:"storage-class"`
-	Sse                   string `json:"sse" toml:"sse"`
-	SseKmsKeyID           string `json:"sse-kms-key-id" toml:"sse-kms-key-id"`
-	ACL                   string `json:"acl" toml:"acl"`
-	AccessKey             string `json:"access-key" toml:"access-key"`
-	SecretAccessKey       string `json:"secret-access-key" toml:"secret-access-key"`
-	SessionToken          string `json:"session-token" toml:"session-token"`
-	Provider              string `json:"provider" toml:"provider"`
-	ForcePathStyle        bool   `json:"force-path-style" toml:"force-path-style"`
-	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
-	RoleARN               string `json:"role-arn" toml:"role-arn"`
-	ExternalID            string `json:"external-id" toml:"external-id"`
-	Profile               string `json:"profile" toml:"profile"`
-	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
+	Endpoint                   string        `json:"endpoint" toml:"endpoint"`
+	Region                     string        `json:"region" toml:"region"`
+	StorageClass               string        `json:"storage-class" toml:"storage-class"`
+	Sse                        string        `json:"sse" toml:"sse"`
+	SseKmsKeyID                string        `json:"sse-kms-key-id" toml:"sse-kms-key-id"`
+	ACL                        string        `json:"acl" toml:"acl"`
+	AccessKey                  string        `json:"access-key" toml:"access-key"`
+	SecretAccessKey            string        `json:"secret-access-key" toml:"secret-access-key"`
+	SessionToken               string        `json:"session-token" toml:"session-token"`
+	Provider                   string        `json:"provider" toml:"provider"`
+	ForcePathStyle             bool          `json:"force-path-style" toml:"force-path-style"`
+	UseAccelerateEndpoint      bool          `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
+	RoleARN                    string        `json:"role-arn" toml:"role-arn"`
+	ExternalID                 string        `json:"external-id" toml:"external-id"`
+	WebIdentitySessionDuration time.Duration `json:"web-identity-session-duration" toml:"web-identity-session-duration"`
+	Profile                    string        `json:"profile" toml:"profile"`
+	ObjectLockEnabled          bool          `json:"object-lock-enabled" toml:"object-lock-enabled"`
+}
+
+// ValidateWebIdentitySessionDuration checks the requested AWS web identity session duration.
+func ValidateWebIdentitySessionDuration(duration time.Duration) error {
+	if duration < minWebIdentitySessionDuration || duration > maxWebIdentitySessionDuration {
+		return errors.Errorf("S3 web identity session duration must be between %s and %s", minWebIdentitySessionDuration, maxWebIdentitySessionDuration)
+	}
+	return nil
 }
 
 // Apply apply s3 options on backuppb.S3.
@@ -234,6 +248,7 @@ func DefineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
 	flags.String(s3ProfileOption, "", "(experimental) Set the AWS profile to use for AWS S3 authentication. "+
 		"Command line options take precedence over profile settings")
+	flags.Duration(s3WebIdentitySessionDurationOption, DefaultWebIdentitySessionDuration, "Set AWS web identity session duration (15m to 12h; must not exceed the IAM role's maximum session duration)")
 }
 
 // ParseFromFlags parse S3BackendOptions from command line flags.
@@ -276,6 +291,13 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 	options.ExternalID, err = flags.GetString(s3ExternalIDOption)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	options.WebIdentitySessionDuration, err = flags.GetDuration(s3WebIdentitySessionDurationOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := ValidateWebIdentitySessionDuration(options.WebIdentitySessionDuration); err != nil {
+		return err
 	}
 	options.Profile, err = flags.GetString(s3ProfileOption)
 	if err != nil {

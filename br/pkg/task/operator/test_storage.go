@@ -241,7 +241,8 @@ func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 	}
 
 	store, err := objstore.New(ctx, backend, &storeapi.Options{
-		SendCredentials: true,
+		SendCredentials:            true,
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to create external storage")

@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 // statusOK make a string like <green>●</green> <bold>{message}</bold>
@@ -22,7 +23,9 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 	if err != nil {
 		return err
 	}
-	st, err := objstore.Create(ctx, backend, false)
+	st, err := objstore.New(ctx, backend, &storeapi.Options{
+		WebIdentitySessionDuration: cfg.BackendOptions.S3.WebIdentitySessionDuration,
+	})
 	if err != nil {
 		return err
 	}

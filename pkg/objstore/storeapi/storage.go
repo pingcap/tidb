@@ -198,6 +198,10 @@ type Options struct {
 	// For GCS, we will use this as base client to init a client with credentials.
 	HTTPClient *http.Client
 
+	// WebIdentitySessionDuration configures the AWS web identity credential lifetime.
+	// A zero value uses the one-hour default.
+	WebIdentitySessionDuration time.Duration
+
 	// CheckPermissions check the given permission in New() function.
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
