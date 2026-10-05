@@ -49,7 +49,6 @@ use crate::mysql_bootstrap::local_now_datetime6;
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::stats_watch::{SharedStats, StatsSnapshot, TableStatsState};
-use tidb_hack::GoToLower;
 
 /// The two startup shapes selected by Go `Domain.initStats`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,53 +99,6 @@ impl StatsTarget {
         }
         targets
     }
-}
-
-/// Reads one table's statistics through one fresh read-only transaction.
-///
-/// The catalog is loaded at that same timestamp, so the column types the
-/// bounds are decoded at are the types the table had when the rows were read.
-///
-/// `Ok(None)` means the table has no `mysql.stats_meta` row: never analyzed.
-pub fn load_table_stats_from_cluster<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-    timeout: Duration,
-    schema: &str,
-    table: &str,
-) -> Result<Option<ClusterTableStats>, SystemTableError> {
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let loaded = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot)?;
-        let info = catalog
-            .databases
-            .iter()
-            .find(|database| database.info.name.lowercase() == schema.go_to_lower())
-            .and_then(|database| {
-                database
-                    .tables
-                    .iter()
-                    .find(|stored| stored.name.lowercase() == table.go_to_lower())
-            })
-            .ok_or_else(|| SystemTableError::Missing {
-                name: format!("{schema}.{table}"),
-            })?;
-        let column_types: BTreeMap<i64, FieldType> =
-            crate::cluster_stats_load::column_types_of(info);
-        let table_id = info.id;
-        let loader = ClusterStatsLoader::locate(&catalog)?;
-        loader.load_table(&mut snapshot, table_id, &column_types)
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    loaded
 }
 
 /// Reads one column or index statistics item through one fresh read-only

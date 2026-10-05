@@ -15,8 +15,8 @@
 //! Publishing the `mysql` schema bootstrap on one real transaction.
 //!
 //! [`tidb_exec::mysql_bootstrap::bootstrap_mysql_schema`]'s committing caller,
-//! shared by the `mysql-bootstrap` binary (against a live cluster) and the
-//! `--store unistore` boot (against the embedded store, which starts empty on
+//! shared by cluster startup and `--store unistore` boot (against the
+//! embedded store, which starts empty on
 //! every run and therefore bootstraps on every run -- exactly Go's
 //! `session.BootstrapSession` over mockstore). A keyspace that already
 //! carries any bootstrap object is refused by the plan, and nothing is
@@ -28,7 +28,7 @@ use tidb_exec::mysql_bootstrap::{
     bootstrap_mysql_schema, read_ddl_table_version, utc_now_timestamp, BootstrapEnvironment,
 };
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::real_tikv_catalog::{TikvMetaSnapshot, TransactionMetaSnapshot};
+use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
@@ -71,43 +71,6 @@ pub fn publish_bootstrap<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCap
     let schema_version = write.schema_version;
     let outcome = transaction
         .commit(write.mutations, &call)
-        .map_err(|error| error.to_string())?;
-    Ok((outcome, schema_version))
-}
-
-/// Plans and commits the bootstrap on one client-rust transaction.
-///
-/// The engine-backed counterpart of [`publish_bootstrap`], carried beside it
-/// while store construction sites migrate. The shape is identical: a
-/// bootstrap reads and writes share one `start_ts`.
-pub fn publish_bootstrap_over_tikv<S: tidb_txnkv::TikvTransactionSource>(
-    opener: &tidb_txnkv::TikvTransactionOpener<S>,
-    timeout: Duration,
-) -> Result<(OptimisticCommitOutcome, i64), String> {
-    let mut environment = BootstrapEnvironment {
-        system_tz: infer_system_tz(),
-        new_collation_enabled: true,
-        cluster_id: opener.cluster_id().map_err(|error| error.to_string())?,
-        current_timestamp: utc_now_timestamp(),
-        ddl_table_version: 0,
-    };
-    let mut transaction = opener.begin().map_err(|error| error.to_string())?;
-    let start_ts = transaction.start_ts();
-    let write = {
-        let mut snapshot = TikvMetaSnapshot::new(&mut transaction, timeout);
-        environment.ddl_table_version =
-            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
-        bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
-            .map_err(|error| error.to_string())?
-    };
-    eprintln!(
-        "{{\"event\":\"bootstrap_publishing\",\"tables\":{},\"schema_version\":{},\"start_ts\":{start_ts}}}",
-        write.created_tables.len(),
-        write.schema_version
-    );
-    let schema_version = write.schema_version;
-    let outcome = transaction
-        .commit_mutations(write.mutations)
         .map_err(|error| error.to_string())?;
     Ok((outcome, schema_version))
 }

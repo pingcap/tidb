@@ -1,0 +1,339 @@
+{
+  "date": "2026-10-05",
+  "integration_start": "d33fc74e0ba53f1e0a3630491bea1a7eca47e2e0",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_master": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire obsolete standalone server tools and disconnected helpers; no behavioral finding or complete Go package accepted.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-server/src/bin/mysql-bootstrap.rs",
+      "lines_before": 100,
+      "lines_after": 0,
+      "before_sha256": "da7e81f71f0ef86ef334b69bb3e523738e9e1610c2ca2c70fa09d13a3a69e581",
+      "after_sha256": null
+    },
+    {
+      "path": "rust/crates/tidb-server/src/bin/cluster-stats-dump.rs",
+      "lines_before": 195,
+      "lines_after": 0,
+      "before_sha256": "3a3cc6da2dfa82135fab7df516dac361b32a41292f702caf043b5bf518156a89",
+      "after_sha256": null
+    },
+    {
+      "path": "rust/crates/tidb-server/src/bootstrap_publish.rs",
+      "lines_before": 188,
+      "lines_after": 151,
+      "before_sha256": "84fc36302c8f5f87d667cbca8505b793b35f58c60b99896deded288e92e2c9a5",
+      "after_sha256": "d9b3953b37c37038e7710c854ed03d379caa8ee4a608a23e2e67d348c007427c"
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_stats.rs",
+      "lines_before": 884,
+      "lines_after": 836,
+      "before_sha256": "78fe00f0e1bc073ad40479eae737f06252dac6ffebc23c449451cbe2455a2043",
+      "after_sha256": "5b29d4895b3dae9f6a5ac8ffe382db37b2d144fe52a57aacef97c9fdb0117948"
+    }
+  ],
+  "source_lines_net_removed": 381,
+  "removed_tests": 0,
+  "targets": {
+    "before": [
+      "cluster-session-smoke",
+      "cluster-stats-dump",
+      "mysql-bootstrap",
+      "tidb-server"
+    ],
+    "after": [
+      "cluster-session-smoke",
+      "tidb-server"
+    ]
+  },
+  "ownership": [
+    "Normal cluster and unistore startup retain publish_bootstrap, as Go main owns BootstrapSession. mysql-bootstrap has no repository workflow caller.",
+    "cluster-stats-dump has no repository workflow caller. Its custom hex/CMS text output is intentionally retired; SQL SHOW statistics and shared cache/loaders remain. Its only load_table_stats_from_cluster caller is removed together.",
+    "publish_bootstrap_over_tikv has no callers. The maintained publish_bootstrap and notification guard remain unchanged.",
+    "cluster-session-smoke and both real-TiKV scripts remain byte-identical; their transaction/coprocessor checks are still maintained."
+  ],
+  "go_owner_sha256": {
+    "cmd/tidb-server/main.go": "2679ee3cd0480f67e1c8acf23db64b33139a3ba3666de4c70576a940a471223d",
+    "pkg/session/session.go": "da81bbbd78f5e9db9c9ecc9f1de5e77978069e6778e4546591eeabfc90204ee3",
+    "pkg/executor/show_stats.go": "906d6698d0816258337b9bc10f976a430de64c457c272c69759f2cbe56d09c30"
+  },
+  "verification": {
+    "all_retained_test_script_manifest_lockfile_inputs_unchanged": true,
+    "bootstrap_commit_guard_test_body_unchanged": true,
+    "unchanged_tracked_rust_files": 6074,
+    "remaining_binary_targets": 2,
+    "previous_binary_targets": 4
+  },
+  "validation": {
+    "check": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets",
+      "result": "passed; existing warnings remain"
+    },
+    "build": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server",
+      "result": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "wire": {
+      "binary_sha256": "47e6205f1dfc0b59c2db6e65d92cdc2a215ddb1dd3e1d7a32586ed01f8471f0c",
+      "checks": [
+        {
+          "name": "fresh startup bootstraps statistics catalog",
+          "actual": [
+            [
+              "stats_meta"
+            ]
+          ],
+          "expected": [
+            [
+              "stats_meta"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "fresh startup bootstraps root account",
+          "actual": [
+            [
+              "root"
+            ]
+          ],
+          "expected": [
+            [
+              "root"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "SHOW STATS_TOPN retains Go rows",
+          "actual": [
+            [
+              "cleanup",
+              "t",
+              "",
+              "a",
+              "0",
+              "1",
+              "2"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "a",
+              "0",
+              "2",
+              "1"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "idx_a",
+              "1",
+              "1",
+              "2"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "idx_a",
+              "1",
+              "2",
+              "1"
+            ]
+          ],
+          "expected": [
+            [
+              "cleanup",
+              "t",
+              "",
+              "a",
+              "0",
+              "1",
+              "2"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "a",
+              "0",
+              "2",
+              "1"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "idx_a",
+              "1",
+              "1",
+              "2"
+            ],
+            [
+              "cleanup",
+              "t",
+              "",
+              "idx_a",
+              "1",
+              "2",
+              "1"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "SHOW STATS_BUCKETS retains Go cumulative counts and bounds",
+          "actual": [
+            [
+              "cleanup",
+              "buckets",
+              "",
+              "a",
+              "0",
+              "0",
+              "1",
+              "1",
+              "1111",
+              "1111",
+              "0"
+            ]
+          ],
+          "expected": [
+            [
+              "cleanup",
+              "buckets",
+              "",
+              "a",
+              "0",
+              "0",
+              "1",
+              "1",
+              "1111",
+              "1111",
+              "0"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "SHOW STATS_META retains analyzed row count",
+          "actual": [
+            "3"
+          ],
+          "expected": [
+            "3"
+          ],
+          "pass": true
+        }
+      ],
+      "diagnostic_topn_storage": [
+        [
+          "4",
+          "1",
+          "0",
+          "038000000000000001",
+          "2"
+        ],
+        [
+          "4",
+          "1",
+          "0",
+          "038000000000000002",
+          "1"
+        ],
+        [
+          "4",
+          "1",
+          "1",
+          "038000000000000001",
+          "2"
+        ],
+        [
+          "4",
+          "1",
+          "1",
+          "038000000000000002",
+          "1"
+        ]
+      ],
+      "diagnostic_topn_all": [],
+      "diagnostic_explain": [
+        [
+          "TableReader_7",
+          "2.00",
+          "root",
+          "",
+          "data:Selection_6"
+        ],
+        [
+          "\u2514\u2500Selection_6",
+          "2.00",
+          "cop[tikv]",
+          "",
+          "eq(cleanup.t.a, 1)"
+        ],
+        [
+          "  \u2514\u2500TableFullScan_5",
+          "3.00",
+          "cop[tikv]",
+          "table:t",
+          "keep order:false, stats:pseudo"
+        ]
+      ],
+      "diagnostic_bucket_explain": [
+        [
+          "TableReader_7",
+          "1.00",
+          "root",
+          "",
+          "data:Selection_6"
+        ],
+        [
+          "\u2514\u2500Selection_6",
+          "1.00",
+          "cop[tikv]",
+          "",
+          "eq(cleanup.buckets.a, 1111)"
+        ],
+        [
+          "  \u2514\u2500TableFullScan_5",
+          "1.00",
+          "cop[tikv]",
+          "table:buckets",
+          "keep order:false"
+        ]
+      ],
+      "exit": 0
+    },
+    "publication": "Actual hook and immediate-prepush locked build are mandatory; final post-commit results recorded in external final-handoff.json.",
+    "wire_setup_diagnosis": "The first external probe assumed positive-lease ANALYZE eagerly populates all histogram/TopN data. Go SHOW reads resident cache data; the existing Rust refresh uses metadata-only loading unless lease is zero. EXPLAIN predicates request needed statistics, then unchanged expected TopN/bucket rows pass. A second probe selected Last_analyze_time instead of Row_count; corrected the external field index from -1 to 5. All three probes used the identical production binary. Initial outcomes remain in initial-wire.json and diagnostic-wire.json; no production workaround or repository assertion changed."
+  },
+  "limits": [
+    "Counts unchanged: 86 tracked /30 repaired /56 unresolved (27 open,29 partial).",
+    "No whole Go package acceptance, full Go suite, live multi-node TiKV or measured build/workload speedup.",
+    "No repository test harness added or test assertion removed. External MySQL checks reuse existing Go-shaped expectations."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/server-tool-cleanup",
+  "log_sha256": {
+    "check.log": "cc4df67e0e055cfff2593452c951b7bdba2188c933a73499ac21edbe59284908",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "build.log": "a1ec1929965680fed5b60cce7d57580f2ba3daeb2f72d4dde8a6f13484a91f8d",
+    "wire.py": "e0f74fb50207e64480c57d9c7c1e6d42446d3ba8fe2cd54ed37b2fe1b3048515",
+    "wire.json": "69a24cd2179c6f225fc69fafdb2534113934e9392f529edf7f3b0bfcb3bbb118",
+    "metadata-before.json": "a387d42eb5802e7d240263f1a56a0c6925b6c291a500d36f3c25fcbb17f571bf",
+    "metadata-after.json": "f03f51579d6fe0aff4adaa8ab18287ea6bfef723ddcbc582a1b7af90d750bdec"
+  }
+}

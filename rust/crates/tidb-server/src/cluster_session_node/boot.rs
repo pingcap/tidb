@@ -83,8 +83,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // tiup's deploy->patch->start flow boots this node against a
             // FRESH keyspace before any Go TiDB ever ran, so `mysql.*` does
             // not exist yet. The convergence node owns the cluster's system
-            // catalog from then on, so bootstrap it right here -- the same
-            // transaction path the mysql-bootstrap tool uses -- and let the
+            // catalog from then on, so bootstrap it right here and let the
             // catalog load below read the schema just published. A cluster a
             // TiDB already bootstrapped skips the publish entirely.
             let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(

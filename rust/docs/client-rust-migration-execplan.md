@@ -396,14 +396,11 @@ thin adapters onto the vendored crate; and the full existing Rust test suite
       `TransactionMutationBuffer` layered above the memdb. Getting its DML
       semantics right is reasoning work, not substitution, and it wants its
       own session with the statement tests in view.
-      Migration style that is working and should continue: **strangler**.
-      Parallel engine-backed implementations beside the coordinator-backed
-      ones (`TikvMetaSnapshot` beside `TransactionMetaSnapshot`,
-      `load_catalog_from_tikv_cluster` beside `load_catalog_from_cluster`,
-      `publish_bootstrap_over_tikv` beside `publish_bootstrap`), so the tree
-      stays compiling and sites move one at a time. The old implementations
-      become unreferenced as the chain completes, and the deletion is then
-      mechanical.
+      Current bootstrap ownership supersedes this historical migration sketch:
+      both live store startup paths use `publish_bootstrap`. The unused
+      `publish_bootstrap_over_tikv` alternative and standalone bootstrap tool
+      were retired in the [server-tool cleanup](parity/current-audit/server-tool-cleanup-validation.json).
+      Migrate actual callers before retiring any remaining storage owner.
 - [ ] **Go-fidelity classification of `tidb-txnkv` (2026-08-25), which decides
       what the deletion may and may not touch.** Checked every module against
       the Go source it cites, because "unreferenced" is NOT the deletion
