@@ -116,3 +116,5 @@ No parent finding or complete package is closed; lazy V2, MVCC schema timestamp
 ranges, DDL exclusion and live Go-peer GC remain explicit prerequisites.
 
 B02/B05 now share the deferred pessimistic uniqueness consumer and its safety lifecycle. See [validation](deferred-uniqueness-batch-validation.json). T01/N03 remain partial; the other 54 roots were not freshly reproduced.
+
+B01 channel ownership now shares native/adapter membership, keyspace, discovery and TSO connections, including bootstrap/refresh and joined runtime shutdown. See [validation](pd-channel-batch-validation.json). Forwarding/follower consumers, health and full-package acceptance remain open.

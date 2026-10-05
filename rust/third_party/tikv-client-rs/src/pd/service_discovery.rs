@@ -10,6 +10,80 @@ use std::sync::{Arc, Mutex};
 use std::{future::Future, pin::Pin, time::Duration};
 use tonic::{transport::Channel, Request, Status};
 
+/// Discovery-owned endpoint connections, shared by metadata, keyspace and
+/// timestamp consumers (Go serviceDiscovery.clientConns/GetOrCreateGRPCConn).
+/// Exact URL keys remain retained until close; membership changes do not
+/// retire a channel still borrowed by another service.
+pub struct ChannelCache {
+    channels: Mutex<Option<std::collections::HashMap<String, Channel>>>,
+}
+
+impl Default for ChannelCache {
+    fn default() -> Self {
+        Self {
+            channels: Mutex::new(Some(Default::default())),
+        }
+    }
+}
+
+impl ChannelCache {
+    /// Construct a lazy channel once. The factory must not perform blocking
+    /// I/O and must run inside the runtime that owns the connection driver.
+    pub fn get_or_insert_with(
+        &self,
+        endpoint: &str,
+        connect: impl FnOnce() -> Result<Channel, Status>,
+    ) -> Result<Channel, Status> {
+        let mut guard = self.channels.lock().expect("PD channel cache poisoned");
+        let channels = guard
+            .as_mut()
+            .ok_or_else(|| Status::cancelled("PD discovery closed"))?;
+        if let Some(channel) = channels.get(endpoint) {
+            return Ok(channel.clone());
+        }
+        let channel = connect()?;
+        channels.insert(endpoint.to_owned(), channel.clone());
+        Ok(channel)
+    }
+
+    /// Eager dial without holding a map lock across I/O. Concurrent callers
+    /// retain the published winner and drop their redundant candidate, as Go
+    /// LoadOrStore does. Failed or canceled construction is never published.
+    pub async fn get_or_connect<F, Fut>(
+        &self,
+        endpoint: &str,
+        connect: F,
+    ) -> Result<Channel, Status>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Channel, Status>>,
+    {
+        {
+            let guard = self.channels.lock().expect("PD channel cache poisoned");
+            let channels = guard
+                .as_ref()
+                .ok_or_else(|| Status::cancelled("PD discovery closed"))?;
+            if let Some(channel) = channels.get(endpoint) {
+                return Ok(channel.clone());
+            }
+        }
+        let candidate = tokio::time::timeout(Duration::from_secs(3), connect())
+            .await
+            .map_err(|_| Status::deadline_exceeded("PD channel dial timed out"))??;
+        // Recheck close and concurrent publication after dialing.
+        self.get_or_insert_with(endpoint, || Ok(candidate))
+    }
+
+    /// Release cached handles and prohibit new publication, including a dial
+    /// that began before close. RPC/stream owners cancel and join separately.
+    pub fn close(&self) {
+        self.channels
+            .lock()
+            .expect("PD channel cache poisoned")
+            .take();
+    }
+}
+
 /// Go constants.NullKeyspaceID identifies the legacy, keyspace-agnostic client.
 pub const NULL_KEYSPACE_ID: u32 = u32::MAX;
 /// Go servicediscovery.serviceModeUpdateInterval.

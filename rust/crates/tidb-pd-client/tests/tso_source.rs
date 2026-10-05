@@ -36,6 +36,7 @@ enum TsoReply {
 }
 
 struct State {
+    peers: std::collections::HashSet<std::net::SocketAddr>,
     cluster_info: Option<pdpb::GetClusterInfoResponse>,
     discovery_delay: Duration,
     discovery_requests: usize,
@@ -88,10 +89,11 @@ struct MockPd {
 impl Pd for MockPd {
     async fn get_cluster_info(
         &self,
-        _: tonic::Request<pdpb::GetClusterInfoRequest>,
+        request: tonic::Request<pdpb::GetClusterInfoRequest>,
     ) -> Result<tonic::Response<pdpb::GetClusterInfoResponse>, tonic::Status> {
         let (delay, response) = {
             let mut state = self.state.lock().unwrap();
+            state.peers.extend(request.remote_addr());
             state.discovery_requests += 1;
             (state.discovery_delay, state.cluster_info.clone())
         };
@@ -105,6 +107,11 @@ impl Pd for MockPd {
         &self,
         request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
     ) -> Result<tonic::Response<tonic::codegen::BoxStream<pdpb::TsoResponse>>, tonic::Status> {
+        self.state
+            .lock()
+            .unwrap()
+            .peers
+            .extend(request.remote_addr());
         self.state.lock().unwrap().stream_opens += 1;
         let state = Arc::clone(&self.state);
         let mut requests = request.into_inner();
@@ -199,8 +206,13 @@ impl Pd for MockPd {
 
     async fn get_members(
         &self,
-        _request: tonic::Request<pdpb::GetMembersRequest>,
+        request: tonic::Request<pdpb::GetMembersRequest>,
     ) -> Result<tonic::Response<pdpb::GetMembersResponse>, tonic::Status> {
+        self.state
+            .lock()
+            .unwrap()
+            .peers
+            .extend(request.remote_addr());
         let member = pdpb::Member {
             name: "pd-1".to_owned(),
             member_id: 1,
@@ -273,6 +285,7 @@ impl Server {
         let address = listener.local_addr().unwrap();
         let endpoint = format!("http://{address}");
         let state = Arc::new(Mutex::new(State {
+            peers: Default::default(),
             cluster_info: None,
             discovery_delay: Duration::ZERO,
             discovery_requests: 0,
@@ -814,5 +827,42 @@ fn source_service_background_probe_does_not_block_metadata_or_shutdown() {
     assert!(
         start.elapsed() < Duration::from_secs(1),
         "shutdown did not cancel discovery"
+    );
+}
+
+#[test]
+fn source_channel_batch_adapter_metadata_discovery_and_tso_share_connection() {
+    let server = Server::start_auto_batching();
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+    client.get_timestamp().unwrap();
+    client.refresh_members().unwrap();
+    let peers = server.state.lock().unwrap().peers.len();
+    client.shutdown().unwrap();
+    assert_eq!(
+        peers, 1,
+        "metadata, discovery and TSO must share one connection"
+    );
+}
+
+#[test]
+fn source_channel_batch_adapter_periodic_discovery_uses_process_channel() {
+    let server = Server::start_auto_batching();
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+    client.get_timestamp().unwrap();
+    let previous = server.state.lock().unwrap().discovery_requests;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while server.state.lock().unwrap().discovery_requests <= previous {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "idle discovery did not run"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    client.get_timestamp().unwrap();
+    let peers = server.state.lock().unwrap().peers.len();
+    client.shutdown().unwrap();
+    assert_eq!(
+        peers, 1,
+        "periodic probes must not create another connection fleet"
     );
 }

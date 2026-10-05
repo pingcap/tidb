@@ -15,7 +15,7 @@ use tonic::IntoRequest;
 use tonic::Request;
 
 use super::connectionctx::{ConnectionCtx, Manager};
-use super::service_discovery::{TsoDiscovery, TsoRoute};
+use super::service_discovery::{ChannelCache, TsoDiscovery, TsoRoute};
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::keyspacepb;
@@ -28,6 +28,7 @@ use crate::Timestamp;
 /// A PD cluster.
 pub struct Cluster {
     id: u64,
+    channels: Arc<ChannelCache>,
     client: Option<pdpb::pd_client::PdClient<Channel>>,
     keyspace_client: Option<keyspacepb::keyspace_client::KeyspaceClient<Channel>>,
     members: pdpb::GetMembersResponse,
@@ -473,6 +474,7 @@ impl Cluster {
     }
 
     pub(crate) fn start_close(&mut self) -> impl Future<Output = ()> + Send + 'static {
+        self.channels.close();
         self.client.take();
         self.keyspace_client.take();
         self.retired_tso.extend(self.tso.randomly_pick());
@@ -492,6 +494,7 @@ impl Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
+        self.channels.close();
         self.tso.release_all();
         for connection in &self.retired_tso {
             connection.cancel();
@@ -534,6 +537,7 @@ pub(crate) struct LeaderConnection {
 #[derive(Clone)]
 pub struct Connection {
     security_mgr: Arc<SecurityManager>,
+    channels: Arc<ChannelCache>,
     // Initialization retries share probe selection before a Cluster exists.
     discovery: TsoDiscovery,
 }
@@ -546,6 +550,7 @@ impl Connection {
     pub fn new(security_mgr: Arc<SecurityManager>) -> Connection {
         Connection {
             security_mgr,
+            channels: Arc::new(ChannelCache::default()),
             discovery: TsoDiscovery::default(),
         }
     }
@@ -591,6 +596,7 @@ impl Connection {
         tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);
         let cluster = Cluster {
             id,
+            channels: self.channels.clone(),
             client: Some(client),
             keyspace_client: Some(keyspace_client),
             members,
@@ -628,7 +634,8 @@ impl Connection {
         timeout: Duration,
         keyspace: Option<&keyspacepb::KeyspaceMeta>,
     ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
-        let connection = self.clone();
+        let mut connection = self.clone();
+        connection.channels = cluster.channels.clone();
         let mut discovery = cluster.discovery.clone();
         let keyspace_result = keyspace
             .map(|meta| discovery.set_keyspace(meta))
@@ -665,15 +672,21 @@ impl Connection {
     ) -> Result<(TsoRoute, Channel)> {
         Ok(discovery
             .discover(id, url, timeout, |url| {
-                let security = self.security_mgr.clone();
-                async move {
-                    security
-                        .connect(&url, |channel| channel)
-                        .await
-                        .map_err(|error| tonic::Status::unavailable(error.to_string()))
-                }
+                let connection = self.clone();
+                async move { connection.channel(&url).await }
             })
             .await?)
+    }
+
+    async fn channel(&self, endpoint: &str) -> std::result::Result<Channel, tonic::Status> {
+        self.channels
+            .get_or_connect(endpoint, || async {
+                self.security_mgr
+                    .connect(endpoint, |channel| channel)
+                    .await
+                    .map_err(|error| tonic::Status::unavailable(error.to_string()))
+            })
+            .await
     }
 
     async fn validate_endpoints(
@@ -758,17 +771,9 @@ impl Connection {
         keyspacepb::keyspace_client::KeyspaceClient<Channel>,
         pdpb::GetMembersResponse,
     )> {
-        let mut client = self
-            .security_mgr
-            .connect(addr, pdpb::pd_client::PdClient::<Channel>::new)
-            .await?;
-        let keyspace_client = self
-            .security_mgr
-            .connect(
-                addr,
-                keyspacepb::keyspace_client::KeyspaceClient::<Channel>::new,
-            )
-            .await?;
+        let channel = self.channel(addr).await?;
+        let mut client = pdpb::pd_client::PdClient::new(channel.clone());
+        let keyspace_client = keyspacepb::keyspace_client::KeyspaceClient::new(channel);
         let mut request = pdpb::GetMembersRequest::default().into_request();
         request.set_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()));
         let resp: pdpb::GetMembersResponse = client.get_members(request).await?.into_inner();

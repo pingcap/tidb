@@ -44,7 +44,7 @@ pub(super) fn get_members(
     shutdown: &watch::Receiver<bool>,
     expected_cluster_id: Option<u64>,
 ) -> Result<PdMemberObservation, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         timeout,
@@ -87,7 +87,7 @@ pub(super) fn get_region(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -114,7 +114,7 @@ pub(super) fn get_prev_region(
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -150,7 +150,7 @@ pub(super) fn get_region_by_id(
     region_id: u64,
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -186,7 +186,7 @@ pub(super) fn scan_regions(
     cluster_id: u64,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
     let response = block_on_rpc(
@@ -215,7 +215,7 @@ pub(super) fn batch_scan_regions(
     cluster_id: u64,
     request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let need_buckets = request.need_buckets;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
@@ -249,7 +249,7 @@ pub(super) fn get_store(
     cluster_id: u64,
     store_id: u64,
 ) -> Result<Option<PdStore>, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         timeout,
@@ -278,7 +278,7 @@ pub(super) fn get_all_stores(
     shutdown: &watch::Receiver<bool>,
     cluster_id: u64,
 ) -> Result<Vec<tidb_proto::metapb::Store>, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         timeout,
@@ -308,7 +308,7 @@ pub(super) fn get_gc_state(
     cluster_id: u64,
     keyspace_id: Option<u32>,
 ) -> Result<PdGcState, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         timeout,
@@ -448,7 +448,7 @@ pub(super) fn store_global_config(
     control: RpcControl<'_>,
     request: pdpb::StoreGlobalConfigRequest,
 ) -> Result<(), PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let response = block_on_rpc(
         runtime,
         control.timeout,
@@ -474,7 +474,7 @@ pub(super) fn external_timestamp(
     cluster_id: u64,
     value: Option<u64>,
 ) -> Result<u64, PdClientError> {
-    let client = tonic_client(runtime, clients, endpoint)?;
+    let mut client = tonic_client(runtime, clients, endpoint)?;
     let operation = PdOperation::ExternalTimestamp;
     let (header, timestamp) = if let Some(timestamp) = value {
         let response = block_on_rpc(

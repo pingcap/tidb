@@ -15,16 +15,16 @@
 //! Which PD member serves a call, and when a failure means moving to another
 //! one.
 //!
-//! Go boundary: `pd/client`'s `pd_service_discovery.go` — the leader is tried
+//! Go boundary: `pd/client/servicediscovery/service_discovery.go` — the leader is tried
 //! first, a transport-level failure walks the current member set in order, and
-//! a membership refresh is what makes a new leader visible. The channel cache
-//! here is the equivalent of Go's per-member `grpc.ClientConn` map: connections
-//! are kept per endpoint and dropped when the member leaves the set.
+//! a membership refresh is what makes a new leader visible. The shared native
+//! channel map retains endpoint connections until close, as Go's discovery
+//! owner does; metadata membership does not evict active TSO connections.
 //!
 //! Every function is bounded by the *current* member set. None of them
 //! discovers an endpoint PD did not name.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -538,7 +538,6 @@ pub(super) fn refresh_membership(
         ) {
             Ok(observation) => match observation.projected {
                 Ok(members) => {
-                    retain_member_clients(clients, &members);
                     let mut current = state.write().expect("PD state lock poisoned");
                     current.active_endpoint = members.leader_url.clone();
                     current.members = members.clone();
@@ -613,11 +612,11 @@ pub(super) fn is_retryable_endpoint_error(
             ))
 }
 
-/// The worker-owned PD channel cache, paired with the cluster TLS security so
-/// every channel this client opens routes through the one shared
-/// [`crate::secure_endpoint`] helper and none is left plaintext by omission.
+/// The shared PD endpoint owner. Protobuf stubs are short-lived Channel
+/// clones; discovery, membership and TSO retain the same connection map.
+#[derive(Clone)]
 pub(crate) struct PdChannelCache {
-    clients: HashMap<String, TonicPdClient<Channel>>,
+    channels: Arc<tikv_client::pd_service_discovery::ChannelCache>,
     security: Arc<ClusterSecurity>,
     pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
 }
@@ -633,56 +632,46 @@ pub(super) struct TsoDiscoveryState {
 }
 
 impl PdChannelCache {
-    pub(super) fn security(&self) -> Arc<ClusterSecurity> {
-        self.security.clone()
-    }
-
     pub(super) fn new(security: Arc<ClusterSecurity>) -> Self {
         Self {
-            clients: HashMap::new(),
+            channels: Arc::new(tikv_client::pd_service_discovery::ChannelCache::default()),
             security,
             tso_discovery: Default::default(),
         }
     }
-}
 
-impl std::ops::Deref for PdChannelCache {
-    type Target = HashMap<String, TonicPdClient<Channel>>;
-    fn deref(&self) -> &Self::Target {
-        &self.clients
-    }
-}
-
-impl std::ops::DerefMut for PdChannelCache {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.clients
-    }
-}
-
-pub(super) fn tonic_client<'a>(
-    runtime: &tokio::runtime::Runtime,
-    clients: &'a mut PdChannelCache,
-    endpoint: &str,
-) -> Result<&'a mut TonicPdClient<Channel>, PdClientError> {
-    let security = Arc::clone(&clients.security);
-    match clients.clients.entry(endpoint.to_owned()) {
-        std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
-        std::collections::hash_map::Entry::Vacant(entry) => {
-            let parsed = secure_endpoint(endpoint, &security).map_err(|error| {
-                PdClientError::InvalidEndpoint {
-                    endpoint: endpoint.to_owned(),
-                    message: error.to_string(),
+    /// Called while entered into the single process runtime, including by
+    /// its discovery task. Lazy channel drivers must never belong to a
+    /// temporary or separately stopped runtime.
+    pub(super) fn channel(&self, endpoint: &str) -> Result<Channel, PdClientError> {
+        self.channels
+            .get_or_insert_with(endpoint, || {
+                secure_endpoint(endpoint, &self.security)
+                    .map(|endpoint| endpoint.connect_lazy())
+                    .map_err(|error| tonic::Status::invalid_argument(error.to_string()))
+            })
+            .map_err(|error| {
+                if error.code() == tonic::Code::Cancelled {
+                    PdClientError::Closed
+                } else {
+                    PdClientError::InvalidEndpoint {
+                        endpoint: endpoint.to_owned(),
+                        message: error.to_string(),
+                    }
                 }
-            })?;
-            let channel = {
-                let _guard = runtime.enter();
-                parsed.connect_lazy()
-            };
-            Ok(entry.insert(TonicPdClient::new(channel)))
-        }
+            })
+    }
+
+    pub(super) fn close(&self) {
+        self.channels.close();
     }
 }
 
-pub(super) fn retain_member_clients(clients: &mut PdChannelCache, members: &PdMemberSet) {
-    clients.retain(|endpoint, _| members.member_urls.contains(endpoint));
+pub(super) fn tonic_client(
+    runtime: &tokio::runtime::Runtime,
+    clients: &PdChannelCache,
+    endpoint: &str,
+) -> Result<TonicPdClient<Channel>, PdClientError> {
+    let _guard = runtime.enter();
+    Ok(TonicPdClient::new(clients.channel(endpoint)?))
 }

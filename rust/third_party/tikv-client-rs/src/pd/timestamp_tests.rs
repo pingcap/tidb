@@ -30,6 +30,7 @@ struct PdServer {
     leader_urls: Arc<std::sync::RwLock<Vec<String>>>,
     member_failures: Arc<AtomicUsize>,
     member_requests: Arc<AtomicUsize>,
+    connections: Arc<AtomicUsize>,
     stall_members: Arc<std::sync::atomic::AtomicBool>,
     stall_scans: Arc<std::sync::atomic::AtomicBool>,
     region_entered: Arc<tokio::sync::Semaphore>,
@@ -362,6 +363,7 @@ impl Server {
             leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint.clone()])),
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
+            connections: Arc::new(AtomicUsize::new(0)),
             stall_members: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stall_scans: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             region_entered: Arc::new(tokio::sync::Semaphore::new(0)),
@@ -391,12 +393,18 @@ impl Server {
             dropped: Arc::new(AtomicUsize::new(0)),
         };
         let task_service = service.clone();
+        let connections = service.connections.clone();
         let task = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(KeyspaceServer(task_service.clone()))
                 .add_service(TsoServer(task_service.clone()))
                 .add_service(task_service)
-                .serve_with_incoming(TcpListenerStream::new(listener))
+                .serve_with_incoming(TcpListenerStream::new(listener).map(move |socket| {
+                    if socket.is_ok() {
+                        connections.fetch_add(1, Ordering::SeqCst);
+                    }
+                    socket
+                }))
                 .await
                 .unwrap();
         });
@@ -1894,4 +1902,170 @@ async fn source_provider_v2_bootstraps_without_default_group() {
     let headers = tso.service.tso_headers.lock().unwrap();
     assert!(headers.iter().all(|h| h.keyspace_group_id == 4
         && h.keyspace == Some(tsopb::request_header::Keyspace::KeyspaceId(7))));
+}
+
+#[tokio::test]
+async fn source_channel_batch_membership_keyspace_and_tso_share_connection() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    let (mut cluster, _) = connection
+        .connect_cluster_for_keyspace(
+            &[pd.service.endpoint.clone()],
+            Duration::from_secs(1),
+            Some("app"),
+        )
+        .await
+        .unwrap();
+    cluster.get_timestamp().await.unwrap();
+    connection
+        .reconnect(&mut cluster, Duration::from_secs(1))
+        .await
+        .unwrap();
+    cluster.get_timestamp().await.unwrap();
+    cluster.start_close().await;
+    assert_eq!(pd.service.keyspace_loads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        pd.service.connections.load(Ordering::SeqCst),
+        1,
+        "membership, keyspace, discovery, TSO and refresh must share a channel"
+    );
+}
+
+#[tokio::test]
+async fn source_channel_batch_periodic_discovery_keeps_bootstrap_connection() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let client = Arc::new(
+        RetryClient::connect(
+            &[pd.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap(),
+    );
+    client.clone().get_timestamp().await.unwrap();
+    let previous = pd.service.member_requests.load(Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while pd.service.member_requests.load(Ordering::SeqCst) <= previous {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    client.clone().get_timestamp().await.unwrap();
+    client.close().await;
+    assert_eq!(
+        pd.service.connections.load(Ordering::SeqCst),
+        1,
+        "the retry owner must retain the bootstrap channel map"
+    );
+}
+
+#[tokio::test]
+async fn source_channel_batch_failed_or_cancelled_dial_does_not_poison_cache() {
+    use crate::pd::service_discovery::ChannelCache;
+    let cache = ChannelCache::default();
+    let pd = Server::start(Reply::Timestamp).await;
+    let endpoint = &pd.service.endpoint;
+    assert!(cache
+        .get_or_connect(endpoint, || async {
+            Err(tonic::Status::unavailable("dial failed"))
+        })
+        .await
+        .is_err());
+    let result = tokio::time::timeout(
+        Duration::from_millis(10),
+        cache.get_or_connect(endpoint, || std::future::pending()),
+    )
+    .await;
+    assert!(result.is_err());
+    let channel = cache
+        .get_or_connect(endpoint, || async {
+            SecurityManager::default()
+                .connect(endpoint, |channel| channel)
+                .await
+                .map_err(|e| tonic::Status::unavailable(e.to_string()))
+        })
+        .await
+        .unwrap();
+    pdpb::pd_client::PdClient::new(channel)
+        .get_members(GetMembersRequest::default())
+        .await
+        .unwrap();
+    cache
+        .get_or_insert_with(endpoint, || panic!("successful channel must be retained"))
+        .unwrap();
+    assert_eq!(pd.service.connections.load(Ordering::SeqCst), 1);
+    cache.close();
+    cache.close();
+    assert_eq!(
+        cache
+            .get_or_insert_with(endpoint, || panic!("closed cache must not dial"))
+            .unwrap_err()
+            .code(),
+        tonic::Code::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn source_channel_batch_close_rejects_inflight_publication() {
+    use crate::pd::service_discovery::ChannelCache;
+    let cache = ChannelCache::default();
+    let pd = Server::start(Reply::Timestamp).await;
+    let result = cache
+        .get_or_connect(&pd.service.endpoint, || async {
+            cache.close();
+            Ok(
+                tonic::transport::Channel::from_shared(pd.service.endpoint.clone())
+                    .unwrap()
+                    .connect_lazy(),
+            )
+        })
+        .await;
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Cancelled);
+    assert!(cache
+        .get_or_insert_with(&pd.service.endpoint, || panic!("closed cache"))
+        .is_err());
+}
+
+#[tokio::test]
+async fn source_channel_batch_concurrent_dials_publish_one_winner() {
+    use crate::pd::service_discovery::ChannelCache;
+    let cache = ChannelCache::default();
+    let a = Server::start(Reply::Timestamp).await;
+    let b = Server::start(Reply::Timestamp).await;
+    // Both calls enter construction before either may publish. The second
+    // candidate deliberately addresses another fixture so observed RPC peers
+    // prove that both returned handles use the winner, not their own candidate.
+    let barrier = tokio::sync::Barrier::new(2);
+    let dial = |endpoint: String| {
+        let barrier = &barrier;
+        async move {
+            barrier.wait().await;
+            tonic::transport::Channel::from_shared(endpoint)
+                .unwrap()
+                .connect()
+                .await
+                .map_err(|e| tonic::Status::unavailable(e.to_string()))
+        }
+    };
+    let (first, second) = tokio::join!(
+        cache.get_or_connect("same-discovery-key", || dial(a.service.endpoint.clone())),
+        cache.get_or_connect("same-discovery-key", || dial(b.service.endpoint.clone())),
+    );
+    for channel in [first.unwrap(), second.unwrap()] {
+        pdpb::pd_client::PdClient::new(channel)
+            .get_members(GetMembersRequest::default())
+            .await
+            .unwrap();
+    }
+    let counts = (
+        a.service.member_requests.load(Ordering::SeqCst),
+        b.service.member_requests.load(Ordering::SeqCst),
+    );
+    assert!(
+        matches!(counts, (2, 0) | (0, 2)),
+        "only the published winner serves both RPCs: {counts:?}"
+    );
+    cache.close();
 }

@@ -1,6 +1,6 @@
 # Audit and remove Go/Rust structural mismatches
 
-This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [session migration batch](parity/current-audit/session-migration-batch.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
+This living ExecPlan follows root PLANS.md. Use the [current audit index](parity/current-audit/README.md), [finding register](parity/current-audit/structural-findings.json) and [structural batch map](parity/current-audit/remaining-batches.md) for current state. Historical sections below retain dated evidence; their counts are not current. Latest implementation: [shared PD channel batch](pd-channel-batch-execplan.md). Latest cleanup: [test-build plan](test-build-cleanup-execplan.md).
 
 Use the [current audit index](parity/current-audit/README.md) for publication policy and access status. Preserve concurrent changes in the existing Cloud checkouts and run the actual locked-build commit hook.
 
@@ -2606,3 +2606,9 @@ These are existing-owner repairs; complete package and lazy V2/GC obligations re
 ## Deferred pessimistic uniqueness batch
 
 T01/N03 share setting selection, table/native flags, per-key locking, successful-stage preservation, savepoint refusal and terminal DML abort. The [batch plan](deferred-uniqueness-batch-execplan.md) and [validation](parity/current-audit/deferred-uniqueness-batch-validation.json) record 63 distinct Rust cases and 23 TCP assertions passing after three baseline Rust and thirteen TCP failures. Both parents remain partial; counts remain 86 tracked, 30 repaired and 56 unresolved. Native pins are unchanged. Full packages, multi-node TiKV and performance remain unverified.
+
+
+## PD endpoint-channel ownership batch
+
+
+P03/P06 now share native and adapter metadata, keyspace, discovery and TSO channels through one endpoint owner. The adapter removes its private discovery runtime; the process runtime drives idle discovery and joins the task on close. The [batch plan](pd-channel-batch-execplan.md) and [validation](parity/current-audit/pd-channel-batch-validation.json) retain four baseline socket-count failures and final gates. Complete package, follower/forwarding, health, live-cluster and performance obligations remain unaccepted. Counts stay 86 tracked, 30 repaired and 56 unresolved. Concurrent integration commit f29d961bad is preserved.

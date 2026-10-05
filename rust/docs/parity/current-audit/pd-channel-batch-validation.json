@@ -1,0 +1,152 @@
+{
+  "integration_start": "f29d961bad2f55af422480d78c674d0d6ad3da4f",
+  "concurrent_commit_preserved": "f29d961bad2f55af422480d78c674d0d6ad3da4f",
+  "native_base": "bc8cca3fea4f741e68a41b124f28164604a57ee2",
+  "native_commit": "06b4ccc2735ecf89ed57136241cb7b7d204d6c07",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "pd_module": "v0.0.0-20260805103528-afa43111d149",
+  "findings": [
+    "P03",
+    "P06"
+  ],
+  "complete_package_acceptance": false,
+  "implemented": [
+    "Discovery-owned exact-endpoint channel map shared by native membership, keyspace metadata, service/group discovery and TSO streams; bootstrap/refresh retain the same map.",
+    "Successful concurrent dials publish one winner; failures and cancellation leave the cache reusable; close rejects in-flight publication and releases retained handles.",
+    "TiDB adapter uses the same native channel owner for metadata, periodic discovery and TSO instead of three separate construction paths.",
+    "One continuously polled process runtime drives channels and a canceled/joined discovery task while the synchronous command thread is idle.",
+    "Channels remain cached through membership refresh until owner close, matching Go serviceDiscovery.clientConns."
+  ],
+  "removed": [
+    "Duplicate native keyspace/channel construction",
+    "Adapter metadata-only protobuf-client cache and membership-only eviction",
+    "Independent TSO/discovery channel construction",
+    "Private discovery OS thread and runtime"
+  ],
+  "validation": {
+    "native_before": {
+      "command": "CARGO_TARGET_DIR=/workspace/tidb/rust/target CARGO_BUILD_JOBS=1 cargo test --locked -p tikv-client --lib source_channel_batch",
+      "cwd": "/workspace/client-rust",
+      "failed": 2,
+      "passed": 0,
+      "observed_connections": [
+        12,
+        12
+      ],
+      "expected_connections": 1,
+      "log": "native-before.log"
+    },
+    "tidb_before": {
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-pd-client source_channel_batch",
+      "cwd": "/workspace/tidb/rust",
+      "failed": 2,
+      "passed": 0,
+      "observed_connections": [
+        3,
+        4
+      ],
+      "expected_connections": 1,
+      "log": "tidb-before.log"
+    },
+    "native_pd": {
+      "command": "CARGO_TARGET_DIR=/workspace/tidb/rust/target CARGO_BUILD_JOBS=1 cargo test --locked -p tikv-client --lib pd::",
+      "cwd": "/workspace/client-rust",
+      "passed": 172,
+      "failed": 0,
+      "log": "native-pd.log"
+    },
+    "native_all_targets": {
+      "command": "CARGO_TARGET_DIR=/workspace/tidb/rust/target CARGO_BUILD_JOBS=1 cargo check --locked -p tikv-client --all-targets",
+      "exit": 0,
+      "log": "native-check.log"
+    },
+    "tidb_pd": {
+      "command": "cargo test --locked -p tidb-pd-client",
+      "cwd": "/workspace/tidb/rust",
+      "unit_passed": 27,
+      "integration_passed": 54,
+      "failed": 0,
+      "ignored": 1,
+      "ignored_reason": "existing live-PD etcd case requires TIDB_ETCD_PROBE_PD",
+      "log": "tidb-pd-confirmed.log"
+    },
+    "tidb_all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-pd-client -p tidb-txnkv --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "exit": 0,
+      "log": "tidb-check.log"
+    },
+    "lint": {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "exit": 0,
+      "log": "lint.log"
+    },
+    "publication": {
+      "status": "final actual hook, fresh locked server build, push and remote verification recorded after commit in /workspace/.cloud-setup/pd-channel-batch/final-handoff.json"
+    },
+    "native_publication": {
+      "commit": "06b4ccc2735ecf89ed57136241cb7b7d204d6c07",
+      "locked_build_command": "cargo build --locked -p tidb-server",
+      "locked_build_cwd": "/workspace/tidb/rust",
+      "locked_build_exit": 0,
+      "build_log": "native-prepush-build.log",
+      "push_command": "git push origin HEAD:refs/heads/master",
+      "push_exit": 0,
+      "remote_verified": true
+    },
+    "sync": {
+      "command": "CARGO_TARGET_DIR=/workspace/tidb/rust/target CARGO_BUILD_JOBS=1 bash rust/scripts/sync-tikv-client-rs.sh",
+      "exit": 0,
+      "log": "sync.log",
+      "changed_files_match_patched_scratch": true,
+      "repeated_sync_unchanged": true
+    },
+    "rust_total_passed": 253
+  },
+  "initial_failures": [
+    "The first native invocation used a new local target instead of the existing shared target and was interrupted. Only its generated outputs were removed.",
+    "The first shared-target native baseline link failed with linker signal 7 under disk pressure; identified failed output and inactive executables were journaled/pruned, then the same baseline reached both expected behavior failures.",
+    "First sync had already completed when its surrounding command was interrupted. A second maintained sync succeeded unchanged; its redundant adapter patch check correctly refused an already-applied patch. Exact byte comparison verified all adapter changes, and a cached full PD rerun then confirmed exit zero."
+  ],
+  "remaining": [
+    "Follower-proxy/forwarding consumers, member health, complete grpcutil/transport options and original package obligations remain unresolved.",
+    "No complete source package, full Go/native suites, live multi-node failover/TLS or performance acceptance is claimed.",
+    "The other 54 unresolved roots were not freshly reproduced."
+  ],
+  "cloud_logs": "/workspace/.cloud-setup/pd-channel-batch",
+  "cleanup_journals": [
+    "unused-target-cleanup.json",
+    "artifact-cleanup.json"
+  ],
+  "self_review": [
+    "All selected production callers migrate before duplicate channel/runtime code is removed.",
+    "Cache close is terminal; asynchronous dial does not hold a map lock and cannot resurrect a closed owner.",
+    "No generated bindings, dependency declarations or lockfiles were hand-edited.",
+    "Existing gRPC fixtures were extended with real socket identities; existing Go-contract tests remain."
+  ],
+  "go_evidence": [
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil_test.go",
+      "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b"
+    }
+  ],
+  "environment": {
+    "shared_target": "/workspace/tidb/rust/target",
+    "env_helper_updated": true,
+    "metadata_verified_for_both_repos": true
+  }
+}

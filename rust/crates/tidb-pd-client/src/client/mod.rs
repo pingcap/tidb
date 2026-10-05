@@ -44,7 +44,6 @@ use crate::{
     PdOperation, PdRegion, PdStore,
 };
 
-use failover::retain_member_clients;
 use failover::PdChannelCache;
 use topology::invalid_topology;
 
@@ -263,7 +262,8 @@ impl PdClient {
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker_seeds = seeds.clone();
         let worker = std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
                 .enable_all()
                 .build()
             {
@@ -294,10 +294,6 @@ impl PdClient {
             if ready_tx.send(Ok(Arc::clone(&state))).is_err() {
                 return;
             }
-            retain_member_clients(
-                &mut clients,
-                &state.read().expect("PD state lock poisoned").members,
-            );
             run_worker(runtime, clients, receiver, timeout, state, shutdown_rx);
         });
 

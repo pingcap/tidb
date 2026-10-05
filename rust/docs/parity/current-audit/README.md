@@ -7,11 +7,11 @@ Latest connected repair: [deferred pessimistic uniqueness](deferred-uniqueness-b
 ## Work from these owners
 
 - [Structural batch map](remaining-batches.md): every unresolved finding assigned once, shared prerequisites and grouped validation.
-- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../deferred-uniqueness-batch-execplan.md): implementation, gates and recovery.
+- [Living full ExecPlan](../../full-structural-parity-execplan.md) and [current batch plan](../../pd-channel-batch-execplan.md): implementation, gates and recovery.
 - [Coverage matrix](structural-coverage.md): inventory scope and explicitly unreviewed packages. Regenerate inventory with `python3 rust/scripts/inventory-go-rust-parity.py --go-ref origin/master`; inventory regeneration never accepts a package.
-- [Validation receipt](deferred-uniqueness-batch-validation.json): exact source/log identities and verification limits.
+- [Validation receipt](pd-channel-batch-validation.json): exact source/log identities and verification limits.
 
-Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `bc8cca3fea4f741e68a41b124f28164604a57ee2` at this checkpoint.
+Fresh Go comparison: `93a01d31f6da205ae4bf376825293903a6899fdb`, selecting client-go `v2.0.8-0.20260928031501-8edb23f6c7ee`. Derive external pins from that master's go.mod, not the editable integration branch or an older oracle checkout. Native client master is `06b4ccc2735ecf89ed57136241cb7b7d204d6c07` at this checkpoint.
 
 A complete upstream package, including original tests, generated/platform/build inputs and fixtures, is the minimum acceptance unit. Search hits, a passing subset and retired Rust-only adapter tests do not discharge those obligations. The complete inventories are snapshots, not proof that every semantic mismatch is known.
 
@@ -142,3 +142,5 @@ Six test binaries, three source/doc-only assertions and two canned DDL self-chec
 The canonical-variance continuation of [harness retirement](test-harness-retirement-validation.json) removes four compatibility modules, test-only state/finalizer adapters, nine duplicate cases and three shell snippet self-tests. The retained live suite owns Go vectors; ordinary reset is preserved. Fourteen selected aggregate cases pass; finding statuses and prior failure dispositions stay unchanged.
 
 The [window-model cleanup](test-harness-retirement-validation.json) retires six unused source modules and 15 model tests. Forty-three useful vectors execute through the live window suite in both modes, across chunks and reopen; all 14 cases pass. Unused-layout checks are retired, while Go memory/accounting obligations and finding statuses remain unchanged.
+
+The PD channel batch migrates metadata, keyspace, discovery and TSO consumers together and removes the private adapter discovery runtime. See [validation](pd-channel-batch-validation.json). P03/P06 remain partial; counts remain 86 tracked / 30 repaired / 56 unresolved. Cloud `env.sh` now exports `CARGO_TARGET_DIR=/workspace/tidb/rust/target` so native checks and maintained regeneration reuse the installed cache.

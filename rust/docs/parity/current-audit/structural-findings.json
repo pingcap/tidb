@@ -586,19 +586,19 @@
       "id": "P03",
       "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "**P2; partially repaired:** TiDB now consumes native GetClusterInfo service-mode discovery, independent TSO group routing and both wire protocols. An owned periodic discovery worker is independent of metadata commands, bounded by cancellation, and joined on shutdown. Empty/error modes cannot silently select classic PD; API mode uses group primary and legacy default-primary policy. Native V2 initialization now loads its requested metadata before discovering the timestamp group, so startup no longer requires a default group. One loaded snapshot supplies discovery and codec publication. Complete discovery/root/TSO package acceptance and follower/health/channel owners remain open.",
-      "rust_evidence": "`rust/crates/tidb-pd-client/src/{client/worker.rs,client/failover.rs,tso.rs}`; native `src/pd/service_discovery.rs`; [batch validation](pd-service-discovery-batch-validation.json); [provider/bootstrap validation](pd-provider-bootstrap-batch-validation.json)",
+      "finding": "**P2; partially repaired:** TiDB now consumes native GetClusterInfo service-mode discovery, independent TSO group routing and both wire protocols. An owned periodic discovery worker is independent of metadata commands, bounded by cancellation, and joined on shutdown. Empty/error modes cannot silently select classic PD; API mode uses group primary and legacy default-primary policy. Native V2 initialization now loads its requested metadata before discovering the timestamp group, so startup no longer requires a default group. One loaded snapshot supplies discovery and codec publication. Complete discovery/root/TSO package acceptance and follower/health/channel owners remain open. Membership, keyspace RPCs, service/group discovery and TSO now share a discovery-owned endpoint channel map in native and TiDB. Bootstrap and periodic refresh retain connections; failed/canceled dials remain retryable, concurrent publication selects one winner, and close rejects late publication. TiDB removes its separate discovery runtime and drives all channels plus the joined discovery task from one process runtime. See pd-channel-batch-validation.json; remaining follower/health/transport and complete-package obligations remain partial.",
+      "rust_evidence": "`rust/crates/tidb-pd-client/src/{client/worker.rs,client/failover.rs,tso.rs}`; native `src/pd/service_discovery.rs`; [batch validation](pd-service-discovery-batch-validation.json); [provider/bootstrap validation](pd-provider-bootstrap-batch-validation.json); [channel ownership validation](pd-channel-batch-validation.json)",
       "go_owner": "Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode.",
-      "review_basis": "Cloud provider/bootstrap batch from TiDB 85abcb3c23 and native bb8206e7d080 against refreshed unchanged Go master 93a01d31f6 and PD afa43111d149. Four grouped regressions fail before; 167 PD plus 40 keyspace tests pass after. Native bc8cca3fea4f741e68a41b124f28164604a57ee2. P03/P06 remain partial; the other 54 unresolved roots were not freshly reproduced."
+      "review_basis": "Cloud PD channel batch from TiDB f29d961bad and native bc8cca3fea4f against freshly fetched Go 93a01d31f6 / PD afa43111d149. Four socket-identity regressions fail before repair; native PD suite passes 172 cases. Exact adapter/build/publication gates are in pd-channel-batch-validation.json. Parent findings stay partial; other54 roots retain prior evidence."
     },
     {
       "id": "P06",
       "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "**P2; partially repaired:** native batching, deadlines, cancellation and joined current/retired stream ownership now compose GetClusterInfo, independent keyspace-group discovery and PD/TSO wire routing. Periodic refresh retains healthy routes, retires changed routes, rejects stale revisions and joins on close. V2 metadata configures routing before timestamp initialization; no temporary default-group route or duplicate metadata load remains. Metadata leadership publishes independently of TSO discovery errors. GetMinTS now follows provider selection: ordinary TSO in classic mode, API minimum in microservice mode, and ordinary TSO fallback only for Unimplemented. Optional metadata error headers no longer panic; explicit errors remain errors. Follower-proxy/forwarding consumers and complete health/channel/grpcutil ownership remain open; no complete parent-package acceptance is claimed.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`; [explicit shutdown receipt](../../pd-shutdown-ownership-execplan.md); `src/pd/service_discovery.rs`, `cluster.rs`, `retry.rs`; [batch validation](pd-service-discovery-batch-validation.json); [provider/bootstrap validation](pd-provider-bootstrap-batch-validation.json)",
+      "finding": "**P2; partially repaired:** native batching, deadlines, cancellation and joined current/retired stream ownership now compose GetClusterInfo, independent keyspace-group discovery and PD/TSO wire routing. Periodic refresh retains healthy routes, retires changed routes, rejects stale revisions and joins on close. V2 metadata configures routing before timestamp initialization; no temporary default-group route or duplicate metadata load remains. Metadata leadership publishes independently of TSO discovery errors. GetMinTS now follows provider selection: ordinary TSO in classic mode, API minimum in microservice mode, and ordinary TSO fallback only for Unimplemented. Optional metadata error headers no longer panic; explicit errors remain errors. Follower-proxy/forwarding consumers and complete health/channel/grpcutil ownership remain open; no complete parent-package acceptance is claimed. Membership, keyspace RPCs, service/group discovery and TSO now share a discovery-owned endpoint channel map in native and TiDB. Bootstrap and periodic refresh retain connections; failed/canceled dials remain retryable, concurrent publication selects one winner, and close rejects late publication. TiDB removes its separate discovery runtime and drives all channels plus the joined discovery task from one process runtime. See pd-channel-batch-validation.json; remaining follower/health/transport and complete-package obligations remain partial.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`; [explicit shutdown receipt](../../pd-shutdown-ownership-execplan.md); `src/pd/service_discovery.rs`, `cluster.rs`, `retry.rs`; [batch validation](pd-service-discovery-batch-validation.json); [provider/bootstrap validation](pd-provider-bootstrap-batch-validation.json); [channel ownership validation](pd-channel-batch-validation.json)",
       "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; those prerequisites alone did not accept parent packages or close P03/P06/P07. P07's subsequent owned-request repair is recorded separately; P03/P06 remain open/partial. The later explicit-shutdown repair composes cancellation, request admission and joined current/retired streams in the existing native owner. Preserve remaining source-dependent Idle/demand reconnection, setup/readiness and TLS obligations; broader parent-package acceptance remains open. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
-      "review_basis": "Cloud provider/bootstrap batch from TiDB 85abcb3c23 and native bb8206e7d080 against refreshed unchanged Go master 93a01d31f6 and PD afa43111d149. Four grouped regressions fail before; 167 PD plus 40 keyspace tests pass after. Native bc8cca3fea4f741e68a41b124f28164604a57ee2. P03/P06 remain partial; the other 54 unresolved roots were not freshly reproduced."
+      "review_basis": "Cloud PD channel batch from TiDB f29d961bad and native bc8cca3fea4f against freshly fetched Go 93a01d31f6 / PD afa43111d149. Four socket-identity regressions fail before repair; native PD suite passes 172 cases. Exact adapter/build/publication gates are in pd-channel-batch-validation.json. Parent findings stay partial; other54 roots retain prior evidence."
     },
     {
       "id": "P07",
@@ -792,8 +792,8 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "receipt": "deferred-uniqueness-batch-validation.json",
-    "scope": "Shared pessimistic uniqueness setting, table flags, lock selection, statement preservation and abort/savepoint policy for T01/N03. Parent dispositions unchanged."
+    "receipt": "pd-channel-batch-validation.json",
+    "scope": "B01 shared PD endpoint-channel ownership across membership, keyspace, discovery, timestamp streams, runtime and close. P03/P06 remain partial."
   },
   "latest_test_cleanup": {
     "receipt": "orphan-test-cleanup-validation.json",
@@ -1303,6 +1303,19 @@
       },
       "receipt": "deferred-uniqueness-batch-validation.json",
       "scope": "Shared pessimistic uniqueness setting, table flags, lock selection, statement preservation and abort/savepoint policy for T01/N03. Parent dispositions unchanged."
+    },
+    {
+      "integration_start": "f29d961bad2f55af422480d78c674d0d6ad3da4f",
+      "findings": [
+        "P03",
+        "P06"
+      ],
+      "statuses": {
+        "P03": "partial",
+        "P06": "partial"
+      },
+      "receipt": "pd-channel-batch-validation.json",
+      "scope": "B01 shared PD endpoint-channel ownership across membership, keyspace, discovery, timestamp streams, runtime and close. P03/P06 remain partial."
     }
   ],
   "execution_batches": {

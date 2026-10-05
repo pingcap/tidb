@@ -341,6 +341,7 @@ impl RetryClient<Cluster> {
             .unwrap()
             .expect("successful PD initialization");
         let mut client = Self::new_with_cluster(connection.security_manager(), timeout, cluster);
+        client.connection = connection;
         client.initial_keyspace = initial_keyspace;
         client.start_discovery().await;
         Ok(client)
