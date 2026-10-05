@@ -91,16 +91,3 @@ fn is_retryable_ddl_cancel_err_classifies_only_transient_failures() {
     let transient = std::io::Error::other("mock failed admin command on ddl jobs");
     assert!(is_retryable_ddl_cancel_err(&transient));
 }
-
-// --- TestBuildQueryStringFromJobs / TestMergeCreateTableJobsOfSameSchema /
-//     TestMergeCreateTableJobs / TestIsUndroppableTable
-//     (pkg/ddl/executor_nokit_test.go:83 / :126 / :146 / :279) ---
-//
-// Already transcreated WITH their upstream tests in `tidb-exec`
-// (`src/ddl_job_merge.rs`: `build_query_string_from_jobs`,
-// `merge_create_table_jobs_of_same_schema`, `merge_create_table_jobs`,
-// `is_undroppable_table` plus a `tests` module mirroring every Go case,
-// including the max-batch-size-8 split). `tidb-exec` depends on THIS crate,
-// so the tests cannot be mirrored here without a dependency cycle; they run
-// under `-p tidb-exec`, which the b105 receipt records as an out-of-gate
-// verification. No duplicate Rust test is registered for them in this gate.

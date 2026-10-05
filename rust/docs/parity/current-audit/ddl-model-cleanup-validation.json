@@ -1,0 +1,183 @@
+{
+  "base": "1304987c5b34ca8ed87328acf57605fd6e90561e",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire five disconnected DDL/restore models, three private harnesses and stale coverage claims; preserve the mixed cancellation harness and concurrent MDL changes.",
+  "modules": [
+    "ddl_job_comments",
+    "ddl_job_merge",
+    "placement_labels",
+    "schematracker_info_store",
+    "tiflash_recorder"
+  ],
+  "removed": [
+    {
+      "path": "rust/crates/tidb-exec/src/ddl_job_comments.rs",
+      "lines": 227,
+      "sha256": "34af09fc5a831c8af15082065093d605933a7de950aaf3dbe8a108e1d82194f1",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/ddl_job_merge.rs",
+      "lines": 866,
+      "sha256": "2f2156b1f0f0536c92f1ca6da70f9b54aefae07f034aa94b396ab0714f21d956",
+      "tests": [
+        "test_build_query_string_from_jobs",
+        "test_merge_create_table_jobs_of_same_schema",
+        "test_merge_create_table_jobs_zero_or_one_job",
+        "test_merge_create_table_jobs_non_create_table_are_not_merged",
+        "test_merge_create_table_jobs_pre_allocated_ids_are_not_merged",
+        "test_merge_create_table_jobs_foreign_keys_are_not_merged",
+        "test_merge_create_table_jobs_different_schema_are_not_merged",
+        "test_merge_create_table_jobs_max_batch_size_8",
+        "test_is_undroppable_table"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/placement_labels.rs",
+      "lines": 72,
+      "sha256": "b3d24174e831e6d55936f53ae3c77eca3aa5849a3166baa9dc42247438f4b73d",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/schematracker_info_store.rs",
+      "lines": 330,
+      "sha256": "95febbffae4381b384d368d275c3b224b30aa2c82d84f71264ff208de84cd983",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/ddl_job_comments_source.rs",
+      "lines": 184,
+      "sha256": "d086c2983a04272b0dde9bc750dc80ba5d1ede8fa8885fe2e81471c3680591ff",
+      "tests": [
+        "show_job_comments_match_source_vectors",
+        "show_job_comments_preserves_analyze_and_next_gen_boundaries",
+        "show_subjob_comments_match_source_vectors"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/placement_labels_source.rs",
+      "lines": 80,
+      "sha256": "a8e648900401bca66dc5a990e516d4b661ae3c751560b31acbe4e6f0d7b030be",
+      "tests": [
+        "placement_labels_deduplicate_and_sort_rows",
+        "placement_labels_preserve_empty_strings_as_values"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/schematracker_info_store_source.rs",
+      "lines": 203,
+      "sha256": "7a1c3a8cb45f8508d69e2799e4c47502d7863ab1572c47a6b84f3ee1afaeec8d",
+      "tests": [
+        "source_lower_case_table_names_selects_the_folding_rule",
+        "source_delete_tables_and_schemas"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/tiflash_recorder.rs",
+      "lines": 391,
+      "sha256": "72a637f5e1df4c04c4e73a86cb757910fc2cdf43da6538667c34d2e79bc23c4d",
+      "tests": [
+        "recorder",
+        "gen_sql",
+        "gen_reset_sql"
+      ]
+    }
+  ],
+  "source_test_lines_removed": 2353,
+  "tests_removed": 19,
+  "verification": {
+    "retained_inputs_unchanged": 3564,
+    "retained_changed": [
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-executor/src/lib.rs",
+      "rust/crates/tidb-executor/tests/ddl_executor_nokit_killflag_source.rs"
+    ],
+    "mixed_harness_four_real_tests_unchanged": true,
+    "incoming_mdl_files_byte_identical": [
+      "rust/crates/tidb-executor/src/driver/catalog.rs",
+      "rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs",
+      "rust/crates/tidb-session/src/dispatch.rs",
+      "rust/crates/tidb-session/src/lib.rs",
+      "rust/crates/tidb-session/src/tests_mdl_related.rs"
+    ]
+  },
+  "concurrent_commits_preserved": [
+    "568b317459b5aad7f3d128d768d5c78bbb18c7d8",
+    "1304987c5b34ca8ed87328acf57605fd6e90561e"
+  ],
+  "concurrent_file_sha256": {
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "c9e9c49c8ed979b32467667a27f5d10c83f28413a7a162efeffb6f2d9803a1a4",
+    "rust/crates/tidb-server/src/cluster_session_node/schema_sync.rs": "59eb39a47c5e4bd39f8dc2e41aed4fc8399f1dc772a4a63a0560fd1ec4e1c310",
+    "rust/crates/tidb-session/src/dispatch.rs": "6174c2b7f2b2b9b456c69bb0da4d020aeb4ab1b6c5488df06e98db0260c976d1",
+    "rust/crates/tidb-session/src/lib.rs": "e975e7475527b865c4a0ef10cbc4d41a1f4e7485a372a60b5b28dc18f261758a",
+    "rust/crates/tidb-session/src/tests_mdl_related.rs": "8cc0999666ad320da6f784ee27c218f88bae315b71090b85f1a993e9276f6ef9"
+  },
+  "registration": {
+    "tidb-exec": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs",
+      "modules": 95,
+      "sha256": "7981d5b19d6cff90fcc97a24c27b7f94d7af5fa938ecc4bc1d3dfe4cdf5ce59a",
+      "fresh": true
+    },
+    "tidb-executor": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/bd3f0cdc310a08f3/out/all_tests.rs",
+      "modules": 79,
+      "sha256": "31f1513080cb6a7cf9062ced164d59fd0861306ce5e92473ac69d51b270acb81",
+      "fresh": true
+    }
+  },
+  "go_artifacts": {
+    "pkg/ddl/job_submitter.go": "5e8bbaa1d62c106a8926f12628663f9311428b022c9d3377505455e438df0f6f",
+    "pkg/ddl/executor_nokit_test.go": "19c6927e658f2000152f940ca3221014ab040b37571a55df615b43abe4f51722",
+    "pkg/executor/show_ddl_jobs.go": "91925a231e5775b5027e39d41ebec245c531cb48cb1edd91780566071f538bc6",
+    "pkg/executor/show_ddl_jobs_test.go": "99fc81dd14f73a8a33bb68d8ebe6c966fa19aff43078f11837015ed77f931255",
+    "pkg/executor/show_placement.go": "6696941ed598c0df372b39da3921a1b1392bd80a96d4fe2c1c2670496d535fef",
+    "pkg/executor/show_placement_labels_test.go": "c620c4b4c48209a8d7425857356a5ab7b3639ec38a861bd2833fd6830df529cd",
+    "pkg/ddl/schematracker/info_store.go": "1bd37cda68bcfefa503ff62c7f05da5c068e5d527bb3020fb3b645675838b353",
+    "pkg/ddl/schematracker/info_store_test.go": "8e955e7ddd3684064b7b4f906f004db2ae54c9d9810f0b02d77050738e4ccf74",
+    "br/pkg/restore/tiflashrec/tiflash_recorder.go": "53521d21e6b8add03213237f1823f5aa863832e1ed58a4c421a9a05bf53e5e9d",
+    "br/pkg/restore/tiflashrec/tiflash_recorder_test.go": "b1a42de0531343a4d57cdeef051036798aa620a9a041e565ca55200acfbdc950",
+    "br/pkg/restore/tiflashrec/BUILD.bazel": "8e3a65104449134dbfdbf2dbd0cf32b140342ab25dfa1c2f240af1c7aea8af08"
+  },
+  "ownership": [
+    "Rust reference traces contain only module exports, private harnesses and stale comments. No production consumer or reexport remains dependent on the removed modules.",
+    "Go job_submitter.go owns the real job batch/channel lifecycle. The disconnected Rust JobWrapper/token model never participated in durable cluster_ddl or ddl_job_submit; those owners remain unchanged.",
+    "Go SHOW DDL formats real model.Job/ReorgMeta, and placement label formatting has a real SQL consumer. Their disconnected Rust copies supplied no runtime coverage.",
+    "Go InfoStore belongs to the schematracker/checker/DDL owner. The Rust copy had no such consumer; its original Go tests remain obligations.",
+    "TiFlashRecorder had only internal tests and no restore consumer. Retiring it does not establish BR restore package acceptance.",
+    "The mixed executor harness keeps all four real DDL/SqlKiller test bodies byte-identical; only its stale coverage footer is removed."
+  ],
+  "validation": {
+    "all_targets": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "incoming_mdl": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib tests_mdl_related:: -- --test-threads=1",
+      "result": "2 passed; 0 failed; 0 ignored; 2025 filtered out"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "publication": "Actual normal precommit must pass cd rust && cargo build --locked -p tidb-server; repeat immediately before push. Post-commit results are recorded in the external final-handoff.json."
+  },
+  "limits": [
+    "86 tracked, 30 repaired, 56 unresolved: no finding closure or complete Go-package acceptance.",
+    "No broad runtime sweep, full Go suite, live TiKV/BR suite or benchmark; no measured speedup.",
+    "Tests retire with disconnected owners; Go/Rust naming differences alone do not justify deleting correctness coverage."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/ddl-model-cleanup",
+  "log_sha256": {
+    "all-target-check.log": "88f314cc6fe608e4599e516af429ceb59a449393225a3eba3ba5ea53e1285465",
+    "mdl-tests.log": "f553d8109ef21ea703d3e1cf0b02db5e02c958a4d70d1993d07e6d84f4e48be8",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "reference-traces.json": "1e86b0ae1f1b8b99a0c358a11fcd3eeb681d6508f5997b57e82be5a1bc0f1099",
+    "retained-verification.json": "e9d5b13527f5df692b2ac3bb54d5c611493c521ff02b97ed3c395d0668c8ad8e"
+  }
+}

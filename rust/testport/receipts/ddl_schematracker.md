@@ -29,11 +29,10 @@ pinned Go-master artifacts.
 This package is Go-native DDL infrastructure. `SchemaTracker` mutates
 TiDB model metadata through parser ASTs, infoschema, session contexts,
 restricted SQL execution, auto-ID allocators, placement/storage attributes,
-and the live DDL executor. Rust has a deliberately partial
-`tidb-exec::schematracker_info_store` seed and source-shaped tests, but no
-dependency-closed tracker/checker/DDL owner. The Rust module documents its
-missing `dm_tracker.go` and `checker.go` dependencies, so no Rust-only
-behavior was removed and no speculative partial implementation was added.
+and the live DDL executor. The unused Rust InfoStore copy and its private
+harness have been retired. They had no tracker/checker/DDL consumer and did not
+establish package integration. Preserve the original Go obligations and consult
+the current register for actual durable DDL owners.
 
 ## Validation and risk
 
@@ -45,13 +44,9 @@ failpoint-aware Go package suite passes:
     ./tools/check/failpoint-go-test.sh ./pkg/ddl/schematracker -count=1
     # PASS; ok github.com/pingcap/tidb/pkg/ddl/schematracker 1.375s
 
-The Rust source-shaped InfoStore test file is not registered as a Cargo test
-target (`cargo ... test --test schematracker_info_store_source` reports “no
-test target”), so it was not claimed as a passing Rust gate. Rust formatting
-and `git diff --check` pass; no Go/Bazel source changed, so
-`make bazel_prepare` is not required. The main compatibility risk is the
-existing explicit seed boundary: a future Rust tracker must first provide the
-DDL executor/session/infoschema graph before package ownership can be claimed.
+The historical Go run above is retained as dated evidence. The unused Rust
+InfoStore model and harness were removed later; no current Rust tracker package
+acceptance follows from that old boundary audit.
 
 ## Outcome
 

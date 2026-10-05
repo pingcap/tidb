@@ -38,8 +38,6 @@ this is not a repository-wide readiness claim.
 - `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/mathutil` — empty; Go source is unchanged at the current authority.
 - `cargo test -q -p tidb-util mathutil --lib --locked -- --test-threads=1` —
   passed; exactly eight tests ran.
-- `cargo test -q -p tidb-exec ddl_job_merge --lib --locked --
-  --test-threads=1` — passed; nine focused consumer tests ran.
 - `cargo check -p tidb-util -p tidb-exec --all-targets --locked`,
   `cargo check -q -p tidb-expr -p tidb-executor -p tidb-session -p tidb-stats
   --all-targets --locked`, `cargo fmt --all --check`, and `git diff --check` —
