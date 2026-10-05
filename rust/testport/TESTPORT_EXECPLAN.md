@@ -1852,7 +1852,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 - 2026-09-04 (planner identifier keys + NUL-padding gate): extended finding
   #196 to the planner — `SchemaTableKey`/`TableAliasKey` and the
   view-recursion, hint-table, alias-collision, and `USING`-column key sites
-  (`schema_table_key.rs`, `plan_builder/from.rs`) now lowercase with the Go
+  (the retained `plan_builder/from.rs` owner) now lowercase with the Go
   simple mapping, matching `ast.CIStr.L` (`ast/model.go:302`,
   `schema_table_key.go` `.L` keys); tidb-planner gains the `tidb-mysql`
   dependency. The CHAR-width landing then exposed the evaluator's
@@ -9456,17 +9456,6 @@ risks without claiming repository-wide parity.
   regression failed before the fix with exactly one diagnostic and passes
   after; all eight package owner tests and the planner library check pass.
   Evidence is recorded in `receipts/planner_cascades_base.md`.
-- 2026-09-08 (`pkg/planner/cascades/util` return contract): current Go master
-  `aec988ea500d` was re-read as the complete two-artifact, 61-line package,
-  including its single production file, BUILD target, and absence of tests,
-  fixtures, generated/platform variants, and nested packages. The complete
-  planner string-writer owner and binder diagnostic consumer were inventoried.
-  The one Rust-only `#[must_use]` diagnostic on the Go-shaped `NewStrBuffer`
-  constructor was removed; Rust-native writer ownership conveniences remain
-  annotated. The focused deny-on-discard regression failed before the fix with
-  exactly one diagnostic and passes after; the planner library check and Ready
-  lint pass. Evidence is recorded in
-  `receipts/planner_cascades_util.md`.
 - 2026-09-08 (`pkg/planner/util/costusage` return contracts): current Go master
   `aec988ea500d` was re-read as the complete two-artifact, 210-line package,
   including its cost flags, tracing/arithmetic APIs, option methods, BUILD

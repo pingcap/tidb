@@ -32,76 +32,12 @@ reasoning; their old paths, line numbers and status claims are not current.
 
 ## 1. Findings, ranked by consequence
 
-### F1 — LATENT WRONG ROWS: `predicate_partition.rs::route_for` is join-type-blind and ON/WHERE-blind
+### F1 — Retired disconnected predicate router
 
-* Rust: `rust/crates/tidb-planner/src/predicate_partition.rs:161-185`
-* Go: `pkg/planner/core/operator/logicalop/logical_join.go:171-278`
-  (`LogicalJoin.PredicatePushDown`), `:1586` (`extractOnCondition`)
-
-`route_for` decides a predicate's destination from **column dependency
-alone**:
-
-```rust
-match (left, right) {
-    (true, true)  => PredicateRoute::JoinResidual,
-    (true, false) => PredicateRoute::LeftPushdown,
-    (false, true) => PredicateRoute::RightPushdown,
-    ...
-}
-```
-
-It takes no join type and no ON/WHERE flag. Go's answer to the same question
-is a five-way switch on `p.JoinType`, and the two axes it uses are exactly the
-two this function does not have:
-
-* `LeftOuterJoin` (`logical_join.go:196-215`): WHERE predicates are extracted
-  with `p.extractOnCondition(predicates, true, false)` — **derive left only**.
-  A right-only WHERE predicate is *returned upward* (`ret = append(ret,
-  rightPushCond...)`), never pushed into the right child. Conversely the ON
-  condition is pushed **right only** (`DeriveOtherConditions(..., false,
-  true)`), because a left ON condition would filter preserved rows.
-* `RightOuterJoin` (`:216-232`): the mirror image.
-* `AntiSemiJoin` (`:258-277`): `leftCond = leftPushCond` only, and Go
-  explicitly refuses to derive `is not null` for the anti side, with three
-  worked counter-examples in the comment.
-* `AntiLeftOuterSemiJoin` / `LeftOuterSemiJoin` (`:173-179`): predicate
-  simplification of `OtherConditions` is **disabled entirely**, citing
-  pingcap/tidb#9051 — the `IN (subq)` equality lives in `OtherConditions` and
-  simplifying it "would cause wrong results".
-
-Concrete divergence, if any caller ever routes on `route_for`'s answer:
-
-```sql
-CREATE TABLE t1 (a INT, b INT);
-CREATE TABLE t2 (a INT, b INT);
-INSERT INTO t1 VALUES (1,1),(2,2);
-INSERT INTO t2 VALUES (1,1);
-
-SELECT t1.a, t2.a FROM t1 LEFT JOIN t2 ON t1.b = t2.b WHERE t2.a IS NULL;
-```
-
-`t2.a IS NULL` binds only to the right child, so `route_for` answers
-`RightPushdown`. Pushed into `t2`, it selects no `t2` row, the left join
-null-extends every `t1` row, and the query returns `(1,NULL),(2,NULL)`.
-Go returns `(2,NULL)` — the classic anti-join idiom. **Two rows vs one, no
-error.**
-
-Status: **latent, not live.** `partition_predicates` is dead code today; the
-live path (§2) never asks this question. This is filed at rank 1 because the
-function's public API *invites* a caller to use its answer, and its doc
-comment describes the route as a "conservative dependency route" — which is
-true of the dependency analysis and false of the pushdown decision it is
-named for.
-
-Applied here: a type-level warning on `PredicateRoute` and on
-`partition_predicates` naming the two missing inputs, the Go switch, and the
-query above. Doc-only — the behaviour is unchanged.
-
-Recommended real fix (**not applied** — it is an API change, not a one-liner):
-give `PredicateRoute` a construction that cannot be built without a join type
-and an ON/WHERE origin, so the join-type-blind route is unrepresentable rather
-than merely documented. Applying a partial gate without the caller that
-consumes it would be guessing at the contract.
+The unused predicate_partition/typed_condition path and its private harnesses
+were removed. See [cleanup evidence](parity/current-audit/planner-private-path-cleanup-validation.json).
+Live join predicate placement remains owned by logical/join.rs and executor
+expression evaluation; this deletion does not establish full join parity.
 
 ### F2 — RANK 3: the null-rejection outer→inner conversion does not exist
 
@@ -372,11 +308,8 @@ Explicitly **not** verified:
 
 ## 6. Where a later unit should resume
 
-1. Decide `predicate_partition.rs`'s fate (F1): either delete it as dead code
-   or give it a join-type-carrying API before anything wires it up. Deleting
-   is the smaller diff and removes the hazard entirely.
-2. Diff the six unexamined `tidb-planner` rule modules against their Go
+1. Diff the six unexamined `tidb-planner` rule modules against their Go
    wrappers to confirm the §0 classification file by file.
-3. Count Go's warning-emission sites for `WHERE <int col> = <string literal>`
+2. Count Go's warning-emission sites for `WHERE <int col> = <string literal>`
    to close the 4-vs-2 gap; §4 rules out the constant propagator but does not
    name the replacement.

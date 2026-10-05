@@ -32,8 +32,7 @@ run through the repository failpoint wrapper when executed.
 ## Rust ownership and decision
 
 Rust has no dependency-closed owner for this package. Existing pieces are
-deliberately narrower: `tidb-planner::telemetry` classifies plan shapes,
-`tidb-config`/`tidb-vardef` expose the telemetry configuration variable, and
+deliberately narrower: `tidb-config`/`tidb-vardef` expose the telemetry configuration variable, and
 `tidb-server` records only bootstrap admission. None provides the global
 feature counters, SQL-backed infoschema/TTL collection, six-hour report
 window, or telemetry logger/report lifecycle.
@@ -53,7 +52,8 @@ Bazel source changed, so `make bazel_prepare` is not required.
 
 - Correctness: telemetry collection/reporting remains a known unported
   integration; no parity claim is made from the existing config or planner
-  fragments.
+  fragments. The disconnected planner telemetry model and its private tests
+  were retired; they never exercised the shared physical plan tree.
 - Compatibility: a future implementation must move session/domain access,
   metrics counters, TTL SQL, windows, and report gating as one package unit.
 - Performance: unchanged.

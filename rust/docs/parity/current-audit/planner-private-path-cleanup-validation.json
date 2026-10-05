@@ -1,0 +1,218 @@
+{
+  "base": "e0f77d1aab4ade4ca40643f709948f21cd563d2f",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire seven disconnected planner modules, eight private harnesses, obsolete writer receipt and stale predicate/model documentation.",
+  "modules": [
+    "columnar_index_extra",
+    "index_advisor_model",
+    "predicate_partition",
+    "typed_condition",
+    "schema_table_key",
+    "string_writer",
+    "telemetry"
+  ],
+  "removed": [
+    {
+      "path": "rust/crates/tidb-planner/src/columnar_index_extra.rs",
+      "lines": 282,
+      "sha256": "e35847b9102f384e30d1be9d51eb0bcbbd710f1c4fc30d55fdd7e428140cb35a",
+      "tests": [
+        "test_vector_index_extra_copies_source_fields",
+        "test_index_id_is_derived_from_retained_index_metadata",
+        "test_reference_vector_is_owned_without_normalization"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/index_advisor_model.rs",
+      "lines": 111,
+      "sha256": "0281dc1c509ed38948cf01b5d082dbe76cbd2fe67b0827cf98e17ae12e5ce951",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/predicate_partition.rs",
+      "lines": 266,
+      "sha256": "d7da4d665867de29b53636fca63b38f91e359d6a9f0e0102333d37ee994bf95d",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/typed_condition.rs",
+      "lines": 130,
+      "sha256": "e3396107559f623f9eed735cb0cd7caf983c29e2906c731ce2306e176c3b731f",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/schema_table_key.rs",
+      "lines": 122,
+      "sha256": "816cfdf770737b0b075f24d5e0fc6d701842c131478a84de800d6c10d5173f43",
+      "tests": [
+        "keys_use_the_go_simple_case_mapping"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/string_writer.rs",
+      "lines": 75,
+      "sha256": "659ca84ce02fc90d11093638829aadcf3f4373d44bdbe24142596a4ca1f48f5c",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/telemetry.rs",
+      "lines": 160,
+      "sha256": "5fdd85dc2e18a6cc982d31a20086821fc2509bb944f63c790cf79bda78209d03",
+      "tests": [
+        "nil_nonphysical_and_empty_explain_are_not_tiflash",
+        "table_reader_classifies_store_and_exchange",
+        "explain_unwraps_target_before_classification",
+        "physical_children_are_visited_in_order"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/columnar_index_extra.rs",
+      "lines": 42,
+      "sha256": "ae16b1f031a2c4b3c658ddb34742f6d38d9135f99f1eb696fde57cba306146ab",
+      "tests": [
+        "source_vector_index_metadata_is_reachable_through_planner_crate"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/index_advisor_model.rs",
+      "lines": 63,
+      "sha256": "b83f2f8524cf0ddd5702ddee8077353849b0c448e97d19d9a8bb4e9cbc9d88d0",
+      "tests": [
+        "source_index_prefix_relation_matches_optimizer_vectors",
+        "source_columns_and_indexes_normalize_identity_keys"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/predicate_partition.rs",
+      "lines": 139,
+      "sha256": "f251a535802409f7e66e5365b285deb52f45bcb3a7a723e77911dc478f4468ab",
+      "tests": [
+        "source_dependencies_choose_child_or_join_residual_routes",
+        "mutable_and_opaque_shapes_never_become_pushdown_claims",
+        "a_single_child_function_keeps_dependency_but_requires_effects_check",
+        "literal_only_predicate_is_only_a_constant_candidate"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/typed_condition.rs",
+      "lines": 70,
+      "sha256": "077be836eeaf5e17434a79d31cc022216be2db6c0bd15b2ee222d838b96bd776",
+      "tests": [
+        "join_filter_request_keeps_full_schema_and_true_only_policy",
+        "outer_match_request_explicitly_tracks_unknown_without_evaluation"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/schema_table_key.rs",
+      "lines": 43,
+      "sha256": "9785904431ffbf06528b78e9177174628f586a51b66442dd9511b6de8aee06c8",
+      "tests": [
+        "schema_table_keys_normalize_case_insensitively",
+        "aliases_preserve_qualification_in_identity"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/string_writer.rs",
+      "lines": 41,
+      "sha256": "513e84a5c394364b182c4f3480fc9058c167ee572abb2ce453c2d081dcd794d2",
+      "tests": [
+        "source_string_writer_hides_lengths_and_flushes",
+        "source_constructor_accepts_a_standard_writer"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/telemetry.rs",
+      "lines": 38,
+      "sha256": "bc2a694306e13ee67bec8c99e5c76cbdc8bda7a76a4c6e1146df5b50686999e3",
+      "tests": [
+        "shared_cte_shape_reports_tiflash_exchange",
+        "non_tiflash_read_does_not_set_exchange_flag"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/indexadvisor_prefix_relation_source.rs",
+      "lines": 119,
+      "sha256": "1128daf73bd38fb8536037f21719125d432b2427c0db5863fe03f3ffcfb1c53b",
+      "tests": [
+        "optimizer_prefix_contain_index_accepts_exactly_prefix_column_sequences"
+      ]
+    },
+    {
+      "path": "rust/testport/receipts/planner_cascades_util.md",
+      "lines": 62,
+      "sha256": "d81c3a9e02e76e07b2e77dfba6951a63781bee8ae0230ea95a57773a18a6c231",
+      "tests": []
+    }
+  ],
+  "verification": {
+    "retained_inputs_unchanged": 3594,
+    "retained_inputs_changed": [
+      "rust/crates/tidb-planner/src/lib.rs"
+    ],
+    "source_test_lines_removed": 1701,
+    "tests_removed": 24,
+    "removed_source_modules": 7,
+    "removed_test_harnesses": 8
+  },
+  "registration": [
+    {
+      "crate": "tidb-planner",
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+      "modules": 46,
+      "sha256": "d2176a95f63c6d2fbf6bfa7eeaaf30321c212d1784b21f9c9ae8081b23d4d1df",
+      "retired_harnesses_absent": true
+    },
+    {
+      "crate": "difftest-planner-tests",
+      "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+      "modules": 39,
+      "sha256": "cd06854fef01fdc4818e320aee4a393e430116c805fc5d403d5c52c589875df6",
+      "retired_harnesses_absent": true
+    }
+  ],
+  "go_artifacts": {
+    "pkg/planner/core/telemetry.go": "ae5bcb22a06f47cb383be684737d0d941c8e35dae9afe476cbc45fe22225e2d6",
+    "pkg/planner/core/columnar_index_utils.go": "3a3770f36aec0c34e6a9386343a82a80e1ce241f62629531e69115b8324b8867",
+    "pkg/planner/core/schema_table_key.go": "86c39522357f9ece382f50dc2e9840cb01cc04d44b55a9f85e8f721aee5a9963",
+    "pkg/planner/core/operator/logicalop/logical_join.go": "886b29a47d35e780ec8447e077502f610e78cc2632e3de95532aafa4cf009a70",
+    "pkg/planner/indexadvisor/model.go": "e4d525d009761829ada1544d7f628515d48f1e42695009a5161fddb9810f310c",
+    "pkg/planner/cascades/util/string_writer.go": "78844d8e61e59e61e6365bd5530651f2dbd16dce8a931486b456f32df980c41c",
+    "pkg/planner/cascades/util/BUILD.bazel": "2fd4632c414ba613b371d84f13b0ec96d09fde6c071d45fe9e5282a20bf7f792"
+  },
+  "ownership_evidence": [
+    "predicate_partition and typed_condition only consume each other and private tests; actual join placement remains in logical/join.rs with typed expression execution.",
+    "telemetry private tests build a separate PlanNode rather than shared PhysicalPlan. Go IsTiFlashContained traverses actual base.Plan/PhysicalTableReader.",
+    "columnar_index_extra normalizes metadata and protocol tokens; it has no scan/planner consumer. Go builds physicalop.ColumnarIndexExtra from model.IndexInfo and TiPB.",
+    "index_advisor_model, schema_table_key and string_writer have no production caller; their remaining Rust tests only construct the disconnected copies. Go owners and all original Go tests are retained.",
+    "Shared condition_binding, residual_condition, live planner key normalization, logical/physical trees, hashing and their retained tests are unchanged."
+  ],
+  "validation": {
+    "all_targets": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "runtime_tests": "Not rerun: unreachable deletion with 3594 retained source/manifest/script files byte-identical; only lib.rs module declarations and obsolete documentation changed among retained code inputs.",
+    "publication": "Actual precommit and immediately-before-push cargo build --locked -p tidb-server are mandatory. Post-commit results live in the external final-handoff.json."
+  },
+  "limits": [
+    "No finding closure or complete-package acceptance. Counts remain 86 tracked, 30 repaired, 56 unresolved.",
+    "No measured build/runtime speedup, full Go suite, live TiKV or performance benchmark claim.",
+    "Deletion is justified by absent production consumers; naming differences from Go alone do not justify deleting correctness tests."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/planner-private-path-cleanup",
+  "log_sha256": {
+    "all-target-check.log": "1218a43dec8491fa5117db22b507ceace4b368d429dcdf58a78986343f5a061b",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "reference-traces.json": "845654ba9876d5ce5b4f64df2c9a5b215f05791c1cd8c258d0224c52e9601f38",
+    "retained-verification.json": "d5fdf4d84a5a5b6f7ca713d9e28dd89ffd711eb3429bffa80b984c3b09cb5796"
+  }
+}

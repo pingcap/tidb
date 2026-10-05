@@ -21,14 +21,6 @@
 //! Go's `pkg/planner/core/base.Plan` / `LogicalPlan` / `PhysicalPlan`
 //! interfaces and the `baseimpl` / `logicalop` / `physicalop` base structs.
 //!
-//! This SUPERSEDES the crate's earlier position that it would carry no plan
-//! representation. That position was written when the leaves here were
-//! dependency-closed formulas with no shared node type, and it is no longer
-//! the shape of the crate: without a tree, the ~40 `logical_*`/`physical_*`
-//! modules are standalone `*Identity` structs and cost formulas that no
-//! optimizer pass can be written against. The tree is what those become
-//! passes over.
-//!
 //! It is an incremental transcreation of `pkg/planner/core`: the ordinary
 //! SELECT path now builds and costs this tree, with typed variants for the
 //! logical and physical operators rather than a silent default arm.
@@ -93,7 +85,6 @@ pub mod by_item;
 pub mod cardinality;
 pub mod cascades_base;
 pub mod column_length;
-pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod cluster_table_extractor;
 pub mod configured_order_limit_contract;
@@ -111,7 +102,6 @@ pub mod fix_control;
 pub mod fulltext;
 pub mod handle_cols;
 pub mod hash_equaler;
-pub mod index_advisor_model;
 pub mod index_columns;
 pub mod index_task;
 pub mod join_condition;
@@ -132,7 +122,6 @@ pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;
 pub mod plan_cost_ver2;
-pub mod predicate_partition;
 pub mod prepared_dml;
 pub mod pushdown;
 pub mod range_detacher;
@@ -142,17 +131,13 @@ pub mod transaction_control;
 pub mod txn_mode;
 pub use read_only_scan::configured_catalog;
 pub mod residual_condition;
-pub mod schema_table_key;
 pub mod selectivity_greedy;
 pub mod signed_bigint_ranger;
 pub mod stats_info;
-pub mod string_writer;
 pub mod table_sampler;
 pub mod task;
 pub mod task_type;
-pub mod telemetry;
 pub mod tikv_scan_spec;
-pub mod typed_condition;
 
 /// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.
 ///

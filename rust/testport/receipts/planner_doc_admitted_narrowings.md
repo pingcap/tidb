@@ -27,8 +27,6 @@ parity here. Comparison is limited to the code's own declarations.
   refused; overflow kept as a refusal.
 - `ranger/points.rs:1407-1434` — cast conversion "TOLERATING" note: which
   events are tolerated versus `return nil`.
-- `predicate_partition.rs:46` — AntiSemiJoin "additionally refuses to
-  derive" (pushes left-side predicates only).
 - `selectivity_greedy.rs:207` — `None` versus `Some(0.0)` stats-refusal
   semantics.
 - `fix_control.rs:287` — hex-literal parse refuses default-silently for

@@ -1,90 +1,86 @@
-# Remove disconnected logical-operator models
+# Remove disconnected planner paths and private harnesses
 
-This living ExecPlan follows root PLANS.md. Earlier receipts remain indexed in
-parity/current-audit/README.md. Git preserves retired source and prior plans.
+This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
+indexed by parity/current-audit/README.md; Git retains retired implementations.
 
 ## Purpose / Big Picture
 
 
-Remove unused normalized operator copies and private test harnesses as one
-batch. The shared logical-plan tree remains the implementation owner. Success
-means fewer compiled inputs with all retained production code and useful test
-bodies unchanged; no measured speedup or complete package acceptance is claimed.
+Remove seven disconnected planner modules, their eight private integration
+harnesses and stale documentation together. Real planner/expression/executor
+owners and their tests stay byte-identical. Reduce compiled inputs without
+claiming measured speedup or complete Go-package acceptance.
 
 ## Context and Orientation
 
 
-Base 89417915aff3596dd9b5a30361532133027337ab on /workspace/tidb hparser-integration.
-Fresh Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed; native client remains
-cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1. The thirteen crate-root models are
-logical_union_all, logical_max_one_row, logical_top_n, logical_table_dual,
-logical_sequence, logical_show, logical_show_ddl_jobs, logical_limit,
-logical_sort, logical_mem_table, logical_schema_producer, logical_cte_table and
-resolve_grouping_expand. These independent representations have no production
-callers. Shared logical/ implementations and logical_lock/data_source owners
-are retained. Go's generated hash methods belong to actual logical operators;
-tests of normalized identity tokens do not validate those operators.
+Base e0f77d1aab4ade4ca40643f709948f21cd563d2f on hparser-integration.
+Refreshed Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Native master
+cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1 is unchanged. Retire columnar_index_extra,
+index_advisor_model, predicate_partition, typed_condition, schema_table_key,
+string_writer and telemetry at the tidb-planner crate root. The predicate pair
+only calls each other and private tests. Other candidates only have private
+harness consumers. Go uses actual logical/physical operators, metadata and
+expression owners; Rust's normalized copies do not validate those paths.
 
 ## Progress
 
 
-- [x] Refresh refs, inspect Go owners and trace all tracked Rust references.
-- [x] Remove thirteen models and thirteen private harnesses; trim ten adapter tests from the mixed hash harness while preserving its two real-owner test bodies.
-- [x] Remove stale ownership and complete-suite claims.
-- [x] Grouped checks, 3,631 unchanged retained inputs, two byte-identical retained test bodies, fresh registration, lint and self-review.
-- [ ] Actual precommit build, fresh prepush build, normal push, remote verification and Cloud draft handoff.
+- [x] Refresh refs, inspect source owners and trace all Rust references.
+- [x] Delete seven modules, eight harnesses and stale documentation together.
+- [x] Verify retained inputs, generated test registration, grouped all-target checking and lint.
+- [x] Self-review and unchanged remote base; normal hook/pre-push gate results are recorded after commit in the external final handoff.
 
 ## Milestones and Plan of Work
 
 
-Inventory complete dependency groups before deleting them. Remove root module
-declarations and their difftests together; trim only the private portion of
-logicalop_hash64_equals_source.rs. Remove obsolete comments from six real-owner
-files and correct the historical b089 receipt. Record deletion hashes and Go
-artifact obligations in operator-model-cleanup-validation.json. No original Go
-test, dependency, maintained script or production method changes.
+Remove the seven root module declarations and corresponding source/test files.
+Retire the disconnected writer parity receipt and its index entry. Remove the
+obsolete predicate hazard/remediation instructions; preserve live rule findings.
+Correct telemetry and identifier historical receipts and the stale crate header.
+Record exact removed hashes and unchanged inputs in the cleanup receipt.
 
 ## Validation and Acceptance
 
 
-Activate source /workspace/.cloud-setup/env.sh in each build shell. From rust/:
+Source /workspace/.cloud-setup/env.sh. From rust/ run:
 
     CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets
 
-From repository root run make lint and git diff --check. Verify every retained
-source/manifest/script hash: only lib.rs declarations, six comment-only files
-and the mixed test harness may differ. Its two retained function bodies must
-be byte-identical. Fresh generated test registration must drop thirteen private
-harnesses while retaining logicalop_hash64_equals_source. No runtime test rerun
-is required for pure unreachable deletion with unchanged retained behavior.
-Normal commit must run the actual executable hooks/pre-commit selected by
-core.hooksPath=hooks, including cd rust && cargo build --locked -p tidb-server.
-Repeat that locked build immediately before each push and verify remote SHA.
+Run root make lint and git diff --check. Verify every retained Rust source,
+manifest and script hash, allowing only the root module declaration/header edit.
+Inspect freshly generated registrations for both affected aggregates. No runtime
+rerun is required when all retained executable behavior and tests are unchanged.
+Normal commit must execute hooks/pre-commit and its locked tidb-server build.
+Immediately before every push rerun cd rust && cargo build --locked -p tidb-server;
+verify remote SHA and preserve concurrent work. No Go/Bazel/dependency edits.
 
 ## Surprises & Discoveries
 
 
-The hash harness mixes ten tests of normalized identity copies with two tests
-of real Projection and SchemaProducer implementations. Deleting it wholesale
-would remove valid coverage. Keep those two tests unchanged. ColumnIdentity
-and SortByItem matches elsewhere belong to independent retained owners.
+The predicate pair advertises a future evaluator and has no live caller. A prior
+audit already recommended removing this latent join-type-blind routing API.
+The private telemetry test constructs its own PlanNode, not the shared plan tree.
+Keep real Go-contract and Rust ownership tests even when names differ from Go.
 
 ## Decision Log
 
 
-Delete disconnected models together with their private consumers; retain shared
-hashing, real logical operators and all their tests. The cleanup removes 3,178 source/test lines and 71
-test functions without weakening retained assertions. Date: 2026-10-05 UTC.
-No new harness or permanent script is introduced. Keep full Go package/test
-obligations separate from retired Rust adapter claims.
+Delete entire disconnected groups; do not weaken retained assertions or remove
+required build hooks. Retain shared condition_binding/residual_condition and
+hashing implementations because they have real callers or useful owner tests.
+No new permanent script or harness. Date: 2026-10-05 UTC.
 
 ## Outcomes & Retrospective
 
 
-Evidence: parity/current-audit/operator-model-cleanup-validation.json. Register
-counts remain 86 tracked / 30 repaired / 56 unresolved. No behavioral finding
-closure, full Go suite, live TiKV validation or measured performance claim.
-Before-images and final publication handoff are under
-/workspace/.cloud-setup/operator-model-cleanup. Recover individual files with
-git show 89417915aff3596dd9b5a30361532133027337ab:<path> into a temporary file
-before reviewing restoration. Preserve concurrent work and never force-push.
+Evidence belongs in parity/current-audit/planner-private-path-cleanup-validation.json
+and /workspace/.cloud-setup/planner-private-path-cleanup. Counts remain
+86 tracked / 30 repaired / 56 unresolved. No source behavior fix, whole-package
+acceptance, full Go/live TiKV run or performance claim follows from dead deletion.
+Recover files with git show e0f77d1aab:<path> into temporary files before restoring.
+External final-handoff.json records post-commit gates, remote SHA and setup draft.
+
+Validation result: 24 private tests and 1,701 source/test lines removed; 3,594
+retained inputs are byte-identical. Fresh aggregate registrations exclude all eight
+retired harnesses. Grouped all-target checking, make lint and diff checks pass.
