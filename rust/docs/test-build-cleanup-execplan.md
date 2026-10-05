@@ -73,6 +73,11 @@ maintained scripts and repository build gates. The old pattern-only receipt
 claimed consumers that the current tree does not have; Git preserves its history.
 Date: 2026-10-05 UTC.
 
+Concurrent publication: push rejected after bea8db3df4e6e512af83a2bc6303a3d6ca6dba57
+landed four nonoverlapping server schema-watch edits. Preserve them with a normal
+merge. Combined server all-target check, lint and the existing new watch-closure
+regression pass (1 test, 0 failures); all four incoming files are unchanged.
+
 ## Outcomes & Retrospective
 
 

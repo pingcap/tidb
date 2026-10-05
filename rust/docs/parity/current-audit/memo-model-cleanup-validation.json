@@ -233,5 +233,16 @@
     "repaired": 30,
     "unresolved": 56,
     "changed": false
+  },
+  "concurrent_change": {
+    "commit": "bea8db3df4e6e512af83a2bc6303a3d6ca6dba57",
+    "scope": "Schema-watch closure reload and duplicate watcher removal in four server files",
+    "integration": "Nonoverlapping normal merge; cleanup retained-file hashes describe cleanup relative to its base, not these incoming changes",
+    "validation": {
+      "all_target_check": "cargo check --locked -p tidb-server --all-targets passed",
+      "test": "cargo test --locked -p tidb-server --lib closed_global_version_watch_nudges_before_rewatch -- --test-threads=1: 1 passed, 0 failed",
+      "lint": "make lint passed",
+      "preservation": "All four incoming server files match bea8db3df4 exactly"
+    }
   }
 }

@@ -34,7 +34,7 @@ use crate::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
     node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_privilege_watch,
-    spawn_schema_version_watch, RunConfiguredNodeError,
+    RunConfiguredNodeError,
 };
 
 /// The per-request RPC deadline for the transaction tier's row reads and
@@ -154,10 +154,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
         COPROCESSOR_QUERY_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // The watch only makes the reload *prompt*; the tick above is what makes
-    // it correct. It is listed before the reloader in the tuple below so it is
-    // dropped first: a watch may not outlive the thread it nudges.
-    let watcher = spawn_schema_version_watch(&config, &reloader);
     // The account half of the same division: the reloader's tick is what makes
     // a peer's `GRANT` reach this node at all, and this watch is what makes it
     // arrive in a round trip instead of an interval.
@@ -600,7 +596,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
             replica_poll,
             global_config_keeper,
             factory,
-            watcher,
             reloader,
             privilege_watcher,
             privilege_reloader,
@@ -621,7 +616,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
             replica_poll,
             global_config_keeper,
             factory,
-            watcher,
             reloader,
             privilege_watcher,
             privilege_reloader,
@@ -671,9 +665,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             drop(global_config_keeper);
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
-            // shutdown drain. The watch goes first: it nudges the reloader,
-            // so it must not outlive it.
-            drop(watcher);
+            // shutdown drain.
             drop(reloader);
             drop(privilege_watcher);
             drop(privilege_reloader);

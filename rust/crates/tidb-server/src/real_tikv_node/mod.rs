@@ -34,7 +34,7 @@ use tidb_exec::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
 };
 use tidb_pd_client::{
-    EtcdClient, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
+    EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
 };
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
@@ -48,7 +48,7 @@ mod session_time_zone;
 
 pub(crate) use schema_following::{
     connect_schema_notifier, note_reload, spawn_catalog_reloader, spawn_node_stats,
-    spawn_privilege_watch, spawn_schema_version_watch, spawn_sysvar_watch,
+    spawn_privilege_watch, spawn_sysvar_watch,
 };
 pub(crate) use session_time_zone::RealTiKvSessionTimeZone;
 
