@@ -1329,6 +1329,93 @@ impl Catalog {
         }
     }
 
+    /// Resolves the concrete storage table IDs a statement reads when its
+    /// name is a view. Go's planner records the base tables of a view in the
+    /// transaction's MDL map, rather than the view name itself. Resolve the
+    /// canonical view SQL on demand so drop/recreate and nested-view changes
+    /// use the IDs visible to this statement's catalog snapshot.
+    pub fn mdl_table_ids(&self, database: &str, name: &str) -> Option<Vec<i64>> {
+        let mut ids = Vec::new();
+        let mut visiting = HashSet::new();
+        self.collect_mdl_table_ids(database, name, &mut visiting, &mut ids)
+            .then_some(ids)
+    }
+
+    fn collect_mdl_table_ids(
+        &self,
+        database: &str,
+        name: &str,
+        visiting: &mut HashSet<CatalogTableKey>,
+        ids: &mut Vec<i64>,
+    ) -> bool {
+        let key = CatalogTableKey::new(database, name);
+        let Some(entry) = self.get_by_key(&key) else {
+            return false;
+        };
+        match entry {
+            TableEntry::Kv(table) => {
+                if !ids.contains(&table.table_id) {
+                    ids.push(table.table_id);
+                }
+                true
+            }
+            TableEntry::View(view) => {
+                if !visiting.insert(key) {
+                    return false;
+                }
+                let mut statement = match tidb_parser::parse(&view.select_sql) {
+                    Ok(statement) => statement,
+                    Err(_) => {
+                        visiting.remove(&CatalogTableKey::new(database, name));
+                        return false;
+                    }
+                };
+                let mut paths = Vec::new();
+                struct TablePathCollector<'a> {
+                    paths: &'a mut Vec<Vec<String>>,
+                }
+                impl tidb_ast::Visitor for TablePathCollector<'_> {
+                    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                        if let Some(table) = node.downcast_ref::<tidb_ast::TableRef>() {
+                            self.paths.push(table.name.clone());
+                        }
+                        false
+                    }
+
+                    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                        true
+                    }
+                }
+                tidb_ast::Visitable::accept(
+                    &mut statement,
+                    &mut TablePathCollector { paths: &mut paths },
+                );
+                let mut resolved = true;
+                for path in paths {
+                    let Ok((path_database, path_name)) = split_table_path(&path, database) else {
+                        resolved = false;
+                        continue;
+                    };
+                    if !self.collect_mdl_table_ids(path_database, path_name, visiting, ids) {
+                        // CTE names and virtual tables are not storage table
+                        // dependencies. They are intentionally ignored; a
+                        // real missing object still makes the view read fail
+                        // before it can hold an MDL pin.
+                        if self.get_in(path_database, path_name).is_none() {
+                            continue;
+                        }
+                        resolved = false;
+                    }
+                }
+                visiting.remove(&CatalogTableKey::new(database, name));
+                resolved
+            }
+            // Memory and sequence entries do not carry a TiKV table ID and
+            // therefore cannot participate in Go's table-ID MDL map.
+            TableEntry::Mem(_) | TableEntry::Sequence(_) => true,
+        }
+    }
+
     pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.get_by_key(&CatalogTableKey::new(database, name))
     }

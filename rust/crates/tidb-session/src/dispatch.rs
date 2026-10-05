@@ -124,6 +124,33 @@ fn sem_stmt_view(stmt: &Stmt) -> tidb_util::sem_v2::StmtView {
     }
 }
 
+/// Whether a query contains a locking clause. Go's `StmtCtx.IsReadOnly` is
+/// false for every locking read, including a lock attached to a nested query
+/// or set-operation wrapper, so those statements must populate the MDL map
+/// even under autocommit.
+fn query_has_lock(stmt: &Stmt) -> bool {
+    struct LockFinder {
+        found: bool,
+    }
+    impl tidb_ast::Visitor for LockFinder {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<tidb_ast::SelectLock>() {
+                self.found = true;
+            }
+            self.found
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = stmt.clone();
+    let mut finder = LockFinder { found: false };
+    tidb_ast::Visitable::accept(&mut statement, &mut finder);
+    finder.found
+}
+
 pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
     struct Filter {
         warnings: Vec<String>,
@@ -1703,11 +1730,10 @@ impl Session {
         let Some(sink) = self.mdl_related_tables.clone() else {
             return;
         };
-        // `SELECT ... FOR UPDATE` is not read-only in Go, but this tier does
-        // not take its row locks yet either (a named gap); classifying every
-        // Query as read-only here is exact for the statements this node
-        // actually serves, and errs toward recording MORE once it isn't.
-        let read_only = matches!(stmt, Stmt::Query(_));
+        // Go's `IsAutoCommitTxn && StmtCtx.IsReadOnly` exemption does not
+        // apply to locking reads. `SELECT ... FOR UPDATE/FOR SHARE` enters
+        // the transaction's related-table map even when autocommit is on.
+        let read_only = matches!(stmt, Stmt::Query(_)) && !query_has_lock(stmt);
         if read_only && !self.in_transaction() && self.is_autocommit() {
             return;
         }
@@ -1722,13 +1748,15 @@ impl Session {
         };
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
-            match catalog.stored_table_id(db, table) {
-                Some(table_id) => {
-                    sink.record_table(table_id, version);
-                    if let Some(process) = &self.process {
-                        process
-                            .registry()
-                            .transaction_related_table(process.id(), table_id);
+            match catalog.mdl_table_ids(db, table) {
+                Some(table_ids) => {
+                    for table_id in table_ids {
+                        sink.record_table(table_id, version);
+                        if let Some(process) = &self.process {
+                            process
+                                .registry()
+                                .transaction_related_table(process.id(), table_id);
+                        }
                     }
                 }
                 None => sink.record_unresolved(),
@@ -1759,13 +1787,15 @@ impl Session {
         };
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
-            match catalog.stored_table_id(db, table) {
-                Some(table_id) => {
-                    sink.record_table(table_id, version);
-                    if let Some(process) = &self.process {
-                        process
-                            .registry()
-                            .transaction_related_table(process.id(), table_id);
+            match catalog.mdl_table_ids(db, table) {
+                Some(table_ids) => {
+                    for table_id in table_ids {
+                        sink.record_table(table_id, version);
+                        if let Some(process) = &self.process {
+                            process
+                                .registry()
+                                .transaction_related_table(process.id(), table_id);
+                        }
                     }
                 }
                 None => sink.record_unresolved(),

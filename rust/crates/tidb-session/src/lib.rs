@@ -455,8 +455,9 @@ impl DomainMap {
 pub trait MdlRelatedTableSink: Send + Sync {
     /// One stored table, bound at `version`; first use wins.
     fn record_table(&self, table_id: i64, version: i64);
-    /// A referenced name resolved to no stored table (a view, an unknown
-    /// name); the gate falls back to blocking conservatively.
+    /// A referenced name resolved to no concrete storage table (for example an
+    /// unknown name or a virtual object); the gate may conservatively retain
+    /// the unresolved marker.
     fn record_unresolved(&self);
 }
 
@@ -2802,6 +2803,8 @@ mod tests_join_reorder_cost;
 mod tests_json;
 #[cfg(test)]
 mod tests_mem_quota;
+#[cfg(test)]
+mod tests_mdl_related;
 #[cfg(test)]
 mod tests_merge_join_mixed_key_types;
 #[cfg(test)]

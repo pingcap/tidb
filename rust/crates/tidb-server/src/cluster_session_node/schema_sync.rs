@@ -219,8 +219,10 @@ impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
     }
 
     fn record_unresolved(&self) {
-        // Go's related-table map contains only concrete table IDs. An
-        // unresolved name does not add a synthetic all-table dependency.
+        // Go's related-table map contains only concrete table IDs. View
+        // dependencies are expanded by the session before this callback;
+        // an actually unresolved name does not add a synthetic all-table
+        // dependency.
     }
 }
 
