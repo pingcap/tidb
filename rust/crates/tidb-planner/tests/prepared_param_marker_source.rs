@@ -16,15 +16,12 @@
 
 use tidb_ast::{Expr, QueryStmt, SelectField, Stmt};
 use tidb_planner::{
-    condition_binding::{bind_residual, ConditionBindingError},
     configured_catalog::ConfiguredCatalog,
-    join_condition::JoinSchema,
     read_only_scan::{
         lower_prepared_point_read, ConfiguredColumn, ConfiguredPreparedPointReadTemplate,
         ConfiguredTable, PreparedBindError, PreparedPlanError, ReadOnlyScanError,
         UnsupportedReadOnlyPredicate,
     },
-    residual_condition::{classify_residual, ResidualPredicate, ResidualUnsupported},
 };
 
 fn catalog() -> ConfiguredCatalog {
@@ -222,25 +219,4 @@ fn prepared_range_read_binds_one_marker_per_handle_bound() {
     let range = point.bind(&[7]).unwrap();
     assert_eq!(range.handle_ranges()[0].start(), 7);
     assert_eq!(range.handle_ranges()[0].end(), 7);
-}
-
-#[test]
-fn unbound_markers_are_rejected_by_generic_residual_planning() {
-    let marker = Expr::ParamMarker {
-        offset: 0,
-        order: 3,
-        in_execute: false,
-        value: None,
-        projection_offset: 0,
-    };
-    assert_eq!(
-        bind_residual(&marker, &JoinSchema::new([], [])),
-        Err(ConditionBindingError::UnboundParameterMarker { position: 3 })
-    );
-    assert_eq!(
-        classify_residual(&marker),
-        ResidualPredicate::Unsupported(ResidualUnsupported::AstVariant {
-            category: "param_marker"
-        })
-    );
 }

@@ -1,0 +1,172 @@
+{
+  "base": "0cb2af0f2cd90f591048faa6be5bc2d0ded439b9",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire four unused read-planning adapters and four private harnesses; preserve logical locks, live expression planning, single readers and four prepared-read tests.",
+  "modules": [
+    "condition_binding",
+    "residual_condition",
+    "logical_lock",
+    "real_tikv_multi_read"
+  ],
+  "removed": [
+    {
+      "path": "rust/crates/tidb-planner/src/condition_binding.rs",
+      "lines": 327,
+      "sha256": "de8c8a89d31d448674b771c2a01a25c20d8520210a2bc42efc9264f395019a0d",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/residual_condition.rs",
+      "lines": 313,
+      "sha256": "dbb0279f5337d8078760a01826032bb0966a4a20a08ad033956c63cf53a6e899",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/logical_lock.rs",
+      "lines": 138,
+      "sha256": "a6379c80185c2b27d3b797360c7412ab11cf47a7301c75ae930835048bc3f0af",
+      "tests": [
+        "update_variants_match_source_predicate",
+        "share_variants_match_source_predicate",
+        "none_skip_locked_and_unknown_values_are_unsupported",
+        "raw_discriminants_preserve_go_iota_order"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/real_tikv_multi_read.rs",
+      "lines": 276,
+      "sha256": "789074b22e81f68a4049dd70c6b26463a36fd06f0e6e08e1939cf9d6568cb4b1",
+      "tests": []
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/condition_binding.rs",
+      "lines": 109,
+      "sha256": "d79808fe700ac7a94acfff778a16e4e35a07f92d7cce5c6002769ddfb44eb906",
+      "tests": [
+        "residual_columns_bind_in_source_order_to_full_schema",
+        "dedicated_predicate_binds_nested_columns_for_typed_owner",
+        "unknown_or_ambiguous_column_never_becomes_a_constant"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/residual_condition.rs",
+      "lines": 113,
+      "sha256": "f68498f7bda00d9d97ff08b9df9a250994ae674b5bacc17fe2a9c13ef5c66038",
+      "tests": [
+        "conjunction_preserves_comparison_and_function_residuals",
+        "not_or_parentheses_keep_boolean_shape_without_evaluation",
+        "dedicated_predicate_shapes_are_explicitly_unsupported"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/logical_lock.rs",
+      "lines": 49,
+      "sha256": "99e3547e7931bd63dc169f618a1e2fcdb6e25aca46fe26db6ce469b5ea15fda3",
+      "tests": [
+        "point_get_lock_families_are_supported",
+        "skip_locked_and_unknown_locks_are_not_supported"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/real_tikv_multi_relation_scan_source.rs",
+      "lines": 554,
+      "sha256": "6435a432068c88221e907d0ce91168eea9c0d28420906808d88ac4b752c1bc4a",
+      "tests": [
+        "supplied_plans_share_one_timestamp_and_cancellation_authority",
+        "supplied_plan_contradiction_returns_empty_before_timestamp_or_send",
+        "mismatched_supplied_plan_fails_before_timestamp_or_send",
+        "supplied_second_send_failure_cancels_and_closes_first_response",
+        "both_physical_scans_share_one_timestamp_and_cancellation_authority",
+        "invalid_second_plan_fails_before_timestamp_transport_or_left_send",
+        "left_contradiction_returns_empty_before_timestamp_or_send",
+        "right_contradiction_returns_empty_before_timestamp_or_send",
+        "zero_timestamp_fails_before_sending_either_transport",
+        "second_send_failure_cancels_and_closes_the_first_lazy_response",
+        "repeated_statements_reuse_the_two_connection_local_transports"
+      ]
+    }
+  ],
+  "partial_removals": {
+    "real_tikv_read.rs": "118 lines: unused two-reader struct/accessors, opener and forwarding impl; remaining bytes unchanged.",
+    "prepared_param_marker_source.rs": "One private residual-model test and three imports; four retained test bodies byte-identical."
+  },
+  "source_test_lines_removed": 2025,
+  "tests_removed": 24,
+  "verification": {
+    "retained_inputs_unchanged": 3537,
+    "retained_changed": [
+      "rust/crates/tidb-exec/src/lib.rs",
+      "rust/crates/tidb-exec/src/real_tikv_read.rs",
+      "rust/crates/tidb-planner/src/lib.rs",
+      "rust/crates/tidb-planner/tests/prepared_param_marker_source.rs"
+    ],
+    "remaining_single_reader_code_byte_identical": true,
+    "four_prepared_tests_byte_identical": true
+  },
+  "registration": {
+    "tidb-exec": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-exec/7c1db4a468b7b3bf/out/all_tests.rs",
+      "sha256": "bfe51f3531e17a8148c59596d197fcefec58f54897972728ef896ab484f09b70",
+      "modules": 85,
+      "fresh": true,
+      "retired_harnesses_absent": true
+    },
+    "difftest-planner-tests": {
+      "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+      "sha256": "eac617ddb56d11b876f53fa0a6a4541131d8f5ea3abe6eb80c7a0e6c684b7c79",
+      "modules": 36,
+      "fresh": true,
+      "retired_harnesses_absent": true
+    },
+    "tidb-planner": {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+      "sha256": "d2176a95f63c6d2fbf6bfa7eeaaf30321c212d1784b21f9c9ae8081b23d4d1df",
+      "modules": 46,
+      "fresh": true,
+      "retired_harnesses_absent": true
+    }
+  },
+  "go_artifacts": {
+    "pkg/planner/core/operator/logicalop/logical_lock.go": "6921cf5bdcc6954a07451c2635c69b59d0a801c3f63bb27509ed73cf33aaf2d7",
+    "pkg/planner/core/logical_plan_builder.go": "01e352e46d091aeb174ce7c71143d23aa92f4b9d0c41d691aaba1cb8baaef131",
+    "pkg/planner/core/expression_rewriter.go": "3620cfdb3ec996eb0fe15a6572a1babc07466e0918f00e42cbed7b13d181db45",
+    "pkg/executor/builder.go": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7"
+  },
+  "ownership": [
+    "Go logical_plan_builder retains OtherConditions as expressions; expression_rewriter and live executor own their evaluation. The removed ResidualPredicate/ConditionBinding chain has no production consumer; it only supplies syntax metadata to its private tests.",
+    "Go logicalop owns supported SELECT lock classification. Retained Rust logical/lock.rs and logical/operator_tests.rs own the integrated logical operator. The removed second classifier duplicated raw discriminants without any caller.",
+    "Go executorBuilder gets snapshots from the statement transaction owner. The fixed two-reader Rust wrapper is only opened by its private harness. Its struct, opener and forwarding impl have been removed together. Single-reader process admission, transports, snapshots, caching and cancellation are byte-identical.",
+    "The mixed prepared harness retains its four parser/prepared-bind/range/admission tests; only a test of the retired residual model is removed. No live functionality or test assertion has been weakened."
+  ],
+  "validation": {
+    "all_targets": {
+      "command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-exec -p tidb-server --all-targets",
+      "result": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "result": "passed"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    "runtime": "Not rerun: unreachable deletion with all retained implementation and test bodies byte-identical.",
+    "publication": "Normal precommit must run cd rust && cargo build --locked -p tidb-server; repeat immediately before push. Actual post-commit gates live in external final-handoff.json."
+  },
+  "limits": [
+    "86 tracked / 30 repaired / 56 unresolved: no finding disposition changed.",
+    "No full Go suite, live TiKV, complete package acceptance or measured speedup.",
+    "Original Go lifecycle/fixture obligations remain; private model removal is not acceptance."
+  ],
+  "external_evidence": "/workspace/.cloud-setup/read-plan-cleanup",
+  "log_sha256": {
+    "all-target-check.log": "707398c56faea7f041df566b5bb36fb12494f72a4a6bd283166eb99a1da3bdd8",
+    "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e",
+    "reference-traces.json": "32dd0e994005bb0d94cf7b8662f41d6401ac980e64136e9b40848c79312ad595",
+    "retained-verification.json": "bf5b4d8b3cc9dcdfe353b4f8f1ca596785103c0f865fe3992dee2bb9727283bf",
+    "removed-read-spans.json": "14b6b33da866b5eb8d4fcb7e67e95f6a26059f369b3872b0946e6708093a2cec",
+    "removed-prepared-test.rs": "5a1a18b8a5e803e6b0a30d6986bed7896b557cb08db826b50039435c3c3341e0"
+  }
+}

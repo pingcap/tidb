@@ -136,7 +136,6 @@ pub mod real_tikv_catalog;
 pub mod real_tikv_ddl;
 pub mod real_tikv_dml;
 pub mod real_tikv_load_stats;
-pub mod real_tikv_multi_read;
 pub mod real_tikv_privileges;
 pub mod real_tikv_read;
 pub mod real_tikv_stats;
