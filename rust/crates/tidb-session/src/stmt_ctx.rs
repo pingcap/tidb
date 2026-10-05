@@ -1445,6 +1445,12 @@ impl Session {
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_constraint_check_in_place(constraint_check_in_place)
+                .with_pessimistic_check_in_prewrite(
+                    !self.pessimistic_constraint_check_in_place()
+                        && self.in_transaction()
+                        && !self.restricted_sql
+                        && self.connection_id.is_some_and(|id| id > 0),
+                )
                 // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
                 // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
                 // `DupKeyCheckLazy` whenever constraint checks are disabled OR the

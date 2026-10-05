@@ -10447,3 +10447,206 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
         );
     }
 }
+
+#[test]
+fn deferred_uniqueness_batch_writes_skip_locks_and_check_at_commit() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(940)).unwrap();
+    rows(&mut session, "CREATE DATABASE deferred_writes");
+    rows(&mut session, "USE deferred_writes");
+    rows(
+        &mut session,
+        "CREATE TABLE t (id INT PRIMARY KEY, u INT UNIQUE)",
+    );
+    rows(&mut session, "INSERT INTO t VALUES (1,10),(2,20)");
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    rows(&mut session, "SET tidb_txn_assertion_level=OFF");
+    for sql in [
+        "INSERT INTO t VALUES (3,30)",
+        "INSERT INTO t VALUES (1,30)",
+        "INSERT INTO t VALUES (3,10)",
+        "UPDATE t SET id=3,u=30 WHERE id=1",
+        "INSERT INTO t VALUES (1,40) ON DUPLICATE KEY UPDATE id=3,u=30",
+    ] {
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        let stage = session.buffer.checkpoint();
+        session.execute_write(sql).unwrap();
+        let lock_keys = session.buffer.pessimistic_keys_since(stage);
+        // New record/unique-index keys defer their absence check. UPDATE
+        // retains the old record lock and deletion entries as Go does.
+        let presumed = session.buffer.presume_not_exists_keys();
+        assert!(!presumed.is_empty(), "{sql}");
+        assert!(
+            lock_keys.iter().all(|key| !presumed.contains(key)),
+            "{sql}: deferred keys were locked"
+        );
+        session.buffer.release(stage);
+        if sql == "INSERT INTO t VALUES (1,30)" || sql == "INSERT INTO t VALUES (3,10)" {
+            let error = session.control_transaction("COMMIT").unwrap_err();
+            assert_eq!(error.code, 1062, "{sql}: {error:?}");
+        } else {
+            session.control_transaction("ROLLBACK").unwrap();
+        }
+    }
+    // Go unistore checks NotExist before Insert when assertions are enabled.
+    rows(&mut session, "SET tidb_txn_assertion_level=STRICT");
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(&mut session, "INSERT INTO t VALUES (1,30)");
+    assert_eq!(
+        session.control_transaction("COMMIT").unwrap_err().code,
+        8141
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+        vec![vec!["1", "10"], vec!["2", "20"]]
+    );
+}
+
+#[test]
+fn deferred_uniqueness_batch_savepoint_follows_transaction_mode() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(941)).unwrap();
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    // Autocommit SAVEPOINT is still a no-op; optimistic transactions work.
+    session.control_transaction("SAVEPOINT empty").unwrap();
+    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    session.control_transaction("SAVEPOINT allowed").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    let error = session
+        .control_transaction("SAVEPOINT refused")
+        .unwrap_err();
+    assert_eq!(error.code, 1105);
+    assert_eq!(error.message, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled");
+    assert!(session.session.in_transaction());
+    session.control_transaction("ROLLBACK").unwrap();
+}
+
+#[test]
+fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(942)).unwrap();
+    rows(&mut session, "CREATE DATABASE deferred_abort");
+    rows(&mut session, "USE deferred_abort");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY)");
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(&mut session, "INSERT INTO t VALUES (1)");
+    let error = session
+        .execute_write("INSERT INTO t VALUES (1)")
+        .unwrap_err();
+    assert_eq!(error.code, 8147, "{error:?}");
+    assert!(error.message.starts_with(
+        "transaction aborted because lazy uniqueness check is enabled and an error occurred:"
+    ));
+    assert!(!session.session.in_transaction());
+    assert!(session.explicit.is_none());
+    assert!(session.buffer.is_empty());
+    assert!(rows(&mut session, "SELECT * FROM t").is_empty());
+    rows(&mut session, "INSERT INTO t VALUES (2)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t")),
+        vec![vec!["2"]]
+    );
+}
+
+#[test]
+fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(943)).unwrap();
+    rows(&mut session, "CREATE DATABASE deferred_scope");
+    rows(&mut session, "USE deferred_scope");
+    rows(
+        &mut session,
+        "CREATE TABLE t (id INT PRIMARY KEY, u INT UNIQUE)",
+    );
+    rows(&mut session, "INSERT INTO t VALUES (1,10),(2,20)");
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session.session.set_restricted_sql(true);
+    session.session.set_restricted_sql(false);
+    session.session.set_connection_id(0);
+    session.session.set_connection_id(943);
+    rows(&mut session, "DELETE FROM t WHERE id=1");
+    rows(&mut session, "INSERT INTO t VALUES (1,10)");
+    assert!(
+        session.buffer.presume_not_exists_keys().is_empty(),
+        "local tombstones prove absence"
+    );
+    rows(&mut session, "INSERT INTO t VALUES (3,30),(4,NULL)");
+    rows(&mut session, "UPDATE t SET u=31 WHERE id=3");
+    rows(&mut session, "INSERT IGNORE INTO t VALUES (5,20)");
+    rows(&mut session, "UPDATE IGNORE t SET u=20 WHERE id=3");
+    assert!(session.session.in_transaction());
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=ON",
+    );
+    rows(&mut session, "INSERT INTO t VALUES (6,60)");
+    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+        vec![
+            vec!["1", "10"],
+            vec!["2", "20"],
+            vec!["3", "31"],
+            vec!["4", "NULL"],
+            vec!["6", "60"]
+        ]
+    );
+    rows(&mut session, "SET autocommit=0");
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    assert!(session.control_transaction("SAVEPOINT implicit").is_err());
+    session.control_transaction("ROLLBACK").unwrap();
+    rows(&mut session, "SET autocommit=1");
+}
+
+#[test]
+fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
+    use tidb_protocol::PreparedValue;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(944)).unwrap();
+    rows(&mut session, "CREATE DATABASE deferred_binary");
+    rows(&mut session, "USE deferred_binary");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY)");
+    rows(
+        &mut session,
+        "SET tidb_constraint_check_in_place_pessimistic=OFF",
+    );
+    let insert = session.prepare_general("INSERT INTO t VALUES (?)").unwrap();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .execute_general(&insert, &[PreparedValue::SignedLongLong(1)])
+        .unwrap();
+    assert!(session.execute("SELECT missing FROM t").is_err());
+    assert!(
+        session.session.in_transaction(),
+        "ordinary query errors do not invoke DML abort policy"
+    );
+    let error = match session.execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
+        Err(error) => error,
+        Ok(_) => panic!("a local duplicate must fail"),
+    };
+    assert_eq!(error.code, 8147, "{error:?}");
+    assert!(!session.session.in_transaction());
+    assert!(session.explicit.is_none());
+    assert!(session.buffer.is_empty());
+    assert!(rows(&mut session, "SELECT * FROM t").is_empty());
+}

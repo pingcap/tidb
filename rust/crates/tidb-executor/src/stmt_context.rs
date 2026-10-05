@@ -675,6 +675,8 @@ pub struct StmtContextData {
     pessimistic_lazy_dup_check: bool,
     /// Go TxnCtx.IsPessimistic for the active or implicit statement transaction.
     pessimistic_transaction: bool,
+    /// Go DupKeyCheckInPrewrite for an explicit, unrestricted user transaction.
+    pessimistic_check_in_prewrite: bool,
     /// Go `SessionVars.ConstraintCheckInPlace` (`@@tidb_constraint_check_in_place`).
     /// `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
     /// combines this with the transaction mode to select lazy checking.
@@ -1648,6 +1650,13 @@ context_configuration! {
         self
     }
 
+    /// Selects Go's deferred pessimistic uniqueness policy for this statement.
+    #[must_use]
+    pub fn with_pessimistic_check_in_prewrite(mut self, enabled: bool) -> Self {
+        self.pessimistic_check_in_prewrite = enabled;
+        self
+    }
+
     /// Sets `@@tidb_constraint_check_in_place` for this statement.
     #[must_use]
     pub fn with_constraint_check_in_place(mut self, enabled: bool) -> Self {
@@ -1983,6 +1992,7 @@ impl StmtContext {
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
+            pessimistic_check_in_prewrite: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
@@ -3265,6 +3275,12 @@ impl StmtContext {
     #[must_use]
     pub fn constraint_check_in_place(&self) -> bool {
         self.constraint_check_in_place
+    }
+
+    /// Whether an actual lazy absence check should be deferred to prewrite.
+    #[must_use]
+    pub fn pessimistic_check_in_prewrite(&self) -> bool {
+        self.pessimistic_transaction && self.pessimistic_check_in_prewrite
     }
 
     /// Whether `ALTER TABLE ... MODIFY COLUMN` may drop AUTO_INCREMENT.

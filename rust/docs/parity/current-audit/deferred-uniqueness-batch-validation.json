@@ -1,0 +1,110 @@
+{
+  "baseline": {
+    "integration": "f6a53da43a2702d381bfcc5a3bb8e3dd49d6ecab",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+    "native_client": "bc8cca3fea4f741e68a41b124f28164604a57ee2"
+  },
+  "scope": "Existing-owner maintenance across T01 and N03; no complete Go package accepted.",
+  "counts": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "open": 28,
+    "partial": 28
+  },
+  "findings": {
+    "T01": "partial",
+    "N03": "partial"
+  },
+  "go_owners": [
+    "pkg/executor/insert.go::getPessimisticLazyCheckMode",
+    "pkg/table/tables/tables.go::AddRecord",
+    "pkg/table/tables/index.go::Create",
+    "pkg/session/txn.go::LazyTxn.flushStmtBuf,Wait",
+    "pkg/session/txn.go::KeyNeedToLock",
+    "pkg/executor/simple.go::executeSavepoint",
+    "pkg/executor/adapter.go::handlePessimisticDML",
+    "pkg/store/mockstore/unistore/tikv/mvcc.go::buildPrewriteLock"
+  ],
+  "changes": [
+    "Live session setting selects prewrite policy only for explicit, non-restricted user pessimistic transactions.",
+    "INSERT, UPDATE and ODKU record/distinct-index misses carry NeedConstraintCheckInPrewrite after the native value write; tombstones and eager/IGNORE checks do not.",
+    "Existing per-key lock selection consumes the native flag. Removed the separate global-setting interpretation at lock acquisition.",
+    "Successful statement stages preserve previous presumed-absent flags under the transaction activation policy, matching Go LazyTxn.",
+    "Savepoints are refused with 1105 when pessimistic in-place checking is disabled; optimistic/autocommit behavior remains valid.",
+    "Terminal text and binary-prepared DML failures return 8147 and discard prior writes, SQL/native transaction state and buffer; ordinary query errors do not trigger that policy."
+  ],
+  "before": {
+    "rust_failed": 3,
+    "rust_passed": 0,
+    "wire_failed": 13,
+    "wire_passed": 10,
+    "wire_receipt": "baseline-assertions-off-wire.json",
+    "detail": "Missing lock exclusion, accepted savepoint, missing transaction abort. TCP duplicate INSERT/UPDATE/ODKU/prepared failures also exposed expired-buffer errors and connection loss."
+  },
+  "after": {
+    "distinct_rust_passed": 63,
+    "rust_failed": 0,
+    "new_cases": 6,
+    "grouped_command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session -p tidb-server --lib --no-fail-fast -- deferred_uniqueness_batch --test-threads=1",
+    "adjacent_commands": [
+      "rust/target/debug/build/tidb-server/77c9a1484da84886/out/tidb_server-77c9a1484da84886 pessimistic savepoint prepared_transactions deferred_uniqueness_batch --test-threads=1",
+      "rust/target/debug/build/tidb-session/6f9593a3c5413e52/out/tidb_session-6f9593a3c5413e52 tests_core::transactions tests_savepoint --test-threads=1"
+    ],
+    "counts_note": "32 server and 31 session cases; the grouped six overlap and are counted once.",
+    "wire_command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/deferred-uniqueness-batch/wire.py final /workspace/tidb/rust/target/debug/tidb-server",
+    "wire_passed": 23,
+    "wire_failed": 0,
+    "wire_binary_sha256": "6ab71b0d9e4e4582e944445210d97591b813be6ec70b9c7e2570697dd038275c",
+    "check_command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "check_exit": 0,
+    "build_command": "cd rust && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server",
+    "build_exit": 0,
+    "lint_command": "make lint",
+    "lint_exit": 0,
+    "diff_check_command": "git diff --check",
+    "publication": "Actual hook build, fresh prepush build, normal push and exact remote SHA are recorded after execution in /workspace/.cloud-setup/deferred-uniqueness-batch/final-handoff.json."
+  },
+  "interpretation": [
+    "Go unistore checks NotExist assertions before Insert constraints. STRICT returns 8141; OFF exposes duplicate 1062. Both are covered; no storage assertion behavior was weakened.",
+    "Baseline wire recovery reconnects after connection loss to complete the remaining independent scenarios.",
+    "One intermediate regression build exposed an inaccessible test helper and a missed internal call argument; corrected before final runs. Intermediate failed test assertions identified error-code and INSERT-classification wiring; final outcomes above supersede them."
+  ],
+  "limits": [
+    "The other 54 unresolved roots were not freshly reproduced.",
+    "T01 non-public/temp/global-index transitions and complete package obligations remain open.",
+    "N03 native deployment defaults and other configuration consumers remain incomplete.",
+    "Full Go suites, live multi-node TiKV and transport failure matrix are unverified.",
+    "No benchmark or performance improvement is claimed; all behavior runs are Rust/native unistore or existing fixtures."
+  ],
+  "logs_directory": "/workspace/.cloud-setup/deferred-uniqueness-batch",
+  "log_sha256": {
+    "baseline.log": "89e9a5faeeb9a0f4f34ce789981de0e34e347be7e37e81b9e5ee81233901ec95",
+    "baseline-assertions-off-wire.json": "662e131346d5fc728d0f19e2c8ff9e820b95614ba2fc8f7aebd6ae16bdd3be7a",
+    "final-tests.log": "57031e8a4927c9c6fe5196b64a3fc8c35c00c4c88df77f9a8eb9aeb799fc4d9d",
+    "adjacent-server-tests.log": "36330e96f864ab959467190e0071751e8add6ecca17be9d663ad53973ef0838d",
+    "adjacent-session-tests.log": "c061a3fc9c15f15417be6d73ae289d08c9906bfca13e937102a12ac5d2c32698",
+    "rust-test-results.json": "499dcb2e04cd418ac0f1b86ed43b4c06cf95f83c6daa657dd2852822226ba6a8",
+    "final-wire.json": "e689cd805d1833689e22d40635d1582597662be932e8bef7a2eba93f423ac62b",
+    "check.log": "91307f4bd29cdcb230c644c5b7414d054a9eafb0a56d24835ec731fafb25f888",
+    "server-build.log": "ddf0af8103adaad82ab743a4aa600ca196133712c55b9115b21ae503e72ec34c",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "wire.py": "0daff5fca0284015a901e7b9f285f02d13aaf780544d84086e2ef59e3cc4fbcf",
+    "artifact-cleanup.json": "5f51a22974b04f06ea1850601869b985f8110d565409f2b722e1eaadf5896d13",
+    "format-validation.json": "b9baf0d3087c252dcd386d8bf383e4cdff4d20240ea6694dc935d657dc96f69a"
+  },
+  "source_sha256": {
+    "rust/crates/tidb-executor/src/cluster_storage.rs": "f1e2127cef32591c9cfe52893a63074be5d47be9953a66f6e11ba678310d3d19",
+    "rust/crates/tidb-executor/src/kv_table.rs": "2002cfbbff118a66cb81d013afcb3a4a87baabbb6b03fabc341037820dde9553",
+    "rust/crates/tidb-executor/src/kv_table/index_entries.rs": "fba858d4abe8443e3a168d9eb2773f6bfb07e1108e7ec20674a924be295c2f1b",
+    "rust/crates/tidb-executor/src/stmt_context.rs": "4b6396fac629f50b20c5718f5743965c51fb9426b55819c7028700a1ee97a6cb",
+    "rust/crates/tidb-executor/src/storage.rs": "195b6be8b0770b1c13ccdede63b251bc237f896c55647ef3244b374e9f627ba4",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "d81fe70b906d0b38509e754c7a90577288e394d702d4a49d86352252385a7bd6",
+    "rust/crates/tidb-server/src/cluster_session_node/record_set.rs": "4c99cd815c677e858788623f9764827662f10d423e9d57e5e517eea357814ac6",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs": "5aa3318b8dfc8e2efe50f8b20e96747ce527b9105fe8a31dbbfdeaac3233164b",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "985b83a9c90704888c6d489bf335bd8eb6a0c74d9f0c9e063b7a3abcd092d7dd",
+    "rust/crates/tidb-session/src/tests_core/transactions.rs": "339364bcf8dfbe6553e886128ae1a3038bc1965db3316421bf52d4c5f38e137b",
+    "rust/crates/tidb-session/src/txn.rs": "efdfb3bc18f9c9920ffa32bba24ebf0943a9a8322959d5e8ec4e17264349436b"
+  }
+}

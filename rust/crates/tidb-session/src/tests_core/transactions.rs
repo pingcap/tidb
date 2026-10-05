@@ -749,3 +749,40 @@ fn snapshot_provider_batch_result_close_preserves_outer_transaction_and_cursor_p
     session.run("SET tidb_snapshot=''").unwrap();
     session.run("ROLLBACK").unwrap();
 }
+
+#[test]
+fn deferred_uniqueness_batch_context_scopes_the_live_setting() {
+    let mut session = Session::new();
+    session.set_connection_id(42);
+    session
+        .apply_set("SET tidb_constraint_check_in_place_pessimistic=OFF")
+        .unwrap();
+    assert!(!session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+    session.control_transaction("BEGIN OPTIMISTIC").unwrap();
+    assert!(!session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+    session.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert!(session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+    session.set_restricted_sql(true);
+    assert!(!session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+    session.set_restricted_sql(false);
+    session.set_connection_id(0);
+    assert!(!session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+    session.set_connection_id(42);
+    session
+        .apply_set("SET tidb_constraint_check_in_place_pessimistic=ON")
+        .unwrap();
+    assert!(!session
+        .statement_context(true)
+        .pessimistic_check_in_prewrite());
+}

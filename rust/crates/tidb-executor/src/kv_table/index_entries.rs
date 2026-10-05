@@ -483,6 +483,7 @@ impl KvTable {
         zone: &SessionTimeZone,
         lazy_dup_check: bool,
         pessimistic: bool,
+        check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
@@ -513,7 +514,12 @@ impl KvTable {
                 AssertionOp::AssertNotExist
             };
             self.store
-                .set_with_assertion(key, value, assertion)
+                .set_with_constraint_check(
+                    key,
+                    value,
+                    assertion,
+                    distinct && lazy_check && pessimistic && check_in_prewrite,
+                )
                 .map_err(KvTableError::from)?;
         }
         Ok(())
@@ -569,6 +575,7 @@ impl KvTable {
         zone: &SessionTimeZone,
         lazy_dup_check: bool,
         pessimistic: bool,
+        check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
         let indexes = self.indexes.clone();
@@ -594,16 +601,23 @@ impl KvTable {
                         zone,
                     )?;
                     let key = Key::from_bytes(new_key);
-                    if new_distinct {
+                    let lazy_check = if new_distinct {
                         self.check_insert_key(
                             &key,
                             &duplicate_value_text(&self.index_values(index, new_row)),
                             &self.qualified_key(&index.name),
                             lazy_dup_check,
-                        )?;
-                    }
+                        )?
+                    } else {
+                        false
+                    };
                     self.store
-                        .set_with_assertion(key, value, AssertionOp::AssertNotExist)
+                        .set_with_constraint_check(
+                            key,
+                            value,
+                            AssertionOp::AssertNotExist,
+                            lazy_check && pessimistic && check_in_prewrite,
+                        )
                         .map_err(KvTableError::from)?;
                     continue;
                 }
@@ -667,19 +681,26 @@ impl KvTable {
             let value =
                 self.index_entry_value(index, new_row, handle, new_distinct, physical_id, zone)?;
             let key = Key::from_bytes(new_key);
-            if new_distinct {
+            let lazy_check = if new_distinct {
                 self.check_insert_key(
                     &key,
                     &duplicate_value_text(&self.index_values(index, new_row)),
                     &self.qualified_key(&index.name),
                     lazy_dup_check,
-                )?;
-            }
+                )?
+            } else {
+                false
+            };
             self.store
                 .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
             self.store
-                .set_with_assertion(key, value, AssertionOp::AssertNotExist)
+                .set_with_constraint_check(
+                    key,
+                    value,
+                    AssertionOp::AssertNotExist,
+                    lazy_check && pessimistic && check_in_prewrite,
+                )
                 .map_err(KvTableError::from)?;
         }
         Ok(())

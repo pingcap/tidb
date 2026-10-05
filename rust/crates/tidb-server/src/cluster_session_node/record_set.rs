@@ -183,8 +183,13 @@ impl ClusterServerSession {
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
             let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
-            let opened =
-                self.with_bound_statement(shape, &prelock_keys, resource_group, true, |session| {
+            let opened = self.with_bound_statement(
+                shape,
+                &prelock_keys,
+                resource_group,
+                true,
+                false,
+                |session| {
                     let mut opened = run(session)?;
                     if let OpenedStatement::Rows(state) = &mut opened {
                         if let Err(error) = state.retain_chunks(session) {
@@ -193,7 +198,8 @@ impl ClusterServerSession {
                         }
                     }
                     Ok(opened)
-                })?;
+                },
+            )?;
             (opened, None)
         } else {
             let snapshot = self.begin_read_statement(shape, resource_group)?;

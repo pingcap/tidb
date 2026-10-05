@@ -697,6 +697,28 @@ impl MutationBuffer {
             native: state.memdb.staging(),
         }
     }
+    /// Go LazyTxn.flushStmtBuf keeps earlier successful absence checks when
+    /// a later lock attempt clears its provisional PresumeKeyNotExists flag.
+    pub fn preserve_statement_presumptions(&self, checkpoint: BufferCheckpoint) {
+        if checkpoint.native == 0 {
+            return;
+        }
+        self.state().memdb.write(|buffer| {
+            let mut keys = Vec::new();
+            buffer.inspect_stage(checkpoint.native, |key, flags, _| {
+                if flags.has_presume_key_not_exists() {
+                    keys.push(key.to_vec());
+                }
+            });
+            for key in keys {
+                buffer.update_flags(
+                    &key,
+                    &[tikv_client::kv::FlagsOp::SetPreviousPresumeKeyNotExists],
+                );
+            }
+        });
+    }
+
     /// Ends a statement scope after its delta has been consumed. Outer SQL
     /// savepoints remain active; completed transaction scopes are already gone.
     pub fn release(&self, checkpoint: BufferCheckpoint) {
@@ -1105,6 +1127,27 @@ impl TableStorage for ClusterTableStorage {
         self.check_usable()?;
         self.buffer
             .stage_owned_batch([(key, Some(value), false, assertion)])
+    }
+
+    fn set_with_constraint_check(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: tidb_txnkv::AssertionOp,
+        check_in_prewrite: bool,
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        let mut state = self.buffer.state();
+        state.stage_batch([(key.clone(), Some(value), false, assertion)])?;
+        // Native MemDB clears this flag on value writes. Set it in the same
+        // SQL buffer critical section after the value, matching SetWithFlags.
+        if check_in_prewrite {
+            state.memdb.update_flags(
+                key.as_bytes(),
+                &[tikv_client::kv::FlagsOp::SetNeedConstraintCheckInPrewrite],
+            );
+        }
+        Ok(())
     }
 
     fn delete_with_assertion(

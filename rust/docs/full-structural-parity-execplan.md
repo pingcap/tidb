@@ -2602,3 +2602,7 @@ statement-only storage/catalog overrides, cursor timestamp retention and bounded
 publication caching. See [the current plan](schema-snapshot-batch-execplan.md)
 and [validation](parity/current-audit/schema-snapshot-batch-validation.json).
 These are existing-owner repairs; complete package and lazy V2/GC obligations remain open.
+
+## Deferred pessimistic uniqueness batch
+
+T01/N03 share setting selection, table/native flags, per-key locking, successful-stage preservation, savepoint refusal and terminal DML abort. The [batch plan](deferred-uniqueness-batch-execplan.md) and [validation](parity/current-audit/deferred-uniqueness-batch-validation.json) record 63 distinct Rust cases and 23 TCP assertions passing after three baseline Rust and thirteen TCP failures. Both parents remain partial; counts remain 86 tracked, 30 repaired and 56 unresolved. Native pins are unchanged. Full packages, multi-node TiKV and performance remain unverified.

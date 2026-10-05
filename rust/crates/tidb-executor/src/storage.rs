@@ -282,6 +282,18 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         self.set(key, value)
     }
 
+    /// Writes table-selected assertion and deferred uniqueness policy together.
+    /// Stores without a commit boundary already checked absence eagerly.
+    fn set_with_constraint_check(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: tidb_txnkv::AssertionOp,
+        _check_in_prewrite: bool,
+    ) -> Result<(), StorageError> {
+        self.set_with_assertion(key, value, assertion)
+    }
+
     /// Removes one key, Go `kv.Mutator.Delete`. Removing an absent key
     /// succeeds, as it does in Go.
     fn delete(&mut self, key: Key) -> Result<(), StorageError>;

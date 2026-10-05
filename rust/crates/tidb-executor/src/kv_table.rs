@@ -2940,7 +2940,7 @@ impl KvTable {
                 *physical_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle, *physical_id, zone, false, false)?;
+            self.write_index_entries(row, handle, *physical_id, zone, false, false, false)?;
             self.store.set(key, value).map_err(KvTableError::from)?;
         }
         Ok(())
@@ -3514,6 +3514,8 @@ impl KvTable {
             false
         };
         let pessimistic = stats_ctx.is_some_and(crate::StmtContext::pessimistic_transaction);
+        let check_in_prewrite =
+            stats_ctx.is_some_and(crate::StmtContext::pessimistic_check_in_prewrite);
         self.write_index_entries(
             row,
             &handle,
@@ -3521,6 +3523,7 @@ impl KvTable {
             &zone,
             lazy_dup_check,
             pessimistic,
+            check_in_prewrite,
         )?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx
@@ -3528,7 +3531,7 @@ impl KvTable {
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .set_with_assertion(
+            .set_with_constraint_check(
                 key,
                 value,
                 if set_presume && !pessimistic {
@@ -3536,6 +3539,7 @@ impl KvTable {
                 } else {
                     tidb_txnkv::AssertionOp::AssertNotExist
                 },
+                set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
         if let Some(stats_ctx) = stats_ctx {
@@ -3823,10 +3827,12 @@ impl KvTable {
             &new_handle.record_handle(),
         ));
         let pessimistic = stats_ctx.is_some_and(crate::StmtContext::pessimistic_transaction);
+        let check_in_prewrite =
+            stats_ctx.is_some_and(crate::StmtContext::pessimistic_check_in_prewrite);
         // Go optimizeDupKeyCheckForUpdate keeps optimistic UPDATE and IGNORE
-        // eager; pessimistic writes check absence while acquiring their locks.
+        // eager; pessimistic writes use the selected lock/prewrite boundary.
         let lazy_dup_check = pessimistic && !stats_ctx.is_some_and(crate::StmtContext::ignore_err);
-        if old_key.as_ref() != Some(&destination_key) {
+        let set_presume = if old_key.as_ref() != Some(&destination_key) {
             let duplicate_value = if clustered {
                 clustered_key_text(self, row)
             } else {
@@ -3840,8 +3846,10 @@ impl KvTable {
                 &duplicate_value,
                 &self.qualified_key("PRIMARY"),
                 lazy_dup_check,
-            )?;
-        }
+            )?
+        } else {
+            false
+        };
         let old_physical_id = old_key.as_ref().map_or(self.table_id, |key| {
             tidb_codec::decode_table_id(key.as_bytes())
         });
@@ -3872,6 +3880,7 @@ impl KvTable {
                         &zone,
                         lazy_dup_check,
                         pessimistic,
+                        check_in_prewrite,
                     ) {
                         // Cluster sessions restore their native statement
                         // checkpoint; only the in-process backend needs repair.
@@ -3882,6 +3891,7 @@ impl KvTable {
                                 handle,
                                 old_physical_id,
                                 &zone,
+                                false,
                                 false,
                                 false,
                             )?;
@@ -3898,6 +3908,7 @@ impl KvTable {
                         &zone,
                         lazy_dup_check,
                         pessimistic,
+                        check_in_prewrite,
                     ) {
                         if !self.store.has_external_statement_rollback() {
                             self.write_index_entries(
@@ -3905,6 +3916,7 @@ impl KvTable {
                                 handle,
                                 old_physical_id,
                                 &zone,
+                                false,
                                 false,
                                 false,
                             )?;
@@ -3920,6 +3932,7 @@ impl KvTable {
                         &zone,
                         lazy_dup_check,
                         pessimistic,
+                        check_in_prewrite,
                     )?;
                 }
             }
@@ -3956,7 +3969,12 @@ impl KvTable {
                 .note(self.table_id, key.as_bytes());
         }
         self.store
-            .set_with_assertion(key, value, record_assertion)
+            .set_with_constraint_check(
+                key,
+                value,
+                record_assertion,
+                set_presume && pessimistic && check_in_prewrite,
+            )
             .map_err(KvTableError::from)?;
         if let Some(stats_ctx) = stats_ctx {
             if old_physical_id == new_physical_id {

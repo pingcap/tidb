@@ -339,6 +339,13 @@ impl Session {
         self.txn.is_some()
     }
 
+    /// Go SessionVars.ConstraintCheckInPlacePessimistic, read live per statement.
+    pub fn pessimistic_constraint_check_in_place(&self) -> bool {
+        self.vars
+            .get_system("tidb_constraint_check_in_place_pessimistic")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1")
+    }
+
     /// The mode the open transaction runs in, if one is open.
     ///
     /// `BEGIN PESSIMISTIC` and `BEGIN OPTIMISTIC` are accepted here and their
@@ -738,6 +745,12 @@ impl Session {
         // Go's `Txn(true)`: with autocommit OFF this is the statement that
         // opens the pending transaction.
         self.begin_implicit_transaction()?;
+        if self.in_transaction()
+            && self.statement_txn_mode().is_pessimistic()
+            && !self.pessimistic_constraint_check_in_place()
+        {
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(1105, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")));
+        }
         let local_temporary = self.local_temporary_tables.clone();
         let global_temporary = self.global_temporary_data.clone();
         let table_delta = self.table_delta_savepoint();

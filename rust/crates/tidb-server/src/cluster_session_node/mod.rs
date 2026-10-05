@@ -3492,6 +3492,7 @@ impl ClusterSessionFactory {
             schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
             explicit: None,
+            lazy_uniqueness_check_enabled: false,
             savepoints: Vec::new(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
@@ -4501,6 +4502,7 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
                 StatementReadShape::LockingRead,
                 |_| Vec::new(),
                 &resource_group,
+                true,
                 |session| operation(session).map_err(map_error),
             )?;
             internal.control_transaction("COMMIT")?;
@@ -4573,6 +4575,8 @@ pub struct ClusterServerSession {
     /// where a statement prepares a timestamp of its own after planning and
     /// waits for it at its first read.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
+    /// Go LazyTxn captures this policy when the transaction becomes valid.
+    lazy_uniqueness_check_enabled: bool,
     /// The transaction's savepoints, oldest first: for each, the name
     /// lowercased and the buffer image taken when it was declared.
     ///
@@ -4765,6 +4769,7 @@ impl ClusterServerSession {
             StatementReadShape::Unknown,
             |_session| prelock_keys.clone(),
             &resource_group,
+            true,
             move |session| {
                 attempt_read_keys.begin();
                 match session
@@ -4886,6 +4891,7 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
         resource_group: &str,
+        is_dml: bool,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.prepare_statement_context(
@@ -4893,7 +4899,7 @@ impl ClusterServerSession {
             shape != StatementReadShape::AutocommitWrite,
         )?;
         let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
-        self.with_bound_statement(shape, &prelock_keys, resource_group, true, run)
+        self.with_bound_statement(shape, &prelock_keys, resource_group, true, is_dml, run)
     }
 
     fn prepare_statement_context(
@@ -4961,7 +4967,7 @@ impl ClusterServerSession {
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, &[], resource_group, false, run)
+        self.with_bound_statement(shape, &[], resource_group, false, false, run)
     }
 
     /// The statement lifecycle proper: savepoint, attempt, replay budget.
@@ -4971,6 +4977,7 @@ impl ClusterServerSession {
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
         notify_executor_breakpoint: bool,
+        is_dml: bool,
         mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         // Go's MDL considers a RUNNING statement a user of its schema
@@ -5033,6 +5040,9 @@ impl ClusterServerSession {
             }
         };
         self.session.end_external_mpp_query_scope(outcome.is_err());
+        if outcome.is_ok() && self.explicit.is_some() && self.lazy_uniqueness_check_enabled {
+            self.buffer.preserve_statement_presumptions(savepoint);
+        }
         self.buffer.release(savepoint);
         self.session.set_selected_lock_keys(None);
         // Go's `cleanRetryInfo` (`pkg/session/session.go:329-336`, deferred
@@ -5063,6 +5073,25 @@ impl ClusterServerSession {
                     .with_label_values(&[] as &[&str])
                     .observe(observation.retries as f64);
             }
+        }
+        if outcome.is_err()
+            && (is_dml || shape == StatementReadShape::LockingRead)
+            && self
+                .explicit
+                .as_ref()
+                .is_some_and(|txn| txn.is_pessimistic())
+            && self.session.in_transaction()
+            && !self.session.pessimistic_constraint_check_in_place()
+        {
+            // Go handlePessimisticDML: with deferred uniqueness we cannot
+            // identify which earlier statement caused the terminal failure.
+            // End the SQL and native owners after releasing the statement stage.
+            let _ = self.session.control_transaction("ROLLBACK");
+            let _ = self.discard_explicit();
+            return outcome.map_err(|error| SqlQueryError::new(
+                8147, *b"HY000",
+                format!("transaction aborted because lazy uniqueness check is enabled and an error occurred: {}", error.message),
+            ));
         }
         outcome
     }
@@ -5382,24 +5411,15 @@ impl ClusterServerSession {
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let transaction = self.explicit.as_ref().expect("pessimistic transaction");
-        // Go `getPessimisticLazyCheckMode` (`pkg/executor/insert.go:346-350`):
-        // the default ON checks lazy INSERT assertions in LockKeys, while OFF
-        // inside an explicit client transaction defers them to prewrite.
-        let check_in_lock = self
-            .session
-            .vars()
-            .get_system("tidb_constraint_check_in_place_pessimistic")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        // Table-selected native flags decide which keys need locking. A
+        // live session switch cannot override an earlier key's selected policy.
         let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
-        let presume_not_exists = if check_in_lock {
-            self.buffer
-                .presume_not_exists_since(*savepoint)
-                .into_iter()
-                .filter(|key| key_set.contains(key))
-                .collect()
-        } else {
-            std::collections::BTreeSet::new()
-        };
+        let presume_not_exists = self
+            .buffer
+            .presume_not_exists_since(*savepoint)
+            .into_iter()
+            .filter(|key| key_set.contains(key))
+            .collect::<std::collections::BTreeSet<_>>();
         // Ownership removes a repeated acquisition, not a NEW absence check.
         // Go KVTxn.LockKeys verifies NeedCheckExists even on a held key.
         if keys.is_empty() {
@@ -5666,6 +5686,7 @@ impl ClusterServerSession {
         if let Some(observer) = self.session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
+        self.lazy_uniqueness_check_enabled = !self.session.pessimistic_constraint_check_in_place();
         self.explicit = Some(transaction);
         // The transaction reads this catalog version until it ends; the pin
         // is what a Go owner's `WaitVersionSynced` waits out (Go
@@ -7719,8 +7740,12 @@ impl QuerySession for ClusterServerSession {
                 .begin_prepared_routed_statement_observation(&sql, stmt);
         }
         self.session.set_binary_prepared_execution(true);
-        let attempt =
-            self.with_prelocked_statement(shape, bind_prelock_keys, &resource_group, |session| {
+        let attempt = self.with_prelocked_statement(
+            shape,
+            bind_prelock_keys,
+            &resource_group,
+            is_write,
+            |session| {
                 if let Some(read_keys) = attempt_read_keys.as_ref() {
                     read_keys.begin();
                 }
@@ -7750,7 +7775,8 @@ impl QuerySession for ClusterServerSession {
                 } else {
                     session.run_with_params(&sql, &params).map_err(map_error)
                 }
-            });
+            },
+        );
         self.session.set_binary_prepared_execution(false);
         if observed_write {
             let affected_rows = match &attempt {
