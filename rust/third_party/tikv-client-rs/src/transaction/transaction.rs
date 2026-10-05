@@ -1179,6 +1179,8 @@ pub struct Transaction<PdC: PdClient = PdRpcClient> {
     keyspace_name: Option<String>,
     rpc_interceptor: Option<RpcInterceptorChain>,
     resource_group_name: Option<String>,
+    /// Snapshot-only override; transaction writes retain their own group.
+    snapshot_resource_group_name: Option<String>,
     resource_control: Option<ResourceGroupControllerHandle>,
     ru_details: Option<Arc<crate::RuDetails>>,
     /// Snapshot-only callers may replace this with source replica-read
@@ -1335,6 +1337,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             keyspace_name,
             rpc_interceptor: None,
             resource_group_name: None,
+            snapshot_resource_group_name: None,
             resource_control: None,
             ru_details: None,
             replica_read_config: ReplicaReadConfig::default(),
@@ -1765,7 +1768,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let remote_snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let remote_snapshot_variables = self.snapshot_variables.clone();
-        let remote_resource_group_name = self.resource_group_name.clone();
+        let remote_resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let remote_resource_control = self.resource_control.clone();
         let remote_ru_details = self.ru_details.clone();
         let remote_retry_options = self.options.retry_options.clone();
@@ -1973,6 +1976,18 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// The group is sent on every physical TiKV request, including retries.
     pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
         self.resource_group_name = Some(resource_group_name.into());
+        self.snapshot_resource_group_name = None;
+    }
+
+    /// Override the snapshot read group; `None` restores the transaction group.
+    pub fn set_snapshot_resource_group_name(&mut self, name: Option<String>) {
+        self.snapshot_resource_group_name = name;
+    }
+
+    fn snapshot_resource_group_name(&self) -> Option<&str> {
+        self.snapshot_resource_group_name
+            .as_deref()
+            .or(self.resource_group_name.as_deref())
     }
 
     /// Native shorthand for [`Self::set_resource_group_name`].
@@ -2042,7 +2057,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
@@ -2164,7 +2179,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
@@ -2420,7 +2435,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let keys = keys
@@ -2556,7 +2571,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let keys = keys
@@ -2721,7 +2736,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         );
         let snapshot_runtime_stats = self.snapshot_runtime_stats.clone();
         let snapshot_variables = self.snapshot_variables.clone();
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let keys = keys
@@ -4462,7 +4477,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let snapshot_variables = self.snapshot_variables.clone();
         let scanner_retry_owner =
             crate::request::plan::new_snapshot_retry_owner(Arc::clone(&snapshot_variables));
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
@@ -4725,7 +4740,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let snapshot_variables = self.snapshot_variables.clone();
         let scanner_retry_owner =
             crate::request::plan::new_snapshot_retry_owner(Arc::clone(&snapshot_variables));
-        let resource_group_name = self.resource_group_name.clone();
+        let resource_group_name = self.snapshot_resource_group_name().map(str::to_owned);
         let resource_control = self.resource_control.clone();
         let ru_details = self.ru_details.clone();
         let priority = self.options.priority;
@@ -16711,6 +16726,19 @@ mod tests {
                             request.context.as_ref().unwrap(),
                             Box::new(kvrpcpb::ScanResponse::default()),
                         )
+                    } else if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    {
+                        (
+                            "prewrite",
+                            request.context.as_ref().unwrap(),
+                            Box::new(kvrpcpb::PrewriteResponse::default()),
+                        )
+                    } else if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+                        (
+                            "commit",
+                            request.context.as_ref().unwrap(),
+                            Box::new(kvrpcpb::CommitResponse::default()),
+                        )
                     } else {
                         panic!("resource-group-name test received an unexpected request");
                     };
@@ -16726,15 +16754,15 @@ mod tests {
                 Ok(response)
             },
         )));
+        pd_client.set_timestamp(Timestamp::from_version(10));
         let mut transaction = Transaction::new(
             Timestamp::from_version(1),
             pd_client,
-            TransactionOptions::new_optimistic()
-                .read_only()
-                .drop_check(CheckLevel::None),
+            TransactionOptions::new_optimistic().drop_check(CheckLevel::None),
             Keyspace::Disable,
         );
-        transaction.set_resource_group_name("test");
+        transaction.set_resource_group_name("write");
+        transaction.set_snapshot_resource_group_name(Some("test".into()));
         transaction.get(Vec::new()).await.unwrap();
         let _: Vec<_> = transaction
             .batch_get(vec![b"batch".to_vec()])
@@ -16747,12 +16775,39 @@ mod tests {
             .unwrap()
             .collect();
 
+        transaction
+            .get_with_options(b"get-option".to_vec(), &[])
+            .await
+            .unwrap();
+        transaction
+            .batch_get_with_options([b"batch-option".to_vec()], &[])
+            .await
+            .unwrap();
+        transaction
+            .scan_iterator_batch((b"abc".to_vec()..b"def".to_vec()).into(), 1, false)
+            .await
+            .unwrap();
+        transaction.set_snapshot_resource_group_name(None);
+        transaction.get(b"reset".to_vec()).await.unwrap();
+        transaction.set_snapshot_resource_group_name(Some("read-again".into()));
+        transaction
+            .put(b"write-key".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+
         assert_eq!(
             *observed.lock().unwrap(),
             [
                 ("get", "test".to_owned()),
                 ("batch-get", "test".to_owned()),
                 ("scan", "test".to_owned()),
+                ("get", "test".to_owned()),
+                ("batch-get", "test".to_owned()),
+                ("scan", "test".to_owned()),
+                ("get", "write".to_owned()),
+                ("prewrite", "write".to_owned()),
+                ("commit", "write".to_owned()),
             ]
         );
     }

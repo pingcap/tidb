@@ -337,6 +337,7 @@ where
         &self,
         key: &[u8],
         call: &crate::rpc::UnaryCallContext,
+        options: &crate::SnapshotReadOptions,
     ) -> Result<(Option<Vec<u8>>, u64), OptimisticCoordinatorError> {
         let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
@@ -354,6 +355,7 @@ where
             true,
             self.gc_state.cache(),
         )?;
+        snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
             crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
         }
@@ -374,6 +376,7 @@ where
         end_key: &[u8],
         limit: Option<usize>,
         call: &crate::rpc::UnaryCallContext,
+        options: &crate::SnapshotReadOptions,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
         let runtime = self.open_read_runtime()?;
         if runtime.cluster_id() != self.pd.cluster_id() {
@@ -391,6 +394,7 @@ where
             true,
             self.gc_state.cache(),
         )?;
+        snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
             crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
         }

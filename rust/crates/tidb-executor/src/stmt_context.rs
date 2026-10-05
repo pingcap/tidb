@@ -3454,6 +3454,29 @@ impl StmtContext {
         self.replica_read
     }
 
+    /// Go executor InitSnapshotWithSessCtx/newReplicaReadAdjuster for point readers.
+    pub fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions {
+        let zone = tidb_config::config_tree::config::get_txn_scope_from_config();
+        tidb_txnkv::SnapshotReadOptions {
+            replica_read: self.replica_read,
+            read_replica_scope: if self.replica_read.is_closest_read() {
+                zone.clone()
+            } else {
+                "global".into()
+            },
+            read_timeout_ms: self.coprocessor_read_policy.read_timeout_ms,
+            resource_group_name: Some(self.resource_group_name().to_owned()),
+            busy_threshold_ns: self.coprocessor_read_policy.busy_threshold_ns,
+            adaptive: (self.replica_read == ReplicaReadType::ClosestAdaptive).then(|| {
+                (
+                    avg_row_bytes,
+                    self.coprocessor_read_policy.closest_read_threshold,
+                    zone,
+                )
+            }),
+        }
+    }
+
     /// The collation mode captured by this expression build context.
     #[must_use]
     pub fn new_collation_enabled(&self) -> bool {

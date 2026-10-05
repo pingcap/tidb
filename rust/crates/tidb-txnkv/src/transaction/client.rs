@@ -39,6 +39,7 @@ pub struct ClientTransaction<C, L, T> {
     gc_state: Arc<GcStateCache>,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
     read_ts: u64,
+    snapshot_read_options: Option<crate::SnapshotReadOptions>,
     collect_snapshot_stats: bool,
     commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
     schema_error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
@@ -72,6 +73,7 @@ pub struct SnapshotScanRegion {
 impl<C, L, T> crate::new_txn::TxnResourceGroup for ClientTransaction<C, L, T> {
     fn set_resource_group_name(&mut self, name: &str) {
         self.engine.transaction_mut().set_resource_group_name(name);
+        self.snapshot_read_options = None;
     }
 }
 impl<C, L, T> ClientTransaction<C, L, T>
@@ -172,6 +174,7 @@ where
             gc_state,
             snapshot_stats,
             read_ts: start_ts,
+            snapshot_read_options: None,
             collect_snapshot_stats: false,
             commit_mode,
             schema_error: Default::default(),
@@ -266,6 +269,68 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             _ => Self::read_error(error),
         }
     }
+    /// Replace the statement's snapshot settings without changing transaction state.
+    pub fn set_snapshot_read_options(&mut self, options: &crate::SnapshotReadOptions) {
+        if self.snapshot_read_options.as_ref() == Some(options) {
+            return;
+        }
+        use tikv_client::{ReplicaReadAdjustment, ReplicaReadSelectorOption, ReplicaReadType};
+        let mode = match options.replica_read.raw() {
+            1 => ReplicaReadType::Follower,
+            2..=4 => ReplicaReadType::Mixed,
+            5 => ReplicaReadType::Learner,
+            6 => ReplicaReadType::PreferLeader,
+            _ => ReplicaReadType::Leader,
+        };
+        let transaction = self.engine.transaction_mut().inner_mut();
+        transaction.set_replica_read(mode);
+        let scope = if options.read_replica_scope.is_empty() {
+            "global"
+        } else {
+            &options.read_replica_scope
+        };
+        transaction.set_read_replica_scope(scope);
+        if options.replica_read.is_closest_read() && scope != "global" {
+            transaction.set_match_store_labels(vec![tikv_client::proto::metapb::StoreLabel {
+                key: "zone".into(),
+                value: scope.into(),
+            }]);
+        }
+        transaction.set_snapshot_read_timeout(Duration::from_millis(options.read_timeout_ms));
+        transaction.set_snapshot_resource_group_name(options.resource_group_name.clone());
+        transaction.set_load_based_replica_read_threshold(Duration::from_nanos(
+            options.busy_threshold_ns.max(0) as u64,
+        ));
+        let adaptive = options.adaptive.clone();
+        // Always replace the callback: an explicit transaction can change modes
+        // between statements, and the prior adaptive closure must not survive.
+        transaction.set_replica_read_adjuster(Arc::new(move |count| {
+            let Some((avg, threshold, zone)) = &adaptive else {
+                return ReplicaReadAdjustment::new(None, mode);
+            };
+            let bytes = avg * count as f64;
+            let estimate = if !bytes.is_finite() || bytes >= 9_223_372_036_854_775_808.0 {
+                i64::MIN
+            } else {
+                bytes as i64
+            };
+            if estimate >= *threshold {
+                ReplicaReadAdjustment::new(
+                    Some(ReplicaReadSelectorOption::MatchLabels(vec![
+                        tikv_client::proto::metapb::StoreLabel {
+                            key: "zone".into(),
+                            value: zone.clone(),
+                        },
+                    ])),
+                    ReplicaReadType::Mixed,
+                )
+            } else {
+                ReplicaReadAdjustment::new(None, ReplicaReadType::Leader)
+            }
+        }));
+        self.snapshot_read_options = Some(options.clone());
+    }
+
     fn prepare_read(&mut self, read_ts: u64, call: &UnaryCallContext) {
         self.client.set_call(call);
         self.client.take_read_trace();

@@ -213,6 +213,9 @@ where
 /// is single-threaded in spirit and its interior mutability stays behind
 /// `&mut self` methods.
 pub trait TableStorage: fmt::Debug + Send + Sync {
+    /// Installs immutable statement policy on the native snapshot, where available.
+    fn set_snapshot_read_options(&self, _options: tidb_txnkv::SnapshotReadOptions) {}
+
     /// Go snapshot runtime command totals. In-process storage has no RPCs.
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         (0, 0)

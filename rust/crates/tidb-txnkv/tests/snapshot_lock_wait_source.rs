@@ -149,6 +149,8 @@ impl TimestampSource for TickingTimestamps {
 #[derive(Debug, Default)]
 struct Recorded {
     get_versions: Vec<u64>,
+    get_timeouts: Vec<Duration>,
+    batch_timeouts: Vec<Duration>,
     get_contexts: Vec<KvrpcContext>,
     scans: Vec<(KvrpcScanRequest, KvrpcContext)>,
     batch_requests: Vec<KvrpcBatchGetRequest>,
@@ -289,8 +291,13 @@ impl TransactionCommandClient for LockingClient {
         _address: &str,
         request: &KvrpcGetRequest,
         context: &KvrpcContext,
-        _call: &UnaryCallContext,
+        call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcGetResponse> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .get_timeouts
+            .push(call.timeout());
         self.recorded
             .lock()
             .unwrap()
@@ -352,6 +359,11 @@ impl TransactionCommandClient for LockingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchGetResponse> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .batch_timeouts
+            .push(call.timeout());
         self.recorded
             .lock()
             .unwrap()
@@ -2529,4 +2541,75 @@ impl tidb_txnkv::region::RegionQueryLoader for OneRegion {
             "fixture expects cached store metadata",
         ))
     }
+}
+
+#[test]
+fn snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset() {
+    let _config = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded.clone());
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(OneRegion));
+    let mut transaction = RealOptimisticTransaction::new_injected(
+        runtime,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2_000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    for (index, timeout) in [731, 0, 233].into_iter().enumerate() {
+        let group = format!("read-group-{index}");
+        transaction.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+            read_timeout_ms: timeout,
+            resource_group_name: Some(group.clone()),
+            ..Default::default()
+        });
+        let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+        transaction
+            .snapshot_get_at(ROW_KEY, START_TS + index as u64 + 1, &call)
+            .unwrap();
+        transaction
+            .snapshot_batch_get(&[format!("batch-{index}").into_bytes()], &call)
+            .unwrap();
+        let recorded = recorded.lock().unwrap();
+        for (context, duration) in [
+            (
+                recorded.get_contexts.last().unwrap(),
+                *recorded.get_timeouts.last().unwrap(),
+            ),
+            (
+                recorded.batch_contexts.last().unwrap(),
+                *recorded.batch_timeouts.last().unwrap(),
+            ),
+        ] {
+            assert_eq!(
+                context
+                    .resource_control_context
+                    .as_ref()
+                    .unwrap()
+                    .resource_group_name,
+                group
+            );
+            if timeout == 0 {
+                assert!(
+                    duration > Duration::from_secs(10),
+                    "zero restores the native request default: {duration:?}"
+                );
+            } else {
+                assert!(
+                    duration <= Duration::from_millis(timeout) && !duration.is_zero(),
+                    "configured per-RPC budget: {duration:?}"
+                );
+            }
+        }
+        assert_eq!(
+            transaction.start_ts(),
+            START_TS,
+            "statement options do not change transaction identity"
+        );
+    }
+    transaction.finish_without_writes().unwrap();
 }

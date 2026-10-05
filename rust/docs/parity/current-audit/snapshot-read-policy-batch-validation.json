@@ -1,0 +1,291 @@
+{
+  "scope": "Connected snapshot-read policy and native resource-group ownership maintenance; no complete package or actual non-leader routing acceptance.",
+  "baseline": {
+    "tidb": "853d55127a8991f19756d79348fd17a43b4c3fb9",
+    "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+    "client_rust": "06b4ccc2735ecf89ed57136241cb7b7d204d6c07",
+    "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee"
+  },
+  "native_commit": "63046fb9b2e0faeb74f7d58bcf27bbb5bbfdee65",
+  "rechecked_findings": [
+    "O13",
+    "N03",
+    "T02"
+  ],
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 28,
+    "partial": 28
+  },
+  "distinct_tidb_passes": 63,
+  "native_passes": 7,
+  "before_failures": {
+    "sql_producer": 3,
+    "native_consumer": 1,
+    "native_ownership": 1
+  },
+  "changes": [
+    "One immutable statement policy reaches point/batch/prepared builders and existing deferred, MaxTS, explicit and overlay snapshots.",
+    "Retained point access columns use the existing Go cardinality owner; fast plans without access columns estimate zero.",
+    "Native Get and BatchGet requests carry configured per-RPC timeout, zero reset and changing statement group.",
+    "Native read resource-group override is independent of prewrite/commit ownership, with reset restoring the transaction group; ordinary, option-bearing and scanner paths share it.",
+    "Replica/adaptive/closest/busy settings reach native configuration and replace prior callbacks; actual non-leader routing is not claimed."
+  ],
+  "test_maintenance": "Removed contains_lookup helper and fixed IndexLookup assertion from an unhinted full-table IN fixture. The existing test now verifies initial cache miss, returned rows, cached reuse and changed-parameter results. Go compareTaskCost owns unhinted choice; no Go execution of this particular physical shape was run.",
+  "development_retries": {
+    "after-executor.log": "Two policy cases passed; the batch assertion incorrectly expected fast-plan zero width. Corrected to the optimizer plan estimate 38 from retained access columns.",
+    "check.log": "Missing read_options in a test SessionSnapshot initializer; corrected before final all-target check."
+  },
+  "routing_gap": "ClientPd inherits PdClient::map_region_to_store_with_replica, whose default ignores config/state and maps the leader. Source-confirmed; no live follower/busy-store test. Preserve T02/O13 partial until the shared routing owner and all consumers migrate.",
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-executor --lib snapshot_read_policy_ -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL: three SQL policy producer regressions",
+      "log": "before.log",
+      "sha256": "7b92a946715ef575e8f66c1b9cbd171a2d9e926981c9d7fe5e4d1ed41b426b33"
+    },
+    {
+      "command": "cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source snapshot_read_policy_ -- --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "EXPECTED FAIL: missing native request resource group",
+      "log": "before-native.log",
+      "sha256": "55c39b072deabe38e80d2284842298e277c43fac122477e19f473d1e365a59d1",
+      "note": "Disable the new native consumer body while retaining the observation seam and regression. The first group assertion fails; this does not separately reproduce the timeout assertion."
+    },
+    {
+      "command": "cargo test --locked -p tikv-client --lib source_go_integration_tests_resource_group_test_TestResourceGroupName -- --exact transaction::transaction::tests::source_go_integration_tests_resource_group_test_TestResourceGroupName",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "EXPECTED FAIL: reset group empty, prewrite and commit use read group",
+      "log": "before-native-ownership.log",
+      "sha256": "a5e24c460ab8e64761a1ff53c302ad8a87820c94d71a6195867b273f4b6cc56f",
+      "note": "The snapshot setter seam delegates to the old transaction setter before separating ownership. All nine requests run and the final assertion reproduces the mismatch."
+    },
+    {
+      "command": "cargo test --locked -p tikv-client --lib -- source_go_integration_tests_resource_group_test_TestResourceGroupName source_snapshot_context_settings_reach_all_read_requests source_snapshot_default_read_timeouts source_lock_retries_drop_the_configurable_snapshot_read_timeout source_go_txnkv_txnsnapshot_snapshot_test_TestReplicaReadAdjuster source_snapshot_iterator --test-threads=1",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "PASS: seven tests",
+      "log": "native-tests.log",
+      "sha256": "a134bd505a621faa87d7ad79d6304bd1d80d5adb5e1e75736c7c0509246042d8"
+    },
+    {
+      "command": "cargo check --locked -p tikv-client --all-targets",
+      "cwd": "/workspace/client-rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0",
+      "result": "PASS",
+      "log": "native-check.log",
+      "sha256": "60fbb9f250a0e771ba26b956737d3177249af09ae57ec4c8c3cf1f452081e0f8"
+    },
+    {
+      "command": "cargo build --locked -p tidb-server",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS immediately before native push",
+      "log": "native-prepush-build.log",
+      "sha256": "76266baa3c5abab4a4468402f83b41bacc7f58c489b250fc80782d542df960c2",
+      "note": "Uses the existing vendor before maintained sync; final TiDB integration is validated separately below."
+    },
+    {
+      "command": "CARGO_BUILD_JOBS=1 bash rust/scripts/sync-tikv-client-rs.sh",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: maintained patches and protobuf regeneration",
+      "log": "sync.log",
+      "sha256": "af8a5af720b6bd1a01e213726fb91383390049c85156e25a023b8b31c439fdd9"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-planner -p tidb-server -p tidb-txnkv --lib --test snapshot_lock_wait_source -- snapshot_read_policy_ point_get_max_ts driver::tests::point_get a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "FAILED: disk exhausted during linking before tests ran",
+      "log": "grouped-link-disk-failure.log",
+      "sha256": "312f0966a5f74e925b47ca09fac444c4a25ddb4afab4061d8d9efe3e6eaab8b2",
+      "note": "Inactive regeneratable artifacts reclaimed; source, logs and recovery preserved. Not a passing check."
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-planner -p tidb-server -p tidb-txnkv --lib --test snapshot_lock_wait_source -- snapshot_read_policy_ point_get_max_ts driver::tests::point_get a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "FAILED: 32 pass, one fixed unhinted IndexLookup assertion fails",
+      "log": "grouped-plan-shape-failure.log",
+      "sha256": "1b4279a379c18991ddb852cfd35e63db9be6a87433756304fd2eb5389d3cad39"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-planner -p tidb-server -p tidb-txnkv --lib --test snapshot_lock_wait_source --no-fail-fast -- snapshot_read_policy_ point_get_max_ts driver::tests::point_get a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "62 pass, same plan-shape assertion fails; all new policy tests pass",
+      "log": "grouped-investigation.log",
+      "sha256": "04d9da3309d45c5f29b3147d53da580f00ff53cbfdaeb9cfd6f08bf30fcc69cb"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-planner -p tidb-server -p tidb-txnkv --lib --test snapshot_lock_wait_source --no-fail-fast -- snapshot_read_policy_ point_get_max_ts driver::tests::point_get a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts --test-threads=1",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS: 63 distinct TiDB cases",
+      "log": "after-grouped.log",
+      "sha256": "fe2ec4cb4109245b28549f29933b3c21e5fffe447096e8376a09e3f95777ecd6"
+    },
+    {
+      "command": "cargo check --locked -p tidb-txnkv -p tidb-planner -p tidb-executor -p tidb-exec -p tidb-server --all-targets",
+      "cwd": "/workspace/tidb/rust",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "check-final.log",
+      "sha256": "96830dcc6af1db456b0c3111c58b5460cc188414fac50fc5b5d9b9cc1fea72de"
+    },
+    {
+      "command": "make lint",
+      "cwd": "/workspace/tidb",
+      "activation": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1",
+      "result": "PASS",
+      "log": "lint-final.log",
+      "sha256": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "rust/crates/tidb-exec/src/cluster_table_storage.rs",
+      "sha256": "838fc9bc048a50758ea6126c2c35ca85fc93560c86b7f5d413ac2f755638ecab"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/cluster_storage.rs",
+      "sha256": "a7bb3b5ad0e710ad5fdf07cb076d1240441cb62019f34e45cf9d33fd750ec812"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/access.rs",
+      "sha256": "a43f7cb6b7a6351859133b008c60572c14b36e1d6a61d5aa8f5e2b8e7d719845"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+      "sha256": "180fe0d2ee5cdf1c7d7d32136bbe3f3f853d4848daf5f832091c28dda29d8a0c"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/driver/tests/point_get.rs",
+      "sha256": "26719f40fb102b6e465ff07b2a2af800a694de1d1d253e3dfcf15413354b8d87"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/kv_table.rs",
+      "sha256": "46c8416de6f76e96e53064fb8abb3817f6c73201b396a16cb2941137f37583b7"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/stmt_context.rs",
+      "sha256": "ee26b3803f8f19982f51b4f0af71b353e06b4b6a4146866d87f6531c17cc7d74"
+    },
+    {
+      "path": "rust/crates/tidb-executor/src/storage.rs",
+      "sha256": "cee00651d727b5a487a2fb4df801fb422a40566558d2c7b4dad2d14c929d3260"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/physical/mod.rs",
+      "sha256": "64c5d85aee7f81efddf09bcaef1e864d3596dd18a7be8791bb7aea891f4f647d"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/physical/tests.rs",
+      "sha256": "29439184c632890fea71c1bf4ee2312e5af74a2052c03f82d792368bd83db727"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/mock_cluster.rs",
+      "sha256": "a587c9bcd4e7033caf4562de4e160c7cd58ef43ca8a5f39f9f6c0832274983f7"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/tests/point_get_max_ts.rs",
+      "sha256": "4d770cd10d52c479fffcd8b9642a2bc701aa6ce165be7ae9a9cf3a3bb23dd9df"
+    },
+    {
+      "path": "rust/crates/tidb-server/src/cluster_session_node/transactions.rs",
+      "sha256": "def754a45472304b549f2033250b47d3e39793eca525cc0ada7fd748a780067d"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/lib.rs",
+      "sha256": "2ae17917059f10c71200e452d7a6e47ae55aeb5054ea3ee301eb419a989a42a4"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/option.rs",
+      "sha256": "bc998d3d717c5cbddf41ecd71b1b24400537ba5b7c66183662cf237afcf71cdf"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/transaction/client.rs",
+      "sha256": "493f991e6727b1dc8355804dae325877a1f4e985d69ce1f702202bf82d182501"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/src/transaction/coordinator/opener.rs",
+      "sha256": "6d5c95ddc10e9240f7bb0fbd389d0f54eb5e247ae973083ad76081388970a167"
+    },
+    {
+      "path": "rust/crates/tidb-txnkv/tests/snapshot_lock_wait_source.rs",
+      "sha256": "ab9e9fe4e7a461bead7478d48cea74a391eeed6232fff8862a7de1e429706a77"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/src/transaction/snapshot.rs",
+      "sha256": "340289c333ae50249449556070ab04e474d2ccd3b1f1a7c82db5217a95716529"
+    },
+    {
+      "path": "rust/third_party/tikv-client-rs/src/transaction/transaction.rs",
+      "sha256": "0078ec5dfc8133d43196ca10a54737e66deb580f334eecb2018efb62f6a9f5c7"
+    }
+  ],
+  "go_sources": [
+    {
+      "path": "pkg/executor/builder.go",
+      "sha256": "7d47dc5eec64aa98de44014cf275061b102d6da57a4df2a565694637c53790e7"
+    },
+    {
+      "path": "pkg/executor/point_get.go",
+      "sha256": "403c5fb93f18a263ae088faba9d28da7e72b56f08057304788fd91a7e2b6fc63"
+    },
+    {
+      "path": "pkg/planner/core/operator/physicalop/physical_batch_point_get.go",
+      "sha256": "c662f7783d35df21336174c5573ca4d52970d5e0427c11a2002abbe70a3876a9"
+    },
+    {
+      "path": "pkg/sessiontxn/isolation/base.go",
+      "sha256": "a2ce01dd7970b176bf8e00cfd85a9a2c8fb645b7264314a3f96e26c3c33fb523"
+    },
+    {
+      "path": "pkg/sessiontxn/internal/txn.go",
+      "sha256": "940778c5e2663870b1f7264605c3476a6774d641344f1ab42c1aed041e3bdc12"
+    },
+    {
+      "path": "pkg/store/driver/txn/snapshot.go",
+      "sha256": "85ee5bca1c22a917bf94248f167252797cebbbe15305da7e37341b5cd539834a"
+    },
+    {
+      "path": "pkg/store/driver/txn/txn_driver.go",
+      "sha256": "8096c2cc21d26e6f62ba90f0a6ee9582e3a205bea7bef1e9b434dd937335f710"
+    },
+    {
+      "path": "pkg/planner/core/find_best_task.go",
+      "sha256": "04ec38161e73e14e9e73ac7b9ab65607e44f3f1001e49525c4d0f176d765af63"
+    },
+    {
+      "path": "pkg/planner/core/casetest/plancache/plan_cache_rebuild_test.go",
+      "sha256": "ec80f610e7c97a1f2434cd8b144419a7dff0e15f21be476f65de1e2f20c34a7d"
+    }
+  ],
+  "client_go_sources": [
+    {
+      "path": "txnkv/transaction/txn.go",
+      "sha256": "b1de4ae24c0ec8a17715541af2b61b4ecf65d478f4cae7f24ccc3719fdfc3211"
+    },
+    {
+      "path": "txnkv/txnsnapshot/snapshot.go",
+      "sha256": "d33e17bbe75e3c288b94859b445cf60d10ed7d34ca65a2d334955967fe9d52c5"
+    }
+  ],
+  "other_findings": "Other53 unresolved roots retain previous evidence; not freshly reproduced.",
+  "not_verified": [
+    "Complete Go packages and original full suites",
+    "Live multi-node replica, adaptive/busy routing and AZ selection",
+    "Local/stale scope lifecycle, other dynamic reader estimates and task-build-error counters",
+    "Pipelined background callback refresh after later policy changes",
+    "Performance or fresh-task environment restoration"
+  ],
+  "publication": "Native remote SHA verified after a fresh locked TiDB build; TiDB actual hook and immediately-before-push build remain mandatory. Final evidence: /workspace/.cloud-setup/snapshot-read-policy-batch/final-handoff.json."
+}

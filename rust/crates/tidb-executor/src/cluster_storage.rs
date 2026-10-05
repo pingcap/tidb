@@ -80,6 +80,9 @@ pub type SnapshotPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// implementation maps region errors, stale epochs and unresolvable locks onto
 /// [`StorageError::Retryable`]; anything else is [`StorageError::Backend`].
 pub trait ClusterSnapshot: fmt::Debug + Send {
+    /// Installs immutable statement policy on the native snapshot, where available.
+    fn set_snapshot_read_options(&mut self, _options: tidb_txnkv::SnapshotReadOptions) {}
+
     /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for point and batch-point
     /// commands issued by this snapshot so far.
     fn point_rpc_counts(&mut self) -> (u64, u64) {
@@ -894,6 +897,12 @@ impl SwappableSnapshot {
 }
 
 impl ClusterSnapshot for SwappableSnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        if let Some(snapshot) = self.bound.as_mut() {
+            snapshot.set_snapshot_read_options(options);
+        }
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.snapshot()
             .map_or((0, 0), |snapshot| snapshot.point_rpc_counts())
@@ -1024,6 +1033,13 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_snapshot_read_options(options);
+    }
+
     fn has_external_statement_rollback(&self) -> bool {
         true
     }

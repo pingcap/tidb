@@ -436,18 +436,18 @@
   ],
   "latest_evidence": {
     "date": "2026-10-05",
-    "integration_start": "3cb7eaec4b2b230a0beb9ecebe127094d8a05279",
+    "integration_start": "853d55127a8991f19756d79348fd17a43b4c3fb9",
     "findings": [
-      "S03",
+      "O13",
       "N03",
-      "S04"
+      "T02"
     ],
     "statuses": {
-      "S03": "partial",
+      "O13": "partial",
       "N03": "partial",
-      "S04": "partial"
+      "T02": "partial"
     },
-    "receipt": "session-migration-batch-validation.json",
-    "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
+    "receipt": "snapshot-read-policy-batch-validation.json",
+    "scope": "Connected O13/N03 snapshot-read maintenance: point/batch/prepared policy and estimates, deferred/MaxTS/explicit carriers, physical read timeout and independent native snapshot resource-group ownership. T02 leader-only adapter fallback freshly confirmed; no whole-package or non-leader routing acceptance."
   }
 }

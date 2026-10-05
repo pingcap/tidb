@@ -35,6 +35,7 @@ pub(super) struct MockCluster {
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
     /// Resource groups observed at snapshot/transaction request boundaries.
     pub(super) resource_groups: Mutex<Vec<String>>,
+    pub(super) read_options: Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>,
     /// The timestamp of the last commit that touched each key, which is
     /// what a prewrite at `start_ts` is checked against -- TiKV's own
     /// write-conflict rule in miniature.
@@ -220,6 +221,10 @@ impl Drop for MockSnapshot {
 }
 
 impl ClusterSnapshot for MockSnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.cluster.read_options.lock().unwrap().push(options);
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         Ok(self.data.get(key.as_bytes()).cloned())
     }

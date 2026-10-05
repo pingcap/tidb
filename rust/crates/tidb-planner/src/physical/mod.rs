@@ -3960,6 +3960,44 @@ impl PhysicalPlan {
         )
     }
 
+    /// Go PointGetPlan/BatchPointGetPlan.GetAvgRowSize; fast plans have no accessCols.
+    #[must_use]
+    pub fn point_avg_row_size(&self, enable_chunk_rpc: bool) -> f64 {
+        use crate::cardinality::row_size::{
+            get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeStore,
+        };
+        let (columns, index) = match self {
+            Self::PointGet(point) => (&point.access_cols, point.index_id),
+            Self::BatchPointGet(point) => (&point.access_cols, point.index_id),
+            _ => return 0.0,
+        };
+        let Some(columns) = columns else {
+            return 0.0;
+        };
+        let hist = self.stats_info().and_then(StatsInfo::hist_coll);
+        let columns: Vec<_> = columns
+            .iter()
+            .map(|column| RowSizeColumn {
+                stats: hist.and_then(|hist| hist.column(column.unique_id)),
+                estimated_width: 0.0,
+            })
+            .collect();
+        let pseudo = hist.is_none_or(|hist| hist.pseudo());
+        let count = hist.map_or(0, |hist| hist.realtime_count());
+        if index.is_some() {
+            get_index_avg_row_size(&columns, pseudo, count, true, enable_chunk_rpc)
+        } else {
+            get_table_avg_row_size(
+                &columns,
+                pseudo,
+                count,
+                RowSizeStore::TiKv,
+                true,
+                enable_chunk_rpc,
+            )
+        }
+    }
+
     /// Go reader GetNetDataSize, before splitting into region tasks.
     #[must_use]
     pub fn cop_net_data_size(&self, encoded_key: bool, enable_chunk_rpc: bool) -> f64 {

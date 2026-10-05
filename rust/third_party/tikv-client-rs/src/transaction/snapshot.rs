@@ -399,7 +399,7 @@ impl<PdC: PdClient> Snapshot<PdC> {
     /// Set the source-compatible resource group on subsequent snapshot RPCs.
     pub fn set_resource_group_name(&mut self, resource_group_name: impl Into<String>) {
         self.transaction
-            .set_resource_group_name(resource_group_name);
+            .set_snapshot_resource_group_name(Some(resource_group_name.into()));
     }
 
     /// Attach a PD resource-group controller to subsequent snapshot RPCs.

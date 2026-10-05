@@ -56,9 +56,14 @@ fn fix52592_disables_unique_index_point_conversion() {
 struct BatchGetCountingStorage {
     inner: MemTableStorage,
     batch_gets: Arc<AtomicUsize>,
+    read_options: Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
 }
 
 impl TableStorage for BatchGetCountingStorage {
+    fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.read_options.lock().unwrap().push(options);
+    }
+
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.inner.get(key)
     }
@@ -160,15 +165,8 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 }
 
 #[test]
-fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
+fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
     let cache = crate::SessionPlanCache::default();
-    use tidb_planner::physical::PhysicalPlan;
-
-    fn contains_lookup(plan: &PhysicalPlan) -> bool {
-        matches!(plan, PhysicalPlan::IndexLookUpReader(_))
-            || plan.children().iter().any(contains_lookup)
-    }
-
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
         "CREATE TABLE prepared_in_stats (id BIGINT PRIMARY KEY, k BIGINT, v BIGINT, KEY k_idx(k))",
@@ -204,7 +202,45 @@ fn prepared_in_predicate_uses_filtered_stats_for_cache_admission() {
             &PreparedPlanCacheEnvironment::default(),
         )
         .expect("bound IN values should build the cached plan");
-    assert!(execution.with_plan(|_, physical| contains_lookup(physical)).unwrap());
+    // Go chooses unhinted access paths by cost. Cache admission and rebind
+    // correctness must not require an index lookup for a full-table predicate.
+    assert!(!execution.cache_hit());
+    let (_, mut rows) =
+        run_prepared_select_for_test(&execution, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
+    rows.sort_by_key(|row| match row[0] {
+        Datum::Int(id) => id,
+        _ => panic!("integer handle"),
+    });
+    assert_eq!(
+        rows,
+        (1..=10)
+            .map(|id| vec![Datum::Int(id), Datum::Int(id * 11)])
+            .collect::<Vec<_>>()
+    );
+    drop(execution);
+    let rebound = plan
+        .bind(
+            &cache,
+            &(5..=14).map(Datum::Int).collect::<Vec<_>>(),
+            &catalog,
+            DEFAULT_DATABASE,
+            &ctx,
+            &PreparedPlanCacheEnvironment::default(),
+        )
+        .unwrap();
+    assert!(rebound.cache_hit());
+    let (_, mut rows) =
+        run_prepared_select_for_test(&rebound, &catalog, DEFAULT_DATABASE, &ctx).unwrap();
+    rows.sort_by_key(|row| match row[0] {
+        Datum::Int(id) => id,
+        _ => panic!("integer handle"),
+    });
+    assert_eq!(
+        rows,
+        (5..=10)
+            .map(|id| vec![Datum::Int(id), Datum::Int(id * 11)])
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -1531,6 +1567,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let _ = std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
         inner: MemTableStorage::new(),
         batch_gets: Arc::clone(&batch_gets),
+        read_options: Default::default(),
     }));
     run_insert_on(
         "INSERT INTO bd VALUES (1, 'a', 10)",
@@ -1713,6 +1750,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let mut storage = BatchGetCountingStorage {
         inner: MemTableStorage::new(),
         batch_gets: Arc::clone(&batch_gets),
+        read_options: Default::default(),
     };
     storage.set(key, value).unwrap();
     storage
@@ -1769,6 +1807,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
                 inner: MemTableStorage::new(),
                 batch_gets: Arc::clone(&batch_gets),
+                read_options: Default::default(),
             }));
         let ctx = crate::StmtContext::for_query();
         run_insert_on(
@@ -2650,4 +2689,142 @@ fn out_of_range_point_literal_plans_a_table_dual() {
         operators.iter().any(|name| name.contains("TableDual")),
         "expected a TableDual operator, got {operators:?}"
     );
+}
+
+// Go executor InitSnapshotWithSessCtx and newReplicaReadAdjuster configure the
+// snapshot for each execution, including reused prepared plans.
+fn snapshot_policy_catalog() -> (
+    Catalog,
+    Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
+) {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE read_policy (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let options = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "read_policy") else {
+        panic!("table")
+    };
+    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
+        read_options: options.clone(),
+        ..Default::default()
+    }));
+    run_insert_on(
+        "INSERT INTO read_policy VALUES (1,10),(2,20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    (catalog, options)
+}
+
+fn snapshot_policy_context(mode: crate::ReplicaReadType) -> crate::StmtContext {
+    crate::StmtContext::for_query()
+        .with_resource_group_name("statement-read-group")
+        .with_replica_read(mode)
+        .with_coprocessor_read_policy(crate::remote_scan::CoprocessorReadPolicy {
+            closest_read_threshold: 4096,
+            busy_threshold_ns: 1_234_567_890,
+            read_timeout_ms: 731,
+        })
+}
+
+fn assert_snapshot_policy(
+    options: &Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
+    mode: crate::ReplicaReadType,
+    expected_avg: f64,
+) {
+    let options = options.lock().unwrap();
+    let option = options
+        .last()
+        .expect("point reader must configure its native snapshot");
+    assert_eq!(option.replica_read, mode);
+    assert_eq!(option.read_timeout_ms, 731);
+    assert_eq!(
+        option.resource_group_name.as_deref(),
+        Some("statement-read-group")
+    );
+    assert_eq!(option.busy_threshold_ns, 1_234_567_890);
+    if mode == crate::ReplicaReadType::ClosestAdaptive {
+        assert_eq!(
+            option.adaptive.as_ref().map(|x| (x.0, x.1)),
+            Some((expected_avg, 4096)),
+            "Go estimates retained accessCols; only fast plans have zero width"
+        );
+    } else {
+        assert!(
+            option.adaptive.is_none(),
+            "a new execution must clear the previous adjuster"
+        );
+    }
+}
+
+#[test]
+fn snapshot_read_policy_point_follow_go() {
+    let (catalog, options) = snapshot_policy_catalog();
+    for mode in [
+        crate::ReplicaReadType::Follower,
+        crate::ReplicaReadType::ClosestAdaptive,
+        crate::ReplicaReadType::Leader,
+    ] {
+        assert_eq!(
+            run_select_on(
+                "SELECT v FROM read_policy WHERE id=1",
+                &catalog,
+                &snapshot_policy_context(mode)
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(10)]]
+        );
+        assert_snapshot_policy(&options, mode, 0.0);
+    }
+}
+
+#[test]
+fn snapshot_read_policy_batch_follow_go() {
+    let (catalog, options) = snapshot_policy_catalog();
+    for mode in [
+        crate::ReplicaReadType::Mixed,
+        crate::ReplicaReadType::ClosestAdaptive,
+        crate::ReplicaReadType::Leader,
+    ] {
+        assert_eq!(
+            run_select_on(
+                "SELECT v FROM read_policy WHERE id IN (1,2) ORDER BY id",
+                &catalog,
+                &snapshot_policy_context(mode)
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]
+        );
+        assert_snapshot_policy(&options, mode, 38.0);
+    }
+}
+
+#[test]
+fn snapshot_read_policy_prepared_follow_go() {
+    let (mut catalog, options) = snapshot_policy_catalog();
+    let stmt = tidb_parser::parse("SELECT v FROM read_policy WHERE id=?").unwrap();
+    let zone = tidb_datatype::SessionTimeZone::default();
+    let plan = Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, DEFAULT_DATABASE, &zone).unwrap(),
+    );
+    for mode in [
+        crate::ReplicaReadType::Follower,
+        crate::ReplicaReadType::ClosestAdaptive,
+        crate::ReplicaReadType::Leader,
+    ] {
+        let ctx = snapshot_policy_context(mode);
+        let execution = plan.bind(&[Datum::Int(1)], &zone).unwrap();
+        let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let result =
+            run_prepared_point_get(&execution, &mut catalog, DEFAULT_DATABASE, &decode, &ctx)
+                .unwrap()
+                .unwrap()
+                .1;
+        assert_eq!(result, vec![vec![Datum::Int(10)]]);
+        assert_snapshot_policy(&options, mode, 0.0);
+    }
 }

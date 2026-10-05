@@ -561,6 +561,7 @@ struct DeferredSnapshot {
 /// The statement's read transaction, and the shape it was declared with.
 #[derive(Default)]
 struct DeferredState {
+    read_options: Option<tidb_txnkv::SnapshotReadOptions>,
     /// An ordinary timestamp request started after planning and not yet waited.
     prepared: Option<Box<dyn PendingClusterSnapshot>>,
     /// `None` until the first read waits for the prepared snapshot.
@@ -727,7 +728,10 @@ impl DeferredSnapshot {
             } else {
                 self.transactions.open_snapshot(&self.resource_group)
             };
-            let opened = opened.map_err(StorageError::Backend)?;
+            let mut opened = opened.map_err(StorageError::Backend)?;
+            if let Some(options) = &guard.read_options {
+                opened.set_snapshot_read_options(options.clone());
+            }
             // Recorded at the open, under the same lock, so the timestamp the
             // statement publishes at is the one its reads are served at and
             // cannot be a later transaction's.
@@ -768,6 +772,14 @@ impl Drop for DeferredSnapshot {
 }
 
 impl ClusterSnapshot for DeferredSnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        let mut state = self.state();
+        if let Some(opened) = state.opened.as_mut() {
+            opened.set_snapshot_read_options(options.clone());
+        }
+        state.read_options = Some(options);
+    }
+
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.prepare_open()
     }

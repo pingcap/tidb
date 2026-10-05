@@ -174,6 +174,24 @@ impl ReplicaReadType {
     }
 }
 
+/// Statement-owned options for the native KV snapshot. Coprocessor request
+/// options have a different owner; ordinary Get/BatchGet must configure this one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SnapshotReadOptions {
+    /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.
+    pub replica_read: ReplicaReadType,
+    /// Scope used for snapshot visibility and closest-replica matching.
+    pub read_replica_scope: String,
+    /// Per-RPC read timeout; zero restores the native default.
+    pub read_timeout_ms: u64,
+    /// Statement resource group, overriding the activation-time group when supplied.
+    pub resource_group_name: Option<String>,
+    /// Load-based replica threshold, preserving duration precision until encoding.
+    pub busy_threshold_ns: i64,
+    /// Adaptive point-read estimate, threshold and configured zone.
+    pub adaptive: Option<(f64, i64, String)>,
+}
+
 /// Request-origin metadata propagated to storage RPCs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RequestSource {

@@ -1900,6 +1900,12 @@ impl KvTable {
         self.store.point_rpc_counts()
     }
 
+    /// Installs point-reader options on the same backend that serves its keys.
+    pub(crate) fn configure_snapshot_read(&self, ctx: &crate::StmtContext, avg_row_bytes: f64) {
+        self.store
+            .set_snapshot_read_options(ctx.snapshot_read_options(avg_row_bytes));
+    }
+
     pub(crate) fn point_reader(&self) -> PointRead<'_> {
         PointRead {
             table: self,

@@ -3931,6 +3931,7 @@ fn build_point_get(
     let table = catalog
         .physical_kv_table_by_id(physical_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
+    table.configure_snapshot_read(ctx, plan.point_avg_row_size(true));
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
@@ -3992,6 +3993,7 @@ fn build_batch_point_get(
     let table = catalog
         .physical_kv_table_by_id(batch.table_id)
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
+    table.configure_snapshot_read(ctx, plan.point_avg_row_size(true));
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     // Go buildBatchPointGet sizes both capacities to the retained access keys.

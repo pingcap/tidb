@@ -2461,3 +2461,41 @@ fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
     assert_eq!(pseudo.cop_net_data_size(false, true), 32.5);
     assert_eq!(pseudo.cop_net_data_size(true, false), 36.0);
 }
+
+#[test]
+fn snapshot_read_policy_point_sizes_follow_go_fast_and_optimizer_plans() {
+    let columns = vec![
+        Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
+        Column::new(2, FieldType::new(FieldTypeCode::LongLong)),
+    ];
+    for batch in [false, true] {
+        for index in [None, Some(2)] {
+            for access in [None, Some(columns.clone())] {
+                let expected = if access.is_none() {
+                    0.0
+                } else if index.is_some() {
+                    37.0
+                } else {
+                    29.0
+                };
+                let plan = if batch {
+                    PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+                        access_cols: access,
+                        index_id: index,
+                        ..Default::default()
+                    })
+                } else {
+                    PhysicalPlan::PointGet(PhysicalPointGet {
+                        access_cols: access,
+                        index_id: index,
+                        ..Default::default()
+                    })
+                };
+                // Go pseudo width: two 8-byte columns + two flags, plus the
+                // 19-byte key; table rows subtract the encoded 8-byte handle.
+                assert_eq!(plan.point_avg_row_size(true), expected);
+                assert_eq!(plan.point_avg_row_size(false), expected);
+            }
+        }
+    }
+}

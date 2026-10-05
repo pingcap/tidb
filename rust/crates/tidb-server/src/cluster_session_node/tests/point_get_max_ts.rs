@@ -1044,3 +1044,44 @@ fn neither_the_deferral_nor_the_declaration_reaches_a_statement_inside_a_transac
     session.control_transaction("COMMIT").expect("commit");
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 3);
 }
+
+#[test]
+fn snapshot_read_policy_follows_deferred_max_ts_batch_and_explicit_execution() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    for explicit in [false, true] {
+        if explicit {
+            session.execute_write("BEGIN").unwrap();
+        }
+        for (mode, timeout) in [("follower", 731), ("closest-adaptive", 233), ("leader", 0)] {
+            session
+                .execute_write(&format!(
+                    "SET tidb_replica_read='{mode}', tikv_client_read_timeout={timeout}"
+                ))
+                .unwrap();
+            for sql in [
+                "SELECT v FROM t WHERE id=1",
+                "SELECT v FROM t WHERE id IN (1,2) ORDER BY id",
+            ] {
+                node.read_options.lock().unwrap().clear();
+                assert!(!rows(&mut session, sql).is_empty());
+                let options = node.read_options.lock().unwrap();
+                let option = options
+                    .last()
+                    .expect("deferred snapshot retains options until open");
+                assert_eq!(option.read_timeout_ms, timeout);
+                assert_eq!(
+                    option.replica_read,
+                    match mode {
+                        "follower" => tidb_txnkv::ReplicaReadType::Follower,
+                        "closest-adaptive" => tidb_txnkv::ReplicaReadType::ClosestAdaptive,
+                        _ => tidb_txnkv::ReplicaReadType::Leader,
+                    }
+                );
+            }
+        }
+        if explicit {
+            session.execute_write("ROLLBACK").unwrap();
+        }
+    }
+}

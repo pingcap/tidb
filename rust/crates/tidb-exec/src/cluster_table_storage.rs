@@ -429,6 +429,12 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for StatementSnapshot<C, L, P>
 {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.set_snapshot_read_options(&options);
+        }
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.transaction
             .as_ref()
@@ -490,6 +496,7 @@ pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdC
     cancellation: UnaryCancellation,
     consumed: bool,
     get_rpc_count: u64,
+    read_options: tidb_txnkv::SnapshotReadOptions,
 }
 
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapshot<C, L, P> {
@@ -502,6 +509,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
             cancellation: UnaryCancellation::new(),
             consumed: false,
             get_rpc_count: 0,
+            read_options: Default::default(),
         }
     }
 
@@ -527,6 +535,10 @@ impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for MaxTsSnapshot<C, L, P>
 {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.read_options = options;
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         (self.get_rpc_count, 0)
     }
@@ -539,7 +551,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
         );
         let (value, rpc_count) = self
             .opener
-            .snapshot_get_at_max_ts(key.as_bytes(), &call)
+            .snapshot_get_at_max_ts(key.as_bytes(), &call, &self.read_options)
             .map_err(classify)?;
         self.get_rpc_count = self.get_rpc_count.wrapping_add(rpc_count);
         Ok(value)
@@ -560,7 +572,13 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
             self.cancellation.clone(),
         );
         self.opener
-            .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
+            .snapshot_scan_at_max_ts(
+                start.as_bytes(),
+                end.as_bytes(),
+                limit,
+                &call,
+                &self.read_options,
+            )
             .map_err(classify)
     }
 
@@ -636,6 +654,22 @@ enum SessionTransactionState<C, L, P: StorePdCapability> {
         lock_values: PessimisticLockCache,
     },
     Finished,
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
+    SessionTransactionState<C, L, P>
+{
+    fn set_snapshot_read_options(&mut self, options: &tidb_txnkv::SnapshotReadOptions) {
+        match self {
+            Self::Optimistic(transaction) | Self::PessimisticPending { transaction, .. } => {
+                transaction.set_snapshot_read_options(options)
+            }
+            Self::Pessimistic { transaction, .. } => {
+                transaction.snapshot().set_snapshot_read_options(options)
+            }
+            Self::Finished => {}
+        }
+    }
 }
 
 /// Crosses Go's lazy pessimistic boundary exactly once, immediately before
@@ -1077,6 +1111,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             start_ts: self.start_ts,
             timeout: self.timeout,
             read_ts: None,
+            read_options: Default::default(),
             locking,
         }))
     }
@@ -1109,6 +1144,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
             start_ts: self.start_ts,
             timeout: self.timeout,
             read_ts: Some(read_ts),
+            read_options: Default::default(),
             locking,
         }))
     }
@@ -1316,6 +1352,10 @@ impl fmt::Debug for MutationOverlaySnapshot {
 }
 
 impl ClusterSnapshot for MutationOverlaySnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.snapshot.set_snapshot_read_options(options);
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.snapshot.point_rpc_counts()
     }
@@ -1597,6 +1637,7 @@ struct SessionSnapshot<C, L, P: StorePdCapability> {
     read_ts: Option<u64>,
     /// Whether this statement may use rows returned with pessimistic locks.
     locking: bool,
+    read_options: tidb_txnkv::SnapshotReadOptions,
 }
 
 impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
@@ -1611,6 +1652,10 @@ impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
 impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
     for SessionSnapshot<C, L, P>
 {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.read_options = options;
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         let mut state = self
             .state
@@ -1642,6 +1687,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
         match &mut *state {
             SessionTransactionState::Optimistic(transaction) => transaction
                 .snapshot_get_at(&bytes, read_ts, &call)
@@ -1684,6 +1730,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
         match &mut *state {
             SessionTransactionState::Optimistic(transaction) => transaction
                 .snapshot_batch_get_at(&keys, read_ts, &call)
@@ -1738,6 +1785,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
         match &mut *state {
             SessionTransactionState::Optimistic(transaction) => transaction
                 .snapshot_scan_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
@@ -1977,6 +2025,7 @@ mod tests {
             start_ts: 10,
             timeout: Duration::from_secs(1),
             read_ts: None,
+            read_options: Default::default(),
             locking: false,
         };
         assert_eq!(ClusterSnapshot::start_ts(&snapshot), 10);
@@ -2153,6 +2202,7 @@ mod tests {
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: None,
+            read_options: Default::default(),
             locking: false,
         };
         assert_eq!(
@@ -2167,6 +2217,7 @@ mod tests {
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: Some(200),
+            read_options: Default::default(),
             locking: false,
         };
         assert_eq!(

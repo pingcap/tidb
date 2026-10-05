@@ -1710,6 +1710,7 @@ pub fn open_prepared_point_get(
     let TableEntry::Kv(kv) = table.as_ref() else {
         return Ok(None);
     };
+    kv.configure_snapshot_read(stmt_ctx, 0.0);
     let schema = fast_point_schema(kv, &plan.output);
     let statistics = catalog.table_statistics(kv.stats_physical_id());
     let columns = plan.output.columns.clone();

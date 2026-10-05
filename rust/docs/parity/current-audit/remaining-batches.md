@@ -33,6 +33,8 @@ Completion: One discovery/TSO/region/channel lifecycle; service-mode switches, o
 
 Integration dependencies: none; external prerequisite packages still require complete acceptance.
 
+Latest snapshot-policy evidence confirms that ClientPd inherits a leader-only replica mapping fallback. SQL configuration and native adjusters are now connected, but non-leader/busy-store routing is not repaired. Continue at the shared region/selector owner and migrate ordinary plus coprocessor consumers before retiring either cache; do not add another selector to the adapter. See [the snapshot receipt](snapshot-read-policy-batch-validation.json).
+
 ## B02: Shared SQL session, planner and table execution
 
 Source owners: pkg/session and sessiontxn providers; pkg/planner/core, pkg/executor, pkg/table/tables, pkg/meta/autoid.

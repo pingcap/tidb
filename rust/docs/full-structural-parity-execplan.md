@@ -2614,3 +2614,9 @@ T01/N03 share setting selection, table/native flags, per-key locking, successful
 
 
 P03/P06 now share native and adapter metadata, keyspace, discovery and TSO channels through one endpoint owner. The adapter removes its private discovery runtime; the process runtime drives idle discovery and joins the task on close. The [batch plan](pd-channel-batch-execplan.md) and [validation](parity/current-audit/pd-channel-batch-validation.json) retain four baseline socket-count failures and final gates. Complete package, follower/forwarding, health, live-cluster and performance obligations remain unaccepted. Counts stay 86 tracked, 30 repaired and 56 unresolved. Concurrent integration commit f29d961bad is preserved.
+
+
+## Snapshot read-policy batch
+
+
+The [snapshot plan](snapshot-read-policy-batch-execplan.md) and [receipt](parity/current-audit/snapshot-read-policy-batch-validation.json) connect O13/N03 SQL policy, retained point estimates, deferred/MaxTS/explicit/prepared lifetimes and native timeout/resource groups. Native read overrides no longer replace prewrite/commit groups. T02 now has a concrete leader-only adapter fallback to repair at the shared routing owner. All three parents remain partial; counts stay 86 tracked, 30 repaired and 56 unresolved. No full-package, live multi-node or performance acceptance is claimed.
