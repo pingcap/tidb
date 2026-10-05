@@ -557,7 +557,7 @@ fn cast_value_with_flags(
     Ok(converted.value)
 }
 
-// Temporal targets and JSON numeric producers retain their existing adapters.
+// Temporal targets retain their existing adapters.
 // Scalar, temporal and binary sources share numeric/string diagnostics here.
 fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
     use tidb_datatype::FieldTypeCode as T;
@@ -576,6 +576,7 @@ fn contextual_cast_supported(value: &Datum, field: &FieldType) -> bool {
             | Datum::Duration(_)
             | Datum::BinaryLiteral(_)
             | Datum::Bit(_)
+            | Datum::Json(_)
     ) && matches!(
         field.code(),
         T::Tiny
@@ -1117,6 +1118,7 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
         // datetime an invalid cast produced, not a debug rendering.
         Datum::Time(time) => time.to_string(),
         Datum::Duration(duration) => duration.to_string(),
+        Datum::Json(value) => value.to_string(),
         Datum::BinaryLiteral(value) | Datum::Bit(value) => {
             String::from_utf8_lossy(value.as_bytes()).into_owned()
         }
@@ -1128,6 +1130,69 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
 mod source_tests {
     use super::*;
     use tidb_datatype::{BinaryLiteral, Collation, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn json_numeric_batch_table_callers_keep_source_warning_and_final_overflow() {
+        for shape in [
+            CastShape::RawTable,
+            CastShape::InsertRow,
+            CastShape::UpdateAssignment,
+            CastShape::OnDuplicateAssignment,
+            CastShape::GeneratedOnDuplicate,
+        ] {
+            let ctx = crate::StmtContext::for_dml(false, false, false);
+            let value = Datum::Json(tidb_datatype::BinaryJSON::parse("\"123.45tail\"").unwrap());
+            let field = FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(3)
+                .with_decimal(1);
+            let result = cast_value_shaped(value, &field, "a", 4, &ctx, shape, false).unwrap();
+            assert_eq!(result.sql_string().unwrap(), "99.9");
+            let warnings = ctx.take_warnings();
+            assert_eq!(warnings.len(), 2, "{warnings:?}");
+            assert_eq!(warnings[0].1, 1265);
+            assert_eq!(
+                warnings[1].1,
+                if matches!(
+                    shape,
+                    CastShape::InsertRow
+                        | CastShape::OnDuplicateAssignment
+                        | CastShape::GeneratedOnDuplicate
+                ) {
+                    1264
+                } else {
+                    1690
+                }
+            );
+        }
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let error = cast_value_for_column(
+            Datum::Json(tidb_datatype::BinaryJSON::parse("{}").unwrap()),
+            &FieldType::new(FieldTypeCode::Double),
+            "a",
+            4,
+            &ctx,
+            false,
+        )
+        .unwrap_err()
+        .to_mysql_error();
+        assert_eq!(error.code, 1366);
+        assert_eq!(
+            error.message,
+            "Incorrect double value: '{}' for column 'a' at row 5"
+        );
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let error = cast_table_value(
+            Datum::Json(tidb_datatype::BinaryJSON::parse("{}").unwrap()),
+            &FieldType::new(FieldTypeCode::Double),
+            "a",
+            &ctx,
+            false,
+        )
+        .unwrap_err()
+        .to_mysql_error();
+        assert_eq!(error.code, 1292);
+        assert_eq!(error.message, "Truncated incorrect FLOAT value: '{}'");
+    }
 
     #[test]
     fn table_mutation_batch_raw_integer_keeps_overflow_identity() {

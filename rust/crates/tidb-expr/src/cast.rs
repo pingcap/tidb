@@ -96,7 +96,7 @@ pub(crate) fn eval_numeric_cast_with_type(
     target: &FieldType,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
-    use tidb_datatype::{DecimalError, MyDecimal, ScalarConversionError};
+    use tidb_datatype::{DecimalError, MyDecimal};
     let warnings = crate::constant::ConversionWarnings(ctx);
     let zone = ctx.time_zone();
     let context = tidb_datatype::ConversionContext::new(
@@ -108,15 +108,6 @@ pub(crate) fn eval_numeric_cast_with_type(
         context
             .handle_truncate(error)
             .map_or(Ok(()), |error| Err(EvalError::Conversion(error)))
-    };
-    let overflow = |error: ScalarConversionError| match error {
-        ScalarConversionError::Overflow { value, target } => {
-            tidb_datatype::ERR_OVERFLOW.generate(format!(
-                "constant {value} overflows {}",
-                tidb_datatype::type_str(target)
-            ))
-        }
-        _ => tidb_datatype::ERR_OVERFLOW.clone(),
     };
     let value = match value {
         Datum::Int(value)
@@ -193,21 +184,13 @@ pub(crate) fn eval_numeric_cast_with_type(
                     .error
                     .map_or(Ok(result.value), |error| Err(EvalError::Conversion(error)));
             }
-            if let Datum::Json(json) = &value {
-                if let Some(bytes) = json.as_string() {
-                    // ConvertJSONToFloat uses StrToFloat(..., false), unlike
-                    // the explicit string-as-real signature's cast parser.
-                    let converted = Datum::new_string(bytes.to_vec())
-                        .convert_to_in_context(
-                            &FieldType::new(FieldTypeCode::Double),
-                            &context,
-                            &zone,
-                        )
-                        .map_err(|_| EvalError::Unsupported("JSON numeric string"))?;
-                    return converted.error.map_or(Ok(converted.value), |error| {
-                        Err(EvalError::Conversion(error))
-                    });
-                }
+            if matches!(value, Datum::Json(_)) {
+                let converted = value
+                    .to_f64_in_context(&context)
+                    .map_err(|_| EvalError::Unsupported("JSON real conversion"))?;
+                return converted.error.map_or(Ok(converted.value), |error| {
+                    Err(EvalError::Conversion(error))
+                });
             }
             let converted = value
                 .to_f64()
@@ -287,34 +270,16 @@ pub(crate) fn eval_numeric_cast_with_type(
                     }
                     Ok(integer(result))
                 }
-                Datum::Json(json) => {
-                    if let Some(bytes) = json.as_string() {
-                        // ConvertJSONToInt chooses StrToInt for a negative
-                        // string and StrToUint otherwise, independently of the
-                        // result's unsigned flag. Keep the parser diagnostics.
-                        let mut parsed_type = FieldType::new(FieldTypeCode::LongLong);
-                        if !(bytes.len() > 1 && bytes[0] == b'-') {
-                            parsed_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-                        }
-                        let converted = Datum::new_string(bytes.to_vec())
-                            .convert_to_in_context(&parsed_type, &context, &zone)
-                            .map_err(|_| EvalError::Unsupported("JSON integer string"))?;
-                        handle(converted.error)?;
-                        return match converted.value {
-                            Datum::Int(value) => Ok(integer(value)),
-                            Datum::UInt(value) => Ok(integer(value as i64)),
-                            _ => Err(EvalError::Unsupported("JSON integer conversion result")),
-                        };
-                    }
-                    let result = tidb_datatype::json_to_int64(&json, unsigned, ctx.type_flags());
-                    if let Some(event) = result.event {
-                        handle(Some(match event {
-                            ScalarConversionEvent::Overflow(error) => overflow(error),
-                            _ => tidb_datatype::ERR_TRUNCATED_WRONG_VALUE
-                                .generate(format!("Truncated incorrect INTEGER value: '{json}'")),
-                        }))?;
-                    }
-                    Ok(integer(result.value))
+                value @ Datum::Json(_) => {
+                    let converted = value
+                        .convert_to_in_context(
+                            &FieldType::new(FieldTypeCode::LongLong).with_unsigned(unsigned),
+                            &context,
+                            &zone,
+                        )
+                        .map_err(|_| EvalError::Unsupported("JSON integer conversion"))?;
+                    handle(converted.error)?;
+                    Ok(converted.value)
                 }
                 value => eval_cast_value(
                     if unsigned {
@@ -357,11 +322,14 @@ pub(crate) fn eval_cast(
 ) -> Result<Datum, EvalError> {
     let mut target = match cast_type {
         CastType::Signed | CastType::Unsigned => FieldType::new(FieldTypeCode::LongLong),
+        CastType::UnsignedInUnion if matches!(v, Datum::Json(_)) => {
+            FieldType::new(FieldTypeCode::LongLong)
+        }
         CastType::Double => FieldType::new(FieldTypeCode::Double),
         CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
         _ => return eval_cast_value(cast_type, v, source, ctx),
     };
-    if matches!(cast_type, CastType::Unsigned) {
+    if matches!(cast_type, CastType::Unsigned | CastType::UnsignedInUnion) {
         target.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
     }
     if let CastType::Decimal { flen, scale } = cast_type {
@@ -837,6 +805,18 @@ pub(crate) fn to_i64_signed_with_warnings(
     v: &Datum,
     ctx: &dyn crate::Columns,
 ) -> Result<i64, EvalError> {
+    if matches!(v, Datum::Json(_)) {
+        return match eval_numeric_cast_with_type(
+            v.clone(),
+            EvalType::Json,
+            None,
+            &FieldType::new(FieldTypeCode::LongLong),
+            ctx,
+        )? {
+            Datum::Int(value) => Ok(value),
+            _ => Err(EvalError::Unsupported("JSON signed conversion result")),
+        };
+    }
     report_int_truncation(v, ctx)?;
     report_signed_overflow(v, ctx);
     Ok(to_i64_signed_in(v, &ctx.time_zone()))
@@ -1333,17 +1313,31 @@ fn exponent_prefix(s: &str) -> i32 {
 /// silently (`getValidFloatPrefix`'s early return), matching the explicit
 /// `CAST` this arm implements.
 fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalError> {
+    if matches!(v, Datum::Json(_)) {
+        let warnings = crate::constant::ConversionWarnings(ctx);
+        let zone = ctx.time_zone();
+        let context = tidb_datatype::ConversionContext::new(
+            ctx.type_flags(),
+            tidb_datatype::ConversionLocation::from_time_zone(&zone),
+            &warnings,
+        );
+        let converted = v
+            .to_f64_in_context(&context)
+            .map_err(|_| EvalError::Unsupported("JSON real conversion"))?;
+        if let Some(error) = converted.error {
+            return Err(EvalError::Conversion(error));
+        }
+        return match converted.value {
+            Datum::Real(value) => Ok(value),
+            _ => Err(EvalError::Unsupported("JSON real conversion result")),
+        };
+    }
     let (text, type_word) = match v {
         Datum::String(value) => (
             String::from_utf8_lossy(value.bytes()).into_owned(),
             "DOUBLE",
         ),
         Datum::Bytes(value) => (String::from_utf8_lossy(value).into_owned(), "DOUBLE"),
-        // go's WrapWithCastAsReal over a JSON operand re-reads the document's
-        // MarshalJSON text as a float, and the failure names the value with
-        // the FLOAT word (`j + 0` over `{}` warns `Truncated incorrect FLOAT
-        // value: '{}'`), where the STRING sources keep the DOUBLE word.
-        Datum::Json(value) => (value.to_string(), "FLOAT"),
         _ => return Ok(to_f64_for_cast(v)),
     };
     let converted = tidb_datatype::str_to_float(&text, true);
@@ -1722,16 +1716,6 @@ pub(crate) fn cast_arg_as_int(
 ) -> Result<Datum, EvalError> {
     if matches!(v, Datum::Int(_) | Datum::UInt(_) | Datum::Null) {
         return Ok(v.clone());
-    }
-    // go's WrapWithCastAsInt over a JSON operand is `builtinCastJSONAsIntSig`:
-    // the document's MarshalJSON text re-reads as an integer (StrToInt), with
-    // go's 1292 truncation warning when the text is not a clean integer —
-    // captured: `bitand(j, j)` over `{}` warns twice and answers 0, while
-    // JSON `3` coerces silently.
-    if let Datum::Json(value) = v {
-        let as_text = Datum::new_string(value.to_string());
-        report_int_truncation(&as_text, ctx)?;
-        return Ok(Datum::Int(to_i64_signed(&as_text)));
     }
     let cast = if source.is_some_and(tidb_datatype::FieldType::is_unsigned) {
         CastType::Unsigned

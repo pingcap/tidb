@@ -3694,55 +3694,42 @@ fn cast_numeric_argument_in_mode(
         };
         return cast_string_numeric_argument(field, bytes, target, ctx, vectorized);
     }
-    if let Datum::Json(json) = &value {
-        if target == EvalType::Real {
-            let converted = tidb_datatype::json_to_float(json);
-            if converted.event.is_some() {
-                if let Some(bytes) = json.as_string() {
-                    let text = String::from_utf8_lossy(bytes);
-                    ctx.handle_truncate(&format!(
-                        "Truncated incorrect DOUBLE value: '{}'",
-                        tidb_datatype::float_warning_input(&text),
-                    ))?;
-                } else {
-                    ctx.handle_truncate(&format!("Truncated incorrect FLOAT value: '{json}'"))?;
-                }
-            }
-            return Ok(Datum::Real(converted.value));
-        }
-        if target == EvalType::Int {
-            // go `builtinCastJSONAsIntSig`: the document's text re-reads as
-            // an integer (StrToInt), raising go's 1292 truncation warning
-            // when the text is not a clean integer — captured:
-            // `bitand(j, j)` over `{}` warns twice and answers 0, while the
-            // JSON number `3` coerces silently.
-            let as_text = Datum::new_string(json.to_string());
-            crate::cast::report_int_truncation(&as_text, ctx)?;
-            return Ok(Datum::Int(crate::cast::to_i64_signed(&as_text)));
-        }
-    }
-    let value = if target == EvalType::Decimal
-        && matches!(value, Datum::Time(_) | Datum::Duration(_) | Datum::Json(_))
-    {
-        // Time/Duration.ToNumber and ConvertJSONToDecimal precede target
-        // precision fitting. JSON's integer path must never pass through f64.
-        let warnings = crate::constant::ConversionWarnings(ctx);
-        let zone = ctx.time_zone();
-        let context = tidb_datatype::ConversionContext::new(
-            ctx.type_flags(),
-            tidb_datatype::ConversionLocation::from_time_zone(&zone),
-            &warnings,
+    if matches!(value, Datum::Json(_)) {
+        // Go arithmetic wraps JSON operands with the same typed cast
+        // signatures as explicit CAST; do not parse the serialized document.
+        let target_field = if target == EvalType::Decimal {
+            numeric_decimal_cast_type(field)
+        } else {
+            FieldType::new(code)
+        };
+        return crate::cast::eval_numeric_cast_with_type(
+            value,
+            EvalType::Json,
+            Some(field),
+            &target_field,
+            ctx,
         );
-        let (decimal, error) = value
-            .to_decimal_with_context(&context)
-            .map_err(|_| EvalError::Unsupported("numeric decimal argument conversion failed"))?;
-        if let Some(error) = error {
-            return Err(EvalError::Conversion(error));
-        }
-        Datum::Decimal(decimal)
-    } else {
-        value
-    };
+    }
+    let value =
+        if target == EvalType::Decimal && matches!(value, Datum::Time(_) | Datum::Duration(_)) {
+            // Time/Duration.ToNumber precedes target precision fitting.
+            let warnings = crate::constant::ConversionWarnings(ctx);
+            let zone = ctx.time_zone();
+            let context = tidb_datatype::ConversionContext::new(
+                ctx.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &warnings,
+            );
+            let (decimal, error) = value.to_decimal_with_context(&context).map_err(|_| {
+                EvalError::Unsupported("numeric decimal argument conversion failed")
+            })?;
+            if let Some(error) = error {
+                return Err(EvalError::Conversion(error));
+            }
+            Datum::Decimal(decimal)
+        } else {
+            value
+        };
     let value = if let (EvalType::Decimal, Datum::Real(real)) = (target, &value) {
         // Every integral double in [-2^53, 2^53] has the same exact integer
         // decimal as Go's shortest-float formatting followed by FromString.
@@ -3961,6 +3948,23 @@ fn cast_json_argument_value(function: &ScalarFunction, value: Datum) -> Result<D
     }
 }
 
+// These source-selected JSON signatures share scalar conversion with the
+// vector path, after the whole JSON input batch has been evaluated.
+fn json_numeric_cast_target(function: &ScalarFunction) -> Option<&FieldType> {
+    let expected = match function.func_name.lowercase() {
+        "cast_signed" | "cast_unsigned" => EvalType::Int,
+        "cast_double" => EvalType::Real,
+        "cast_decimal" => EvalType::Decimal,
+        _ => return None,
+    };
+    if function.args.len() != 1 || function.args[0].static_type()?.eval_type() != EvalType::Json {
+        return None;
+    }
+    function
+        .get_static_type()
+        .filter(|field| field.eval_type() == expected)
+}
+
 fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
     match expression {
         Expression::Constant(constant) => constant
@@ -3977,6 +3981,11 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             }
         }),
         Expression::ScalarFunction(function) => {
+            if let Some(field) = json_numeric_cast_target(function) {
+                return field.eval_type() == target
+                    && numeric_batch_supported(&function.args[0], EvalType::Json);
+            }
+
             if function.func_name.lowercase() == "cast_json" && target == EvalType::Json {
                 return function
                     .get_static_type()
@@ -4075,6 +4084,13 @@ fn eval_integer_batch(
                 .collect())
         }
         Expression::ScalarFunction(function) => {
+            if json_numeric_cast_target(function).is_some() {
+                return eval_numeric_batch_values(expression, ctx, input, EvalType::Int)?
+                    .into_iter()
+                    .map(bits)
+                    .collect();
+            }
+
             if function.numeric_operand_domain() != Some(EvalType::Int)
                 || function
                     .args
@@ -4137,6 +4153,29 @@ fn eval_numeric_batch_values(
     input: &Chunk,
     target: EvalType,
 ) -> Result<Vec<Datum>, EvalError> {
+    if let Expression::ScalarFunction(function) = expression {
+        if let Some(field) = json_numeric_cast_target(function) {
+            let values = eval_numeric_batch_values(&function.args[0], ctx, input, EvalType::Json)?;
+            let cast = cast_type_of(
+                function
+                    .func_name
+                    .lowercase()
+                    .strip_prefix("cast_")
+                    .unwrap(),
+                field,
+            )?;
+            return values
+                .into_iter()
+                .map(|value| {
+                    if value.is_null() {
+                        Ok(value)
+                    } else {
+                        crate::cast::eval_cast(&cast, value, function.args[0].static_type(), ctx)
+                    }
+                })
+                .collect();
+        }
+    }
     if target == EvalType::Int {
         let unsigned = expression
             .static_type()

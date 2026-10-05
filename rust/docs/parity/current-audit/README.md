@@ -144,3 +144,7 @@ The canonical-variance continuation of [harness retirement](test-harness-retirem
 The [window-model cleanup](test-harness-retirement-validation.json) retires six unused source modules and 15 model tests. Forty-three useful vectors execute through the live window suite in both modes, across chunks and reopen; all 14 cases pass. Unused-layout checks are retired, while Go memory/accounting obligations and finding statuses remain unchanged.
 
 The PD channel batch migrates metadata, keyspace, discovery and TSO consumers together and removes the private adapter discovery runtime. See [validation](pd-channel-batch-validation.json). P03/P06 remain partial; counts remain 86 tracked / 30 repaired / 56 unresolved. Cloud `env.sh` now exports `CARGO_TARGET_DIR=/workspace/tidb/rust/target` so native checks and maintained regeneration reuse the installed cache.
+
+## Shared JSON numeric conversion batch, 2026-10-05
+
+[Plan](../../json-numeric-batch-execplan.md) and [validation](json-numeric-batch-validation.json) maintain K03/X01 together against Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust regressions and six MySQL assertions fail before; 129 Rust cases and seven MySQL/unistore assertions pass after, with eleven existing neighboring tests ignored. Shared JSON numeric errors, warning order and scalar/vector conversion replace duplicated parsers. Counts remain 86 tracked, 30 repaired, 56 unresolved (27 open, 29 partial). Complete packages and the other54 roots are not reaccepted. Actual hook and fresh pre-push locked build remain publication gates.

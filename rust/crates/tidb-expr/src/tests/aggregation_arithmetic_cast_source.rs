@@ -2430,3 +2430,68 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
         }
     }
 }
+
+#[test]
+fn json_numeric_batch_arithmetic_uses_json_source_not_serialized_document() {
+    // Go builtinCastJSONAsIntSig invokes ConvertJSONToInt64, so a JSON
+    // string's numeric content and JSON booleans participate in bit ops.
+    for (input, expected) in [("\"7\"", 3), ("true", 1), ("false", 0)] {
+        let ctx = WarningCtx::default();
+        let arg = const_typed(
+            Datum::Json(BinaryJSON::parse(input).unwrap()),
+            FieldType::new(C::Json),
+        );
+        let function = ScalarFunction::new(
+            CiString::new("bitand"),
+            uint_ft(),
+            vec![arg, const_typed(Datum::Int(3), int_ft())],
+        );
+        let result = function.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap();
+        assert_eq!(text(&result), expected.to_string(), "{input}");
+        assert!(ctx.0.borrow().is_empty(), "{:?}", ctx.0.borrow());
+    }
+}
+
+#[test]
+fn json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls() {
+    use crate::scalar_function::try_eval_numeric_batch;
+    for (name, target, expected) in [
+        ("cast_signed", int_ft(), "4"),
+        ("cast_unsigned", uint_ft(), "4"),
+        ("cast_double", real_ft(), "3.5"),
+        ("cast_decimal", dec_ft(), "3.5"),
+    ] {
+        let field = FieldType::new(C::Json);
+        let mut col = Column::new(1, field.clone());
+        col.index = 0;
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new(name),
+            target,
+            vec![Expression::Column(col)],
+        ));
+        let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[field], 2);
+        input.append_datum(0, &Datum::Json(BinaryJSON::parse("\"3.5tail\"").unwrap()));
+        input.append_null(0);
+        input.set_sel(Some(vec![1, 0]));
+        for vectorized in [false, true] {
+            let ctx = WarningCtx::default();
+            let values = if vectorized {
+                try_eval_numeric_batch(&expression, &ctx, &input)
+                    .unwrap()
+                    .expect("typed cast batch")
+            } else {
+                (0..2)
+                    .map(|i| expression.eval(&ctx, input.get_row(i)).unwrap())
+                    .collect()
+            };
+            assert!(values[0].is_null());
+            assert_eq!(text(&values[1]), expected, "{name}/{vectorized}");
+            let warnings = ctx.0.borrow();
+            assert_eq!(warnings.len(), 1, "{name}/{vectorized}: {warnings:?}");
+            assert_eq!(
+                warnings[0].0,
+                if name == "cast_decimal" { 1265 } else { 1292 }
+            );
+        }
+    }
+}

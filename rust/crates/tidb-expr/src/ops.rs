@@ -348,20 +348,24 @@ pub(crate) fn eval_binary_full(
             if !matches!(op, BitAnd | BitOr | BitXor | LeftShift | RightShift) {
                 return Err(EvalError::Unsupported("JSON operand"));
             }
-            // go's bit signatures declare ETInt arguments, so a JSON operand
-            // reaches them through `WrapWithCastAsInt`:
-            // `builtinCastJSONAsIntSig` re-reads the document's MarshalJSON
-            // text as an integer -- StrToInt, go's 1292 truncation warning
-            // included -- so `bitand(j, j)` over `{}` answers 0 (warned) and
-            // over the JSON number `3` it answers 3. Rewriting both sides to
-            // their text here hands them to the string-operand arm below,
-            // which is exactly that cast.
-            let to_text = |value: Datum| match value {
-                Datum::Json(value) => Datum::new_string(value.to_string()),
-                other => other,
+            // Go bit signatures cast JSON through ConvertJSONToInt64;
+            // serializing a JSON string would add quotes to its numeric input.
+            let to_int = |value: Datum, unsigned| {
+                if matches!(value, Datum::Json(_)) {
+                    crate::cast::eval_numeric_cast_with_type(
+                        value,
+                        tidb_datatype::EvalType::Json,
+                        None,
+                        &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                            .with_unsigned(unsigned),
+                        ctx,
+                    )
+                } else {
+                    Ok(value)
+                }
             };
-            l = to_text(l);
-            r = to_text(r);
+            l = to_int(l, operands.lhs.is_unsigned())?;
+            r = to_int(r, operands.rhs.is_unsigned())?;
         } else {
             if l == Datum::Null || r == Datum::Null {
                 return Ok(Datum::Null);

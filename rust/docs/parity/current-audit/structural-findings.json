@@ -11,8 +11,8 @@
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 28,
-    "partial": 28
+    "open": 27,
+    "partial": 29
   },
   "findings": [
     {
@@ -629,12 +629,12 @@
     },
     {
       "id": "X01",
-      "status": "open",
+      "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; source-confirmed:** SQL-created scalar functions and PB-created typed builtins have separate construction/evaluation paths; batch evaluation has decimal/numeric fast paths but otherwise falls back to per-row evaluation. Go's selected builtin owns the typed scalar and vector methods, including string/time/JSON kernels.",
-      "rust_evidence": "`rust/crates/tidb-expr/src/new_function.rs:253`, `:328`; `scalar_function.rs:289`, `:661`, `:672`, `:2834`; `evaluator.rs:400`",
-      "go_owner": "`pkg/expression/scalar_function.go`, `builtin.go::newBaseBuiltinFuncWithTp`, `distsql_builtin.go` and typed vector builtin files. Unify signature selection, casts/context and typed batch evaluation. Function-name lookup alone is not a defect: Go also uses names. This finding concerns the incomplete shared contract and vector execution; no SQL result mismatch or benchmark regression is inferred solely from Rust's representation.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. SQL new_function and PB-selected builtins still construct/evaluate separately; numeric fast paths do not provide the shared typed scalar/vector owner for all types. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "finding": "**P2; partially repaired:** JSON numeric casts, arithmetic arguments and bitwise operands now share the datatype source conversion; signed/unsigned/real/decimal JSON cast batches use the same scalar conversion after evaluating their JSON input batch, preserving selected order and NULLs. Duplicate serialized-document parsers and private numeric diagnostic reconstruction are removed. Broader SQL/PB construction and selected-signature ownership, remaining string/time/JSON kernels and complete typed vector execution remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-expr/src/new_function.rs:253`, `:328`; `scalar_function.rs:289`, `:661`, `:672`, `:2834`; `evaluator.rs:400`; `tidb-datatype/src/{convert,datum_convert}.rs`, `datum/convert.rs`; `tidb-expr/src/{cast,ops,scalar_function}.rs`; `tidb-executor/src/driver/write_cast.rs`; [JSON numeric validation](json-numeric-batch-validation.json)",
+      "go_owner": "`pkg/expression/scalar_function.go`, `builtin.go::newBaseBuiltinFuncWithTp`, `distsql_builtin.go` and typed vector builtin files. Unify signature selection, casts/context and typed batch evaluation. Function-name lookup alone is not a defect: Go also uses names. This finding concerns the incomplete shared contract and vector execution; no SQL result mismatch or benchmark regression is inferred solely from Rust's representation. JSON source conversion follows pkg/types/convert.go and datum.go; typed scalar/vector signatures follow pkg/expression/builtin_cast.go and builtin_cast_vec.go.",
+      "review_basis": "Cloud JSON numeric batch from 8025bb156829edb1b247da9c4dcccfd10fbe340d against refreshed Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust and six complete MySQL baseline failures; 129 Rust cases and seven MySQL/unistore assertions pass, eleven existing neighboring tests ignored. See json-numeric-batch-validation.json for source hashes, commands, added vector coverage and limits. Other54 unresolved roots retain prior evidence."
     },
     {
       "id": "X02",
@@ -676,10 +676,10 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P1; partially repaired:** generated writes, reads and ANALYZE share column conversion and typed delivery; decoder-specific legacy ENUM/SET policy remains preserved. Supported numeric/string conversions now consume the existing contextual datatype owner, retaining multiple ordered warnings, raw overflow identity and per-stage precedence. INSERT completes errors/warnings, UPDATE completes returned overflow/width errors but preserves raw warnings, and ODKU keeps raw errors while naming ordinary warnings with converted values and generated warnings with original values. VARCHAR trailing-space truncation follows the shared datatype warning. Temporal-target/JSON and other unported diagnostics, generated-expression context, broader ANALYZE adapters and full package obligations remain unresolved. Binary integer/float/decimal and temporal numeric sources now use shared contextual diagnostics; BIT string conversion emits unsigned decimal. Charset failures retain decoded bytes, use caller warning/error policy and skip width production. Binary diagnostic text uses source bytes.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-datatype/src/datum_convert.rs`, `datum_convert/diagnostics.rs`; `driver/{write_cast,dml,multi_dml}.rs`; `tidb-session/src/tests_statement_rollback.rs`; [write diagnostics validation](write-diagnostics-batch-validation.json)",
-      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open. Go table/column.go::castColumnValue consumes Datum.ConvertTo and HandleTruncate; executor/insert_common.go::completeInsertErr, insert.go::doDupRowUpdate and update.go::handleUpdateError separately complete errors and warnings. Binary stage control follows types.BinaryLiteral.ToInt and Datum.ConvertTo; charset precedence follows convertToString then table.castColumnValue; UPDATE ordinals follow update.go::updateRows globalRowIdx; session.StmtRollback owns statement rollback.",
-      "review_basis": "Cloud write diagnostics batch from d521ef775635f0a0c5fc2291a1e13e467611855b against refreshed Go 93a01d31f6da205ae4bf376825293903a6899fdb. Four grouped Rust regressions and eight independent MySQL assertions fail before; 71 distinct Rust cases and ten MySQL/unistore assertions pass after. See write-diagnostics-batch-validation.json for exact checks, the stale harness migration and limitations. Other54 unresolved roots retain prior evidence."
+      "finding": "**P1; partially repaired:** generated writes, reads and ANALYZE share column conversion and typed delivery; decoder-specific legacy ENUM/SET policy remains preserved. Supported numeric/string conversions now consume the existing contextual datatype owner, retaining multiple ordered warnings, raw overflow identity and per-stage precedence. INSERT completes errors/warnings, UPDATE completes returned overflow/width errors but preserves raw warnings, and ODKU keeps raw errors while naming ordinary warnings with converted values and generated warnings with original values. VARCHAR trailing-space truncation follows the shared datatype warning. Temporal-target and other unported diagnostics, generated-expression context, broader ANALYZE adapters and full package obligations remain unresolved. Binary integer/float/decimal and temporal numeric sources now use shared contextual diagnostics; BIT string conversion emits unsigned decimal. Charset failures retain decoded bytes, use caller warning/error policy and skip width production. Binary diagnostic text uses source bytes. JSON signed/unsigned/real/decimal sources now share contextual conversion, retain original source errors and ordered source/target warnings, and stop decimal target production on a fatal JSON source error. JSON diagnostic values use document text. Remaining JSON targets and other unported diagnostics retain their prior obligations.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/driver/write_cast.rs::cast_table_value_with_flags`; `kv_table/row_decoder.rs`; `kv_table/table_meta.rs::RowDecodeContext`; `stmt_context.rs`; existing AnalyzeError delivery; receipt `table-policy-batch-repair.md`; `tidb-executor/src/kv_table.rs::update_row_in`; `kv_table/index_entries.rs::rewrite_changed_index_entries`; `driver/write_cast.rs::cast_contextual_value`; [table mutation validation](table-mutation-batch-validation.json); `tidb-datatype/src/datum_convert.rs`, `datum_convert/diagnostics.rs`; `driver/{write_cast,dml,multi_dml}.rs`; `tidb-session/src/tests_statement_rollback.rs`; [write diagnostics validation](write-diagnostics-batch-validation.json); `tidb-datatype/src/{convert,datum_convert}.rs`, `datum/convert.rs`; `tidb-expr/src/{cast,ops,scalar_function}.rs`; `tidb-executor/src/driver/write_cast.rs`; [JSON numeric validation](json-numeric-batch-validation.json)",
+      "go_owner": "Go pkg/table/column.go::CastColumnValue clones ENUM/SET FieldType for legacy task binary matching, then restores the datum collation; pkg/util/rowDecoder/decoder.go evaluates through this shared owner. Existing shared virtual-fill and ANALYZE error-delivery repairs remain; lower conversion/diagnostic producers and complete package obligations remain open. Go table/column.go::castColumnValue consumes Datum.ConvertTo and HandleTruncate; executor/insert_common.go::completeInsertErr, insert.go::doDupRowUpdate and update.go::handleUpdateError separately complete errors and warnings. Binary stage control follows types.BinaryLiteral.ToInt and Datum.ConvertTo; charset precedence follows convertToString then table.castColumnValue; UPDATE ordinals follow update.go::updateRows globalRowIdx; session.StmtRollback owns statement rollback. JSON source conversion follows pkg/types/convert.go and datum.go; typed scalar/vector signatures follow pkg/expression/builtin_cast.go and builtin_cast_vec.go.",
+      "review_basis": "Cloud JSON numeric batch from 8025bb156829edb1b247da9c4dcccfd10fbe340d against refreshed Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust and six complete MySQL baseline failures; 129 Rust cases and seven MySQL/unistore assertions pass, eleven existing neighboring tests ignored. See json-numeric-batch-validation.json for source hashes, commands, added vector coverage and limits. Other54 unresolved roots retain prior evidence."
     },
     {
       "id": "I04",
@@ -792,8 +792,8 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "receipt": "store-maintenance-batch-validation.json",
-    "scope": "T02/N03 connected store maintenance: configured health duration and zero semantics, native/coprocessor PreferLeader flow counters, periodic shared reporting/reset and joined lifetime. Full health/cache/package obligations remain open.",
+    "receipt": "json-numeric-batch-validation.json",
+    "scope": "K03/X01 existing-owner maintenance: shared JSON signed/unsigned/real/decimal conversion, original errors and source-stage warning policy, ordered table-write diagnostics, common numeric casts/argument wrappers and bitwise operands, typed JSON numeric batches. No complete upstream package acceptance.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
@@ -1395,6 +1395,11 @@
     {
       "receipt": "ordinary-forwarding-batch-validation.json",
       "scope": "T02/N03 ordinary forwarding, shared cache feedback and transport metadata/metrics maintenance. Full cache/health/flow and complete-package obligations remain open.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "store-maintenance-batch-validation.json",
+      "scope": "T02/N03 connected store maintenance: configured health duration and zero semantics, native/coprocessor PreferLeader flow counters, periodic shared reporting/reset and joined lifetime. Full health/cache/package obligations remain open.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

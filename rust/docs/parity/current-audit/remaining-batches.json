@@ -6,11 +6,11 @@
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 28,
-    "partial": 28
+    "open": 27,
+    "partial": 29
   },
   "assignment": "Every unresolved ID appears exactly once; cross-batch consumer/dependency gates are explicit.",
-  "evidence_limit": "T02/O13/N03 routing residuals rechecked and advanced by replica-routing-batch-validation.json; other53 unresolved roots retain prior evidence. Counts and whole-package acceptance unchanged.",
+  "evidence_limit": "K03/X01 rechecked and advanced by json-numeric-batch-validation.json; other54 unresolved roots retain prior evidence. No complete package acceptance.",
   "package_acceptance_rule": "A batch is a work allocation. Each Go package still has one complete atomic artifact inventory, integration decision and acceptance receipt even when several batches contribute.",
   "validation_policy": [
     "Prepare the complete owner and dependency inventory before editing; do not pick the next isolated assertion as the batch boundary.",
@@ -278,7 +278,7 @@
       "acceptance": "unaccepted",
       "finding_statuses": {
         "Q01": "open",
-        "X01": "open",
+        "X01": "partial",
         "E04": "partial"
       }
     },

@@ -19,6 +19,7 @@
 //! aggregate-side opaque-JSON rule of `getRealJSONValue`
 //! (`pkg/executor/aggfuncs/func_json_objectagg.go`).
 
+use crate::convert::decimal_conversion_error;
 use std::cmp::Ordering;
 
 use super::{decimal_from_bytes, Datum, DatumStringError, DatumValueError};
@@ -252,7 +253,7 @@ impl Datum {
         &self,
         context: &crate::ConversionContext<'_>,
     ) -> Result<(Decimal, Option<tidb_error::terror::TerrorError>), DatumValueError> {
-        use crate::{MyDecimal, JSON_LITERAL_FALSE, JSON_LITERAL_NULL, JSON_TYPE_CODE_LITERAL};
+        use crate::MyDecimal;
         let (parsed, float) = match self {
             Self::String(value) => {
                 let (decimal, error) = MyDecimal::from_string(value.bytes());
@@ -273,44 +274,10 @@ impl Datum {
                 return Ok((Decimal::from_uint(integer), error));
             }
             Self::Json(value) => {
-                let (decimal, error) = if let Some(value) = value.as_i64() {
-                    (Decimal::from_int(value), None)
-                } else if let Some(value) = value.as_u64() {
-                    (Decimal::from_uint(value), None)
-                } else if let Some(value) = value.as_f64() {
-                    let (decimal, error) = MyDecimal::from_float64(value);
-                    (
-                        Decimal::from_my_decimal(&decimal),
-                        error.map(|error| {
-                            decimal_conversion_error(
-                                error,
-                                crate::format_float_g_shortest(value).as_bytes(),
-                            )
-                        }),
-                    )
-                } else if let Some(value) = value.as_string() {
-                    let (decimal, error) = MyDecimal::from_string(value);
-                    (
-                        Decimal::from_my_decimal(&decimal),
-                        error.map(|error| decimal_conversion_error(error, value)),
-                    )
-                } else if value.type_code() == JSON_TYPE_CODE_LITERAL
-                    && value.value()[0] != JSON_LITERAL_NULL
-                {
-                    (
-                        Decimal::from_int(i64::from(value.value()[0] != JSON_LITERAL_FALSE)),
-                        None,
-                    )
-                } else {
-                    (
-                        Decimal::from_int(0),
-                        Some(
-                            crate::ERR_TRUNCATED_WRONG_VALUE
-                                .generate(format!("Truncated incorrect DECIMAL value: '{value}'")),
-                        ),
-                    )
-                };
-                return Ok((decimal, context.handle_truncate(error)));
+                let mut diagnostics =
+                    crate::datum_convert::diagnostics::Diagnostics::new(Some(context));
+                let converted = crate::convert::json_to_decimal_reported(value, &mut diagnostics);
+                return Ok((converted.value, diagnostics.error));
             }
             Self::Int(_)
             | Self::UInt(_)
@@ -470,31 +437,6 @@ impl Datum {
 
 // MyDecimal keeps compact Rust errors; conversion adds Go's error identity
 // and the exact input slice used by FromString after whitespace/sign removal.
-fn decimal_conversion_error(
-    error: crate::DecimalError,
-    input: &[u8],
-) -> tidb_error::terror::TerrorError {
-    match error {
-        crate::DecimalError::Truncated => crate::ERR_TRUNCATED.clone(),
-        crate::DecimalError::Overflow => crate::ERR_OVERFLOW.clone(),
-        crate::DecimalError::BadNumber => crate::ERR_BAD_NUMBER.clone(),
-        crate::DecimalError::TruncatedWrongValue => {
-            let input = &input[input
-                .iter()
-                .position(|byte| !matches!(byte, b' ' | b'\t'))
-                .unwrap_or(0)..];
-            let input = if matches!(input.first(), Some(b'+' | b'-')) {
-                &input[1..]
-            } else {
-                input
-            };
-            crate::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
-                "Truncated incorrect DECIMAL value: '{}'",
-                String::from_utf8_lossy(input)
-            ))
-        }
-    }
-}
 
 fn decimal_to_i64(decimal: Decimal) -> Converted<i64> {
     match decimal.round_to_i64() {

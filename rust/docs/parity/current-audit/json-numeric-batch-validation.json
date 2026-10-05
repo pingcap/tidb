@@ -1,0 +1,532 @@
+{
+  "base": "8025bb156829edb1b247da9c4dcccfd10fbe340d",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "K03/X01 existing-owner maintenance: shared JSON signed/unsigned/real/decimal conversion, original errors and source-stage warning policy, ordered table-write diagnostics, common numeric casts/argument wrappers and bitwise operands, typed JSON numeric batches. No complete upstream package acceptance.",
+  "environment_maintenance": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/b09b2b15f87b781f/out/tidb_executor-b09b2b15f87b781f",
+      "bytes": 260763320,
+      "reason": "inactive regenerable test binary outside selected validation scope"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/c42f0a3c5d889c29/out/cluster_stats_dump",
+      "bytes": 200812936,
+      "reason": "inactive regenerable test binary outside selected validation scope"
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-txnkv/64b73dccee18c9fe/out/snapshot_lock_wait_source-64b73dccee18c9fe",
+      "bytes": 91207840,
+      "reason": "inactive regenerable test binary outside selected validation scope"
+    }
+  ],
+  "go_source_inputs": {
+    "pkg/types/convert.go": "256d7882460e5e2ec9705cbad7238c7e0d08de2a732519e3075eeffff3b501dd",
+    "pkg/types/datum.go": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc",
+    "pkg/types/mydecimal.go": "7cac77d01f7fd8447962b794d2c397cb280a44b0da345edc63193260bdc1f1d7",
+    "pkg/types/convert_test.go": "a140f20a025d116825021bd749dd94c6ed030167c244256991e837d1562e6512",
+    "pkg/types/datum_test.go": "8b8d78130b76b9c5e0232e546c3ca819d88a0a0feffed33401dcdce44264234d",
+    "pkg/expression/builtin_cast.go": "12741863129c46a008a9064f94e11bf8be0a20f0b4efd83ef0a9e6b40b731ab5",
+    "pkg/expression/builtin_cast_vec.go": "bc5556808e300885467d8af4422762bb089acaae1d40184ab042dcc611f2a8b7",
+    "pkg/expression/builtin_cast_test.go": "caa0b678d597d60452e2dda8c6a84f55cd21d6f2920f17661e85ae3d055ad6d7",
+    "pkg/expression/builtin_op.go": "5c9abd133fddefeb53fbde8b9447bc5666c2b1aad6aec50da15f7214fb2bb154",
+    "pkg/table/column.go": "39640cb6940ab803b1ed9eb9b6fe2b8a8f71e3b11fe62f2e09791d6ed9deaaac",
+    "pkg/executor/insert_common.go": "4cadcb2be9b681c2b53ff584cbb26b0ee2645d5b98745b83ac68a2252de8f388",
+    "pkg/executor/update.go": "e4b3b1ca4669032a647d6fc0c1def39c583e097d671ea4ea95be59499512bb10",
+    "pkg/executor/insert.go": "7106bc74c9877af04d6ac150c367803a7aa7477875e0d2238bc60b3aa59da583"
+  },
+  "rust_sources": {
+    "rust/crates/tidb-datatype/src/convert.rs": "8ba350c36006cef2e20f7a76733b7020c8ad1ebfe8e3949f3534edb622176b86",
+    "rust/crates/tidb-datatype/src/datum/convert.rs": "e4a8d623acf5630d4acd89e995b85d3052bb85dfbb9055cc8250e0308ac33d2c",
+    "rust/crates/tidb-datatype/src/datum_convert.rs": "ca09ffd335dc470575a19fd166f93f70c742b2f947bc111ad34071447e5426b2",
+    "rust/crates/tidb-datatype/src/datum_convert/diagnostics.rs": "f37a0d359e3533399b3d2bcfbd3313d94a8ab84c90b18b70255aec26a814c10a",
+    "rust/crates/tidb-executor/src/driver/write_cast.rs": "ba4d726a118bdc684f32620be432dc71d24264db35a04957cdfa4002d7e030b8",
+    "rust/crates/tidb-expr/src/cast.rs": "2be412345c3076d25730da7b3ec36696d2966242a918bc35272be93cf6e9f406",
+    "rust/crates/tidb-expr/src/ops.rs": "d8ebf8f804ae68e72054740e5879dbac91428bebf39efa4271da3d9b169f2880",
+    "rust/crates/tidb-expr/src/scalar_function.rs": "65ec27963da8276e9499fd697bfe2446b14510e4cb529660a47630f851d8ce48",
+    "rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs": "342cf878f9d9a8f94fa675842ca930a16bda53f42e5e6baa96c540db9e6a6fc2"
+  },
+  "contracts": [
+    "types.ConvertJSONToInt chooses signed parsing only for a negative JSON string, preserves context-dependent prefix rounding and original parser/overflow diagnostics; numeric documents apply target bounds.",
+    "types.ConvertJSONToFloat and ConvertJSONToDecimal apply source HandleTruncate before caller target production. Fatal JSON decimal conversion returns an unset ConvertTo datum and skips target fitting.",
+    "table.castColumnValue and executor completeInsertErr/handleUpdateError retain distinct raw, INSERT, UPDATE and ODKU completion; original JSON text is never Rust Debug formatting.",
+    "builtinCastJSONAsInt/Real/DecimalSig owns both scalar and vector conversion; vector evaluation completes the JSON child batch before converting selected non-NULL rows. Bit operators use the same JSON integer source conversion."
+  ],
+  "before": {
+    "rust_failures": [
+      "json_numeric_batch_context_preserves_source_errors_and_policy",
+      "json_numeric_batch_string_prefix_and_target_stages",
+      "json_numeric_batch_table_callers_keep_source_warning_and_final_overflow",
+      "json_numeric_batch_arithmetic_uses_json_source_not_serialized_document"
+    ],
+    "method": "New tests compiled on unchanged production sources at the base commit; two datatype failures and two caller failures captured in separate executions of the same compiled batch. Fifth scalar/vector test added during repair; it then failed because numeric JSON casts were excluded from batch evaluation.",
+    "mysql": {
+      "phase": "before-configured",
+      "binary_sha256": "a09297ec191f512a19329b4e4277c8c51d46bdfdfff50d38c1aa744d3035c2b1",
+      "checks": [
+        {
+          "name": "insert",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1366,
+              "Incorrect decimal value: 'Json(BinaryJSON { type_code: 12, value: [10, 49, 50, 51, 46, 52, 53, 116, 97, 105, 108] })' for column 'n' at row 1"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "update",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1366,
+              "Incorrect decimal value: 'Json(BinaryJSON { type_code: 12, value: [10, 49, 50, 51, 46, 52, 53, 116, 97, 105, 108] })' for column 'n' at row 1"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "odku",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1366,
+              "Incorrect decimal value: '99.9' for column 'n' at row 1"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "SELECT CAST('\"7\"' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "warnings": [
+            [
+              "Warning",
+              1292,
+              "Truncated incorrect INTEGER value: '\"7\"'"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "SELECT CAST('true' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "warnings": [
+            [
+              "Warning",
+              1292,
+              "Truncated incorrect INTEGER value: 'true'"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "SELECT CAST('false' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "warnings": [
+            [
+              "Warning",
+              1292,
+              "Truncated incorrect INTEGER value: 'false'"
+            ]
+          ],
+          "pass": false
+        },
+        {
+          "name": "JSON column to integer rounds after source warning",
+          "rows": [
+            [
+              4
+            ]
+          ],
+          "warnings": [
+            [
+              "Warning",
+              1366,
+              "Incorrect bigint value: 'Json(BinaryJSON { type_code: 12, value: [7, 51, 46, 53, 116, 97, 105, 108] })' for column 'n' at row 1"
+            ]
+          ],
+          "pass": true
+        }
+      ],
+      "exit": 0
+    },
+    "excluded_setup_attempts": [
+      "First wire invocation lacked PYTHONPATH and did not start. A subsequent invocation omitted env.sh/RUST_MIN_STACK and aborted with stack overflow; its incomplete result is not acceptance evidence. The environment-sourced baseline completed normally and reproduced six failures."
+    ],
+    "intermediate_failures": [
+      "Shared datatype/table fixes passed before operator migration; general integer-wrapper and operator-value JSON serialization were separate remaining consumers.",
+      "JSON numeric batch preflight declined the new vector check; the existing batch evaluator now evaluates child JSON batches and uses shared casts."
+    ]
+  },
+  "validation": {
+    "environment": "source /workspace/.cloud-setup/env.sh; cwd /workspace/tidb/rust for Cargo; CARGO_BUILD_JOBS=1; PYTHONPATH=/workspace/.cloud-setup/python for wire script",
+    "commands": [
+      "cargo test --locked -p tidb-datatype -p tidb-expr -p tidb-executor --lib --no-fail-fast -- --test-threads=1 datum_convert:: datum::convert:: convert::tests:: aggregation_arithmetic_cast_source:: write_cast::source_tests:: json_numeric_batch go_arithmetic_values::",
+      "cargo check --locked -p tidb-datatype -p tidb-expr -p tidb-executor -p tidb-server --all-targets",
+      "cargo build --locked -p tidb-server",
+      "PYTHONPATH=/workspace/.cloud-setup/python python /workspace/.cloud-setup/json-numeric-batch/wire.py after",
+      "make lint (repository root)",
+      "git diff --check"
+    ],
+    "distinct_tests_passed": 129,
+    "passed": [
+      "convert::tests::convert_float_to_uint_nan_panics_like_go - should panic",
+      "convert::tests::convert_scientific_notation_supplemental_rows",
+      "convert::tests::float_warning_input_truncates_at_nul_like_go",
+      "convert::tests::function_cast_integer_prefix_needs_a_digit",
+      "convert::tests::number_to_duration_supplemental_extremes",
+      "convert::tests::source_integer_bounds_and_conversions",
+      "convert::tests::source_to_string_rows",
+      "convert::tests::test_convert_decimal_str_to_uint",
+      "convert::tests::test_convert_json_to_decimal",
+      "convert::tests::test_convert_json_to_float",
+      "convert::tests::test_convert_json_to_int",
+      "convert::tests::test_convert_scientific_notation",
+      "convert::tests::test_get_valid_float",
+      "convert::tests::test_get_valid_int",
+      "convert::tests::test_get_valid_int_strict_and_warning_source_rows",
+      "convert::tests::test_number_to_duration",
+      "convert::tests::test_round_int_str",
+      "convert::tests::test_str_to_duration",
+      "convert::tests::test_str_to_num",
+      "datum::convert::tests::opaque_json_type_of_binary_charset_value_is_blob",
+      "datum::convert::tests::source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets",
+      "datum::convert::tests::source_float_to_decimal_preserves_error_and_float32_precision",
+      "datum::convert::tests::source_to_int_float_and_decimal_rows",
+      "datum::convert::tests::test_to_bool",
+      "datum::convert::tests::test_to_bytes",
+      "datum::convert::tests::to_mysql_json_with_source_type_matches_captured_opaque_rendering",
+      "datum_convert::diagnostics::tests::contextual_conversion_matches_go_values_errors_and_ordered_warnings",
+      "datum_convert::diagnostics::tests::contextual_conversion_retains_caller_warnings_without_leaking_errors",
+      "datum_convert::diagnostics::tests::contextual_integer_conversion_reports_numeric_overflow",
+      "datum_convert::diagnostics::tests::json_numeric_batch_context_preserves_source_errors_and_policy",
+      "datum_convert::diagnostics::tests::json_numeric_batch_string_prefix_and_target_stages",
+      "datum_convert::diagnostics::tests::unsigned_contextual_conversion_matches_go_diagnostics",
+      "datum_convert::diagnostics::tests::write_diagnostics_batch_binary_conversion_stages_follow_context",
+      "datum_convert::go_tests::out_of_range_enum_and_set_keep_the_empty_value",
+      "datum_convert::go_tests::session_zone_reaches_signed_and_duration_conversion",
+      "datum_convert::go_tests::test_convert",
+      "datum_convert::go_tests::test_convert_time",
+      "datum_convert::go_tests::test_convert_to_string",
+      "datum_convert::go_tests::test_convert_type",
+      "datum_convert::go_tests::test_to_int64",
+      "datum_convert::tests::a_time_to_year_cast_reads_the_statements_concat_flag",
+      "datum_convert::tests::contextual_integer_conversion_keeps_first_fatal_error",
+      "datum_convert::tests::contextual_legacy_decimal_events_preserve_first_fatal_error",
+      "datum_convert::tests::contextual_legacy_numeric_events_preserve_first_fatal_error",
+      "datum_convert::tests::contextual_string_conversion_preserves_binary_and_utf8_boundaries",
+      "datum_convert::tests::decimal_temporal_conversion_uses_float_string_parser",
+      "datum_convert::tests::duration_year_cast_preserves_clamped_value_and_overflow_event",
+      "datum_convert::tests::numeric_zero_temporal_conversion_obeys_zero_date_flag",
+      "datum_convert::tests::overflowing_year_text_returns_zero_beside_the_error",
+      "datum_convert::tests::session_now_lands_on_the_zones_own_calendar_day",
+      "datum_convert::tests::signed_string_conversion_prefers_source_truncation_over_clamp",
+      "datum_convert::tests::source_convert_to_enum_set_bit_json_vector_and_temporal_rows",
+      "datum_convert::tests::source_convert_to_integer_float_string_decimal_rows",
+      "datum_convert::tests::strict_datum_integer_conversion_uses_source_truncation_policy",
+      "datum_convert::tests::test_change_reverse_result_by_upper_lower_bound",
+      "datum_convert::tests::test_convert_to_binary_string",
+      "datum_convert::tests::test_convert_to_float",
+      "datum_convert::tests::test_produce_dec_with_specified_tp",
+      "datum_convert::tests::test_string_to_mysql_bit",
+      "datum_convert::tests::test_to_json",
+      "datum_convert::tests::test_to_uint32",
+      "driver::write_cast::source_tests::generated_read_policy_raw_cast_honors_flags_before_force_ignore",
+      "driver::write_cast::source_tests::json_numeric_batch_table_callers_keep_source_warning_and_final_overflow",
+      "driver::write_cast::source_tests::table_mutation_batch_raw_conversion_preserves_warning_order",
+      "driver::write_cast::source_tests::table_mutation_batch_raw_integer_keeps_overflow_identity",
+      "driver::write_cast::source_tests::table_mutation_batch_varchar_space_truncation_warns",
+      "driver::write_cast::source_tests::test_cast_value",
+      "driver::write_cast::source_tests::test_cast_value_strict",
+      "driver::write_cast::source_tests::timestamp_dst_gap_keeps_adjusted_value_and_insert_1292_diagnostic",
+      "driver::write_cast::source_tests::write_diagnostics_batch_binary_and_temporal_keep_typed_errors",
+      "driver::write_cast::source_tests::write_diagnostics_batch_charset_policy_stops_before_width",
+      "tests::aggregation_arithmetic_cast_source::cast_decimal_as_real_propagates_child_metadata",
+      "tests::aggregation_arithmetic_cast_source::json_numeric_batch_arithmetic_uses_json_source_not_serialized_document",
+      "tests::aggregation_arithmetic_cast_source::json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls",
+      "tests::aggregation_arithmetic_cast_source::test_arithmetic_overflow_error_message_with_column_name",
+      "tests::aggregation_arithmetic_cast_source::test_arithmetic_plus",
+      "tests::aggregation_arithmetic_cast_source::test_base_func_infer_max_min_count_ret_type",
+      "tests::aggregation_arithmetic_cast_source::test_cast_as_char_field_type",
+      "tests::aggregation_arithmetic_cast_source::test_cast_binary_string_as_json_sig",
+      "tests::aggregation_arithmetic_cast_source::test_cast_const_as_decimal_field_type",
+      "tests::aggregation_arithmetic_cast_source::test_cast_duration_as_year_honors_concat_mode",
+      "tests::aggregation_arithmetic_cast_source::test_cast_duration_as_year_yields_the_current_year",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_decimal",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_duration",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_int",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_real",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_string",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_string_truncates_at_flen",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_as_time",
+      "tests::aggregation_arithmetic_cast_source::test_cast_func_sig_null_and_hybrid",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_bad_string_as_decimal_reads_zero_silently",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_bad_string_as_decimal_warns_1292",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_char_and_binary",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_int_as_char_zero_width",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_neg_int_as_unsigned_warns_8031",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_string_to_unsigned_and_signed",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_time_to_decimal_saturates",
+      "tests::aggregation_arithmetic_cast_source::test_cast_functions_uint_to_wide_decimal",
+      "tests::aggregation_arithmetic_cast_source::test_cast_json_as_decimal_sig",
+      "tests::aggregation_arithmetic_cast_source::test_cast_signed_to_bit_returns_zero_padded_bytes",
+      "tests::aggregation_arithmetic_cast_source::test_cast_string_as_decimal_sig_with_unsigned_flag_in_union",
+      "tests::aggregation_arithmetic_cast_source::test_check_agg_push_down_max_min_count",
+      "tests::aggregation_arithmetic_cast_source::test_decimal_err_overflow",
+      "tests::aggregation_arithmetic_cast_source::test_real_arithmetic_overflow_error_message",
+      "tests::aggregation_arithmetic_cast_source::test_vectorized_builtin_arithmetic_func",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_duration",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_json_passes_json_columns_through",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_string",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_time",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_enum_row",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_numeric_rows",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_temporal_rows",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_uint_as_time",
+      "tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_unsigned_extras",
+      "tests::go_arithmetic_values::arithmetic_constant_casts_fold_before_evaluation_and_shape_result_metadata",
+      "tests::go_arithmetic_values::go_test_arithmetic_divide",
+      "tests::go_arithmetic_values::go_test_arithmetic_int_divide",
+      "tests::go_arithmetic_values::go_test_arithmetic_minus",
+      "tests::go_arithmetic_values::go_test_arithmetic_mod",
+      "tests::go_arithmetic_values::go_test_arithmetic_mod_hybrid_operand_kinds",
+      "tests::go_arithmetic_values::go_test_arithmetic_multiply",
+      "tests::go_arithmetic_values::hybrid_arithmetic_preserves_null_and_selection_order",
+      "tests::go_arithmetic_values::hybrid_arithmetic_uses_go_typed_numeric_arguments",
+      "tests::go_arithmetic_values::json_cast_arithmetic_batches_preserve_go_operand_passes",
+      "tests::go_arithmetic_values::json_cast_source_signatures_preserve_binary_types_in_both_modes",
+      "tests::go_arithmetic_values::strict_scalar_decimal_precision_probes_preserve_runtime_evaluation",
+      "tests::go_arithmetic_values::temporal_json_arithmetic_uses_go_numeric_casts"
+    ],
+    "existing_ignored": [
+      "tests::aggregation_arithmetic_cast_source::test_avg",
+      "tests::aggregation_arithmetic_cast_source::test_avg_final_mode",
+      "tests::aggregation_arithmetic_cast_source::test_bit_and",
+      "tests::aggregation_arithmetic_cast_source::test_bit_or",
+      "tests::aggregation_arithmetic_cast_source::test_bit_xor",
+      "tests::aggregation_arithmetic_cast_source::test_concat",
+      "tests::aggregation_arithmetic_cast_source::test_count",
+      "tests::aggregation_arithmetic_cast_source::test_first_row",
+      "tests::aggregation_arithmetic_cast_source::test_max_min",
+      "tests::aggregation_arithmetic_cast_source::test_max_min_count",
+      "tests::aggregation_arithmetic_cast_source::test_sum"
+    ],
+    "mysql": {
+      "phase": "after",
+      "binary_sha256": "8131abd88a7e04c643f02fa3e9a9b5f5101f25b7521317801cd06611443b3fc6",
+      "checks": [
+        {
+          "name": "insert",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1265,
+              "Data truncated for column 'n' at row 1"
+            ],
+            [
+              "Warning",
+              1264,
+              "Out of range value for column 'n' at row 1"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "update",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1265,
+              "Data truncated for column '%s' at row %d"
+            ],
+            [
+              "Warning",
+              1690,
+              "DECIMAL value is out of range in '(3, 1)'"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "odku",
+          "error": null,
+          "warnings": [
+            [
+              "Warning",
+              1265,
+              "Data truncated for column 'n' at row 1"
+            ],
+            [
+              "Warning",
+              1264,
+              "Out of range value for column 'n' at row 1"
+            ]
+          ],
+          "rows": [
+            [
+              "99.9"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "SELECT CAST('\"7\"' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              3
+            ]
+          ],
+          "warnings": [],
+          "pass": true
+        },
+        {
+          "name": "SELECT CAST('true' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              1
+            ]
+          ],
+          "warnings": [],
+          "pass": true
+        },
+        {
+          "name": "SELECT CAST('false' AS JSON) & 3",
+          "error": null,
+          "rows": [
+            [
+              0
+            ]
+          ],
+          "warnings": [],
+          "pass": true
+        },
+        {
+          "name": "JSON column to integer rounds after source warning",
+          "rows": [
+            [
+              4
+            ]
+          ],
+          "warnings": [
+            [
+              "Warning",
+              1366,
+              "Incorrect bigint value: '\"3.5tail\"' for column 'n' at row 1"
+            ]
+          ],
+          "pass": true
+        }
+      ],
+      "exit": 0
+    },
+    "formatting": [
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-datatype/src/convert.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-datatype/src/datum/convert.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-datatype/src/datum_convert.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-datatype/src/datum_convert/diagnostics.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-executor/src/driver/write_cast.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-expr/src/cast.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-expr/src/ops.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-expr/src/scalar_function.rs",
+        "normalized_source_preserved": true
+      },
+      {
+        "path": "/workspace/tidb/rust/crates/tidb-expr/src/tests/aggregation_arithmetic_cast_source.rs",
+        "normalized_source_preserved": true
+      }
+    ],
+    "all_target_check": "passed",
+    "lint": "passed",
+    "server_build": "passed"
+  },
+  "removals": [
+    "Duplicate JSON numeric parser/error reconstruction in typed expression casts.",
+    "Private JSON decimal context conversion after its callers moved to the shared source owner.",
+    "Serialized-JSON integer conversions in arithmetic, argument wrappers and operator values."
+  ],
+  "limits": [
+    "K03 remains partial: temporal-target and remaining conversion diagnostics, generated-expression context, broader ANALYZE and complete package obligations.",
+    "X01 advances from open to partial: selected JSON numeric scalar/vector signatures share conversion; full SQL/PB construction/signature ownership and other string/time/JSON kernels remain unresolved.",
+    "The other 54 unresolved roots retain prior evidence; this is not a fresh exhaustive re-audit.",
+    "No full Go suites, live multi-node TiKV/TiFlash, TLS or benchmark runs. No performance claim.",
+    "Eleven pre-existing ignored neighboring tests remain ignored and are not counted as passes."
+  ],
+  "publication": {
+    "destination": "pingcap/tidb hparser-integration",
+    "native": "unchanged",
+    "gates": "Actual hooks/pre-commit locked tidb-server build; fresh locked build immediately before normal push; remote SHA verification. Results are recorded after commit in /workspace/.cloud-setup/json-numeric-batch/final-handoff.json and saved cloud startup instructions."
+  }
+}

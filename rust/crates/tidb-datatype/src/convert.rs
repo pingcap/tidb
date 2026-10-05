@@ -16,6 +16,8 @@
 
 use std::fmt;
 
+use crate::datum_convert::diagnostics::Diagnostics;
+
 use crate::{
     parse_mysql_duration, parse_time_from_num, round_float, BinaryJSON, BinaryLiteral,
     ConversionFlags, Decimal, FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
@@ -1015,10 +1017,27 @@ pub fn json_to_int(
     target: FieldTypeCode,
     flags: ConversionFlags,
 ) -> Converted<i64> {
-    if json_non_numeric(json.type_code()) {
+    json_to_int_reported(json, unsigned, target, flags, &mut Diagnostics::new(None))
+}
+
+pub(crate) fn json_to_int_reported(
+    json: &BinaryJSON,
+    unsigned: bool,
+    target: FieldTypeCode,
+    flags: ConversionFlags,
+    diagnostics: &mut Diagnostics<'_, '_>,
+) -> Converted<i64> {
+    if json_non_numeric(json.type_code())
+        || (json.type_code() == JSON_TYPE_CODE_LITERAL
+            && json.value().first() == Some(&JSON_LITERAL_NULL))
+    {
+        diagnostics.truncate(|| {
+            crate::ERR_TRUNCATED_WRONG_VALUE
+                .generate(format!("Truncated incorrect INTEGER value: '{json}'"))
+        });
         return Converted::truncated(0);
     }
-    match json.type_code() {
+    let converted = match json.type_code() {
         JSON_TYPE_CODE_LITERAL => match json.value().first().copied() {
             Some(JSON_LITERAL_FALSE) => Converted::exact(0),
             Some(JSON_LITERAL_NULL) | None => Converted::truncated(0),
@@ -1091,18 +1110,21 @@ pub fn json_to_int(
         JSON_TYPE_CODE_STRING => {
             let text = std::str::from_utf8(json.as_string().expect("validated binary JSON string"))
                 .unwrap_or("");
-            if text.len() > 1 && text.starts_with('-') {
-                str_to_int(text, false)
+            let warn = flags.truncate_as_warning() || flags.ignore_truncate_err();
+            return if text.len() > 1 && text.starts_with('-') {
+                str_to_int_reported(text, false, warn, diagnostics)
             } else {
-                let converted = str_to_uint(text, false);
+                let converted = str_to_uint_reported(text, false, warn, diagnostics);
                 Converted {
                     value: converted.value as i64,
                     event: converted.event,
                 }
-            }
+            };
         }
         _ => Converted::truncated(0),
-    }
+    };
+    diagnostics.numeric_overflow(converted.event.as_ref());
+    converted
 }
 
 /// `ConvertJSONToInt64`.
@@ -1112,7 +1134,21 @@ pub fn json_to_int64(json: &BinaryJSON, unsigned: bool, flags: ConversionFlags) 
 
 /// `ConvertJSONToFloat`.
 pub fn json_to_float(json: &BinaryJSON) -> Converted<f64> {
-    if json_non_numeric(json.type_code()) {
+    json_to_float_reported(json, &mut Diagnostics::new(None))
+}
+
+pub(crate) fn json_to_float_reported(
+    json: &BinaryJSON,
+    diagnostics: &mut Diagnostics<'_, '_>,
+) -> Converted<f64> {
+    if json_non_numeric(json.type_code())
+        || (json.type_code() == JSON_TYPE_CODE_LITERAL
+            && json.value().first() == Some(&JSON_LITERAL_NULL))
+    {
+        diagnostics.truncate(|| {
+            crate::ERR_TRUNCATED_WRONG_VALUE
+                .generate(format!("Truncated incorrect FLOAT value: '{json}'"))
+        });
         return Converted::truncated(0.0);
     }
     match json.type_code() {
@@ -1133,7 +1169,7 @@ pub fn json_to_float(json: &BinaryJSON) -> Converted<f64> {
         JSON_TYPE_CODE_STRING => {
             let text = std::str::from_utf8(json.as_string().expect("validated binary JSON string"))
                 .unwrap_or("");
-            str_to_float(text, false)
+            str_to_float_reported(text, false, diagnostics)
         }
         _ => Converted::truncated(0.0),
     }
@@ -1167,37 +1203,87 @@ pub(crate) fn decimal_from_text(text: &str) -> Converted<Decimal> {
 
 /// `ConvertJSONToDecimal`.
 pub fn json_to_decimal(json: &BinaryJSON) -> Converted<Decimal> {
-    if json_non_numeric(json.type_code()) {
-        return Converted::truncated(Decimal::from_int(0));
-    }
-    match json.type_code() {
-        JSON_TYPE_CODE_LITERAL => match json.value().first().copied() {
-            Some(JSON_LITERAL_FALSE) => Converted::exact(Decimal::from_int(0)),
-            Some(JSON_LITERAL_NULL) | None => Converted::truncated(Decimal::from_int(0)),
-            Some(_) => Converted::exact(Decimal::from_int(1)),
-        },
-        JSON_TYPE_CODE_INT64 => Converted::exact(Decimal::from_int(
-            json.as_i64().expect("validated binary JSON integer"),
-        )),
-        JSON_TYPE_CODE_UINT64 => Converted::exact(Decimal::from_uint(
-            json.as_u64().expect("validated binary JSON integer"),
-        )),
+    json_to_decimal_reported(json, &mut Diagnostics::new(None))
+}
+
+pub(crate) fn json_to_decimal_reported(
+    json: &BinaryJSON,
+    diagnostics: &mut Diagnostics<'_, '_>,
+) -> Converted<Decimal> {
+    // Go ConvertJSONToDecimal applies HandleTruncate to the original
+    // MyDecimal error, before a caller performs destination production.
+    let (value, error) = match json.type_code() {
+        JSON_TYPE_CODE_INT64 => (Decimal::from_int(json.as_i64().unwrap()), None),
+        JSON_TYPE_CODE_UINT64 => (Decimal::from_uint(json.as_u64().unwrap()), None),
         JSON_TYPE_CODE_FLOAT64 => {
-            let value = json.as_f64().expect("validated binary JSON float");
-            Decimal::from_f64(value).map_or_else(
-                || Converted::truncated(Decimal::from_int(0)),
-                Converted::exact,
+            let value = json.as_f64().unwrap();
+            let (decimal, error) = crate::MyDecimal::from_float64(value);
+            (
+                Decimal::from_my_decimal(&decimal),
+                error.map(|error| {
+                    decimal_conversion_error(
+                        error,
+                        crate::format_float_g_shortest(value).as_bytes(),
+                    )
+                }),
             )
         }
-        // Go's `res.FromString(j.GetString())`, which is prefix-accepting:
-        // `"123abc"` is `123` and `"1,999.00"` is `1`, both with a truncation
-        // warning. Rejecting the whole string instead STORED a silent `0`.
         JSON_TYPE_CODE_STRING => {
-            let text = std::str::from_utf8(json.as_string().expect("validated binary JSON string"))
-                .unwrap_or("");
-            decimal_from_text(text)
+            let bytes = json.as_string().unwrap();
+            let (decimal, error) = crate::MyDecimal::from_string(bytes);
+            (
+                Decimal::from_my_decimal(&decimal),
+                error.map(|error| decimal_conversion_error(error, bytes)),
+            )
         }
-        _ => Converted::truncated(Decimal::from_int(0)),
+        JSON_TYPE_CODE_LITERAL if json.value()[0] != JSON_LITERAL_NULL => (
+            Decimal::from_int(i64::from(json.value()[0] != JSON_LITERAL_FALSE)),
+            None,
+        ),
+        _ => (
+            Decimal::from_int(0),
+            Some(
+                crate::ERR_TRUNCATED_WRONG_VALUE
+                    .generate(format!("Truncated incorrect DECIMAL value: '{json}'")),
+            ),
+        ),
+    };
+    let event = error.as_ref().map(|error| {
+        if error.to_sql_error().code == 1690 {
+            ScalarConversionEvent::Overflow(overflow(&json.to_string(), FieldTypeCode::NewDecimal))
+        } else {
+            ScalarConversionEvent::Truncated
+        }
+    });
+    if let Some(error) = error {
+        diagnostics.truncate(|| error);
+    }
+    Converted { value, event }
+}
+
+pub(crate) fn decimal_conversion_error(
+    error: crate::DecimalError,
+    input: &[u8],
+) -> tidb_error::terror::TerrorError {
+    match error {
+        crate::DecimalError::Truncated => crate::ERR_TRUNCATED.clone(),
+        crate::DecimalError::Overflow => crate::ERR_OVERFLOW.clone(),
+        crate::DecimalError::BadNumber => crate::ERR_BAD_NUMBER.clone(),
+        crate::DecimalError::TruncatedWrongValue => {
+            let input = &input[input
+                .iter()
+                .position(|byte| !matches!(byte, b' ' | b'\t'))
+                .unwrap_or(0)..];
+            let input = if matches!(input.first(), Some(b'+' | b'-')) {
+                &input[1..]
+            } else {
+                input
+            };
+            crate::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
+                "Truncated incorrect DECIMAL value: '{}'",
+                String::from_utf8_lossy(input)
+            ))
+        }
     }
 }
 

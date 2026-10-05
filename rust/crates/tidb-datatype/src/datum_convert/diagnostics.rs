@@ -62,6 +62,98 @@ mod tests {
     }
 
     #[test]
+    fn json_numeric_batch_context_preserves_source_errors_and_policy() {
+        // Go types.ConvertJSONTo{Int,Float,Decimal}: HandleTruncate belongs
+        // to the source stage, before target production.
+        for (code, name) in [
+            (FieldTypeCode::LongLong, "INTEGER"),
+            (FieldTypeCode::Double, "FLOAT"),
+            (FieldTypeCode::NewDecimal, "DECIMAL"),
+        ] {
+            for input in ["{}", "[]", "null"] {
+                for mode in 0..3 {
+                    let flags = DEFAULT_STATEMENT_FLAGS
+                        .with_truncate_as_warning(mode == 1)
+                        .with_ignore_truncate_err(mode == 2);
+                    let warnings = Warnings::default();
+                    let context = ConversionContext::new(flags, ConversionLocation::UTC, &warnings);
+                    let result = Datum::Json(crate::BinaryJSON::parse(input).unwrap())
+                        .convert_to_in_context(
+                            &FieldType::new(code),
+                            &context,
+                            &SessionTimeZone::utc(),
+                        )
+                        .unwrap();
+                    let message =
+                        format!("[types:1292]Truncated incorrect {name} value: '{input}'");
+                    assert_eq!(
+                        result.error.map(|e| e.to_string()),
+                        (mode == 0).then_some(message.clone())
+                    );
+                    assert_eq!(
+                        *warnings.0.borrow(),
+                        if mode == 1 { vec![message] } else { vec![] }
+                    );
+                    // Go ConvertTo(DECIMAL) returns its unset datum on a
+                    // fatal JSON source error; it does not fit a zero decimal.
+                    assert_eq!(
+                        result.value.is_null(),
+                        mode == 0 && code == FieldTypeCode::NewDecimal
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn json_numeric_batch_string_prefix_and_target_stages() {
+        let warnings = Warnings::default();
+        let context = ConversionContext::new(
+            DEFAULT_STATEMENT_FLAGS.with_truncate_as_warning(true),
+            ConversionLocation::UTC,
+            &warnings,
+        );
+        let input = Datum::Json(crate::BinaryJSON::parse("\"3.5tail\"").unwrap());
+        for unsigned in [false, true] {
+            let result = input
+                .convert_to_in_context(
+                    &FieldType::new(FieldTypeCode::Tiny).with_unsigned(unsigned),
+                    &context,
+                    &SessionTimeZone::utc(),
+                )
+                .unwrap();
+            assert_eq!(
+                result.value,
+                if unsigned {
+                    Datum::UInt(4)
+                } else {
+                    Datum::Int(4)
+                }
+            );
+            assert!(result.error.is_none());
+            assert_eq!(
+                *warnings.0.borrow_mut(),
+                vec!["[types:1292]Truncated incorrect DOUBLE value: '3.5tail'".to_owned()]
+            );
+            warnings.0.borrow_mut().clear();
+        }
+        let input = Datum::Json(crate::BinaryJSON::parse("\"123.45tail\"").unwrap());
+        let result = input
+            .convert_to_in_context(
+                &FieldType::new(FieldTypeCode::NewDecimal)
+                    .with_flen(3)
+                    .with_decimal(1),
+                &context,
+                &SessionTimeZone::utc(),
+            )
+            .unwrap();
+        assert_eq!(result.value.sql_string().unwrap(), "99.9");
+        assert_eq!(result.error.unwrap().to_sql_error().code, 1690);
+        assert_eq!(warnings.0.borrow().len(), 1);
+        assert!(warnings.0.borrow()[0].starts_with("[types:1265]"));
+    }
+
+    #[test]
     fn write_diagnostics_batch_binary_conversion_stages_follow_context() {
         use crate::{BinaryLiteral, Decimal};
         let input = Datum::new_binary_literal(BinaryLiteral::from(vec![1; 9]));
@@ -486,7 +578,7 @@ mod tests {
 /// Disabled sinks do not build messages or allocate warning containers.
 pub(crate) struct Diagnostics<'a, 'w> {
     context: Option<&'a ConversionContext<'w>>,
-    pub(super) error: Option<TerrorError>,
+    pub(crate) error: Option<TerrorError>,
     pub(super) unmapped: bool,
 }
 
@@ -560,7 +652,7 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
         }
     }
 
-    pub(super) fn truncate(&mut self, make: impl FnOnce() -> TerrorError) {
+    pub(crate) fn truncate(&mut self, make: impl FnOnce() -> TerrorError) {
         if let Some(context) = self.context {
             if let Some(error) = context.handle_truncate(Some(make())) {
                 if self.error.is_none() {
@@ -570,7 +662,7 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
         }
     }
 
-    pub(super) fn numeric_overflow(&mut self, event: Option<&ScalarConversionEvent>) {
+    pub(crate) fn numeric_overflow(&mut self, event: Option<&ScalarConversionEvent>) {
         match event {
             None => {}
             Some(ScalarConversionEvent::Overflow(ScalarConversionError::Overflow {

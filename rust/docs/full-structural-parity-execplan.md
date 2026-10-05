@@ -41,6 +41,8 @@ in time. This revision is a plan; it closes no production finding.
 
 ## Progress
 
+- [x] (2026-10-05, JSON numeric batch) Maintain K03/X01 through shared JSON source conversion, table warning/error completion, integer/real/decimal expression callers and typed cast batches. Four baseline Rust and six MySQL failures precede 129 Rust and seven MySQL passes (eleven existing ignored tests). See `parity/current-audit/json-numeric-batch-validation.json`; both parents and complete package acceptance remain partial.
+
 - [x] (2026-10-05, ordinary forwarding batch) Connect T02/N03 forwarding configuration, canonical proxy selection/publication, all command metadata and exact-generation failure feedback. Retain source mode and caller cancellation/deadlines; correct unary command metrics. Three baseline failures precede 31 native and 74 TiDB passes, affected checks and lint. See `parity/current-audit/ordinary-forwarding-batch-validation.json`; complete cache/health/flow/package obligations remain open.
 
 - [x] (2026-10-05, connected replica routing) Share native ReplicaRouting between PdRpcClient and ClientPd; repair point/batch/scan follower/learner routing, stale leader-probe retries and busy/all-busy fallback. Canonical store load/health feed the selector; remove the private adapter address cache. Three grouped regressions fail before/pass after; 52 native and 31 TiDB tests pass. See `parity/current-audit/replica-routing-batch-validation.json`. T02/O13/N03 remain partial for broader ownership and live-cluster/package obligations.

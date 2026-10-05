@@ -30,12 +30,12 @@ use diagnostics::Diagnostics;
 use crate::{
     convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
     convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint, integer_signed_lower_bound,
-    integer_signed_upper_bound, integer_unsigned_upper_bound, json_to_int, parse_enum,
-    parse_enum_value, parse_set, parse_set_value, parse_time, parse_time_from_num, str_to_duration,
-    truncate_float, BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Charset, Collation,
-    ConversionFlags, Converted, CoreTime, Datum, DatumValueError, Decimal, DurationOrTime,
-    FieldType, FieldTypeCode, MySqlDuration, ScalarConversionError, ScalarConversionEvent,
-    SessionTimeZone, Time, TimeType, VectorFloat32, UNSPECIFIED_LENGTH,
+    integer_signed_upper_bound, integer_unsigned_upper_bound, parse_enum, parse_enum_value,
+    parse_set, parse_set_value, parse_time, parse_time_from_num, str_to_duration, truncate_float,
+    BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted,
+    CoreTime, Datum, DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode,
+    MySqlDuration, ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType,
+    VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
 /// Direction used by reverse expression evaluation.
@@ -124,6 +124,7 @@ impl Datum {
                 false,
                 diagnostics,
             ),
+            Self::Json(value) => crate::convert::json_to_float_reported(value, diagnostics),
             _ => {
                 let converted = self.to_f64()?;
                 diagnostics.unhandled(converted.event.as_ref());
@@ -396,11 +397,17 @@ impl Datum {
                     bounded
                 }
             }
-            Self::Json(value) => json_to_int(value, false, target, flags),
+            Self::Json(value) => {
+                crate::convert::json_to_int_reported(value, false, target, flags, diagnostics)
+            }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "signed integer")),
         };
         match self {
-            Self::String(_) | Self::Bytes(_) | Self::BinaryLiteral(_) | Self::Bit(_) => {}
+            Self::String(_)
+            | Self::Bytes(_)
+            | Self::BinaryLiteral(_)
+            | Self::Bit(_)
+            | Self::Json(_) => {}
             Self::Int(_) | Self::UInt(_) | Self::Time(_) | Self::Duration(_) => {
                 diagnostics.numeric_overflow(converted.event.as_ref());
             }
@@ -516,7 +523,8 @@ impl Datum {
                 }
             }
             Self::Json(value) => {
-                let converted = json_to_int(value, true, target, flags);
+                let converted =
+                    crate::convert::json_to_int_reported(value, true, target, flags, diagnostics);
                 Converted {
                     value: converted.value as u64,
                     event: converted.event,
@@ -530,7 +538,11 @@ impl Datum {
             }
         };
         match self {
-            Self::String(_) | Self::Bytes(_) | Self::BinaryLiteral(_) | Self::Bit(_) => {}
+            Self::String(_)
+            | Self::Bytes(_)
+            | Self::BinaryLiteral(_)
+            | Self::Bit(_)
+            | Self::Json(_) => {}
             Self::Int(_)
             | Self::UInt(_)
             | Self::Real(_)
@@ -561,10 +573,23 @@ impl Datum {
                     event: failed.then_some(ScalarConversionEvent::Truncated),
                 }
             }
+            Self::Json(value) => {
+                let converted = crate::convert::json_to_decimal_reported(value, diagnostics);
+                if converted.event.is_some()
+                    && !flags.ignore_truncate_err()
+                    && !flags.truncate_as_warning()
+                {
+                    return Ok(Converted {
+                        value: Self::Null,
+                        event: converted.event,
+                    });
+                }
+                converted
+            }
             _ => self.to_decimal()?,
         };
         match (self, converted.event.as_ref()) {
-            (Self::BinaryLiteral(_) | Self::Bit(_), _) => {}
+            (Self::BinaryLiteral(_) | Self::Bit(_) | Self::Json(_), _) => {}
             (Self::String(_) | Self::Bytes(_), Some(ScalarConversionEvent::Truncated)) => {
                 // Datum.ConvertTo uses MyDecimal.FromString directly, not
                 // ConvertDatumToDecimal's context-dependent truncation policy.
