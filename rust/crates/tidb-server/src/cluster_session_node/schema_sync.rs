@@ -41,7 +41,9 @@ use std::time::{Duration, Instant};
 use tidb_exec::catalog_watch::{
     CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
 };
+use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::mdl_info_load::{load_mdl_jobs, MdlJob};
+use tidb_exec::mysql_system_tables::SystemTableError;
 use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
@@ -256,6 +258,7 @@ impl SchemaSyncAck {
         catalog: Arc<SharedCatalog>,
         opener: RealOptimisticTransactionOpener<C, L, P>,
         pins: Arc<SchemaPinRegistry>,
+        min_job_id_refresher: Arc<MinJobIdRefresher>,
         etcd: Arc<EtcdClient>,
         ddl_id: String,
         server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
@@ -307,6 +310,7 @@ impl SchemaSyncAck {
                     &catalog,
                     &opener,
                     &pins,
+                    &min_job_id_refresher,
                     ack_syncer.as_ref(),
                     &ack_context,
                     &schema_validator,
@@ -359,6 +363,7 @@ fn run_ack_loop<C, L, P>(
     catalog: &SharedCatalog,
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     pins: &SchemaPinRegistry,
+    min_job_id_refresher: &MinJobIdRefresher,
     syncer: &dyn SchemaVersionSyncer,
     syncer_context: &SchemaVersionContext,
     validator: &SchemaValidator,
@@ -379,6 +384,8 @@ fn run_ack_loop<C, L, P>(
     let mut mdl_jobs = Vec::new();
     let mut scanned_version: Option<i64> = None;
     let mut next_mdl_scan = Instant::now();
+    let mut retry_mdl_scan = false;
+    let mut last_reload_pass: Option<u64> = None;
     let mut reported_loaded_version: Option<(bool, i64)> = None;
     while !stop.load(Ordering::SeqCst) {
         // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
@@ -404,6 +411,7 @@ fn run_ack_loop<C, L, P>(
             continue;
         }
         let loaded = catalog.load().schema_version;
+        let reload_pass = reload_stats().passes;
         let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
 
         // Go's domain reload path reports every newly loaded version with
@@ -423,11 +431,26 @@ fn run_ack_loop<C, L, P>(
                 mdl_jobs.is_empty(),
                 Instant::now(),
                 next_mdl_scan,
+                retry_mdl_scan,
+                reload_pass,
+                last_reload_pass,
             ) {
-                match load_mdl_jobs(opener, timeout, &catalog.load()) {
+                match load_mdl_jobs(
+                    opener,
+                    timeout,
+                    &catalog.load(),
+                    min_job_id_refresher.current_min_job_id(),
+                ) {
                     Ok(jobs) => {
                         scanned_version = Some(loaded);
-                        next_mdl_scan = if jobs.is_empty() {
+                        last_reload_pass = Some(reload_pass);
+                        retry_mdl_scan = false;
+                        // A schema watch can win the race with the
+                        // transaction that publishes tidb_mdl_info.  Go's
+                        // SQL refresh replaces its map on every reload; a
+                        // Rust snapshot that returns only older rows must
+                        // not turn that race into a one-hour cache miss.
+                        next_mdl_scan = if should_retry_mdl_scan(loaded, &jobs) {
                             Instant::now() + EMPTY_MDL_RETRY
                         } else {
                             Instant::now() + Duration::from_secs(3600)
@@ -435,12 +458,36 @@ fn run_ack_loop<C, L, P>(
                         mdl_jobs = jobs;
                         // The owner deletes a finished job's row; forgetting
                         // its cache entry keeps the cache from growing.
-                        acked.retain(|job_id, _| {
-                            mdl_jobs.iter().any(|job| job.job_id == *job_id)
-                        });
+                        acked.retain(|job_id, _| mdl_jobs.iter().any(|job| job.job_id == *job_id));
                     }
                     Err(error) => {
+                        last_reload_pass = Some(reload_pass);
+                        retry_mdl_scan = true;
                         next_mdl_scan = Instant::now() + EMPTY_MDL_RETRY;
+                        if matches!(error, SystemTableError::Missing { .. }) {
+                            // The MDL row is published by the DDL owner while
+                            // a node can still hold its startup catalog. Go's
+                            // SQL path resolves the table from its fresh
+                            // session schema; refresh the Rust catalog through
+                            // the same fresh snapshot before retrying.
+                            let current = catalog.load();
+                            match tidb_exec::real_tikv_catalog::load_catalog_from_cluster(
+                                opener, timeout,
+                            ) {
+                                Ok(refreshed)
+                                    if refreshed.schema_version >= current.schema_version =>
+                                {
+                                    catalog.store(refreshed);
+                                }
+                                Ok(_) => {}
+                                Err(refresh_error) => {
+                                    emit_warning(
+                                        "schema_sync_catalog_refresh_failed",
+                                        &refresh_error,
+                                    );
+                                }
+                            }
+                        }
                         emit_warning("schema_sync_mdl_read_failed", &error);
                     }
                 }
@@ -453,10 +500,6 @@ fn run_ack_loop<C, L, P>(
             for job in due {
                 match syncer.update_self_version(syncer_context, job.job_id, job.version) {
                     Ok(()) => {
-                        eprintln!(
-                            "{{\"event\":\"schema_sync_acked\",\"job_id\":{},\"version\":{}}}",
-                            job.job_id, job.version
-                        );
                         acked.insert(job.job_id, job.version);
                     }
                     Err(error) => {
@@ -471,6 +514,8 @@ fn run_ack_loop<C, L, P>(
             acked.clear();
             scanned_version = None;
             next_mdl_scan = Instant::now();
+            retry_mdl_scan = false;
+            last_reload_pass = None;
         }
 
         // A sleep in small slices so a shutdown never waits a whole tick.
@@ -489,8 +534,17 @@ fn should_refresh_mdl_jobs(
     jobs_empty: bool,
     now: Instant,
     next_retry: Instant,
+    retry_mdl_scan: bool,
+    reload_pass: u64,
+    last_reload_pass: Option<u64>,
 ) -> bool {
-    scanned_version != Some(loaded_version) || (jobs_empty && now >= next_retry)
+    scanned_version != Some(loaded_version)
+        || reload_pass != last_reload_pass.unwrap_or_default()
+        || now >= next_retry && (jobs_empty || retry_mdl_scan)
+}
+
+fn should_retry_mdl_scan(loaded_version: i64, jobs: &[MdlJob]) -> bool {
+    jobs.is_empty() || !jobs.iter().any(|job| job.version == loaded_version)
 }
 
 fn emit_warning(event: &str, error: &impl std::fmt::Display) {
@@ -653,14 +707,29 @@ mod tests {
             true,
             now,
             now + Duration::from_secs(10),
+            false,
+            0,
+            None,
         ));
-        assert!(!should_refresh_mdl_jobs(Some(7), 7, false, now, now,));
+        assert!(!should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            false,
+            now,
+            now,
+            false,
+            0,
+            Some(0),
+        ));
         assert!(!should_refresh_mdl_jobs(
             Some(7),
             7,
             true,
             now,
             now + Duration::from_secs(1),
+            false,
+            0,
+            Some(0),
         ));
         assert!(should_refresh_mdl_jobs(
             Some(7),
@@ -668,6 +737,9 @@ mod tests {
             true,
             now + Duration::from_secs(1),
             now,
+            false,
+            0,
+            Some(0),
         ));
         assert!(should_refresh_mdl_jobs(
             Some(7),
@@ -675,6 +747,36 @@ mod tests {
             false,
             now,
             now + Duration::from_secs(10),
+            false,
+            0,
+            Some(0),
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            false,
+            now,
+            now + Duration::from_secs(10),
+            false,
+            1,
+            Some(0),
+        ));
+        assert!(should_retry_mdl_scan(8, &[]));
+        assert!(should_retry_mdl_scan(
+            8,
+            &[MdlJob {
+                job_id: 7,
+                version: 7,
+                table_ids: vec![0],
+            }]
+        ));
+        assert!(!should_retry_mdl_scan(
+            8,
+            &[MdlJob {
+                job_id: 8,
+                version: 8,
+                table_ids: vec![0],
+            }]
         ));
     }
 
@@ -778,6 +880,7 @@ mod tests {
             &catalog,
             &opener,
             &SchemaPinRegistry::default(),
+            &MinJobIdRefresher::new(),
             &reporter,
             &context,
             &SchemaValidator::new(Duration::from_secs(45)),

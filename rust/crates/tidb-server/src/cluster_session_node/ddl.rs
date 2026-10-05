@@ -41,10 +41,10 @@ use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
-    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached,
-    run_persisted_ddl_job, submit_check_constraint_job_with_retry,
-    CheckConstraintValidator, ClusterDdlReport, DdlSchemaSync, ExchangePartitionValidator,
-    IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
+    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
+    submit_check_constraint_job_with_retry, CheckConstraintValidator, ClusterDdlReport,
+    DdlSchemaSync, ExchangePartitionValidator, IndexBackfiller, PersistedDdlJobOutcome,
+    SchemaVersionNotifier,
 };
 
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -299,7 +299,6 @@ where
             }
         }
     }
-
 }
 
 impl<C, L, P> tidb_owner::Listener for PersistedDdlScheduler<C, L, P>
@@ -431,6 +430,33 @@ where
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
     ) -> Result<Self, String> {
+        Self::new_with_min_job_id_refresher(
+            opener,
+            catalog,
+            timeout,
+            notifier,
+            server_info,
+            schema_version_syncer,
+            schema_validator,
+            campaign_owner,
+            Arc::new(MinJobIdRefresher::new()),
+        )
+    }
+
+    /// Constructs the DDL owner with a refresher shared by the schema ACK
+    /// loop. Go's domain owns one `MinJobIDRefresher`; both the scheduler and
+    /// `refreshMDLCheckTableInfo` read that same monotonic lower bound.
+    pub fn new_with_min_job_id_refresher(
+        opener: RealOptimisticTransactionOpener<C, L, P>,
+        catalog: Arc<SharedClusterCatalog>,
+        timeout: Duration,
+        notifier: Option<Arc<EtcdClient>>,
+        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
+        schema_validator: Arc<SchemaValidator>,
+        campaign_owner: bool,
+        min_job_id_refresher: Arc<MinJobIdRefresher>,
+    ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
         let server_state_context = ServerStateContext::background();
         let server_state: Arc<dyn Syncer> = match notifier.as_ref() {
@@ -444,7 +470,6 @@ where
             .init(&server_state_context)
             .map_err(|error| error.to_string())?;
         let opener = Arc::new(opener);
-        let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
         let (min_job_id_stop, min_job_id_stopped) = channel();
         let min_job_id_worker = std::thread::Builder::new()
             .name("ddl-min-job-id-refresher".to_owned())

@@ -1131,7 +1131,9 @@ fn get_server_info_for_log(info: &ServerInfo) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
+    use std::sync::atomic::{
+        AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering,
+    };
     use std::sync::mpsc;
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
@@ -1168,6 +1170,9 @@ mod tests {
         read_delay_micros: AtomicU64,
         /// Go `mockCompaction`: fail this many newly-created watch streams.
         watch_failures: AtomicU64,
+        /// Counts authoritative job-prefix reads. WaitVersionSynced must not
+        /// perform these; only the background mirror owns that operation.
+        prefix_reads: AtomicUsize,
     }
 
     /// A single-node in-process etcd stand-in with working watches and CAS.
@@ -1343,6 +1348,7 @@ mod tests {
             &self,
             prefix: &str,
         ) -> Result<(Vec<(String, Vec<u8>)>, i64), String> {
+            self.state.prefix_reads.fetch_add(1, AtomicOrdering::SeqCst);
             let kv = self.state.kv.lock().unwrap_or_else(|e| e.into_inner());
             let entries = kv
                 .iter()
@@ -1804,6 +1810,47 @@ mod tests {
         );
         loop_ctx.cancel();
         loop_handle.join().expect("schema mirror thread");
+        tidb_vardef::set_enable_mdl(false);
+    }
+
+    #[test]
+    fn wait_version_synced_does_not_read_the_job_prefix() {
+        let _guard = globals_test_lock();
+        tidb_vardef::set_enable_mdl(true);
+        let etcd = FakeEtcd::default();
+        etcd.set_server_infos(&[("node-a", "tidb-a", 4000, 1)]);
+        let syncer = new_syncer(&etcd);
+
+        // Seed only the in-memory mirror. The Go owner wait path installs a
+        // predicate over this mirror; the background SyncJobSchemaVerLoop is
+        // the sole owner of authoritative prefix reads.
+        syncer.handle_job_schema_ver_kv(
+            &format!("{DDL_ALL_SCHEMA_VERSIONS_BY_JOB}/9/node-a"),
+            b"7",
+            false,
+        );
+        etcd.state.prefix_reads.store(0, AtomicOrdering::SeqCst);
+
+        let result = syncer
+            .wait_version_synced(
+                &Context::with_timeout(&Context::background(), Duration::from_millis(500)),
+                9,
+                7,
+                false,
+            )
+            .expect("the in-memory mirror should satisfy the wait");
+        assert_eq!(
+            result,
+            SyncSummary {
+                server_count: 1,
+                assumed_server_count: 0,
+            }
+        );
+        assert_eq!(
+            0,
+            etcd.state.prefix_reads.load(AtomicOrdering::SeqCst),
+            "WaitVersionSynced must not perform the background mirror's range read"
+        );
         tidb_vardef::set_enable_mdl(false);
     }
 

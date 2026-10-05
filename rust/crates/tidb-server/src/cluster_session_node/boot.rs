@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_exec::cop_scan::CopScanSource;
+use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_executor::remote_scan::PushdownScanner;
@@ -339,12 +340,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // above is -- a node with no reachable etcd registers nowhere, is waited
     // on by nobody, and correctly spawns no acknowledger either.
     let schema_pins = Arc::new(super::schema_sync::SchemaPinRegistry::default());
+    let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
     let schema_sync_ack = match crate::real_tikv_node::connect_schema_notifier(&config) {
         Some(etcd) => Some(
             super::schema_sync::SchemaSyncAck::spawn(
                 Arc::clone(&catalog),
                 authority.transaction_opener(),
                 Arc::clone(&schema_pins),
+                Arc::clone(&min_job_id_refresher),
                 etcd,
                 server_info.local_server_info().static_info.id,
                 Arc::clone(&server_info),
@@ -366,7 +369,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         .as_ref()
         .map(super::schema_sync::SchemaSyncAck::syncer);
     let cluster_ddl = Arc::new(
-        RealClusterDdl::new(
+        RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
             Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
@@ -375,6 +378,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             schema_version_syncer,
             Arc::clone(&schema_validator),
             config.run_ddl,
+            min_job_id_refresher,
         )
         .map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(

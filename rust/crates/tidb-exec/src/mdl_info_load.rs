@@ -31,7 +31,9 @@
 
 use std::time::Duration;
 
-use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use crate::mysql_system_tables::{
+    scan_system_table_from_int_handle, SystemRow, SystemTableError, SystemTableView,
+};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
@@ -63,14 +65,14 @@ fn str_to_int64s(text: &str) -> Vec<i64> {
 /// Reads every `mysql.tidb_mdl_info` row at one fresh timestamp.
 ///
 /// `catalog` locates the table; it is the node's already-loaded catalog, so
-/// no meta walk happens here — only the table's own record scan. A cluster
-/// whose bootstrap predates the table (or a unistore without Go's bootstrap)
-/// answers an empty list rather than an error: no table means no Go owner
-/// writing rows, and therefore nothing to acknowledge.
+/// no meta walk happens here — only the table's own record scan. A catalog
+/// that predates the table returns a retryable missing-table error; the caller
+/// refreshes the catalog and retries, matching Go's SQL behavior.
 pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     catalog: &ClusterCatalog,
+    min_job_id: i64,
 ) -> Result<Vec<MdlJob>, SystemTableError> {
     let view = match SystemTableView::locate(
         catalog,
@@ -78,7 +80,10 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
         &["job_id", "version", "table_ids"],
     ) {
         Ok(view) => view,
-        Err(SystemTableError::Missing { .. }) => return Ok(Vec::new()),
+        // Go's restricted SQL query would fail if this system table were
+        // absent. Treat that as a retryable catalog race instead of silently
+        // caching an empty MDL set and leaving the owner waiting forever.
+        Err(error @ SystemTableError::Missing { .. }) => return Err(error),
         Err(error) => return Err(error),
     };
     let mut transaction = opener
@@ -86,7 +91,11 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let loaded = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        scan_system_table(&mut snapshot, &view)
+        // Go's restricted SQL query has `job_id >= min_job_id`.  Use the
+        // clustered integer handle as the storage lower bound so historical
+        // DDL rows do not get decoded on every MDL refresh.  The row-level
+        // predicate below remains as a defensive check for legacy layouts.
+        scan_system_table_from_int_handle(&mut snapshot, &view, min_job_id)
     };
     transaction
         .finish_without_writes()
@@ -101,6 +110,9 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
             // read it, never acking a version this node did not see.
             continue;
         };
+        if job_id < min_job_id {
+            continue;
+        }
         // Decoded exactly as Go: `Str2Int64Map` on the stored text, where an
         // empty string yields `{0}` (ParseInt("") errors into 0), and table
         // id 0 matches no real table -- so a job with no listed tables gates

@@ -993,6 +993,8 @@ mod tests {
 
 #[cfg(test)]
 mod clustered_handle_tests {
+    use std::cell::RefCell;
+
     use tidb_ast::CiString;
     use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
     use tidb_model::column::ColumnInfo;
@@ -1198,6 +1200,50 @@ mod clustered_handle_tests {
         let view = SystemTableView::project("mysql.stats_meta", &meta, &["table_id"]);
         let key = view.record_prefix(&[Datum::Int(114)]).expect("it encodes");
         assert_eq!(key.as_slice(), META_KEY);
+    }
+
+    struct RecordingSnapshot {
+        range: RefCell<Option<(Vec<u8>, Vec<u8>)>>,
+    }
+
+    impl MetaSnapshot for RecordingSnapshot {
+        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(&mut self, _prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+            panic!("integer-handle lower-bound scans must not use scan_prefix")
+        }
+
+        fn scan_range(
+            &mut self,
+            start: &[u8],
+            end: &[u8],
+        ) -> Result<MetaPairs, ClusterCatalogError> {
+            *self.range.borrow_mut() = Some((start.to_vec(), end.to_vec()));
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn integer_handle_lower_bound_uses_a_range_scan() {
+        let table = stats_meta_table();
+        let view = SystemTableView::project("mysql.stats_meta", &table, &["table_id"]);
+        let mut snapshot = RecordingSnapshot {
+            range: RefCell::new(None),
+        };
+
+        scan_system_table_from_int_handle(&mut snapshot, &view, 114).expect("range scan");
+
+        let (start, end) = snapshot
+            .range
+            .into_inner()
+            .expect("the lower-bound scan records its range");
+        assert_eq!(start, view.record_prefix(&[Datum::Int(114)]).unwrap());
+        assert_eq!(
+            end,
+            prefix_scan_end(&view.record_prefix(&[]).unwrap()).unwrap()
+        );
     }
 
     #[test]
