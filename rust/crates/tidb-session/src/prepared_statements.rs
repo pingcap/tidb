@@ -55,6 +55,7 @@
 //!   so it is never restored.
 
 use std::collections::HashMap;
+use tidb_expr::user_vars::UserVarsReader;
 
 use tidb_ast::{Expr, PrepareSource, QueryStmt, SelectField, Stmt};
 use tidb_datatype::Datum;
@@ -267,10 +268,7 @@ impl Session {
     fn prepare_source_text(&self, name: &str) -> String {
         let value = self
             .user_vars
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&name.to_ascii_lowercase())
-            .cloned()
+            .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
             .unwrap_or(Datum::Null);
         // A value with no text form reads as `NULL`, the same text an unset
         // variable parses -- which is a syntax error unless the whole prepared
@@ -304,10 +302,7 @@ impl Session {
             .map(|expr| match expr {
                 Expr::UserVar(name) => self
                     .user_vars
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(&name.to_ascii_lowercase())
-                    .cloned()
+                    .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
                     .unwrap_or(Datum::Null),
                 _ => unreachable!("the parser admits only @variables in USING"),
             })

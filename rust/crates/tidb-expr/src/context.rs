@@ -905,6 +905,11 @@ pub trait Columns {
         }
     }
 
+    /// Shared session owner used by the plan-aware user-variable rewriter.
+    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+        None
+    }
+
     /// Reads a case-insensitive user variable.
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         let _ = name;

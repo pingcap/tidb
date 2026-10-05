@@ -626,8 +626,7 @@ fn multi_update_defaults_resolve_across_sources() {
 /// rejected statement cannot consume the source expression's side effect.
 #[test]
 fn insert_select_generated_target_is_rejected_before_source_effects() {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use tidb_expr::user_vars::{UserVars, UserVarsReader};
 
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
@@ -635,12 +634,9 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
         &mut catalog,
     )
     .unwrap();
-    let variables = Arc::new(Mutex::new(HashMap::from([(
-        "probe".to_owned(),
-        Datum::Int(0),
-    )])));
-    let ctx =
-        crate::StmtContext::for_dml(false, true, false).with_user_vars(Arc::clone(&variables));
+    let variables = UserVars::new();
+    variables.set_user_var_val("probe", Datum::Int(0));
+    let ctx = crate::StmtContext::for_dml(false, true, false).with_user_vars(variables.clone());
     assert!(matches!(
         run_insert_on(
             "INSERT INTO select_default (g) SELECT @probe := 1",
@@ -649,13 +645,7 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
         ),
         Err(DriverError::BadGeneratedColumn { .. })
     ));
-    assert_eq!(
-        variables
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get("probe"),
-        Some(&Datum::Int(0))
-    );
+    assert_eq!(variables.get_user_var_val("probe"), Some(Datum::Int(0)));
 }
 
 /// AUTO_INCREMENT, checked against behavior captured from real TiDB:

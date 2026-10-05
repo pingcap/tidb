@@ -64,6 +64,11 @@ pub trait ColumnResolver {
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
 
+    /// Go's session user-variable owner: declared types are resolved at build time.
+    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+        None
+    }
+
     /// The current typed value of a prepared marker. Its absolute order is
     /// retained in the compiled expression, independently of this snapshot.
     fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {
@@ -235,6 +240,10 @@ pub trait ColumnResolver {
 // Keep a borrowed resolver's complete context, including trait objects, when
 // passing it through the rewriter's statically dispatched recursive helpers.
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
+    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+        (**self).user_vars()
+    }
+
     fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
         (**self).rewrite_grouping(args)
     }
@@ -1061,6 +1070,39 @@ pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
     rewrite_expr_resolved(expr, &NoResolver)
 }
 
+/// Go BuildGetVarFunction and the get*Var function classes.
+fn user_variable_read_type(declared: &FieldType) -> (&'static str, FieldType) {
+    use tidb_datatype::EvalType;
+    let (kind, code) = match declared.eval_type() {
+        EvalType::Int if declared.is_unsigned() => ("uint", FieldTypeCode::LongLong),
+        EvalType::Int => ("int", FieldTypeCode::LongLong),
+        EvalType::Real => ("real", FieldTypeCode::Double),
+        EvalType::Decimal => ("decimal", FieldTypeCode::NewDecimal),
+        EvalType::Datetime => ("time", declared.code()),
+        _ => ("string", FieldTypeCode::VarString),
+    };
+    let mut result = FieldType::new(code);
+    result.set_flen_under_limit(declared.flen());
+    result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+    match declared.eval_type() {
+        EvalType::Int => {
+            result.set_raw_flags(declared.raw_flags());
+            result.set_decimal(0);
+        }
+        EvalType::Datetime => {
+            result.set_decimal(declared.decimal());
+        }
+        _ if kind == "string" => {
+            if !declared.charset_name().is_empty() {
+                result.set_charset_name(declared.charset_name());
+                result.set_collation_name(declared.collation_name());
+            }
+        }
+        _ => {}
+    }
+    (kind, result)
+}
+
 /// [`rewrite_expr`] with column resolution: `Expr::Column` paths are bound
 /// through `resolver` into [`Expression::Column`] nodes (index + result type).
 pub fn rewrite_expr_resolved(
@@ -1230,6 +1272,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         | Expr::Bit(_)
         | Expr::CharsetBinary { .. }
         | Expr::Assign { .. }
+        | Expr::UserVar(_)
         | Expr::Collate { .. }
         | Expr::CharsetString { .. } => rewrite_leaf_literal(expr, resolver),
         Expr::In { .. }
@@ -1404,24 +1447,49 @@ fn rewrite_leaf_literal(
             }
             Ok(rewritten)
         }
-        // The inline `@name := expr` assignment expression: Go's
-        // `builtinSetVar*Sig`, whose whole point is the SIDE EFFECT on the
-        // session, performed once per row. The name is a build-time token, so
-        // it rides as a constant argument, and the result type comes from the
-        // value -- which is also the type the assignment stores.
-        //
-        // A bare `@name` READ has no arm here on purpose: its result type is
-        // the type of the value the session currently holds (Go picks one of
-        // its typed `GetVar` signatures from `GetUserVarType` at build time),
-        // and the session encodes that choice in the function NAME before the
-        // rewriter runs -- see `getvar_*` in [`builtin_return_type`].
+        Expr::UserVar(name) => {
+            use crate::user_vars::UserVarsReader;
+            let name = tidb_hack::go_to_lower(name);
+            let declared = resolver
+                .user_vars()
+                .and_then(|vars| vars.get_user_var_type(&name))
+                .unwrap_or_else(|| {
+                    let mut field = FieldType::new(FieldTypeCode::VarString);
+                    field.set_flen(65_535);
+                    field
+                });
+            let (kind, ret_type) = user_variable_read_type(&declared);
+            let mut function = ScalarFunction::new(
+                CiString::new(format!("getvar_{kind}")),
+                ret_type.clone(),
+                vec![constant_string(&name)],
+            );
+            function
+                .collation
+                .set_coercibility(crate::expr_collation::Coercibility::IMPLICIT);
+            function
+                .collation
+                .set_repertoire(crate::expr_collation::Repertoire::UNICODE);
+            function
+                .collation
+                .set_charset_and_collation(ret_type.charset_name(), ret_type.collation_name());
+            Ok(Expression::ScalarFunction(function))
+        }
+        // Go rewriteUserVariable publishes the RHS type while building the
+        // plan, even if no rows execute or the RHS later evaluates to NULL.
         Expr::Assign { name, value } => {
-            let args = vec![
-                constant_string(name),
-                rewrite_expr_resolved(value, resolver)?,
-            ];
+            let name = tidb_hack::go_to_lower(name);
+            let value = rewrite_expr_resolved(value, resolver)?;
+            let declared = value
+                .static_type()
+                .cloned()
+                .ok_or(EvalError::Unsupported("user variable RHS has no type"))?;
+            let args = vec![constant_string(&name), value];
             let ret_type = builtin_return_type("setvar", &args)
                 .ok_or(EvalError::Unsupported("setvar has no result type"))?;
+            if let Some(vars) = resolver.user_vars() {
+                vars.set_user_var_type(&name, declared);
+            }
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("setvar"),
                 ret_type,

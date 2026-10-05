@@ -290,6 +290,10 @@ struct PreparedDefaultResolver<'a, R> {
 impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
     for PreparedDefaultResolver<'_, R>
 {
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.base.user_vars()
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         self.base.resolve(path)
     }

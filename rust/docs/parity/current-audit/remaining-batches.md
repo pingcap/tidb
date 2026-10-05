@@ -128,3 +128,5 @@ B02 shared write policy now retains binary/temporal numeric diagnostics, charset
 The K03/X01 [JSON numeric batch](json-numeric-batch-validation.json) connects the shared datatype source owner to table writes, scalar casts, bitwise operands and numeric JSON cast batches. Both parents remain partial; broader temporal/generated/ANALYZE and complete SQL/PB signature/kernel obligations remain.
 
 B03/B05/B09 share the [internal-process repair](internal-process-batch-validation.json): one live internal-session entry supplies tracked-task visibility, local cancellation and internal timestamp diagnostics. N04, I01 and O09 remain partial; remote dispatch, other providers, lazy schema V2 and full exclusion/package obligations remain. Physical timestamp holds remain conservative.
+
+B02/B06 share the [typed user-variable repair](user-variable-batch-validation.json): one value/type owner serves planning, SET, inline expression execution, prepared statements and session migration. S03/X01 remain partial because their other package obligations are not accepted. Other54 unresolved roots retain earlier evidence.

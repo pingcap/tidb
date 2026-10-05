@@ -20,7 +20,7 @@
 //! pins: `SET @i = 5` stores an integer, so `@i + 1` is integer arithmetic,
 //! while `SET @y = 'hello'` stores a string.
 //!
-//! Every expectation below is captured from real TiDB via
+//! The original examples below were captured from real TiDB via
 //! `rust/difftests/gorun`:
 //!
 //! ```text
@@ -169,9 +169,8 @@ fn an_inline_assignment_is_visible_to_the_rest_of_its_own_row() {
     assert_eq!(one_row(&mut session, "SELECT @i := @i + 1, @i"), ["4", "4"]);
     // The assignment OUTLIVES the statement.
     assert_eq!(one_row(&mut session, "SELECT @i"), ["4"]);
-    // An UNSET variable is typed as a string when the statement is built (Go
-    // does the same), so this row only works because arithmetic COERCES a
-    // string operand the way Go's arithmetic classes do. Captured from Go:
+    // The first inline assignment publishes its integer type during planning,
+    // so later expressions use that type before any row executes. Captured from Go:
     // `select @c := 0, @c := @c + 1, @c` -> `RS:0|1|1`.
     let mut fresh = Session::new();
     assert_eq!(
@@ -227,4 +226,156 @@ fn an_inline_assignment_from_a_column_runs_once_per_row() {
         ]
     );
     assert_eq!(one_row(&mut session, "SELECT @s"), ["c"]);
+}
+
+// Go SessionVars preserves values and declared types independently across migration.
+#[test]
+fn user_variable_batch_migrates_independent_declared_types() {
+    let mut source = Session::new();
+    source.run("SET @value_only = 7").unwrap();
+    let mut state = source.encode_session_states().unwrap();
+    let mut declared = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+    declared.set_flen(18);
+    declared.set_decimal(5);
+    state["user-var-types"] = serde_json::json!({"type_only": declared});
+    let mut target = Session::new();
+    target.decode_session_states(&state.to_string()).unwrap();
+    let restored = target.encode_session_states().unwrap();
+    assert_eq!(restored["user-var-types"], state["user-var-types"]);
+    assert_eq!(restored["user-var-values"], state["user-var-values"]);
+    target.run("SET @type_only = NULL").unwrap();
+    assert!(target.encode_session_states().unwrap()["user-var-types"]
+        .get("type_only")
+        .is_none());
+}
+
+#[test]
+fn user_variable_batch_plans_inline_types_without_executing_values() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE test.empty_vars (a INT)").unwrap();
+    session
+        .run("SELECT @planned := CAST(a AS DECIMAL(18,5)) FROM test.empty_vars")
+        .unwrap();
+    let state = session.encode_session_states().unwrap();
+    assert!(state["user-var-values"].get("planned").is_none());
+    let declared: tidb_datatype::FieldType =
+        serde_json::from_value(state["user-var-types"]["planned"].clone()).unwrap();
+    assert_eq!(
+        declared.code(),
+        tidb_datatype::FieldTypeCode::NewDecimal,
+        "{state}"
+    );
+    assert_eq!((declared.flen(), declared.decimal()), (18, 5));
+    assert_eq!(
+        one_row(&mut session, "SELECT @fresh := 2, @fresh + 1"),
+        ["2", "3"]
+    );
+}
+
+#[test]
+fn user_variable_batch_set_retains_declared_width_and_scale() {
+    let mut session = Session::new();
+    session
+        .run("SET @d = CAST(1.25 AS DECIMAL(18,5)), @s = CAST('x' AS CHAR(12))")
+        .unwrap();
+    let state = session.encode_session_states().unwrap();
+    let decimal: tidb_datatype::FieldType =
+        serde_json::from_value(state["user-var-types"]["d"].clone()).unwrap();
+    let string: tidb_datatype::FieldType =
+        serde_json::from_value(state["user-var-types"]["s"].clone()).unwrap();
+    assert_eq!((decimal.flen(), decimal.decimal()), (18, 5));
+    assert_eq!(string.flen(), 12);
+}
+
+#[test]
+fn user_variable_batch_uses_migrated_types_and_source_string_assignments() {
+    let mut session = Session::new();
+    session.run("SET @number = '1.25', @word = 'abc'").unwrap();
+    let mut state = session.encode_session_states().unwrap();
+    let mut decimal = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+    decimal.set_flen(18);
+    decimal.set_decimal(5);
+    state["user-var-types"]["number"] = serde_json::to_value(decimal).unwrap();
+    session.decode_session_states(&state.to_string()).unwrap();
+    assert_eq!(
+        one_row(&mut session, "SELECT @number, @number + 1"),
+        ["1.25", "2.25"]
+    );
+    assert_eq!(one_row(&mut session, "SELECT COERCIBILITY(@word)"), ["2"]);
+    session
+        .run("SELECT @json := CAST('[1,2]' AS JSON), @duration := CAST('12:34:56' AS TIME)")
+        .unwrap();
+    use tidb_expr::user_vars::UserVarsReader;
+    for name in ["json", "duration"] {
+        assert!(matches!(
+            session.user_vars.get_user_var_val(name),
+            Some(Datum::String(_))
+        ));
+    }
+    session.run("SET @Ä = 11").unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @ä"), ["11"]);
+    session.run("SET @ä = NULL").unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @Ä"), ["NULL"]);
+}
+
+#[test]
+fn user_variable_batch_set_plans_all_assignments_before_execution() {
+    let mut session = Session::new();
+    session.run("SET @first = 5, @second = @first * 2").unwrap();
+    use tidb_expr::user_vars::UserVarsReader;
+    assert!(
+        matches!(session.user_vars.get_user_var_val("second"), Some(Datum::Real(value)) if value == 10.0)
+    );
+    session.run("SET @first = 4").unwrap();
+    session
+        .run("SELECT @first := CAST(NULL AS CHAR(12))")
+        .unwrap();
+    assert_eq!(
+        session.user_vars.get_user_var_val("first"),
+        Some(Datum::Int(4))
+    );
+    assert_eq!(
+        session.user_vars.get_user_var_type("first").unwrap().flen(),
+        12
+    );
+    assert_eq!(
+        one_row(&mut session, "SELECT @first, @first + 1"),
+        ["4", "5"]
+    );
+}
+
+#[test]
+fn user_variable_batch_reads_integer_carrier_and_running_totals() {
+    let mut session = Session::new();
+    session.run("SET @carrier = '12'").unwrap();
+    let mut state = session.encode_session_states().unwrap();
+    state["user-var-types"]["carrier"] = serde_json::to_value(tidb_datatype::FieldType::new(
+        tidb_datatype::FieldTypeCode::LongLong,
+    ))
+    .unwrap();
+    session.decode_session_states(&state.to_string()).unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @carrier"), ["0"]);
+    session
+        .run("CREATE TABLE totals (a INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO totals VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @t := @t + v FROM totals ORDER BY a")),
+        [
+            vec!["NULL".to_owned()],
+            vec!["NULL".to_owned()],
+            vec!["NULL".to_owned()]
+        ]
+    );
+    session.run("SET @t = 0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @t := @t + v FROM totals ORDER BY a")),
+        [
+            vec!["10".to_owned()],
+            vec!["30".to_owned()],
+            vec!["60".to_owned()]
+        ]
+    );
 }

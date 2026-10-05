@@ -1,0 +1,302 @@
+{
+  "date": "2026-10-05",
+  "base": "2b7793fa87cf14960afc26de0abcbb68e00bbb48",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance.",
+  "counts": {
+    "tracked": 86,
+    "unresolved": 56,
+    "repaired": 30,
+    "open": 27,
+    "partial": 29
+  },
+  "statuses": {
+    "S03": "partial",
+    "X01": "partial"
+  },
+  "other_unresolved_roots_freshly_reproduced": false,
+  "go_source_inputs": {
+    "pkg/sessionctx/variable/session.go": "bf69a13a39f9353aebd777836cb48a97fd75e6f965b581683fc5e422746607c9",
+    "pkg/planner/core/expression_rewriter.go": "3620cfdb3ec996eb0fe15a6572a1babc07466e0918f00e42cbed7b13d181db45",
+    "pkg/executor/set.go": "88e1af9d91e146a3e1abda147faa15f761f12b99bc56f1f4595cce3131a60e70",
+    "pkg/expression/builtin_other.go": "ba02dd0b627610fae61552ba18b4e9841eabda26ff8e82141bf57c078dc941e6",
+    "pkg/expression/builtin_other_test.go": "e63a2bf0e0005ef610379f436217412ffd8a7689c93a338e551360e06faca57c",
+    "pkg/types/datum.go": "a7e97bcf032c6abd2e5c8d59516212cb6ead164dc3ec826bfd87392bc66475fc"
+  },
+  "rust_source_inputs": {
+    "rust/crates/tidb-datatype/src/datum/mod.rs": "be90ca3c6859f44ae5997e445dcf9b95062563db805b6df179b1c28e6a3c522f",
+    "rust/crates/tidb-executor/src/access_cost.rs": "016125db728c8340e5fd42dba3d90ba6fab527006f6a04342e6b3738661c4b0d",
+    "rust/crates/tidb-executor/src/driver/catalog.rs": "53a95fb156121d6463635eb3899aea433dabab4f86a41c5a1650cda9541c42ad",
+    "rust/crates/tidb-executor/src/driver/dml/defaults.rs": "a26342df970953bae90051f90d81a1ad3c5890624bc318463a0db93f7a3a0b27",
+    "rust/crates/tidb-executor/src/driver/from.rs": "86063a51a1b0a8a0ac092d623f64209238f8ef37e5add00cb2650dee2ce745d6",
+    "rust/crates/tidb-executor/src/driver/tests/column_defaults.rs": "a550f8676b5e88e443451652e81f480eee16f7a4ab8399aa4bc416c2cbfb841b",
+    "rust/crates/tidb-executor/src/index_range.rs": "0281bc85e2143eaf6f611fb9e1411c3eef1d0eb81d74cf55af67436fe341f2ba",
+    "rust/crates/tidb-executor/src/stmt_context.rs": "79fc248c3801222dce8cbb5de0bb98d362ba9b347fe4d415ed9baafd7ba727b7",
+    "rust/crates/tidb-expr/src/constant_fold.rs": "1657d035745177581d2fde5a8ab6a254cf1e5261189d0c338efdf6745f0977bb",
+    "rust/crates/tidb-expr/src/context.rs": "51acc5dc3f0b8edd056a24b0e6fe1ac3f15cf4cd2176de7e020788eb3cfe87a0",
+    "rust/crates/tidb-expr/src/rewriter.rs": "c8772bde2acf94698e42359dd136cd870bb6ba0bddd6a6d966f84d21cade0557",
+    "rust/crates/tidb-expr/src/rewriter/fold_mode.rs": "1de3771945231fb099ace3a7dba96c5d09851eaf367532e7237024d81e5af3c7",
+    "rust/crates/tidb-expr/src/rewriter/result_type.rs": "5d1187d52a2d478b11ced87cb0c4a55e1333f7a31cbd3416aae3c85739758b75",
+    "rust/crates/tidb-expr/src/scalar_function.rs": "3680499fef6f7c599bf5f18a8e9db3095b2f609f13598a3e3fd5276889cb237c",
+    "rust/crates/tidb-expr/src/simple_expr.rs": "927a22dc3dcb87323ff941b50e622041857fbf20d07382fb1d79039141a70c64",
+    "rust/crates/tidb-expr/src/tests/setvar_getvar_values_getparam_source.rs": "225572dc122b922dfee34d7c609eae2ac6c61013c8f71aee32edfbe2e3beb523",
+    "rust/crates/tidb-expr/src/user_vars.rs": "8590a1d6b447df4678a925f14907c26d4a6812eee3fac75ace4d0b75c8980d7a",
+    "rust/crates/tidb-planner/src/plan_builder.rs": "12a44367a978a9f0c0412f5dd75110333c7ba8d9f52d490f19fd683e5775f30b",
+    "rust/crates/tidb-session/src/binding_arm.rs": "4c9a6a34b08a4203cdc28279b40d0b204dcb60ffe0deac14824c1af929dfa5c3",
+    "rust/crates/tidb-session/src/dispatch.rs": "bb90cc726a4e875baed38d9b232b2264164bcf0e60812ed880657ea5e1e3ce6e",
+    "rust/crates/tidb-session/src/lib.rs": "49afccca88ffab62616f2a20468fa5d22b3c2dd5041f40a3aad3861a78f3ab0a",
+    "rust/crates/tidb-session/src/prepared_statements.rs": "0624f475300366e86dfb9e511817724bc0e8d83bfe3118fbfbc8b9aa7ae8ae0e",
+    "rust/crates/tidb-session/src/session_states.rs": "7788a55260073929cb1708b8a30849c286a1e3c62844d3eae145edb9265e59ca",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "cd209180f2cdc8675106bdd24c1ff22b1d65af17b3e579e00869c3369166f620",
+    "rust/crates/tidb-session/src/tests_user_vars.rs": "b495b8cc2590d202b2ba891d74a608f123637a5025002606949cfebe40e3f8b1",
+    "rust/crates/tidb-session/src/variables.rs": "b3dde867b06680da9df7e0b8940b4c9cdcd8a2bcfbe65a51b545fbe18241e750",
+    "rust/crates/tidb-session/src/vars.rs": "1ae94f92078ef5f8c830af591aafd797ca5f7d33057f0b019a5d757be40f3b72"
+  },
+  "contracts": [
+    "One UserVars owner is shared by session, statement context and every production planner resolver wrapper; prepared FROM/USING, SELECT INTO and binding lookup use its live values.",
+    "Bare reads select signatures from declared types, preserving source display metadata and implicit coercibility; inline assignment publishes the RHS type while planning even with zero rows or NULL values.",
+    "SET plans every RHS before executing assignments and retains the physical plans; full declared type is stored with nonnull values. SET NULL removes both maps; inline NULL preserves the old value.",
+    "Migration snapshots both maps under one read lock and restores them independently, without reconstructing types or discarding type-only entries.",
+    "GETVAR integer signatures read the Go datum carrier, decimals use source ToDecimal without CAST scale rounding, and timestamp/duration/JSON inline assignments store strings.",
+    "Go Unicode lowercase is used by live name readers/writers; original store getters/setters retain caller-supplied names as Go does."
+  ],
+  "removed": [
+    "Session/StmtContext duplicate Arc<Mutex<HashMap<String, Datum>>> owner",
+    "Value-based uservar_read_expr AST substitution",
+    "Migration type reconstruction from values",
+    "Redundant generic result_type rules for synthetic GETVAR AST names",
+    "rust/crates/tidb-session/tests/user_variable_source.rs: two duplicate cases removed; running-total obligation moved into existing tests_user_vars suite",
+    "Stale TIMESTAMP SETVAR time-storage expectation corrected to Go string signature"
+  ],
+  "before": {
+    "failed": 3,
+    "passed": 0,
+    "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session --lib user_variable_batch -- --test-threads=1",
+    "log": "/workspace/.cloud-setup/user-variable-batch/before.log"
+  },
+  "intermediate": {
+    "passed": 115,
+    "failed": 14,
+    "log": "/workspace/.cloud-setup/user-variable-batch/intermediate-tests.log",
+    "diagnosis": "Missing bare UserVar dispatcher arm and main PlanScopeResolver owner forwarding; fixed before final validation."
+  },
+  "validation": {
+    "rust": {
+      "passed": 138,
+      "failed": 0,
+      "ignored": 0,
+      "command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-session -p tidb-expr -p tidb-executor --lib --no-fail-fast -- tests_user_vars session_migration tests_prepared user_vars::tests setvar_getvar_values_getparam_source select_into insert_select --test-threads=1",
+      "log": "/workspace/.cloud-setup/user-variable-batch/final-tests.log"
+    },
+    "all_targets": {
+      "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-session -p tidb-executor -p tidb-expr -p tidb-planner -p tidb-datatype --all-targets",
+      "passed": true
+    },
+    "lint": {
+      "command": "source /workspace/.cloud-setup/env.sh; make lint",
+      "passed": true,
+      "log": "/workspace/.cloud-setup/user-variable-batch/lint.log"
+    },
+    "wire": {
+      "binary_sha256": "9ca112bca0535e99d722c63dfb86fa63e2a7b024c650713f07ac4192a643ccf3",
+      "checks": [
+        {
+          "name": "SET preserves declared width and scale",
+          "actual": [
+            18,
+            5,
+            12
+          ],
+          "expected": [
+            18,
+            5,
+            12
+          ],
+          "pass": true
+        },
+        {
+          "name": "zero-row inline assignment publishes only type",
+          "actual": [
+            246,
+            18,
+            false
+          ],
+          "expected": [
+            246,
+            18,
+            false
+          ],
+          "pass": true
+        },
+        {
+          "name": "later projection observes inline type/value",
+          "actual": [
+            [
+              2,
+              3
+            ]
+          ],
+          "expected": [
+            [
+              2,
+              3
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "migrated declared decimal selects source conversion",
+          "actual": [
+            [
+              "1.25",
+              "2.25"
+            ]
+          ],
+          "expected": [
+            [
+              "1.25",
+              "2.25"
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "type-only migration entry preserved",
+          "actual": {
+            "Array": false,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Decimal": 5,
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Flag": 129,
+            "Flen": 18,
+            "Tp": 246
+          },
+          "expected": {
+            "Array": false,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Decimal": 5,
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Flag": 129,
+            "Flen": 18,
+            "Tp": 246
+          },
+          "pass": true
+        },
+        {
+          "name": "JSON/duration use string assignment signatures",
+          "actual": [
+            5,
+            5
+          ],
+          "expected": [
+            5,
+            5
+          ],
+          "pass": true
+        },
+        {
+          "name": "prepared USING shares Unicode-folded store",
+          "actual": [
+            [
+              12
+            ]
+          ],
+          "expected": [
+            [
+              12
+            ]
+          ],
+          "pass": true
+        },
+        {
+          "name": "user-variable coercibility is implicit",
+          "actual": [
+            [
+              2
+            ]
+          ],
+          "expected": [
+            [
+              2
+            ]
+          ],
+          "pass": true
+        }
+      ],
+      "exit": 0
+    },
+    "server_build": {
+      "command": "CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server",
+      "passed": true
+    },
+    "format": "Changed-region rustfmt with formatting-equivalence check; git diff --check.",
+    "wire_initial_check": "An initial external wire assertion used 4 for KindString. Source pkg/types/datum.go defines KindString=5; corrected the external expectation and reran all eight checks on the unchanged server binary. No production workaround.",
+    "aggregate": {
+      "artifacts": [
+        {
+          "path": "target/debug/build/tidb-session/e707319cd1e6af68/out/all_tests.rs",
+          "mtime": 1791044830.929528,
+          "retired_harness_present": true
+        },
+        {
+          "path": "target/debug/build/tidb-session/82ff241ce16cac8c/out/all_tests.rs",
+          "mtime": 1791043605.8408961,
+          "retired_harness_present": true
+        },
+        {
+          "path": "target/debug/build/tidb-session/d5cb6fde71a30914/out/all_tests.rs",
+          "mtime": 1791242060.4136713,
+          "retired_harness_present": false
+        },
+        {
+          "path": "target/debug/build/tidb-session/de56ade773225fd9/out/all_tests.rs",
+          "mtime": 1790982315.8989294,
+          "retired_harness_present": true
+        }
+      ],
+      "latest_excludes_deleted_harness": true
+    }
+  },
+  "publication": "Actual hook build and fresh pre-push locked build follow this source receipt; exact publication results belong in /workspace/.cloud-setup/user-variable-batch/final-handoff.json and saved Cloud startup instructions. No future push is preclaimed.",
+  "unverified": [
+    "Full upstream Go package/test acceptance",
+    "Full SQL/PB typed-signature and vector matrix",
+    "Live multi-node TiKV",
+    "Session signing/token and DDL/hypothetical migration state",
+    "Performance/benchmark improvement",
+    "Cloud Publish and fresh-task restore"
+  ],
+  "pruned_regenerable_artifacts": [
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-server/77c9a1484da84886/out/tidb_server-77c9a1484da84886",
+      "bytes": 435636400,
+      "active_executable": false,
+      "reason": "No tidb_server process; previous server unit-test binary unused by this batch."
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-session/6f9593a3c5413e52/out/tidb_session-6f9593a3c5413e52",
+      "bytes": 290872576,
+      "active_executable": false,
+      "reason": "Previous server-feature unit-test binary; current batch uses other feature-unified unit binaries, production build does not need this test executable."
+    },
+    {
+      "path": "/workspace/tidb/rust/target/debug/build/tidb-executor/b09b2b15f87b781f/out/tidb_executor-b09b2b15f87b781f",
+      "bytes": 260146464,
+      "active_executable": false,
+      "reason": "Previous server-feature unit-test binary; current batch uses other feature-unified unit binaries, production build does not need this test executable."
+    }
+  ],
+  "removed_test_obligations": {
+    "rust/crates/tidb-session/tests/user_variable_source.rs": {
+      "before_sha256": "5095a95cc10743d6371afc80c062891c97adf4af9e75c07ca47430b2a717b36d",
+      "unset": "tests_user_vars::names_are_case_insensitive_and_an_unset_variable_is_null",
+      "assignment": "tests_user_vars::an_inline_assignment_is_visible_to_the_rest_of_its_own_row",
+      "running_total": "tests_user_vars::user_variable_batch_reads_integer_carrier_and_running_totals"
+    }
+  }
+}

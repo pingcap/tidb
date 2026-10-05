@@ -395,7 +395,7 @@ pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
 /// counter, a random source, a session variable, or a side effect.
 pub fn is_unfoldable(name: &str) -> bool {
     // Go's `GetVar` is one name; this rewriter encodes the signature the
-    // session's current value picked into the name (`getvar_int`,
+    // session's declared type picked into the name (`getvar_int`,
     // `getvar_string`, ...), so a bare `"getvar"` arm below would never match
     // anything the rewriter builds. The prefix test is what actually fires.
     if name.starts_with("getvar_") {

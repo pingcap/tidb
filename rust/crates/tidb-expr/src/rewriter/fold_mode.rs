@@ -45,6 +45,10 @@ impl<'a> FoldModeResolver<'a> {
 }
 
 impl ColumnResolver for FoldModeResolver<'_> {
+    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+        self.base.user_vars()
+    }
+
     fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, crate::EvalError> {
         self.base.rewrite_grouping(args)
     }

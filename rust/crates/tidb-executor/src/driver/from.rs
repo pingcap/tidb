@@ -204,6 +204,10 @@ pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
 }
 
 impl ColumnResolver for ScopeResolver<'_> {
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.scope.constant_context.as_ref()?.user_vars()
+    }
+
     fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
         tidb_expr::Columns::param_value(
             self.scope

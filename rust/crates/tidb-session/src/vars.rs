@@ -2124,7 +2124,7 @@ pub enum VarError {
 /// A session's system-variable state: the variables it has overridden (Go's
 /// `SessionVars.systems`) plus the shared GLOBAL table.
 ///
-/// User variables are NOT here. They live in one place -- the shared map
+/// User variables are NOT here. They live in one place -- the shared UserVars owner
 /// [`crate::Session`] lends to every statement context -- because `@x := expr`
 /// writes them from inside expression evaluation, mid-row; see
 /// `tidb_executor::StmtContext`'s `user_vars` field.

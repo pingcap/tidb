@@ -1084,6 +1084,10 @@ pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Opti
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.warning_context?.user_vars()
+    }
+
     fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
         let expand = self.block_expand.ok_or(EvalError::InvalidGroupFuncUse)?;
         expand.rewrite_grouping(args)

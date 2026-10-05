@@ -2118,7 +2118,25 @@ impl ScalarFunction {
                 }
             }
             if name == "setvar" && self.args.len() == 2 {
-                let value = self.args[1].eval(ctx, row)?;
+                let mut value = self.args[1].eval(ctx, row)?;
+                if self.args[1].static_type().is_some_and(|field| {
+                    matches!(
+                        field.eval_type(),
+                        tidb_datatype::EvalType::Timestamp
+                            | tidb_datatype::EvalType::Duration
+                            | tidb_datatype::EvalType::Json
+                    )
+                }) {
+                    value = crate::cast::eval_cast(
+                        &tidb_ast::CastType::Char {
+                            len: None,
+                            charset: None,
+                        },
+                        value,
+                        None,
+                        ctx,
+                    )?;
+                }
                 if !value.is_null() {
                     ctx.set_uservar(&var, value.clone());
                 }
@@ -3121,29 +3139,45 @@ impl ScalarFunction {
     }
 }
 
-/// The cast a `cast_*` function name describes, with the width and scale its
-/// result type carries. Go stores the same fact as the chosen
-/// `builtinCast*As*Sig`.
-/// Converts a user variable's stored value onto the kind its `getvar_<kind>`
-/// call declared. NULL stays NULL, and a value already of that kind passes
-/// through untouched -- the conversion only matters when an assignment made
-/// during this same statement changed the kind out from under the plan.
+/// Go typed GETVAR evaluation reads the live value through its already selected
+/// signature. Integer signatures read the carrier; decimal/real/string signatures
+/// apply their source conversions independently of declared display width.
 fn uservar_as_kind(kind: &str, value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use tidb_ast::CastType;
     if value.is_null() {
         return Ok(Datum::Null);
     }
+    // Go builtinGetIntVarSig returns Datum.GetInt64 verbatim; unsignedness
+    // belongs to the compiled result type, independently of the runtime kind.
+    if kind == "int" {
+        return Ok(Datum::Int(value.get_int64()));
+    }
+    if kind == "uint" {
+        return Ok(Datum::UInt(value.get_int64() as u64));
+    }
     let target = match (kind, &value) {
-        ("int", Datum::Int(_)) | ("uint", Datum::UInt(_)) | ("real", Datum::Real(_)) => {
-            return Ok(value)
-        }
+        ("real", Datum::Real(_)) => return Ok(value),
         ("decimal", Datum::Decimal(_)) => return Ok(value),
         ("time", Datum::Time(_)) => return Ok(value),
         ("string", Datum::String(_) | Datum::Bytes(_)) => return Ok(value),
-        ("int", _) => CastType::Signed,
-        ("uint", _) => CastType::Unsigned,
         ("real", _) => CastType::Double,
-        ("decimal", _) => CastType::Decimal { flen: 0, scale: 0 },
+        ("decimal", _) => {
+            // Go GetDecimalVar uses Datum.ToDecimal, without CAST's width/scale rounding.
+            let warnings = crate::constant::ConversionWarnings(ctx);
+            let zone = ctx.time_zone();
+            let context = tidb_datatype::ConversionContext::new(
+                ctx.type_flags(),
+                tidb_datatype::ConversionLocation::from_time_zone(&zone),
+                &warnings,
+            );
+            let (decimal, error) = value
+                .to_decimal_with_context(&context)
+                .map_err(|_| EvalError::Unsupported("user variable decimal conversion"))?;
+            if let Some(error) = error {
+                return Err(EvalError::Conversion(error));
+            }
+            return Ok(Datum::Decimal(decimal));
+        }
         ("time", _) => return crate::cast::cast_arg_as_datetime(&value, None, ctx),
         ("string", _) => CastType::Char {
             len: None,

@@ -631,10 +631,10 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** JSON numeric casts, arithmetic arguments and bitwise operands now share the datatype source conversion; signed/unsigned/real/decimal JSON cast batches use the same scalar conversion after evaluating their JSON input batch, preserving selected order and NULLs. Duplicate serialized-document parsers and private numeric diagnostic reconstruction are removed. Broader SQL/PB construction and selected-signature ownership, remaining string/time/JSON kernels and complete typed vector execution remain unresolved.",
-      "rust_evidence": "`rust/crates/tidb-expr/src/new_function.rs:253`, `:328`; `scalar_function.rs:289`, `:661`, `:672`, `:2834`; `evaluator.rs:400`; `tidb-datatype/src/{convert,datum_convert}.rs`, `datum/convert.rs`; `tidb-expr/src/{cast,ops,scalar_function}.rs`; `tidb-executor/src/driver/write_cast.rs`; [JSON numeric validation](json-numeric-batch-validation.json)",
-      "go_owner": "`pkg/expression/scalar_function.go`, `builtin.go::newBaseBuiltinFuncWithTp`, `distsql_builtin.go` and typed vector builtin files. Unify signature selection, casts/context and typed batch evaluation. Function-name lookup alone is not a defect: Go also uses names. This finding concerns the incomplete shared contract and vector execution; no SQL result mismatch or benchmark regression is inferred solely from Rust's representation. JSON source conversion follows pkg/types/convert.go and datum.go; typed scalar/vector signatures follow pkg/expression/builtin_cast.go and builtin_cast_vec.go.",
-      "review_basis": "Cloud JSON numeric batch from 8025bb156829edb1b247da9c4dcccfd10fbe340d against refreshed Go b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Four Rust and six complete MySQL baseline failures; 129 Rust cases and seven MySQL/unistore assertions pass, eleven existing neighboring tests ignored. See json-numeric-batch-validation.json for source hashes, commands, added vector coverage and limits. Other54 unresolved roots retain prior evidence."
+      "finding": "**P2; partially repaired:** JSON numeric casts, arithmetic arguments and bitwise operands now share the datatype source conversion; signed/unsigned/real/decimal JSON cast batches use the same scalar conversion after evaluating their JSON input batch, preserving selected order and NULLs. Duplicate serialized-document parsers and private numeric diagnostic reconstruction are removed. Broader SQL/PB construction and selected-signature ownership, remaining string/time/JSON kernels and complete typed vector execution remain unresolved. User-variable reads now resolve declared types through the shared planner/expression context instead of an early value-based AST substitution. Inline types reach later expressions during planning; SET retains all RHS plans before execution. Integer reads use the source datum carrier, decimal conversion avoids CAST scale rounding, and timestamp/duration/JSON inline assignments use source string signatures. The obsolete synthetic AST read-type fallback is removed. This is existing-owner maintenance; other typed SQL/PB construction, scalar/time kernels and complete vector/package acceptance remain unresolved.",
+      "rust_evidence": "`rust/crates/tidb-expr/src/new_function.rs:253`, `:328`; `scalar_function.rs:289`, `:661`, `:672`, `:2834`; `evaluator.rs:400`; `tidb-datatype/src/{convert,datum_convert}.rs`, `datum/convert.rs`; `tidb-expr/src/{cast,ops,scalar_function}.rs`; `tidb-executor/src/driver/write_cast.rs`; [JSON numeric validation](json-numeric-batch-validation.json); `tidb-expr/src/{user_vars,rewriter,scalar_function,context}.rs`; `tidb-planner/src/plan_builder.rs`; `tidb-executor/src/stmt_context.rs`; `tidb-session/src/{variables,session_states,prepared_statements,dispatch,binding_arm}.rs`; [typed user-variable validation](user-variable-batch-validation.json)",
+      "go_owner": "`pkg/expression/scalar_function.go`, `builtin.go::newBaseBuiltinFuncWithTp`, `distsql_builtin.go` and typed vector builtin files. Unify signature selection, casts/context and typed batch evaluation. Function-name lookup alone is not a defect: Go also uses names. This finding concerns the incomplete shared contract and vector execution; no SQL result mismatch or benchmark regression is inferred solely from Rust's representation. JSON source conversion follows pkg/types/convert.go and datum.go; typed scalar/vector signatures follow pkg/expression/builtin_cast.go and builtin_cast_vec.go. User-variable ownership follows pkg/sessionctx/variable/session.go; planning follows pkg/planner/core/expression_rewriter.go; SET and typed signatures follow pkg/executor/set.go and pkg/expression/builtin_other.go.",
+      "review_basis": "Cloud user-variable batch from 2b7793fa87cf14960afc26de0abcbb68e00bbb48 against freshly fetched Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Three regressions fail on original production sources; shared owner and caller validation follows in user-variable-batch-validation.json. Parents remain partial. Other54 unresolved roots retain prior evidence and were not freshly reproduced."
     },
     {
       "id": "X02",
@@ -694,10 +694,10 @@
       "id": "S03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "**P2; partially repaired:** SHOW SESSION_STATES and SET SESSION_STATES now compose portable state through the existing session, variable, prepared-statement and binding owners. SQL and binary handles share IDs; migration rebuilds original SQL under its prepare-time database, restores remembered parameter types and refuses long-data buffers/open cursors. Active transactions, temporary tables, advisory locks and sandbox sessions are refused. Prepared SHOW retains its result-memory authority and reports metadata without executing export. Full Go migration remains incomplete: signing-certificate/token lifecycle, authoritative user-variable type maps, DDL/hypothetical state and complete source-package obligations remain open.",
-      "rust_evidence": "`tidb-session/src/session_states.rs`; `prepared_statements.rs`; `stmt_ctx.rs`; `tidb-server/src/mysql_connection.rs`; [batch validation](session-migration-batch-validation.json)",
-      "go_owner": "`pkg/session/session.go::EncodeStates`/`DecodeStates`, executor show/simple handlers and `pkg/server/driver_tidb.go` prepared-state handlers. Preserve the complete encode/decode/validation lifecycle; a JSON echo or variables-only transfer is insufficient.",
-      "review_basis": "Rechecked live integration 3cb7eaec4b against freshly fetched Go master 93a01d31f6. Original unsupported-dispatch regressions fail before repair; portable text/binary protocol transfer is now exercised. This is not acceptance of pkg/sessionctx/sessionstates or its parent packages."
+      "finding": "**P2; partially repaired:** SHOW SESSION_STATES and SET SESSION_STATES now compose portable state through the existing session, variable, prepared-statement and binding owners. SQL and binary handles share IDs; migration rebuilds original SQL under its prepare-time database, restores remembered parameter types and refuses long-data buffers/open cursors. Active transactions, temporary tables, advisory locks and sandbox sessions are refused. Prepared SHOW retains its result-memory authority and reports metadata without executing export. Full Go migration remains incomplete: signing-certificate/token lifecycle, DDL/hypothetical state and complete source-package obligations remain open. User variables now migrate through the authoritative UserVars owner: encoding snapshots both independent maps under one lock and decoding restores values/types separately, including type-only and value-only entries. SET retains planned width/scale, inline assignment publishes types before any row executes, and NULL statement assignment unsets both maps. Signing certificates/tokens, DDL/hypothetical state and complete package obligations remain unresolved.",
+      "rust_evidence": "`tidb-session/src/session_states.rs`; `prepared_statements.rs`; `stmt_ctx.rs`; `tidb-server/src/mysql_connection.rs`; [batch validation](session-migration-batch-validation.json); `tidb-expr/src/{user_vars,rewriter,scalar_function,context}.rs`; `tidb-planner/src/plan_builder.rs`; `tidb-executor/src/stmt_context.rs`; `tidb-session/src/{variables,session_states,prepared_statements,dispatch,binding_arm}.rs`; [typed user-variable validation](user-variable-batch-validation.json)",
+      "go_owner": "`pkg/session/session.go::EncodeStates`/`DecodeStates`, executor show/simple handlers and `pkg/server/driver_tidb.go` prepared-state handlers. Preserve the complete encode/decode/validation lifecycle; a JSON echo or variables-only transfer is insufficient. User-variable ownership follows pkg/sessionctx/variable/session.go; planning follows pkg/planner/core/expression_rewriter.go; SET and typed signatures follow pkg/executor/set.go and pkg/expression/builtin_other.go.",
+      "review_basis": "Cloud user-variable batch from 2b7793fa87cf14960afc26de0abcbb68e00bbb48 against freshly fetched Go master b36c940a4332c866d8b0e2afde88f5e7c2fd7fed. Three regressions fail on original production sources; shared owner and caller validation follows in user-variable-batch-validation.json. Parents remain partial. Other54 unresolved roots retain prior evidence and were not freshly reproduced."
     },
     {
       "id": "S04",
@@ -792,13 +792,13 @@
   ],
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
-    "receipt": "internal-process-batch-validation.json",
-    "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance.",
+    "receipt": "user-variable-batch-validation.json",
+    "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance.",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
   },
   "latest_test_cleanup": {
-    "receipt": "analyze-model-cleanup-validation.json",
-    "scope": "Three unused analyze/statistics models, three private harnesses, 29 tests and one obsolete panic export removed; 3530 retained inputs and eight retained test bodies unchanged. Finding statuses/counts unchanged."
+    "receipt": "user-variable-batch-validation.json",
+    "scope": "One duplicate 66-line user-variable integration harness removed: two duplicate tests retired and the unique running-total obligation consolidated into the existing session suite. Stale TIMESTAMP assignment expectation corrected to the Go string signature; no source obligation removed."
   },
   "test_cleanup_history": [
     {
@@ -945,6 +945,10 @@
     {
       "receipt": "read-plan-cleanup-validation.json",
       "scope": "Four unused read-planning adapters, four private harnesses and 24 tests removed; 3537 retained inputs, remaining single-reader code and four prepared tests byte-identical. Finding statuses/counts unchanged."
+    },
+    {
+      "receipt": "analyze-model-cleanup-validation.json",
+      "scope": "Three unused analyze/statistics models, three private harnesses, 29 tests and one obsolete panic export removed; 3530 retained inputs and eight retained test bodies unchanged. Finding statuses/counts unchanged."
     }
   ],
   "repair_history": [
@@ -1405,6 +1409,11 @@
     {
       "receipt": "json-numeric-batch-validation.json",
       "scope": "K03/X01 existing-owner maintenance: shared JSON signed/unsigned/real/decimal conversion, original errors and source-stage warning policy, ordered table-write diagnostics, common numeric casts/argument wrappers and bitwise operands, typed JSON numeric batches. No complete upstream package acceptance.",
+      "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
+    },
+    {
+      "receipt": "internal-process-batch-validation.json",
+      "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance.",
       "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed"
     }
   ],

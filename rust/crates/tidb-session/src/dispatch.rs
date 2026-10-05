@@ -2249,12 +2249,11 @@ impl Session {
                         if row.len() != names.len() {
                             return Err(DriverError::SelectIntoColumnMismatch);
                         }
-                        let mut vars = self
-                            .user_vars
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         for (name, value) in names.iter().zip(row.iter()) {
-                            vars.insert(name.to_ascii_lowercase(), value.clone());
+                            self.user_vars.set_user_var_val(
+                                &tidb_util::stringutil::go_to_lower(name),
+                                value.clone(),
+                            );
                         }
                     }
                     return Ok(PendingExecution::Complete(StmtOutput::Affected(u64::from(

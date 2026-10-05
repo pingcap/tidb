@@ -154,22 +154,13 @@ impl Session {
         }
         system_vars.insert("rand_seed1", self.rand.get_seed1().to_string());
         system_vars.insert("rand_seed2", self.rand.get_seed2().to_string());
+        let (values, user_types) = self.user_vars.snapshot();
         let mut user_vars = BTreeMap::new();
-        let mut user_types = BTreeMap::new();
-        for (name, datum) in self
-            .user_vars
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-        {
+        for (name, datum) in values {
             user_vars.insert(
-                name.clone(),
+                name,
                 serde_json::from_slice::<Value>(&datum.marshal_json().map_err(invalid_state)?)
                     .map_err(invalid_state)?,
-            );
-            user_types.insert(
-                name.clone(),
-                tidb_datatype::infer_param_type_from_datum(datum),
             );
         }
         let mut prepared = self.protocol_session_states.prepared.clone();
@@ -373,14 +364,18 @@ impl Session {
             }
         }
         if let Some(vars) = state.get("user-var-values").and_then(Value::as_object) {
-            let mut values = self
-                .user_vars
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (name, value) in vars {
-                values.insert(
-                    name.clone(),
+                self.user_vars.set_user_var_val(
+                    name,
                     Datum::unmarshal_json(value.to_string().as_bytes()).map_err(invalid_state)?,
+                );
+            }
+        }
+        if let Some(types) = state.get("user-var-types").and_then(Value::as_object) {
+            for (name, field_type) in types {
+                self.user_vars.set_user_var_type(
+                    name,
+                    serde_json::from_value(field_type.clone()).map_err(invalid_state)?,
                 );
             }
         }

@@ -67,28 +67,19 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     }
 }
 
-/// The call `@name` becomes: Go's `BuildGetVarFunction` chooses one of its
-/// typed `GETVAR` signatures from the type the session holds for the name, and
-/// the choice rides in the function name so the rewriter -- which has no
-/// session -- can type the node (see `getvar_*` in `tidb_expr`'s
-/// `builtin_return_type`).
-///
-/// An UNSET variable has no type to read; Go's own answer is a string-typed
-/// NULL, which `getvar_string` produces.
-fn uservar_read_expr(name: &str, value: Option<&Datum>) -> tidb_ast::Expr {
-    let kind = match value {
-        Some(Datum::Int(_)) => "int",
-        Some(Datum::UInt(_)) => "uint",
-        Some(Datum::Real(_)) => "real",
-        Some(Datum::Decimal(_)) => "decimal",
-        Some(Datum::Time(_)) => "time",
-        _ => "string",
-    };
-    tidb_ast::Expr::Func {
-        name: format!("getvar_{kind}"),
-        args: vec![tidb_ast::Expr::String(name.to_owned())],
-        origin_position: 0,
-    }
+fn is_set_literal(expr: &tidb_ast::Expr) -> bool {
+    matches!(
+        expr,
+        tidb_ast::Expr::Int(_)
+            | tidb_ast::Expr::Decimal(_)
+            | tidb_ast::Expr::Float(_)
+            | tidb_ast::Expr::Hex(_)
+            | tidb_ast::Expr::Bit(_)
+            | tidb_ast::Expr::String(_)
+            | tidb_ast::Expr::RawString(_)
+            | tidb_ast::Expr::Bool(_)
+            | tidb_ast::Expr::Null
+    )
 }
 
 /// One complete mutable AST pass for variable substitution.
@@ -110,10 +101,7 @@ impl Visitor for VariableBinder<'_> {
         let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
             return false;
         };
-        if !matches!(
-            expr,
-            tidb_ast::Expr::SysVar { .. } | tidb_ast::Expr::UserVar(_)
-        ) {
+        if !matches!(expr, tidb_ast::Expr::SysVar { .. }) {
             return false;
         }
         match self.session.bind_variable_atom(expr) {
@@ -290,35 +278,72 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::SetUserVar(set) => {
-                // Go plans the whole SET statement ONCE, against the variable
-                // state as it stood BEFORE any assignment ran: `SET @usr = 5,
-                // @usr2 = @usr * 2` resolves the `@usr` reference with the
-                // type @usr had at plan time — unset, hence the string-typed
-                // GetVar whose real-arithmetic result renders 10.0. Binding
-                // each expression lazily made the second assignment see the
-                // FIRST's freshly stored integer and answer an int where go
-                // answers a real (oracle m21). Bind everything first, then
-                // evaluate in order.
-                let mut bound_values = Vec::with_capacity(set.assignments.len());
+                // Go builds all RHS expressions before SetExecutor changes values/types.
+                // Keep those physical plans, so later assignments cannot rebind a read
+                // against the type installed by an earlier assignment.
+                let mut planned = Vec::with_capacity(set.assignments.len());
                 for assignment in &set.assignments {
-                    let bound = self.bind_variables_in(&assignment.value)?;
-                    let key = assignment.name.to_ascii_lowercase();
-                    bound_values.push((bound, key));
+                    let mut bound = self.bind_variables_in(&assignment.value)?;
+                    if let tidb_ast::Expr::Column(path) = &bound {
+                        if let [word] = path.as_slice() {
+                            bound = tidb_ast::Expr::String(word.clone());
+                        }
+                    }
+                    let sql = match &bound {
+                        tidb_ast::Expr::Subquery(query) => query.restore(),
+                        _ => format!("SELECT {}", bound.restore()),
+                    };
+                    let ctx = self.statement_context(false);
+                    let Stmt::Query(query) =
+                        tidb_parser::parse_with_sql_mode(&sql, self.scanner_sql_mode())
+                            .map_err(|error| DriverError::Parse(format!("{error:?}")))?
+                    else {
+                        unreachable!("SET RHS is planned as a query")
+                    };
+                    let database = self.current_database().to_owned();
+                    let physical = self.with_catalog_mut(|catalog| {
+                        tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
+                    })?;
+                    let field = physical
+                        .schema()
+                        .and_then(|schema| schema.columns.first())
+                        .and_then(|column| column.ret_type.clone())
+                        .ok_or_else(|| DriverError::unsupported("SET expression has no type"))?;
+                    planned.push((
+                        bound,
+                        tidb_util::stringutil::go_to_lower(&assignment.name),
+                        query,
+                        physical,
+                        field,
+                    ));
                 }
-                for (bound, key) in &bound_values {
-                    let value = self.eval_bound_value(bound)?;
-                    // Go's `SET @x = NULL` CLEARS the variable
-                    // (`UnsetUserVar`), which is the opposite of the inline
-                    // `@x := NULL` assignment expression -- that one leaves
-                    // the existing value alone.
-                    let mut vars = self
-                        .user_vars
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if matches!(value, Datum::Null) {
-                        vars.remove(key);
+                for (bound, key, query, mut physical, field) in planned {
+                    let value = if is_set_literal(&bound) {
+                        // Raising a cancelled query's quota must not allocate a SELECT result.
+                        self.eval_bound_value(&bound)?
                     } else {
-                        vars.insert(key.clone(), value);
+                        let ctx = self.statement_context(false);
+                        let database = self.current_database().to_owned();
+                        let (_, rows) = self.with_catalog_mut(|catalog| {
+                            tidb_executor::run_query_meta_stmt_with_physical(
+                                &query,
+                                Some(&mut physical),
+                                catalog,
+                                &database,
+                                &ctx,
+                            )
+                        })?;
+                        match rows.len() {
+                            0 => Datum::Null,
+                            1 => rows[0].first().cloned().unwrap_or(Datum::Null),
+                            _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
+                        }
+                    };
+                    if value.is_null() {
+                        self.user_vars.unset_user_var(&key);
+                    } else {
+                        self.user_vars.set_user_var_val(&key, value);
+                        self.user_vars.set_user_var_type(&key, field);
                     }
                 }
                 Ok(Some(()))
@@ -1252,18 +1277,14 @@ impl Session {
     /// system variable keeps only the text, so [`Self::eval_literal`] is this
     /// plus `datum_text`.
     ///
-    /// The expression may itself reference variables (`SET @z = @x + 1`), so
-    /// they are bound to their values first -- the same substitution a
-    /// user-facing query gets, for the same reason: the rewriter behind
-    /// `run_select_on` knows literals and columns, not session state.
+    /// System variables are substituted before planning; user variables are
+    /// resolved by the shared expression rewriter against the session owner.
     pub(crate) fn eval_value(&mut self, expr: &tidb_ast::Expr) -> Result<Datum, DriverError> {
         let bound = self.bind_variables_in(expr)?;
         self.eval_bound_value(&bound)
     }
 
-    /// Evaluates an ALREADY-VARIABLE-SUBSTITUTED expression. Split from
-    /// [`Self::eval_value`] so a multi-assignment `SET` can bind every
-    /// expression against the PRE-statement variable state first.
+    /// Evaluates an expression whose system variables have been substituted.
     fn eval_bound_value(&mut self, bound: &tidb_ast::Expr) -> Result<Datum, DriverError> {
         // An unquoted identifier is a bare word value such as `SET sql_mode =
         // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally
@@ -1277,18 +1298,7 @@ impl Session {
         // Go SetExecutor evaluates constants directly, without allocating a
         // SELECT result under the previous query quota. In particular, SET
         // must be able to raise a quota after a cancelled query.
-        if matches!(
-            bound,
-            tidb_ast::Expr::Int(_)
-                | tidb_ast::Expr::Decimal(_)
-                | tidb_ast::Expr::Float(_)
-                | tidb_ast::Expr::Hex(_)
-                | tidb_ast::Expr::Bit(_)
-                | tidb_ast::Expr::String(_)
-                | tidb_ast::Expr::RawString(_)
-                | tidb_ast::Expr::Bool(_)
-                | tidb_ast::Expr::Null
-        ) {
+        if is_set_literal(bound) {
             return tidb_expr::eval(bound)
                 .map_err(|error| DriverError::Exec(tidb_executor::ExecError::Eval(error)));
         }
@@ -1319,13 +1329,9 @@ impl Session {
             .unwrap_or(Datum::Null))
     }
 
-    /// Replaces every variable reference in `sql` with the session's value,
-    /// so the driver plans against ordinary literals.
-    ///
-    /// Go resolves `@@x` and `@x` in the expression rewriter using the
-    /// session's variables; the values live in the session here, so the
-    /// substitution happens here too. An unknown `@@x` is Go's 1193, while an
-    /// unset `@x` is NULL rather than an error, as in MySQL.
+    /// Resolves system-variable scope and visibility before shared planning.
+    /// User-variable AST nodes remain intact so the rewriter can observe inline
+    /// assignments' declared types in source order.
     pub(crate) fn bind_variables(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
         let mut binder = VariableBinder {
             session: self,
@@ -1499,20 +1505,6 @@ impl Session {
                     Err(error) => return Err(var_error(error)),
                 }
             }
-            // A user variable's VALUE is not substituted -- it becomes a
-            // `getvar_<kind>` call the evaluator resolves against the
-            // session's own map, which is the only way `SELECT @last := v,
-            // @last FROM t` can see the assignment made for the CURRENT row.
-            // What IS decided here is the kind, from the value the session
-            // holds now: Go's `BuildGetVarFunction` picks its typed signature
-            // the same way, at build time.
-            Expr::UserVar(name) => uservar_read_expr(
-                name,
-                self.user_vars
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(&name.to_ascii_lowercase()),
-            ),
             _ => unreachable!("VariableBinder only sends variable atoms to this helper"),
         })
     }

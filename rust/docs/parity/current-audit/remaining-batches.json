@@ -94,6 +94,21 @@
         },
         "receipt": "session-migration-batch-validation.json",
         "scope": "Session migration composition, shared prepared IDs and prepare metadata, live variable/RNG restoration, grant SQL-mode/output consumers, binding/warning/statement state and historical-read admission; existing-owner repairs, not complete package acceptance."
+      },
+      "latest_user_variable_maintenance": {
+        "date": "2026-10-05",
+        "integration_start": "2b7793fa87cf14960afc26de0abcbb68e00bbb48",
+        "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+        "findings": [
+          "S03",
+          "X01"
+        ],
+        "statuses": {
+          "S03": "partial",
+          "X01": "partial"
+        },
+        "receipt": "user-variable-batch-validation.json",
+        "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
       }
     },
     {
@@ -314,6 +329,21 @@
         "Q01": "open",
         "X01": "partial",
         "E04": "partial"
+      },
+      "latest_user_variable_maintenance": {
+        "date": "2026-10-05",
+        "integration_start": "2b7793fa87cf14960afc26de0abcbb68e00bbb48",
+        "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+        "findings": [
+          "S03",
+          "X01"
+        ],
+        "statuses": {
+          "S03": "partial",
+          "X01": "partial"
+        },
+        "receipt": "user-variable-batch-validation.json",
+        "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
       }
     },
     {
@@ -487,19 +517,17 @@
   ],
   "latest_evidence": {
     "date": "2026-10-05",
-    "integration_start": "42d7c7960f7ede39f4d91a74d8bb4685811b71d0",
+    "integration_start": "2b7793fa87cf14960afc26de0abcbb68e00bbb48",
     "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
     "findings": [
-      "I01",
-      "N04",
-      "O09"
+      "S03",
+      "X01"
     ],
     "statuses": {
-      "I01": "partial",
-      "N04": "partial",
-      "O09": "partial"
+      "S03": "partial",
+      "X01": "partial"
     },
-    "receipt": "internal-process-batch-validation.json",
-    "scope": "I01/N04/O09 shared internal-session maintenance: live auto-analyze task tracking, process publication, SQL KILL cancellation/reset/identity lifetime, and internal timestamp diagnostics. No whole-package acceptance."
+    "receipt": "user-variable-batch-validation.json",
+    "scope": "S03/X01 existing-owner maintenance: one live value/type store, plan-time inline types, SET plan-before-execute ordering, typed reads, independent migration maps and shared prepared/DML consumers. No complete package acceptance."
   }
 }

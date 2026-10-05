@@ -713,6 +713,10 @@ struct RangeColumnResolver<'a> {
 }
 
 impl ColumnResolver for RangeColumnResolver<'_> {
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.resolver.user_vars()
+    }
+
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {
         self.resolver.time_zone()
     }

@@ -250,13 +250,13 @@ fn setvar_stores_session_value_and_returns_it() {
     );
     assert_eq!(store.get("k"), Some(Datum::Decimal(dec)));
 
-    // {g, timestamp}: the time arg keeps KindMysql end-to-end (Go's
-    // setVarFunctionClass maps this argTp straight to builtinSetTimeVarSig).
+    // Go setVarFunctionClass selects the string signature for TIMESTAMP;
+    // DATETIME alone selects builtinSetTimeVarSig.
     let time = Time::from_date_checked(2025, 1, 2, 3, 4, 5, 0, TimeType::Timestamp, 0)
         .expect("a valid fixed timestamp");
     let time_sig = ScalarFunction::new(
         CiString::new("setvar"),
-        FieldType::new(C::Timestamp),
+        FieldType::new(C::VarString),
         vec![
             var_name("l"),
             const_arg(Datum::Time(time), FieldType::new(C::Timestamp)),
@@ -264,9 +264,9 @@ fn setvar_stores_session_value_and_returns_it() {
     );
     assert_eq!(
         time_sig.eval(&store, empty.get_row(0)).unwrap(),
-        Datum::Time(time)
+        text("2025-01-02 03:04:05")
     );
-    assert_eq!(store.get("l"), Some(Datum::Time(time)));
+    assert_eq!(store.get("l"), Some(text("2025-01-02 03:04:05")));
 }
 
 /// GO PORT of `pkg/expression/builtin_other_test.go:119 TestGetVar`.

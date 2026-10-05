@@ -1616,23 +1616,6 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // `FieldType` over the builder's (`*bf.tp = *ft`), so the charset,
         // collation, flen and decimal all pass through untouched.
         "any_value" if args.len() == 1 => args.first()?.static_type()?.clone(),
-        // Reading a user variable: Go's `BuildGetVarFunction` picks one of its
-        // typed `GETVAR` signatures from the type the session currently holds
-        // for the name, so the CHOICE is made before the rewriter runs and
-        // arrives encoded in the name -- the same "build-time decision lives
-        // in the function name" shape `cast_*` and `date_add_*` use. The
-        // declared type must agree with the value the evaluator returns,
-        // because the chunk tier appends into a column of exactly this type.
-        "getvar_int" if args.len() == 1 => int(),
-        "getvar_uint" if args.len() == 1 => {
-            let mut ft = int();
-            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-            ft
-        }
-        "getvar_real" if args.len() == 1 => FieldType::new(FieldTypeCode::Double),
-        "getvar_decimal" if args.len() == 1 => FieldType::new(FieldTypeCode::NewDecimal),
-        "getvar_time" if args.len() == 1 => FieldType::new(FieldTypeCode::Datetime),
-        "getvar_string" if args.len() == 1 => text(),
         // Go `getParamFunctionClass.getFunction` returns ETString and fixes
         // its display width at `mysql.MaxFieldVarCharLength` (65535).
         "getparam" if args.len() == 1 => {
@@ -1640,8 +1623,18 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
             ft.set_flen(65_535);
             ft
         }
-        // `SETVAR` reports -- and stores -- its value argument's type.
-        "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),
+        // Go setVarFunctionClass evaluates timestamp, duration and JSON as strings.
+        "setvar" if args.len() == 2 => {
+            let source = args[1].static_type().cloned().unwrap_or_else(text);
+            if matches!(source.eval_type(), tidb_datatype::EvalType::Timestamp
+                | tidb_datatype::EvalType::Duration | tidb_datatype::EvalType::Json) {
+                let mut result = text();
+                result.set_flen(source.flen());
+                result
+            } else {
+                source
+            }
+        },
         // Go reads these from `SessionVars`; each returns a string of flen 64
         // (`databaseFunctionClass`, `versionFunctionClass`,
         // `currentUserFunctionClass`, `currentRoleFunctionClass`,

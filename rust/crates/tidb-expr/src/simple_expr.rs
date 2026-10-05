@@ -342,6 +342,10 @@ impl<'a> SchemaNameResolver<'a> {
 }
 
 impl ColumnResolver for SchemaNameResolver<'_> {
+    fn user_vars(&self) -> Option<&crate::user_vars::UserVars> {
+        self.base.user_vars()
+    }
+
     fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {
         self.base.param_value(order)
     }

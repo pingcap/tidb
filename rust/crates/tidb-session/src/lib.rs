@@ -760,13 +760,13 @@ pub struct Session {
     /// itself never cacheable and would otherwise always answer 0.
     prev_found_in_plan_cache: bool,
     /// Go `SessionVars.userVars`: this session's user variables, keyed
-    /// lowercased, each holding a TYPED value (`SetUserVarVal` stores a
-    /// `types.Datum`, which is why `SET @i = 5` and `SET @s = '5'` differ).
+    /// lowercased, with independent runtime values and declared SQL types.
+    /// Planning may publish a type before any value exists.
     ///
-    /// The session owns the map and lends the handle to every statement
+    /// The session owns the store and lends the handle to every statement
     /// context, because `@x := expr` writes it from INSIDE expression
     /// evaluation -- once per row, visible to the next select-list item.
-    user_vars: Arc<std::sync::Mutex<HashMap<String, Datum>>>,
+    user_vars: tidb_expr::user_vars::UserVars,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
     /// each sequence, keyed by lowercase `db.name`, which is what `LASTVAL`
     /// reports. It is SESSION state, not the sequence's stored counter -- a
@@ -986,7 +986,7 @@ impl Session {
             plan_cache_invalidation,
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
-            user_vars: Arc::default(),
+            user_vars: tidb_expr::user_vars::UserVars::new(),
             sequence_last_values: Arc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             statement_boundary_open: false,

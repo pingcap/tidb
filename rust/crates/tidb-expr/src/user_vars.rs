@@ -99,6 +99,12 @@ impl UserVars {
         self.write().types.insert(name.to_owned(), field_type);
     }
 
+    /// Go EncodeSessionStates copies both independent maps under one read lock.
+    pub fn snapshot(&self) -> (HashMap<String, Datum>, HashMap<String, FieldType>) {
+        let inner = self.read();
+        (inner.values.clone(), inner.types.clone())
+    }
+
     /// Go `Clone`: a deep, independent copy.
     #[must_use]
     pub fn clone_vars(&self) -> Self {

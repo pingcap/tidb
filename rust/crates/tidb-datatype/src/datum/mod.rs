@@ -412,6 +412,21 @@ impl Datum {
         }
     }
 
+    /// Go Datum.GetInt64 reads the numeric carrier without converting the kind.
+    /// Variants with no integer carrier have zero, as in a newly constructed Go datum.
+    pub fn get_int64(&self) -> i64 {
+        match self {
+            Self::Int(value) => *value,
+            Self::UInt(value) => *value as i64,
+            Self::Real(value) | Self::Float32(value) => value.to_bits() as i64,
+            Self::Duration(value) => value.nanoseconds(),
+            Self::Enum(value, _) => value.value() as i64,
+            Self::Set(value, _) => value.value() as i64,
+            Self::Json(value) => i64::from(value.type_code()),
+            _ => 0,
+        }
+    }
+
     /// Returns the unsigned payload when this is [`Datum::UInt`].
     pub const fn as_uint(&self) -> Option<u64> {
         match self {

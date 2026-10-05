@@ -23,6 +23,7 @@ use tidb_ast::{
 };
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
+use tidb_expr::user_vars::UserVarsReader;
 
 use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
@@ -340,9 +341,8 @@ impl Session {
                     // silently dropping nothing.
                     tidb_ast::BindingValue::UserVar(name) => self
                         .user_vars
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get(&name.to_ascii_lowercase())
+                        .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
+                        .as_ref()
                         .and_then(crate::datum_text)
                         .ok_or_else(|| DriverError::unsupported("sql digest is null")),
                 })

@@ -3189,6 +3189,10 @@ pub(crate) struct TableResolver<'a> {
 }
 
 impl ColumnResolver for TableResolver<'_> {
+    fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
+        self.constant_context.user_vars()
+    }
+
     fn clause_message(&self) -> &'static str {
         self.clause_message
     }
