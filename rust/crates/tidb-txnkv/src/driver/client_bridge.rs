@@ -920,8 +920,10 @@ impl ReplicaRouting for ClientPd {
         Ok(native)
     }
 
-    fn record_store_replica_flow(&self, _id: u64, _destination: ReplicaFlowsType) {
-        // Periodic replica-flow metrics are not composed by this adapter yet.
+    fn record_store_replica_flow(&self, id: u64, destination: ReplicaFlowsType) {
+        if let Ok(store) = self.backend.store_state(id) {
+            store.routing_health().record_replica_flow(destination);
+        }
     }
 }
 

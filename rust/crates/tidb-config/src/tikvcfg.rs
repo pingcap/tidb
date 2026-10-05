@@ -365,6 +365,20 @@ impl Default for TiKVClient {
 }
 
 impl TiKVClient {
+    /// Go server startup parses this duration and accepts zero, but not negatives.
+    pub fn store_liveness_timeout_duration(&self) -> Result<std::time::Duration, String> {
+        let invalid = || {
+            format!(
+                "invalid duration value for store-liveness-timeout: {}",
+                self.store_liveness_timeout
+            )
+        };
+        let nanos = crate::configtypes::parse_go_duration(&self.store_liveness_timeout)
+            .map_err(|_| invalid())?;
+        let nanos = u64::try_from(nanos).map_err(|_| invalid())?;
+        Ok(std::time::Duration::from_nanos(nanos))
+    }
+
     /// Go `GetGrpcKeepAliveTimeout`: the timeout as nanoseconds.
     pub fn grpc_keep_alive_timeout_nanos(&self) -> i64 {
         (self.grpc_keep_alive_timeout * 1_000_000_000.0) as i64

@@ -28,7 +28,6 @@ use crate::{
 };
 
 use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationReceipt};
-use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::{
     AsyncRequestDispatcher, CompletionError, CompletionRunLoop, DirectUnaryClientError,
@@ -222,9 +221,13 @@ impl TonicCoprocessorClient {
         self.transport.close_address_version(address, version)
     }
 
-    /// Runs one foreground health check with client-go's one-second default.
+    /// Runs one foreground health check with the validated process configuration.
     pub fn liveness_default(&self, address: &str) -> Result<StoreLiveness, DirectUnaryClientError> {
-        self.liveness(address, DEFAULT_STORE_LIVENESS_TIMEOUT)
+        let timeout = tidb_config::config_tree::config::get_global_config()
+            .tikv_client
+            .store_liveness_timeout_duration()
+            .map_err(DirectUnaryClientError::InvalidRequest)?;
+        self.liveness(address, timeout)
     }
 
     /// Returns the greatest live physical-channel version for diagnostics.

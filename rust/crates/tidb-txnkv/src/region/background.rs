@@ -58,8 +58,8 @@ pub enum BackgroundRegionCacheError {
     ZeroInterval,
     /// A zero GC limit cannot inspect an entry.
     ZeroGcLimit,
-    /// A zero health-check timeout would classify every store as unavailable.
-    ZeroLivenessTimeout,
+    /// The configured health-check timeout is malformed or negative.
+    InvalidLivenessTimeout(String),
     /// The sole maintenance thread could not be created.
     Spawn(String),
     /// A previous panic poisoned the canonical cache lock.
@@ -88,9 +88,7 @@ impl std::fmt::Display for BackgroundRegionCacheError {
         match self {
             Self::ZeroInterval => formatter.write_str("background interval must be nonzero"),
             Self::ZeroGcLimit => formatter.write_str("background GC limit must be nonzero"),
-            Self::ZeroLivenessTimeout => {
-                formatter.write_str("background liveness timeout must be nonzero")
-            }
+            Self::InvalidLivenessTimeout(message) => formatter.write_str(message),
             Self::Spawn(message) => {
                 write!(formatter, "failed to spawn maintenance driver: {message}")
             }
@@ -891,9 +889,6 @@ where
     where
         P: StoreLivenessProbe,
     {
-        if liveness_timeout.is_zero() {
-            return Err(BackgroundRegionCacheError::ZeroLivenessTimeout);
-        }
         Self::start_store_maintenance(
             cache,
             interval,
@@ -909,6 +904,10 @@ where
         liveness: Option<(Box<dyn StoreLivenessProbe>, Duration)>,
     ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError> {
         let loader = cache.loader_handle();
+        let flow_interval = Duration::from_secs(
+            tidb_config::tikvcfg::get_global_config().stores_refresh_interval / 2,
+        );
+        let mut last_flow_report = std::time::Instant::now();
         Self::start_with_round(
             cache,
             interval,
@@ -960,7 +959,12 @@ where
                         let (probe, timeout) = liveness
                             .as_ref()
                             .expect("liveness plans require an enabled probe");
-                        let observed = probe.probe(&plan.address, *timeout);
+                        // Go requestLiveness: zero means unreachable without health I/O.
+                        let observed = if timeout.is_zero() {
+                            super::StoreLiveness::Unreachable
+                        } else {
+                            probe.probe(&plan.address, *timeout)
+                        };
                         StoreLivenessResult {
                             plan,
                             liveness: observed,
@@ -976,6 +980,10 @@ where
                     {
                         stores.stale_discarded += 1;
                     }
+                }
+                if !flow_interval.is_zero() && last_flow_report.elapsed() >= flow_interval {
+                    cache.report_store_replica_flows();
+                    last_flow_report = std::time::Instant::now();
                 }
                 Ok(BackgroundMaintenanceRound {
                     triggered,

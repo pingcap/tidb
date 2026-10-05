@@ -234,6 +234,16 @@ impl<L> RegionCache<L> {
         })
     }
 
+    /// Publishes and resets each canonical store's PreferLeader flow window.
+    pub fn report_store_replica_flows(&self) {
+        for store in self.stores.values() {
+            crate::client_go_metrics::report_store_replica_flows(
+                store.id(),
+                store.routing_health().take_replica_flows(),
+            );
+        }
+    }
+
     /// Runs one cache-maintenance scan at the current wall clock.
     ///
     /// Expired entries are removed and delayed reloads become visible to the

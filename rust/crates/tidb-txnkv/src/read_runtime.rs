@@ -24,7 +24,7 @@ use crate::region::{
     RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RequestSelection, RequestSelector,
     StoreLiveness, StoreLivenessProbe,
 };
-use crate::{DirectUnaryClient, DEFAULT_STORE_LIVENESS_TIMEOUT};
+use crate::DirectUnaryClient;
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_GC_LIMIT: usize = 50;
@@ -239,7 +239,10 @@ where
             DirectUnaryStoreLivenessProbe(client.clone()),
             DEFAULT_MAINTENANCE_INTERVAL,
             DEFAULT_GC_LIMIT,
-            DEFAULT_STORE_LIVENESS_TIMEOUT,
+            tidb_config::config_tree::config::get_global_config()
+                .tikv_client
+                .store_liveness_timeout_duration()
+                .map_err(BackgroundRegionCacheError::InvalidLivenessTimeout)?,
         )?;
         Ok(Self::from_started(client, region_cache, cluster_id))
     }

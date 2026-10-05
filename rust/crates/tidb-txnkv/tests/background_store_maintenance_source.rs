@@ -548,22 +548,59 @@ fn unknown_probe_does_not_revive_known_unreachable_store() {
 }
 
 #[test]
-fn zero_liveness_timeout_is_rejected_before_worker_spawn() {
-    let result = BackgroundRegionCache::start_with_liveness(
-        RegionCache::new(RestartLoader {
-            locations: VecDeque::new(),
-            stores: VecDeque::new(),
-        }),
-        ConstantProbe(StoreLiveness::Reachable),
-        Duration::from_secs(1),
+fn zero_liveness_timeout_starts_and_joins_without_probing() {
+    let location = location();
+    let mut cache = RegionCache::new(RestartLoader {
+        locations: [location.clone()].into(),
+        stores: [Some(StoreMetadata {
+            id: 101,
+            address: "tikv-old".into(),
+            labels: Vec::new(),
+        })]
+        .into(),
+    });
+    cache.locate_key(b"a").unwrap();
+    let attempt = RegionAttempt {
+        region: location.region,
+        peer_id: 11,
+        store_id: 101,
+        address: "tikv-old".into(),
+        store_epoch: 7,
+    };
+    cache
+        .on_send_failure(&attempt, StoreLiveness::Unreachable)
+        .unwrap();
+    let addresses = Arc::new(Mutex::new(Vec::new()));
+    let background = BackgroundRegionCache::start_with_liveness(
+        cache,
+        RestartProbe {
+            addresses: Arc::clone(&addresses),
+        },
+        Duration::from_secs(3600),
         50,
         Duration::ZERO,
+    )
+    .expect("Go accepts zero store-liveness-timeout");
+    background.trigger_store_check().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while background.completed_rounds().unwrap() == 0 && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(background.completed_rounds().unwrap(), 1);
+    assert!(
+        addresses.lock().unwrap().is_empty(),
+        "zero timeout must not invoke the health probe"
     );
-    assert!(matches!(
-        result,
-        Err(tidb_txnkv::region::BackgroundRegionCacheError::ZeroLivenessTimeout)
-    ));
+    background
+        .with_cache(|cache| {
+            let store = cache.store_state(101).unwrap();
+            assert_eq!(store.resolve_state(), StoreResolveState::Resolved);
+            assert_eq!(store.liveness(), StoreLiveness::Unreachable);
+        })
+        .unwrap();
+    background.shutdown().unwrap();
 }
+
 
 #[test]
 fn blocked_store_load_keeps_cache_available_and_discards_stale_publication() {

@@ -658,6 +658,14 @@ impl<L> RegionCache<L> {
         };
         let cached_leader = Some(peer.id) == leader_peer_id;
         let (replica_read, stale_read) = request_flags(selector, cached_leader);
+        if selector.policy.mode != ReplicaReadMode::Leader && selector.health_policy.prefer_leader {
+            use tikv_client::tikv::ReplicaFlowsType;
+            store.routing_health().record_replica_flow(if cached_leader {
+                ReplicaFlowsType::ToLeader
+            } else {
+                ReplicaFlowsType::ToFollower
+            });
+        }
         selector.record_route_dispatch(attempt.clone(), proxy.as_ref());
         Ok(RequestSelection::Attempt(LeaderRequest {
             attempt,

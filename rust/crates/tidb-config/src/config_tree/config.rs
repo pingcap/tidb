@@ -826,6 +826,7 @@ impl Config {
         self.txn_local_latches.valid()?;
         self.pd_client.valid()?;
         self.tikv_client.valid()?;
+        self.tikv_client.store_liveness_timeout_duration()?;
         self.trx_summary.valid()?;
         if self.deploy_mode != Mode::Starter {
             if self.external_workload.is_configured() {

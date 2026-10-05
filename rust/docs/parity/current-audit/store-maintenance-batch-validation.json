@@ -1,0 +1,217 @@
+{
+  "base": "15a8fb392e3174a666edf2cd69621b2cb7cff581",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "client_go": "v2.0.8-0.20260928031501-8edb23f6c7ee",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "T02/N03 shared store maintenance: configured liveness duration, zero/no-I/O semantics, native and coprocessor PreferLeader flow windows, periodic shared metric reporting/reset and joined shutdown.",
+  "source_inventory": {
+    "internal/locate/accessmode.go": "cf2db2d551d5437faee1b217395bb7ff64b105e61840d543901c5e1eb7c733a3",
+    "internal/locate/main_test.go": "9e5983e12991fcea417b0bba33550436f6b4eba7572e9d71e0abd49c26222d42",
+    "internal/locate/metrics_collector.go": "a0b1f4378a94a0da0dbb0b877fb5c5f5bb24349c5bed8a4aca96cc5413e2f5e5",
+    "internal/locate/metrics_collector_test.go": "f955505306aec2209afc55203bdd8538c9d5c012f2f24efc6ff5833caae875d2",
+    "internal/locate/pd_codec.go": "47972f38028df65a182c0dc15e13ea123cfcf64e81f17e87a0d496dbcb030d41",
+    "internal/locate/pd_codec_test.go": "5238610c6201442746c7fa19352b15974a636acf224c2333a88ad97b5330164e",
+    "internal/locate/region_cache.go": "c4f04a1ed08ddfb80ff7735e72820d7fee14359fdb9076e627a6c3f6b7a17755",
+    "internal/locate/region_cache_test.go": "01ea61ab384fa514b3fcb9c2f4b47aa950bc2f9dc3dba4fb7a629c5b43623b3e",
+    "internal/locate/region_request.go": "7872dab3ee55c26467dda6ee24b2451dd7a14b41a8d21e7a71810c35d69c2de4",
+    "internal/locate/region_request3_test.go": "2ad1a1ec5640928027769a1851d8559998954384c7353532a9b971cb8d54a76e",
+    "internal/locate/region_request_state_test.go": "00f0b6fa2029711ef5ec41c540647acfa21e512918e0637e35db7415e0ab1e87",
+    "internal/locate/region_request_test.go": "9bda3f8e871b48df20f0936413379b75ee9af9f261dbee299e9c72ae8c8aceb7",
+    "internal/locate/replica_selector.go": "a64f5cd40582b2ecb514f3150a726ad149b60f1ecf12a503ab7cb8961eb191d8",
+    "internal/locate/replica_selector_test.go": "94cf617897457c0291e1d1066fee57cf8ef8d3887424acdbbd40ca46fbbe4613",
+    "internal/locate/slow_score.go": "c6ad9dc0e28cbca2f2d8fe1b9dce2f200eaefef4fda863c953aa0f058cf493ad",
+    "internal/locate/sorted_btree.go": "1f02b13b1da270d37410b07e3ac200b63ae3934a83952c611ebd3620d387dab4",
+    "internal/locate/store_cache.go": "e116b4b783a9aba5cb41ec93572127a18ffe9150000c3d1817d63b739c577354"
+  },
+  "source_contracts": [
+    "TiDB cmd/tidb-server/main.go: ParseDuration and reject negative store-liveness-timeout before tikv.SetStoreLivenessTimeout.",
+    "client-go internal/locate/store_cache.go: zero requestLiveness returns unreachable without health I/O; store-owned replica flow counters reset on reporting.",
+    "client-go internal/locate/replica_selector.go: PreferLeader records target leader/follower classification.",
+    "client-go internal/locate/region_cache.go: reportStoreReplicaFlows at StoresRefreshInterval/2 using the existing gauge registry."
+  ],
+  "before": {
+    "method": "Restored prior executable behavior for five consumers while retaining new typed duration/counter/report support needed to compile regression callers. Not a pristine base checkout. Coprocessor coverage and stronger zero-background assertions were added after the initial failure capture.",
+    "failures": [
+      {
+        "test": "store_maintenance_timeout_configuration_rejects_invalid_values",
+        "observation": "Invalid duration accepted by startup validation."
+      },
+      {
+        "test": "store_maintenance_foreground_zero_timeout_does_not_connect",
+        "observation": "Zero-config foreground check still connected to the loopback listener using the default timeout."
+      },
+      {
+        "test": "store_maintenance_background_rejects_invalid_config_before_start",
+        "observation": "Background construction ignored negative configured duration."
+      },
+      {
+        "test": "store_maintenance_native_reads_report_leader_follower_and_reset_windows",
+        "observation": "After correcting the scripted Scan fixture, gauge remained 0 instead of 3 after point/batch/scan reads."
+      },
+      {
+        "test": "store_maintenance_worker_reports_flows_and_joins",
+        "observation": "Periodic flow remained 0 instead of 1."
+      },
+      {
+        "test": "background_store_maintenance_source::zero_liveness_timeout_starts_and_joins_without_probing",
+        "observation": "Zero timeout rejected by constructor."
+      }
+    ],
+    "excluded_attempts": [
+      "First flow test lacked a scripted Scan response; that fixture error is not bug evidence.",
+      "First after-build reused a baseline configuration object because restored timestamps were older. All restored sources were touched and rebuilt; all six then passed.",
+      "First direct full snapshot invocation omitted the required RUST_MIN_STACK environment and overflowed its stack. The environment-sourced rerun passed all 31 tests."
+    ]
+  },
+  "validation": {
+    "environment": "source /workspace/.cloud-setup/env.sh; CARGO_BUILD_JOBS=1; RUST_MIN_STACK=33554432",
+    "compile_command": "cd rust && cargo test --locked -p tidb-txnkv --test snapshot_lock_wait_source --test all --no-run --message-format=json",
+    "grouped_execution": "Emitted snapshot_lock_wait_source binary --test-threads=1 (31 passed); emitted all binary with background_region_gc_source:: background_runner_source:: background_store_maintenance_source:: replica_health_scoring_source:: replica_selector_source:: request_selector_source:: route_policy_seam_source:: shared_read_runtime_source:: store_failure_state_source:: tikv_transport_failure_source:: --test-threads=1 (60 passed).",
+    "distinct_tests_passed": 91,
+    "tests": [
+      "a_snapshot_read_waits_out_a_live_lock_beyond_four_attempts",
+      "batch_get_does_not_force_lite_resolve_for_large_transactions",
+      "batch_get_joins_retry_workers_before_returning_cancellation_or_sibling_error",
+      "batch_get_lock_recovery_workers_make_independent_progress",
+      "batch_get_reads_the_published_async_setting_on_every_call",
+      "batch_get_recovery_starts_before_an_earlier_rpc_completes",
+      "batch_get_retries_keep_physical_response_boundaries",
+      "batch_get_split_retries_run_children_independently",
+      "max_ts_get_only_skips_new_unhinted_transactions_after_its_first_lock",
+      "ordinary_forwarding_delayed_success_cannot_publish_a_replaced_proxy",
+      "ordinary_forwarding_disabled_keeps_direct_replica_probe",
+      "ordinary_forwarding_failure_retries_physical_proxy_and_preserves_leader",
+      "ordinary_forwarding_routes_point_batch_and_scan_to_proxy",
+      "ordinary_forwarding_success_publishes_shared_proxy",
+      "point_get_keeps_its_explicit_lite_resolve_for_large_transactions",
+      "scan_pair_locks_use_point_get_without_replaying_clean_rows",
+      "scan_response_locks_wait_without_stamping_read_hints",
+      "snapshot_batch_backoff_keeps_one_completed_workers_history",
+      "snapshot_get_and_batch_get_back_off_ignored_request_hints",
+      "snapshot_nested_status_retries_share_history_across_lock_encounters",
+      "snapshot_read_policy_timeout_and_group_reach_native_requests_and_reset",
+      "snapshot_replica_busy_retry_uses_idle_peer_and_resets_when_all_busy",
+      "snapshot_replica_policy_reaches_point_batch_and_scan_routes",
+      "snapshot_replica_stale_retry_probes_leader_then_uses_replica_read",
+      "snapshot_response_stats_batch_modes_retries_and_pair_errors",
+      "snapshot_response_stats_get_retries_cache_and_optional_collection",
+      "store_maintenance_background_rejects_invalid_config_before_start",
+      "store_maintenance_foreground_zero_timeout_does_not_connect",
+      "store_maintenance_native_reads_report_leader_follower_and_reset_windows",
+      "store_maintenance_timeout_configuration_rejects_invalid_values",
+      "store_maintenance_worker_reports_flows_and_joins",
+      "background_region_gc_source::gc_never_scans_more_than_limit_and_resumes_at_next_entry",
+      "background_runner_source::active_cache_lease_rejects_shutdown_without_stopping_the_worker",
+      "background_runner_source::poisoned_cache_is_returned_by_the_fallible_worker_join",
+      "background_runner_source::sessions_share_one_maintained_cache_but_cannot_stop_its_authority",
+      "background_runner_source::trigger_wakes_the_single_driver_and_shutdown_waits_for_close",
+      "background_store_maintenance_source::blocked_store_load_keeps_cache_available_and_discards_stale_publication",
+      "background_store_maintenance_source::delayed_probe_cannot_overwrite_newer_foreground_liveness",
+      "background_store_maintenance_source::delayed_success_cannot_revive_replaced_store_generation",
+      "background_store_maintenance_source::periodic_tombstone_refresh_expires_dependent_regions_without_replacing_store",
+      "background_store_maintenance_source::production_failure_triggers_in_place_maintenance_on_the_shared_cache",
+      "background_store_maintenance_source::same_address_restart_becomes_selectable_after_background_liveness_recovers",
+      "background_store_maintenance_source::unknown_probe_does_not_revive_known_unreachable_store",
+      "background_store_maintenance_source::zero_liveness_timeout_starts_and_joins_without_probing",
+      "replica_health_scoring_source::five_idle_replica_source_cases_preserve_no_invalidation_fallback",
+      "replica_health_scoring_source::label_matching_requires_every_pair_and_falls_back_instead_of_failing",
+      "replica_health_scoring_source::optimistic_wait_decays_and_busy_comparison_is_strict",
+      "replica_health_scoring_source::positive_busy_estimates_update_load_and_zero_marks_slow",
+      "replica_health_scoring_source::prefer_leader_filters_slow_followers_but_not_slow_leader",
+      "replica_health_scoring_source::score_precedence_and_source_calculate_score_matrix_are_exact",
+      "replica_health_scoring_source::shared_candidate_owner_applies_attempt_budget_to_idle_retries",
+      "replica_health_scoring_source::source_slow_score_rising_and_falling_latency_stays_below_threshold",
+      "replica_health_scoring_source::thirty_second_request_immediately_marks_client_slow",
+      "replica_health_scoring_source::tikv_score_rate_limit_threshold_and_linear_decay_match_source",
+      "replica_health_scoring_source::topology_copy_retains_the_same_store_health_owner",
+      "replica_health_scoring_source::unchanged_tikv_score_above_one_refreshes_decay_clock",
+      "replica_selector_source::evicted_region_rebuilds_whether_eviction_precedes_selector_creation_or_selection",
+      "replica_selector_source::leader_forwarding_is_admitted_and_invalid_stale_combinations_fail_closed",
+      "replica_selector_source::leader_policy_selects_pd_leader_first_with_leader_flags",
+      "replica_selector_source::supported_replica_read_policies_create_request_scoped_selectors",
+      "request_selector_source::attempt_result_must_exactly_match_the_pending_dispatch",
+      "request_selector_source::data_is_not_ready_allows_one_deferred_retry_after_unattempted_peers",
+      "request_selector_source::dead_leader_rotates_to_voter_without_changing_leader_read_semantics",
+      "request_selector_source::follower_policy_visits_nonleaders_before_leader_with_replica_flags",
+      "request_selector_source::leader_attempt_and_time_limits_deterministically_fall_through",
+      "request_selector_source::learner_policy_prefers_learner_then_falls_back_to_voter",
+      "request_selector_source::missing_not_leader_rejects_observed_peer_and_probes_an_alternate",
+      "request_selector_source::mixed_policy_treats_leader_and_replicas_as_equal_candidates",
+      "request_selector_source::prefer_leader_falls_back_to_replica_after_leader_rejection",
+      "request_selector_source::server_busy_state_is_request_owned_and_no_idle_fallback_clears_threshold",
+      "request_selector_source::stale_policy_marks_cached_leader_then_uses_ordinary_replica_reads",
+      "request_selector_source::stale_success_cannot_promote_a_replaced_store_generation",
+      "request_selector_source::stale_unreachable_learner_and_witness_peers_exhaust_to_reload",
+      "request_selector_source::successful_alternate_is_promoted_to_the_next_request_leader",
+      "request_selector_source::unreachable_replica_is_excluded_from_a_fresh_request_selector",
+      "request_selector_source::unsent_attempt_rollback_releases_pending_slot_without_consuming_peer_budget",
+      "route_policy_seam_source::direct_route_uses_the_logical_target_as_its_physical_dispatch",
+      "route_policy_seam_source::proxied_route_separates_logical_target_from_physical_dispatch",
+      "shared_read_runtime_source::authority_is_send_and_sync_while_sessions_are_opened_in_workers",
+      "shared_read_runtime_source::retained_cache_opener_shares_authority_without_hiding_a_foreground_lease",
+      "shared_read_runtime_source::sessions_share_process_authority_but_not_client_cells",
+      "store_failure_state_source::address_change_stales_old_region_peer_but_preserves_healthy_alternate",
+      "store_failure_state_source::delayed_failure_cannot_invalidate_a_newer_generation",
+      "store_failure_state_source::existing_canonical_epoch_ignores_every_loader_supplied_epoch",
+      "store_failure_state_source::loader_epoch_zero_re_resolves_without_rolling_back_failure_epoch",
+      "store_failure_state_source::one_exact_failure_stales_every_region_snapshot_for_the_store",
+      "store_failure_state_source::re_resolved_unknown_cached_leader_remains_a_candidate",
+      "store_failure_state_source::reachable_failure_preserves_canonical_generation",
+      "tikv_transport_failure_source::foreground_health_check_maps_serving_unknown_non_serving_and_rpc_failure",
+      "tikv_transport_failure_source::foreground_health_check_uses_one_second_default_and_maps_connection_failure",
+      "tikv_transport_failure_source::liveness_after_client_close_is_terminal_not_a_store_verdict"
+    ],
+    "all_target_check": {
+      "command": "cd rust && cargo check --locked -p tidb-config -p tidb-txnkv -p tidb-exec -p tidb-server --all-targets",
+      "status": "passed"
+    },
+    "lint": {
+      "command": "make lint",
+      "status": "passed"
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "status": "passed"
+    },
+    "publication": "Normal executable hooks/pre-commit must pass cd rust && cargo build --locked -p tidb-server; repeat the same build immediately before push and verify remote SHA. Actual gate logs recorded in the external Cloud handoff after commit."
+  },
+  "changes_in_ownership": "Canonical StoreRoutingHealth owns counters shared by store views. ClientPd forwards native selection accounting; coprocessor selection uses the same counters. The existing RegionCache owner publishes/reset windows through the native shared registry in its existing joined maintenance worker. The shared TiKV configuration owner parses duration for both health consumers. No new worker, cache or metric registry.",
+  "removed_stale_behavior": "Replaced the test asserting zero timeout must be rejected; Go accepts zero. Removed production zero rejection and hardcoded timeout consumption.",
+  "limits": [
+    "T02 and N03 remain partial; 86 tracked, 30 repaired, 56 unresolved (28 open, 28 partial). Other 54 unresolved roots were not re-audited.",
+    "Complete client-go internal/locate or TiDB config package acceptance is not claimed; original full-package source/test/build/platform obligations remain open.",
+    "Coprocessor RequestSelector lifecycle and complete cache/recovery/health policy consolidation remain open.",
+    "Full Go suites, live multi-node TiKV/TLS and performance benchmarks were not run. Loopback health behavior and injected transport routing were validated.",
+    "Flow reporting shares the existing maintenance worker; blocking metadata/probe rounds may defer reporting. No independent scheduler or scheduling-performance parity claim."
+  ],
+  "external_evidence_directory": "/workspace/.cloud-setup/store-maintenance-batch",
+  "logs": {
+    "before-snapshot_lock_wait_source.log": {
+      "sha256": "dd12f51d7473f90da435093afb9028f019b1589aca50d10801b20c7f5f01c550"
+    },
+    "before-all.log": {
+      "sha256": "1bcf9af667d5514e1ea9164b83161db7adb9e8e0d1c1f3b192ed84d1547e3553"
+    },
+    "before-flow-corrected.log": {
+      "sha256": "b735f290a79f64f5e35b006f14bdaa34e5be242c8d92c2388d2eb22bd2076ff2"
+    },
+    "after-snapshot_lock_wait_source.log": {
+      "sha256": "c68ec8a2a15a4389fbb4ebb4be38c6a9d0b77246ec5555187c1f488fd486d6ce"
+    },
+    "after-all.log": {
+      "sha256": "5a7ea26b394756980505d95111ea2ddadebe5d04c027f32a6dc2748e4276fab3"
+    },
+    "grouped-snapshot-env.log": {
+      "sha256": "e2d3ccd7cac778a1aab1f45d2340c9bb8f2b2a396f86562b48aed698531ca058"
+    },
+    "grouped-all.log": {
+      "sha256": "02f33e9baee3a9ef3572f3011f03201e0eaa5fa29df9ba8d3e89de39d0462cb9"
+    },
+    "lint.log": {
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467"
+    },
+    "all-target-check.log": {
+      "sha256": "fe8982f00ebf8fe384bd65c7a8d2ade1b35c45aec6d40da0f019aba35d58f47d"
+    }
+  }
+}

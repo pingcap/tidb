@@ -3169,3 +3169,233 @@ fn ordinary_forwarding_disabled_keeps_direct_replica_probe() {
     assert_eq!(recorded.forwarded_hosts, vec![None]);
     assert_ne!(recorded.routed_reads[0].1, 620);
 }
+
+
+#[test]
+fn store_maintenance_timeout_configuration_rejects_invalid_values() {
+    let _guard = snapshot_test_config();
+    for value in ["broken", "-1ns", "9223372036854775808ns"] {
+        let mut config = tidb_config::config_tree::new_config();
+        config.tikv_client.store_liveness_timeout = value.into();
+        let error = config
+            .valid()
+            .expect_err("Go rejects malformed/negative liveness duration");
+        assert!(error.contains("store-liveness-timeout"), "{error}");
+    }
+    for (value, duration) in [
+        ("0", Duration::ZERO),
+        ("750us", Duration::from_micros(750)),
+        ("1.25s", Duration::from_millis(1250)),
+    ] {
+        let mut config = tidb_config::config_tree::new_config();
+        config.tikv_client.store_liveness_timeout = value.into();
+        config.valid().unwrap();
+        assert_eq!(
+            config
+                .tikv_client
+                .store_liveness_timeout_duration()
+                .unwrap(),
+            duration
+        );
+    }
+}
+
+#[test]
+fn store_maintenance_foreground_zero_timeout_does_not_connect() {
+    let _guard = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|c| {
+        c.tikv_client.store_liveness_timeout = "0".into()
+    });
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    assert_eq!(
+        client.store_liveness_for_route(&listener.local_addr().unwrap().to_string()),
+        tidb_txnkv::region::StoreLiveness::Unreachable
+    );
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "zero timeout must not open a health connection"
+    );
+    tidb_txnkv::DirectUnaryClient::close(&mut client).unwrap();
+}
+
+#[test]
+fn store_maintenance_background_rejects_invalid_config_before_start() {
+    let _guard = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|c| {
+        c.tikv_client.store_liveness_timeout = "-1s".into()
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let owner = tidb_txnkv::SharedReadAuthority::start_with_store_liveness(
+        client.clone(),
+        RegionCache::new(OneRegion),
+    );
+    assert!(
+        owner.is_err(),
+        "the production maintenance owner must consume configured timeout"
+    );
+    tidb_txnkv::DirectUnaryClient::close(&mut client).unwrap();
+}
+
+fn store_flow_value(destination: &str, id: u64) -> f64 {
+    match tikv_client::metrics::global_metrics()
+        .collector("TiKVPreferLeaderFlowsGauge")
+        .unwrap()
+    {
+        tikv_client::metrics::ClientGoCollector::GaugeVec(metric) => metric
+            .with_label_values(&[destination, &id.to_string()])
+            .get(),
+        _ => panic!("flow gauge type"),
+    }
+}
+
+#[test]
+fn store_maintenance_native_reads_report_leader_follower_and_reset_windows() {
+    let _guard = snapshot_test_config();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded.clone());
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    client
+        .scan_responses
+        .push_back(KvrpcScanResponse::default());
+    let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(ReplicaRegion));
+    runtime.locate_key(ROW_KEY).unwrap().unwrap();
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    let mut txn = RealOptimisticTransaction::new_injected(
+        runtime.clone(),
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+        replica_read: tidb_txnkv::ReplicaReadType::PreferLeader,
+        ..Default::default()
+    });
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+    txn.snapshot_get(ROW_KEY, &call).unwrap();
+    txn.snapshot_batch_get(&[b"batch".to_vec()], &call).unwrap();
+    txn.snapshot_scan_at(b"a", b"z", Some(1), START_TS, &call)
+        .unwrap();
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    assert_eq!(store_flow_value("ToLeader", 6200), 3.0);
+    assert_eq!(store_flow_value("ToFollower", 6200), 0.0);
+    runtime
+        .with_region_cache(|cache| {
+            cache
+                .store_state(6200)
+                .unwrap()
+                .routing_health()
+                .health
+                .mark_already_slow()
+        })
+        .unwrap();
+    txn.snapshot_get_at(b"follower", START_TS + 1, &call)
+        .unwrap();
+    let peer = recorded.lock().unwrap().routed_reads.last().unwrap().1;
+    assert_ne!(peer, 620);
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    assert_eq!(store_flow_value("ToLeader", 6200), 0.0);
+    assert_eq!(store_flow_value("ToFollower", peer * 10), 1.0);
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    assert_eq!(store_flow_value("ToFollower", peer * 10), 0.0);
+    txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions::default());
+    txn.snapshot_get_at(b"ordinary", START_TS + 2, &call)
+        .unwrap();
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    assert_eq!(
+        store_flow_value("ToLeader", 6200),
+        0.0,
+        "ordinary leader reads do not populate PreferLeader flows"
+    );
+    // Coprocessor selection shares the same canonical store counters, including
+    // the cache's shared-lock fast path.
+    let mut selector = runtime
+        .with_region_cache(|cache| {
+            cache.request_selector(
+                tidb_txnkv::region::RegionVerId::new(REGION, 1, 1),
+                tidb_txnkv::region::ReadPolicy {
+                    mode: tidb_txnkv::region::ReplicaReadMode::PreferLeader,
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap()
+        .unwrap();
+    let selected = runtime
+        .with_request_selection(&mut selector, |_, selected| selected)
+        .unwrap()
+        .unwrap();
+    let tidb_txnkv::region::RequestSelection::Attempt(route) = selected else {
+        panic!("coprocessor route");
+    };
+    runtime
+        .with_region_cache(|cache| cache.report_store_replica_flows())
+        .unwrap();
+    let destination = if route.cached_leader {
+        "ToLeader"
+    } else {
+        "ToFollower"
+    };
+    assert_eq!(store_flow_value(destination, route.attempt.store_id), 1.0);
+}
+
+#[test]
+fn store_maintenance_worker_reports_flows_and_joins() {
+    let _guard = snapshot_test_config();
+    tidb_config::config_tree::config::update_global(|c| c.stores_refresh_interval = 2);
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+    let client = LockingClient::new(recorded);
+    client
+        .remaining_locked
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    let mut cache = RegionCache::new(OneRegion);
+    cache.locate_key(ROW_KEY).unwrap();
+    cache.report_store_replica_flows();
+    let owner = tidb_txnkv::SharedReadAuthority::start(client, cache).unwrap();
+    let runtime = owner.open_session().unwrap();
+    let mut txn = RealOptimisticTransaction::new_injected(
+        runtime,
+        TickingTimestamps(std::sync::atomic::AtomicU64::new(2000)),
+        CALL_TIMEOUT,
+        START_TS,
+        Instant::now(),
+    )
+    .unwrap();
+    txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+        replica_read: tidb_txnkv::ReplicaReadType::PreferLeader,
+        ..Default::default()
+    });
+    txn.snapshot_get(ROW_KEY, &UnaryCallContext::with_timeout(CALL_TIMEOUT))
+        .unwrap();
+    assert_eq!(
+        store_flow_value("ToLeader", 6200),
+        0.0,
+        "report waits for the source interval"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while store_flow_value("ToLeader", 6200) != 1.0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        store_flow_value("ToLeader", 6200),
+        1.0,
+        "maintenance worker must publish accumulated reads"
+    );
+    drop(txn);
+    owner.shutdown().unwrap();
+}
