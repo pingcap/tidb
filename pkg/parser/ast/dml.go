@@ -3861,8 +3861,10 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
-	// Variables holds variable names for SELECT ... INTO var1, var2
+	// Variables holds variable names for SELECT ... INTO var1, var2 (legacy, for backward compatibility)
 	Variables []string
+	// VariableList holds variable references that can be either local variables or user variables (@var)
+	VariableList []*ColumnNameOrUserVar
 }
 
 // Restore implements Node interface.
@@ -3883,11 +3885,23 @@ func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case SelectIntoVars:
 		ctx.WriteKeyWord("INTO ")
-		for i, v := range n.Variables {
-			if i > 0 {
-				ctx.WritePlain(", ")
+		// Prefer VariableList (new style) over Variables (legacy)
+		if len(n.VariableList) > 0 {
+			for i, v := range n.VariableList {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore SelectInto.VariableList")
+				}
 			}
-			ctx.WriteName(v)
+		} else {
+			for i, v := range n.Variables {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(v)
+			}
 		}
 	default:
 		return errors.New("Unsupported SelectInto type")

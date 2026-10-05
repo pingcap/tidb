@@ -10765,7 +10765,7 @@ SelectStmt:
 		$$ = st
 	}
 	/* MySQL-compatible SELECT ... INTO var_list FROM ... syntax */
-|	SelectStmtBasic "INTO" IdentList "FROM" TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt
+|	SelectStmtBasic "INTO" ColumnNameOrUserVariableList "FROM" TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt
 	{
 		st := $1.(*ast.SelectStmt)
 		st.From = $5.(*ast.TableRefsClause)
@@ -10796,14 +10796,10 @@ SelectStmt:
 			st.LockInfo = $12.(*ast.SelectLockInfo)
 		}
 		// Convert MySQL-style INTO var_list to SelectIntoOpt
-		ciStrList := $3.([]ast.CIStr)
-		vars := make([]string, len(ciStrList))
-		for i, ciStr := range ciStrList {
-			vars[i] = ciStr.O
-		}
+		varList := $3.([]*ast.ColumnNameOrUserVar)
 		st.SelectIntoOpt = &ast.SelectIntoOption{
-			Tp:        ast.SelectIntoVars,
-			Variables: vars,
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
 		}
 		$$ = st
 	}
@@ -10825,17 +10821,13 @@ SelectStmt:
 		$$ = st
 	}
 	/* SELECT ... INTO var_list (without FROM clause, for expressions like SELECT 1+1 INTO @var) */
-|	SelectStmtBasic "INTO" IdentList
+|	SelectStmtBasic "INTO" ColumnNameOrUserVariableList
 	{
 		st := $1.(*ast.SelectStmt)
-		ciStrList := $3.([]ast.CIStr)
-		vars := make([]string, len(ciStrList))
-		for i, ciStr := range ciStrList {
-			vars[i] = ciStr.O
-		}
+		varList := $3.([]*ast.ColumnNameOrUserVar)
 		st.SelectIntoOpt = &ast.SelectIntoOption{
-			Tp:        ast.SelectIntoVars,
-			Variables: vars,
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
 		}
 		$$ = st
 	}
@@ -11742,17 +11734,13 @@ SelectStmtIntoOption:
 
 		$$ = x
 	}
-|	"INTO" IdentList
+|	"INTO" ColumnNameOrUserVariableList
 	{
-		// SELECT ... INTO var1, var2, ... for stored procedures
-		ciStrList := $2.([]ast.CIStr)
-		vars := make([]string, len(ciStrList))
-		for i, ciStr := range ciStrList {
-			vars[i] = ciStr.O
-		}
+		// SELECT ... INTO var1, var2, @var3, ... for stored procedures
+		varList := $2.([]*ast.ColumnNameOrUserVar)
 		$$ = &ast.SelectIntoOption{
-			Tp:        ast.SelectIntoVars,
-			Variables: vars,
+			Tp:           ast.SelectIntoVars,
+			VariableList: varList,
 		}
 	}
 

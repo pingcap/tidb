@@ -53,6 +53,9 @@ type Definition struct {
 
 	// Cached function ID to avoid repeated fmt.Sprintf allocations
 	cachedFuncID string
+
+	// Pre-computed lowercase parameter names to avoid repeated ToLower calls
+	paramNamesLower []string
 }
 
 // GetFunctionID returns a cached function ID.
@@ -67,6 +70,18 @@ func (d *Definition) GetFunctionID() string {
 // InvalidateFunctionID clears the cached function ID (call when Version changes).
 func (d *Definition) InvalidateFunctionID() {
 	d.cachedFuncID = ""
+}
+
+// GetParamNamesLower returns the pre-computed lowercase parameter names.
+// This avoids repeated strings.ToLower calls during function execution.
+func (d *Definition) GetParamNamesLower() []string {
+	if d.paramNamesLower == nil && len(d.ParamNames) > 0 {
+		d.paramNamesLower = make([]string, len(d.ParamNames))
+		for i, name := range d.ParamNames {
+			d.paramNamesLower[i] = strings.ToLower(name)
+		}
+	}
+	return d.paramNamesLower
 }
 
 // IsDefinerSecurity returns true if the function uses DEFINER security.
@@ -217,6 +232,9 @@ type ProcedureDefinition struct {
 
 	// Cached procedure ID
 	cachedProcID string
+
+	// Pre-computed lowercase parameter names to avoid repeated ToLower calls
+	paramNamesLower []string
 }
 
 // GetProcedureID returns a cached procedure ID.
@@ -230,6 +248,18 @@ func (d *ProcedureDefinition) GetProcedureID() string {
 // InvalidateProcedureID clears the cached procedure ID.
 func (d *ProcedureDefinition) InvalidateProcedureID() {
 	d.cachedProcID = ""
+}
+
+// GetParamNamesLower returns the pre-computed lowercase parameter names.
+// This avoids repeated strings.ToLower calls during procedure execution.
+func (d *ProcedureDefinition) GetParamNamesLower() []string {
+	if d.paramNamesLower == nil && len(d.Params) > 0 {
+		d.paramNamesLower = make([]string, len(d.Params))
+		for i, p := range d.Params {
+			d.paramNamesLower[i] = strings.ToLower(p.Name)
+		}
+	}
+	return d.paramNamesLower
 }
 
 // HasOutParams returns true if the procedure has any OUT or INOUT parameters.

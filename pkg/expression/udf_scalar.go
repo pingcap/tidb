@@ -478,11 +478,12 @@ func (b *udfFuncSig) executeSQLFunction(ctx EvalContext, row chunk.Row, args []t
 		}
 	}
 
-	// Create parameter map with pre-allocated capacity
-	paramMap := make(map[string]types.Datum, len(b.def.ParamNames))
-	for i, name := range b.def.ParamNames {
+	// Create parameter map using pre-computed lowercase names
+	paramNamesLower := b.def.GetParamNamesLower()
+	paramMap := make(map[string]types.Datum, len(paramNamesLower))
+	for i, lowerName := range paramNamesLower {
 		if i < len(args) {
-			paramMap[strings.ToLower(name)] = args[i]
+			paramMap[lowerName] = args[i]
 		}
 	}
 
@@ -573,12 +574,12 @@ func transformSingleSelectInto(stmt string) string {
 
 	// Extract parts using original case
 	selectPart := stmt[selectIdx:intoPos]                    // "SELECT ..."
-	intoPart := strings.TrimSpace(stmt[intoPos+5:fromPos])   // "var1, var2, ..."
+	intoPart := strings.TrimSpace(stmt[intoPos+5 : fromPos]) // "var1, var2, ..."
 	restPart := stmt[fromPos:]                               // " FROM ..."
 
 	// Check if intoPart looks like variable list (not OUTFILE)
 	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(intoPart)), "OUTFILE") ||
-	   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(intoPart)), "DUMPFILE") {
+		strings.HasPrefix(strings.ToUpper(strings.TrimSpace(intoPart)), "DUMPFILE") {
 		return stmt
 	}
 
@@ -746,6 +747,89 @@ type cursorState struct {
 	isOpen   bool
 	rows     [][]types.Datum // cached rows from the query
 	position int             // current fetch position
+}
+
+// VarContext provides efficient array-based variable storage.
+// Variable names are mapped to indices once at setup time, then all
+// lookups and assignments use direct array indexing for O(1) access.
+type VarContext struct {
+	nameToIdx map[string]int // Name to index mapping (set once at setup)
+	values    []types.Datum  // Values indexed by variable ID
+}
+
+// NewVarContext creates a VarContext with the given variable names.
+// Each name is assigned a sequential index.
+func NewVarContext(names []string) *VarContext {
+	nameToIdx := make(map[string]int, len(names))
+	for i, name := range names {
+		nameToIdx[name] = i
+	}
+	return &VarContext{
+		nameToIdx: nameToIdx,
+		values:    make([]types.Datum, len(names)),
+	}
+}
+
+// NewVarContextWithValues creates a VarContext with pre-set values.
+func NewVarContextWithValues(names []string, initialValues []types.Datum) *VarContext {
+	ctx := NewVarContext(names)
+	copy(ctx.values, initialValues)
+	return ctx
+}
+
+// Get returns the value of a variable by name.
+func (v *VarContext) Get(name string) (types.Datum, bool) {
+	idx, ok := v.nameToIdx[name]
+	if !ok {
+		return types.Datum{}, false
+	}
+	return v.values[idx], true
+}
+
+// GetByIdx returns the value directly by index (for hot paths after name resolution).
+func (v *VarContext) GetByIdx(idx int) types.Datum {
+	return v.values[idx]
+}
+
+// Set sets the value of a variable by name.
+func (v *VarContext) Set(name string, val types.Datum) bool {
+	idx, ok := v.nameToIdx[name]
+	if !ok {
+		return false
+	}
+	v.values[idx] = val
+	return true
+}
+
+// SetByIdx sets the value directly by index (for hot paths).
+func (v *VarContext) SetByIdx(idx int, val types.Datum) {
+	v.values[idx] = val
+}
+
+// GetIdx returns the index for a variable name, or -1 if not found.
+func (v *VarContext) GetIdx(name string) int {
+	idx, ok := v.nameToIdx[name]
+	if !ok {
+		return -1
+	}
+	return idx
+}
+
+// AddVariable adds a new variable and returns its index.
+func (v *VarContext) AddVariable(name string, val types.Datum) int {
+	idx := len(v.values)
+	v.nameToIdx[name] = idx
+	v.values = append(v.values, val)
+	return idx
+}
+
+// AsMap returns the variables as a map (for compatibility with legacy code).
+func (v *VarContext) AsMap() map[string]types.Datum {
+	result := make(map[string]types.Datum, len(v.nameToIdx))
+	for name, idx := range v.nameToIdx {
+		result[name] = v.values[idx]
+	}
+	return result
 }
 
 // cursorContext manages cursors for a block.
@@ -1178,7 +1262,7 @@ func (v *variableSubstitutionVisitor) Enter(n ast.Node) (ast.Node, bool) {
 	if colExpr, ok := n.(*ast.ColumnNameExpr); ok {
 		// Only match if there's no table qualifier - it's just a variable name
 		if colExpr.Name.Table.L == "" && colExpr.Name.Schema.L == "" {
-			varName := strings.ToLower(colExpr.Name.Name.O)
+			varName := colExpr.Name.Name.L // Use pre-lowercased name from AST
 			if val, exists := v.vars[varName]; exists {
 				// Create a ValueExpr with the variable's value
 				valExpr := ast.NewValueExpr(val.GetValue(), "", "")
@@ -1276,14 +1360,20 @@ func executeInternalSQL(ctx EvalContext, stmt ast.StmtNode, vars map[string]type
 
 // executeSelectIntoVars executes SELECT ... INTO var1, var2, ... statement.
 // It executes the SELECT query and assigns results to the specified variables.
+// Supports both local procedure variables (var_name) and session user variables (@var_name).
 func executeSelectIntoVars(ctx EvalContext, stmt *ast.SelectStmt, vars map[string]types.Datum) (executionResult, error) {
 	executor := getSQLExecutor(ctx)
 	if executor == nil {
 		return executionResult{}, errors.New("SELECT INTO execution requires session context with SQL executor")
 	}
 
-	varList := stmt.SelectIntoOpt.Variables
-	if len(varList) == 0 {
+	// Get variable list - prefer new style (VariableList) over legacy (Variables)
+	intoOpt := stmt.SelectIntoOpt
+	varCount := len(intoOpt.VariableList)
+	if varCount == 0 {
+		varCount = len(intoOpt.Variables)
+	}
+	if varCount == 0 {
 		return executionResult{}, errors.New("SELECT INTO requires at least one variable")
 	}
 
@@ -1312,11 +1402,34 @@ func executeSelectIntoVars(ctx EvalContext, stmt *ast.SelectStmt, vars map[strin
 		return executionResult{}, errors.Wrap(err, "SELECT INTO execution failed")
 	}
 
+	// Helper to set a variable value (either local var or session user var)
+	setVariable := func(v *ast.ColumnNameOrUserVar, val types.Datum) {
+		if v.UserVar != nil {
+			// Session user variable (@var) - set in session context
+			if ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+				sessVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx)
+				if err == nil && sessVars != nil {
+					varName := strings.ToLower(v.UserVar.Name)
+					sessVars.SetUserVarVal(varName, val)
+				}
+			}
+		} else if v.ColumnName != nil {
+			// Local procedure variable
+			vars[v.ColumnName.Name.L] = val // Use pre-lowercased name from AST
+		}
+	}
+
 	// Check that we got exactly one row
 	if len(rows) == 0 {
 		// No rows returned - set all variables to NULL (MySQL behavior)
-		for _, varName := range varList {
-			vars[strings.ToLower(varName)] = types.Datum{}
+		if len(intoOpt.VariableList) > 0 {
+			for _, v := range intoOpt.VariableList {
+				setVariable(v, types.Datum{})
+			}
+		} else {
+			for _, varName := range intoOpt.Variables {
+				vars[strings.ToLower(varName)] = types.Datum{}
+			}
 		}
 		return executionResult{}, nil
 	}
@@ -1326,15 +1439,26 @@ func executeSelectIntoVars(ctx EvalContext, stmt *ast.SelectStmt, vars map[strin
 
 	row := rows[0]
 	// Assign column values to variables
-	for i, varName := range varList {
-		lowerName := strings.ToLower(varName)
-		if i < row.Len() && i < len(fields) {
-			// Get the FieldType from the ResultField for proper datum extraction
-			fieldType := fields[i].Column.FieldType
-			vars[lowerName] = row.GetDatum(i, &fieldType)
-		} else {
-			// Not enough columns in result
-			vars[lowerName] = types.Datum{}
+	if len(intoOpt.VariableList) > 0 {
+		// New style: VariableList with ColumnNameOrUserVar
+		for i, v := range intoOpt.VariableList {
+			var val types.Datum
+			if i < row.Len() && i < len(fields) {
+				fieldType := fields[i].Column.FieldType
+				val = row.GetDatum(i, &fieldType)
+			}
+			setVariable(v, val)
+		}
+	} else {
+		// Legacy style: string variable names
+		for i, varName := range intoOpt.Variables {
+			lowerName := strings.ToLower(varName)
+			if i < row.Len() && i < len(fields) {
+				fieldType := fields[i].Column.FieldType
+				vars[lowerName] = row.GetDatum(i, &fieldType)
+			} else {
+				vars[lowerName] = types.Datum{}
+			}
 		}
 	}
 
@@ -1901,9 +2025,8 @@ func evaluateExpression(ctx EvalContext, expr ast.ExprNode, vars map[string]type
 
 	switch e := expr.(type) {
 	case *ast.ColumnNameExpr:
-		// This is a variable reference
-		varName := strings.ToLower(e.Name.Name.L)
-		if val, ok := vars[varName]; ok {
+		// This is a variable reference (Name.L is already lowercase)
+		if val, ok := vars[e.Name.Name.L]; ok {
 			return val, val.IsNull(), nil
 		}
 		return types.Datum{}, true, errors.Errorf("unknown variable: %s", e.Name.Name.O)
@@ -4308,7 +4431,14 @@ var _ functionClass = (*udfFuncClass)(nil)
 var procedureCache sync.Map
 
 // parsedProcedureBodies caches parsed procedure bodies.
+// Key is schema.name (lowercase), value is *cachedProcedureBody.
 var parsedProcedureBodies sync.Map
+
+// cachedProcedureBody holds a parsed procedure body with metadata.
+type cachedProcedureBody struct {
+	body        ast.StmtNode // The parsed AST (nil for DML procedures)
+	containsDML bool         // True if the AST contains DML (INSERT/UPDATE/DELETE/SELECT)
+}
 
 // ProcedureCacheEntry holds a cached procedure definition.
 type ProcedureCacheEntry struct {
@@ -4363,9 +4493,17 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 
 	// Try to get cached AST - use schema.name as cache key since ID might be 0 for in-memory procedures
 	var stmtNode ast.StmtNode
+	var containsDML bool
 	cacheKey := strings.ToLower(schema + "." + name)
+
 	if cached, ok := parsedProcedureBodies.Load(cacheKey); ok {
-		stmtNode = cached.(ast.StmtNode)
+		cachedBody := cached.(*cachedProcedureBody)
+		containsDML = cachedBody.containsDML
+		if !containsDML {
+			// Safe to reuse cached AST - no DML means no AST modification during execution
+			stmtNode = cachedBody.body
+		}
+		// If containsDML, we must re-parse because variable substitution modifies the AST
 	}
 
 	if stmtNode == nil {
@@ -4378,14 +4516,35 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 			recordProcedureError(name, schema, "parse_error")
 			return nil, errors.Errorf("failed to parse procedure body: %v", err)
 		}
-		parsedProcedureBodies.Store(cacheKey, stmtNode)
+
+		// Detect if this procedure contains DML statements
+		detector := &dmlDetectorVisitor{}
+		stmtNode.Accept(detector)
+		containsDML = detector.containsDML
+
+		// For DML procedures, don't cache the AST body since it gets modified during execution.
+		// Only cache the containsDML flag to avoid re-detection.
+		if containsDML {
+			// Cache only the flag, not the body
+			parsedProcedureBodies.Store(cacheKey, &cachedProcedureBody{
+				body:        nil, // Don't cache body for DML procedures
+				containsDML: containsDML,
+			})
+		} else {
+			// Safe to cache body for non-DML procedures
+			parsedProcedureBodies.Store(cacheKey, &cachedProcedureBody{
+				body:        stmtNode,
+				containsDML: containsDML,
+			})
+		}
 	}
 
-	// Create parameter map with pre-allocated capacity
+	// Create parameter map using pre-computed lowercase names
+	paramNamesLower := def.GetParamNamesLower()
 	paramMap := make(map[string]types.Datum, len(def.Params))
 	argIndex := 0
-	for _, param := range def.Params {
-		lowerName := strings.ToLower(param.Name)
+	for i, param := range def.Params {
+		lowerName := paramNamesLower[i]
 		switch param.Mode {
 		case udf.ParamModeIn:
 			// IN params take values from args
@@ -4422,11 +4581,11 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 		return nil, err
 	}
 
-	// Collect OUT/INOUT parameter values
+	// Collect OUT/INOUT parameter values using pre-computed lowercase names
 	outParams := make(map[string]types.Datum)
-	for _, param := range def.Params {
+	for i, param := range def.Params {
 		if param.Mode == udf.ParamModeOut || param.Mode == udf.ParamModeInOut {
-			if val, ok := paramMap[strings.ToLower(param.Name)]; ok {
+			if val, ok := paramMap[paramNamesLower[i]]; ok {
 				outParams[param.Name] = val
 			}
 		}
