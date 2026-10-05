@@ -1,0 +1,237 @@
+{
+  "base": "0209bbec2088f13ed551b982c474b9621a58dc96",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire one disconnected memo/pattern model, five modules and nine private harnesses; live optimizer code unchanged.",
+  "modules": [
+    "group_expr",
+    "explore_mark",
+    "expr_iterator",
+    "pattern",
+    "pattern_engine"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-planner/src/group_expr.rs",
+      "lines": 108,
+      "tests": [],
+      "sha256": "6d7e5711bb067b833a9eae9ac057cad9f3db0486b097ca10e3e976147d3841c1"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/explore_mark.rs",
+      "lines": 59,
+      "tests": [],
+      "sha256": "ef8c5a1df49ff7a64ca16fa3aec7dd5ae035c0d3e376a2ac82dd24343fa6f658"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/expr_iterator.rs",
+      "lines": 218,
+      "tests": [],
+      "sha256": "303fbaa4e19a6caed36a060df10917c623dc3a4378ec725438ab123054ac5222"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/pattern.rs",
+      "lines": 241,
+      "tests": [],
+      "sha256": "209a093e5ed87f07c89696b8bac3a5400cd75b6acd02130bbf1ebb8bd9798e7d"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/pattern_engine.rs",
+      "lines": 93,
+      "tests": [],
+      "sha256": "b92d224217d41fa3840b64693ce67ba066d90ded04ec432400430c26a66536d1"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/group_expr.rs",
+      "lines": 44,
+      "tests": [
+        "source_new_group_expr_starts_unexplored_and_without_children",
+        "source_fingerprint_frames_count_children_and_plan_hash"
+      ],
+      "sha256": "ca33bf9924b07d25b0ca8eea2ba82d5338bd83daa666837a55063ca453d50e18"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/explore_mark.rs",
+      "lines": 47,
+      "tests": [
+        "source_round_bits_set_clear_and_query",
+        "source_out_of_width_rounds_are_inert"
+      ],
+      "sha256": "86966b6d474a6d052f3f3e2e895d4b5d938d09af61c1f5a2f870a5ae672d982a"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/expr_iterator.rs",
+      "lines": 142,
+      "tests": [
+        "source_group_element_constructor_matches_root_and_children",
+        "source_next_enumerates_cartesian_child_matches",
+        "source_reset_returns_to_first_match",
+        "source_engine_filters_nested_groups"
+      ],
+      "sha256": "fce4471b0ea07f89548f2c769ef6d4a0fec0469c99d23a56228b0ec246c80c8e"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/pattern.rs",
+      "lines": 103,
+      "tests": [
+        "source_get_operand_maps_logical_operator_kinds",
+        "source_operand_match_preserves_wildcard_behavior",
+        "source_new_pattern_starts_without_children",
+        "source_children_are_ordered_and_engine_checked"
+      ],
+      "sha256": "681b66fa7d40de4f6f7a54dcf0cc68d47ec33a17759dd17939e1551c5afe01cf"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/pattern_engine.rs",
+      "lines": 58,
+      "tests": [
+        "engine_sets_preserve_source_membership",
+        "engine_labels_and_raw_bits_are_stable"
+      ],
+      "sha256": "6153d186845adb5bcabcc6b2c4776ebda82a655d8ae55520be75c2f2c0f32a43"
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/memo_group_source.rs",
+      "lines": 93,
+      "tests": [
+        "new_group_expr_stores_plan_hash_empty_children_and_clear_explore_bit",
+        "group_expr_fingerprint_is_child_count_plus_child_ids_plus_plan_hash",
+        "new_group_seeds_exactly_one_equivalent_member"
+      ],
+      "sha256": "35d6169f87a62c814c0e8a83ae823c1eef4efd8ec063fc3083c4bd36cc77a797"
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/memo_group_operations_source.rs",
+      "lines": 43,
+      "tests": [
+        "explore_mark_tracks_two_independent_rounds"
+      ],
+      "sha256": "d5c1ebc49f5173235aca32bb37f12912629d4fa3d116df442ec4ef33f346aa74"
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/memo_expr_iterator_source.rs",
+      "lines": 374,
+      "tests": [
+        "new_expr_iter_from_group_elem_binds_join_children_at_operand_anchors",
+        "expr_iter_next_enumerates_all_nine_projection_selection_combinations",
+        "expr_iter_reset_rebinds_eighteen_deep_bindings_after_full_drain",
+        "expr_iter_with_engine_type_filters_groups_by_engine_tags"
+      ],
+      "sha256": "915e9fe75b2c27d4db76d57153721467feb1fac20ade0cd563f25b8cc0b74c58"
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/cascades_pattern_operand_engine_source.rs",
+      "lines": 180,
+      "tests": [
+        "engine_type_set_membership_table_matches_predefined_sets",
+        "get_operand_classifies_every_source_logical_operator_kind",
+        "operand_match_wildcard_symmetry_and_identity_matrix",
+        "new_pattern_records_operand_and_starts_without_children",
+        "set_children_replaces_child_patterns_in_argument_order"
+      ],
+      "sha256": "fa83bdd156d4db3a6b757dd2f1c929be85df1e7b6b7dfe14c8e8dc3b912811f9"
+    }
+  ],
+  "retired_document": "rust/testport/receipts/planner_cascades_pattern.md",
+  "upstream_obligations": [
+    {
+      "path": "pkg/planner/memo/BUILD.bazel",
+      "sha256": "0206746cfb7ddb0fc2be91cbeaf0e1ec9600e1f99e14c5fd964f6305b0a55ba0"
+    },
+    {
+      "path": "pkg/planner/memo/expr_iterator.go",
+      "sha256": "230edb7a4004ec388d7e1115de01d869207100517ebdccbb0a41b9eebaeea49c"
+    },
+    {
+      "path": "pkg/planner/memo/expr_iterator_test.go",
+      "sha256": "a0f2a798e961fe5dcea08de4f2a429c1f3a4673d496be02d5d0a45cca353aba3"
+    },
+    {
+      "path": "pkg/planner/memo/group.go",
+      "sha256": "fc6c45abbc99f6118f83ab37adbe951fb665a2d07884b0d95a8d38a99620f812"
+    },
+    {
+      "path": "pkg/planner/memo/group_expr.go",
+      "sha256": "c571616ab02ad2f4eca4a4aac0c9fcfe93362c6077c5cf617b752f10253d7ebf"
+    },
+    {
+      "path": "pkg/planner/memo/group_expr_test.go",
+      "sha256": "721e9e94f0d45ce6a83a53ee5d3c5a1b145d8ab3cb170a38cca2b5fefb9d4a73"
+    },
+    {
+      "path": "pkg/planner/memo/group_test.go",
+      "sha256": "974329a8c00e312a12cb85d7d9ad2101f1033c53681d9ff340833ec61230ddf4"
+    },
+    {
+      "path": "pkg/planner/memo/implementation.go",
+      "sha256": "02698caf8a5150d4bde00aade11cb437d5f5f7b697f9187a44c57159b59235c0"
+    },
+    {
+      "path": "pkg/planner/memo/main_test.go",
+      "sha256": "1265f9ba27fe3d36958fee07165802e963feade63eef410f96af565f23daeabb"
+    },
+    {
+      "path": "pkg/planner/cascades/pattern/BUILD.bazel",
+      "sha256": "bc48a7876af75e1359ee1a421566c158f28d234b3edfd515182f243389b33323"
+    },
+    {
+      "path": "pkg/planner/cascades/pattern/engine.go",
+      "sha256": "c41030c612eb8191037b4eaefb23d2f283831940b611551f2dbb503dd8ac8c2c"
+    },
+    {
+      "path": "pkg/planner/cascades/pattern/engine_test.go",
+      "sha256": "74ecf5bba8925ef18f8e99de23d1da6f0f853f3ac43fab3831b83c13504464b7"
+    },
+    {
+      "path": "pkg/planner/cascades/pattern/pattern.go",
+      "sha256": "8a2418adf27ef009e5608ebc82b6faf0796e43ddecd6f247dd8e2aa469e5eb3f"
+    },
+    {
+      "path": "pkg/planner/cascades/pattern/pattern_test.go",
+      "sha256": "c3d34f3c6ca696221368a6797a1fe6cf8233c1fbec5bfddc35a82e1fce1a524d"
+    }
+  ],
+  "tests_removed": 27,
+  "source_test_lines_removed": 1803,
+  "caller_evidence": "All tracked Rust paths checked for scoped module imports and exported symbol use. Only private harnesses and five lib.rs declarations consume this model. EngineType hits outside deletion set resolve to tidb_proto::tipb; group_expr in aggregation_tests is a local Column variable; common Group/Pattern/Operand names belong to unrelated owners. No wildcard root reexports.",
+  "go_ownership_difference": "Go ExprIter retains *Group and *list.Element and lazily rebinds shared child iterators. Retired Rust ExprIter precomputes an owned Cartesian vector. Retired GroupExpr uses byte hashes and integer child identities rather than shared logical plan/memo objects. Tests only validate these disconnected adapters.",
+  "validation": {
+    "status": "passed; publication gates run at commit/push",
+    "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets",
+    "lint_command": "make lint",
+    "logs": "/workspace/.cloud-setup/memo-model-cleanup",
+    "all_target_check": "passed",
+    "lint": "passed",
+    "diff_check": "passed",
+    "retained_hashes": {
+      "unchanged_files": 3694,
+      "only_source_edit": "five module declarations removed from rust/crates/tidb-planner/src/lib.rs",
+      "unexpected_changes": []
+    },
+    "registration": [
+      {
+        "package": "tidb-planner",
+        "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+        "sha256": "ed62bf969dd683d24a5392294ff9bc267e07dcceb276fb7037b24efd8ef622d1"
+      },
+      {
+        "package": "difftest-planner-tests",
+        "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+        "sha256": "f9881510d5766bb03fb659aaba80ea8aab84869cf2eb8e4554e91a4a4ab89061"
+      }
+    ],
+    "self_review": "No runtime source, manifest, dependency, original Go or maintained script change; scoped module references closed; stale receipt links removed."
+  },
+  "limits": [
+    "No complete Go package acceptance",
+    "No measured speedup",
+    "No behavioral tests rerun for pure unreachable deletion",
+    "Full Go suites and live TiKV not run"
+  ],
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "changed": false
+  }
+}

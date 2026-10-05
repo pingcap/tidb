@@ -142,7 +142,8 @@ the AST.
   `run_select_traced_with_delivery_choice_inner` builds the executor pipeline
   DIRECTLY from the AST. There is no retained plan object between the two.
 - `crates/tidb-planner` — a large planner crate exists (`find_best_task`,
-  `group_expr`, `cascades_base`, `implementation_cost`, …) but the executor
+  `cascades_base`, `implementation_cost`, …; the disconnected memo/pattern
+  models were subsequently retired) but the executor
   uses it for COSTING, not construction: of the executor's references to it,
   `candidate_cost` appears 145 times, `plan_cost_ver` 42, `cardinality` 25,
   `physical_property` 59 — and `find_best_task` only 13. The planner's trees
