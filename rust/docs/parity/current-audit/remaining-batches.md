@@ -108,3 +108,9 @@ Integration dependencies: B02, B06.
 ## Current evidence boundary
 
 P03/P06 provider/bootstrap residuals are repaired together: requested-keyspace initialization precedes TSO discovery, minimum timestamps select Go's provider/fallback policy, and optional metadata headers preserve response payloads without panics. The [current receipt](pd-provider-bootstrap-batch-validation.json) records four failures before and 207 native cases after. These broader findings remain partial; follower/forwarding and full package obligations remain. This batch does not freshly reproduce the other 54 unresolved roots.
+
+The shared snapshot batch advances B02/B03 together: S04 ordinary-transaction
+SnapshotTS switching, I04 publication/resize retention and O09 result/cursor
+protection share one tested path. See [validation](schema-snapshot-batch-validation.json).
+No parent finding or complete package is closed; lazy V2, MVCC schema timestamp
+ranges, DDL exclusion and live Go-peer GC remain explicit prerequisites.

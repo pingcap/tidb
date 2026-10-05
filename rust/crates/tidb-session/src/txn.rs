@@ -487,9 +487,12 @@ impl Session {
         self.restricted_sql = restricted;
     }
 
-    /// Timestamp retained by the current read-only historical transaction.
+    /// Effective historical timestamp of the active statement or stale transaction.
     pub fn historical_read_ts(&self) -> Option<u64> {
-        self.txn.as_ref().and_then(|txn| txn.stale_read_ts)
+        self.statement_snapshot
+            .as_ref()
+            .map(|(ts, _)| *ts)
+            .or_else(|| self.txn.as_ref().and_then(|txn| txn.stale_read_ts))
     }
 
     /// `START TRANSACTION READ ONLY AS OF TIMESTAMP <resolved ts>`: the Go
@@ -923,14 +926,18 @@ impl Session {
         // GLOBAL table created by this very statement, closing the gap where
         // the old early return left the first temporary table shared.
         if self.local_temporary_tables.is_empty() && self.global_temporary_data.is_empty() {
-            let (value, discovered) = match &mut self.txn {
-                Some(txn) => run_discovering_temporary_overlay(&mut txn.working, body),
-                None => {
-                    let mut catalog = self
-                        .catalog
-                        .lock()
-                        .map_err(|_| DriverError::CatalogPoisoned)?;
-                    run_discovering_temporary_overlay(&mut catalog, body)
+            let (value, discovered) = if let Some((_, read)) = &mut self.statement_snapshot {
+                run_discovering_temporary_overlay(&mut read.catalog, body)
+            } else {
+                match &mut self.txn {
+                    Some(txn) => run_discovering_temporary_overlay(&mut txn.working, body),
+                    None => {
+                        let mut catalog = self
+                            .catalog
+                            .lock()
+                            .map_err(|_| DriverError::CatalogPoisoned)?;
+                        run_discovering_temporary_overlay(&mut catalog, body)
+                    }
                 }
             };
             if let Some(discovered) = discovered {
@@ -951,14 +958,18 @@ impl Session {
             local: std::mem::take(&mut self.local_temporary_tables),
             global: std::mem::take(&mut self.global_temporary_data),
         };
-        let value = match &mut self.txn {
-            Some(txn) => overlay.run(&mut txn.working, body),
-            None => {
-                let mut catalog = self
-                    .catalog
-                    .lock()
-                    .map_err(|_| DriverError::CatalogPoisoned)?;
-                overlay.run(&mut catalog, body)
+        let value = if let Some((_, read)) = &mut self.statement_snapshot {
+            overlay.run(&mut read.catalog, body)
+        } else {
+            match &mut self.txn {
+                Some(txn) => overlay.run(&mut txn.working, body),
+                None => {
+                    let mut catalog = self
+                        .catalog
+                        .lock()
+                        .map_err(|_| DriverError::CatalogPoisoned)?;
+                    overlay.run(&mut catalog, body)
+                }
             }
         };
         self.local_temporary_tables = std::mem::take(&mut overlay.local);

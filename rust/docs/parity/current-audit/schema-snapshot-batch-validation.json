@@ -1,0 +1,99 @@
+{
+  "base": "57f8c6edd2153cf0c376136534bc552217950c2e",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "native_client": "bc8cca3fea4f741e68a41b124f28164604a57ee2",
+  "findings": [
+    "S04",
+    "I04",
+    "O09"
+  ],
+  "acceptance": "Connected existing-owner repairs, not complete Go package acceptance. All three remain partial; counts unchanged.",
+  "go_sources": {
+    "pkg/infoschema/cache.go": "1ba13eb6314991c8214525958666419e854aab0b1eb879e0899e05fc16d0bc16",
+    "pkg/sessiontxn/isolation/base.go": "a2ce01dd7970b176bf8e00cfd85a9a2c8fb645b7264314a3f96e26c3c33fb523",
+    "pkg/sessiontxn/isolation/optimistic_test.go": "b6eeefd8831c8e7bd7b74bfebfd8e18e844930799d095a033784065bb2064c3d",
+    "pkg/sessiontxn/isolation/readcommitted_test.go": "85db0e89ea068011acd182cda1d154bcf8f0e8d907ac5b23aa12820be48949dd",
+    "pkg/domain/infosync/info.go": "e5de2dcd47afb7bb9b6a9035dd26574eb80d6f582f1804a6d0eb6e510a6b5bcb"
+  },
+  "repairs": [
+    "Historical statements inside ordinary transactions use the existing provider without replacing Transaction.",
+    "Historical physical tables and StmtContext exclude ordinary buffered writes; temporary-table attachment stays in the shared catalog boundary.",
+    "Result teardown retires the statement pin on errors/early close; cursor authority uses its effective read TS independently of the ordinary transaction.",
+    "Every published schema enters the bounded version cache; resize precedes lookup and an in-flight load respects the current capacity."
+  ],
+  "baseline": {
+    "rust_command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec -p tidb-session --lib snapshot_provider_batch --no-fail-fast -- --test-threads=1",
+    "rust_failed": 4,
+    "rust_passed": 0,
+    "wire_failed": 10,
+    "wire_passed": 8,
+    "wire_receipt": "/workspace/.cloud-setup/schema-snapshot-batch/baseline-wire.json"
+  },
+  "validation": {
+    "status": "Passed scoped Ready gates and live TCP probe; actual hook and fresh prepush gates recorded externally after execution",
+    "rust_command": "cd rust && CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-exec -p tidb-session -p tidb-server --lib --no-fail-fast -- snapshot_provider_batch historical_read_batch timestamp_entrypoints_batch snapshot_selection --test-threads=1",
+    "rust_passed": 11,
+    "rust_failed": 0,
+    "scope": "4 exec, 3 server real-unistore, 4 session cases; both optimistic and pessimistic modes in the new transaction cases.",
+    "lint_command": "make lint",
+    "lint_exit": 0,
+    "distinct_rust_tests": 32,
+    "additional_lifecycle_commands": [
+      "rust/target/debug/build/tidb-session/6f9593a3c5413e52/out/tidb_session-6f9593a3c5413e52 tests_core::transactions --test-threads=1",
+      "rust/target/debug/build/tidb-exec/c2ed027c902d29b2/out/tidb_exec-c2ed027c902d29b2 catalog_watch::tests --test-threads=1"
+    ],
+    "lifecycle_counts": {
+      "session": 16,
+      "catalog": 12,
+      "note": "Overlap with the grouped 11 is deduplicated; total is 32, not 39."
+    },
+    "wire_command": "PYTHONPATH=/workspace/.cloud-setup/python python3 /workspace/.cloud-setup/schema-snapshot-batch/wire.py final /workspace/tidb/rust/target/debug/tidb-server",
+    "wire_passed": 18,
+    "wire_failed": 0,
+    "check_command": "cd rust && CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-executor -p tidb-session -p tidb-server --all-targets",
+    "check_exit": 0,
+    "server_build_command": "cd rust && CARGO_BUILD_JOBS=1 cargo build --locked -p tidb-server",
+    "server_build_exit": 0,
+    "diff_check_command": "git diff --check",
+    "diff_check_exit": 0,
+    "wire_binary_sha256": "977573ae718b6067d2b0cf3410d288c03f724165b85fe90276667ae16f8449af",
+    "publication": "Actual hook build and fresh prepush build, normal push, exact remote SHA and draft pins must be verified in /workspace/.cloud-setup/schema-snapshot-batch/final-handoff.json, written after execution."
+  },
+  "limits": [
+    "InfoCache timestamp ranges require real schema-diff MVCC commit timestamps; read timestamps are not substitutes.",
+    "Lazy InfoSchema V2, recent-V2 reporting, DDL-queue exclusion and other internal diagnostics remain incomplete.",
+    "SafeTS topology, standalone fallback, full transaction/prepared and Go package inventories remain incomplete.",
+    "Full Go suites, live multi-node TiKV/Go-peer GC, TLS/token matrices and performance gains are unverified.",
+    "No GC worker enabled; no claim that the other 53 unresolved roots were reproduced."
+  ],
+  "logs_directory": "/workspace/.cloud-setup/schema-snapshot-batch",
+  "log_sha256": {
+    "baseline.log": "3e8e40b21200a3ea73e2d4917f1715aa470e2124d2eb12b1aca3371600b317bc",
+    "baseline-wire.json": "dfeebeaab9afc9970ede2f2a3ce82bfb35d93518ed2fde138566c2744ae38eb5",
+    "final-tests.log": "770c84d5c36ba5e99d4b7b70670d6367029b531f18d34fc1308de999daae6989",
+    "transaction-lifecycle-tests.log": "efe82b2ded248a54e9477c7bac8bdc8271c7f72ca5591a92077cb21fb38312d5",
+    "catalog-lifecycle-tests.log": "e6da7a8f6e078bdebe6a02445b8ecffd2ab79f233d91bf8562ef7a4e38db4313",
+    "final-wire.json": "4bba0629a79e8aa8c9ea137f911becc59a695172937ed9cebc1e0820165c16c3",
+    "check.log": "2eb32d29ec2da28582648b009c8833f57e96359e8f9d98d37e3ecb79638c65a2",
+    "server-build.log": "fa8f6fbe4a5d94c075967e12904770f5e68d2eba4f28eed4f0c2b9bdbdd081ee",
+    "lint.log": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+    "wire.py": "64e3e44a00dbbef7258113ac9e29143057ada39defe2395fc24e4ea01694ca88"
+  },
+  "source_sha256": {
+    "rust/crates/tidb-exec/src/catalog_watch.rs": "08a060e11f36c1d4bb588388e4a3ecdf8f083fa7ff5291a501a12125ec4dfabf",
+    "rust/crates/tidb-executor/src/cluster_storage.rs": "40934707fe92c6ab479065ab8b610bdb82119da9fb643277196e67c3ee3c7592",
+    "rust/crates/tidb-server/src/cluster_session_node/mod.rs": "d044631880d78f736e8c2f119b8f7ae19fc2d485b34679d4b147dc882b544a7b",
+    "rust/crates/tidb-server/src/cluster_session_node/tests/unistore_cop.rs": "c7801345477ec1decc32607a6649cce352a71395a9d04dbb8df7351bd1926ee1",
+    "rust/crates/tidb-session/src/dispatch.rs": "1431208e3b13afa433d6857b0cd91cc6ff749d305cecef303bb1b47a7e16f4fc",
+    "rust/crates/tidb-session/src/lib.rs": "0843cb38f9fb1831d1134cbc97ef202c8c49aa3f3c039e47b90e9069e6b50eec",
+    "rust/crates/tidb-session/src/record_set.rs": "e14d44fbf1aad36dae0e3fce9090bca40af0dd9feac7459008ec24528a821007",
+    "rust/crates/tidb-session/src/stmt_ctx.rs": "2c30b3bf3817f86a2727073cc330de27b0947af1ffe8a81bfaea980286fb4d45",
+    "rust/crates/tidb-session/src/tests_core/transactions.rs": "2c41f77f815a2236f5350e6d4f475286e606a959e015ccf009a02778e3cbbe6d",
+    "rust/crates/tidb-session/src/txn.rs": "8de68a23e40b69f6b76515a360064871487a77afd568316caae4a5ae91084463"
+  },
+  "risks": [
+    "Version cache now retains published full catalogs up to its configured count; readers may retain evicted Arc images. Byte-budget/lazy loading remains open.",
+    "Snapshot selection crosses session, physical storage, result and cursor lifetimes; tested on unistore and registered library cases, not live multi-node TiKV.",
+    "No benchmark gain or full Go package acceptance claimed."
+  ]
+}

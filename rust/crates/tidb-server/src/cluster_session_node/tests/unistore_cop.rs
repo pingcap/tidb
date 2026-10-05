@@ -10381,3 +10381,69 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         vec![vec!["1", "20", "7"]]
     );
 }
+
+/// Go isolation snapshot switching: schema and storage change for the statement,
+/// while the ordinary transaction and its buffered writes retain their identity.
+#[test]
+fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_writes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(937)).unwrap();
+    rows(&mut session, "CREATE DATABASE snapshot_provider_batch");
+    rows(&mut session, "USE snapshot_provider_batch");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO t VALUES (1,10)");
+    rows(
+        &mut session,
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')",
+    );
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT * FROM t");
+    let historical_ts = session.session.current_tso().value() as u64;
+    session.control_transaction("COMMIT").unwrap();
+    rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
+    for mode in ["OPTIMISTIC", "PESSIMISTIC"] {
+        session
+            .control_transaction(&format!("BEGIN {mode}"))
+            .unwrap();
+        rows(&mut session, "UPDATE t SET v=30 WHERE id=1");
+        rows(&mut session, "INSERT INTO t VALUES (2,40,8)");
+        let ordinary_ts = session.session.current_tso().value();
+        rows(&mut session, &format!("SET tidb_snapshot={historical_ts}"));
+        assert_eq!(
+            displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+            vec![vec!["1", "10"]]
+        );
+        assert_eq!(
+            displayed(rows(&mut session, "SELECT v FROM t WHERE id=1")),
+            vec![vec!["10"]]
+        );
+        rows(
+            &mut session,
+            "PREPARE snapshot_query FROM 'SELECT * FROM t ORDER BY id'",
+        );
+        assert_eq!(
+            displayed(rows(&mut session, "EXECUTE snapshot_query")),
+            vec![vec!["1", "10"]]
+        );
+        rows(&mut session, "DEALLOCATE PREPARE snapshot_query");
+        assert!(session.execute("SELECT extra FROM t").is_err());
+        assert!(session.execute_write("UPDATE t SET v=99").is_err());
+        assert!(session.session.in_transaction());
+        assert_eq!(session.session.current_tso().value(), ordinary_ts);
+        assert!(
+            !tidb_txnkv::ACTIVE_START_TS
+                .snapshot()
+                .contains(&historical_ts)
+        );
+        rows(&mut session, "SET tidb_snapshot=''");
+        assert_eq!(
+            displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+            vec![vec!["1", "30", "7"], vec!["2", "40", "8"]]
+        );
+        session.control_transaction("ROLLBACK").unwrap();
+        assert_eq!(
+            displayed(rows(&mut session, "SELECT * FROM t")),
+            vec![vec!["1", "10", "7"]]
+        );
+    }
+}

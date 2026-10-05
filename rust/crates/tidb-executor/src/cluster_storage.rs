@@ -949,6 +949,16 @@ impl ClusterTableStorage {
         }
     }
 
+    /// Go GetSnapshotWithStmtReadTS uses a storage snapshot, without the active
+    /// transaction's UnionStore. Keep snapshot/scanner ownership and isolate writes.
+    #[must_use]
+    pub fn snapshot_only(&self) -> Self {
+        Self {
+            buffer: MutationBuffer::new(),
+            ..self.clone()
+        }
+    }
+
     /// Gives this session's tables a coprocessor to serve base-table scans
     /// with, so a predicate is evaluated at the region instead of after the
     /// range's bytes have crossed the network.

@@ -1839,6 +1839,33 @@ impl Session {
         Some(output).transpose()
     }
 
+    fn run_snapshot_statement_in_transaction(
+        &mut self,
+        ts: u64,
+        statement: Stmt,
+    ) -> Result<PendingExecution, DriverError> {
+        let provider = self.historical_read_provider.as_ref().ok_or_else(|| {
+            DriverError::unsupported("snapshot reads require the historical storage provider")
+        })?;
+        let schema = self
+            .snapshot_schema
+            .as_ref()
+            .filter(|(selected, _)| *selected == ts)
+            .map(|(_, catalog)| catalog);
+        let read = provider(ts, self.current_resource_group(), schema)?;
+        self.statement_snapshot = Some((ts, read));
+        match self.execute_parsed_statement_inner("", statement, None, None, None) {
+            Ok(PendingExecution::Query(mut query)) => {
+                query.transaction_end = QueryTransactionEnd::SnapshotRead;
+                Ok(PendingExecution::Query(query))
+            }
+            outcome => {
+                self.statement_snapshot = None;
+                outcome
+            }
+        }
+    }
+
     /// Executes one already-stripped statement against the snapshot at `ts`,
     /// through the same transaction overlay every in-transaction statement
     /// uses -- so the read path is the ordinary one, only the catalog is
@@ -2024,11 +2051,9 @@ impl Session {
             && self.historical_read_ts() != Some(self.vars.snapshot_ts())
             && matches!(&stmt, Stmt::Query(_))
         {
-            // SnapshotTS overrides an ordinary transaction's reads in Go. Until
-            // that provider transition is composed, never return current rows.
-            return Err(DriverError::unsupported(
-                "snapshot reads inside an existing transaction are unavailable",
-            ));
+            // Go baseTxnContextProvider changes the statement's schema/read TS,
+            // not the active transaction or its write buffer.
+            return self.run_snapshot_statement_in_transaction(self.vars.snapshot_ts(), stmt);
         }
         self.record_mdl_related_tables(&stmt, &scan.names);
         // A statement whose table references carry `AS OF TIMESTAMP` runs

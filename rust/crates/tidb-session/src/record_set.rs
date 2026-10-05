@@ -65,6 +65,7 @@ pub(crate) enum QueryTransactionEnd {
     None,
     AutocommitRead,
     StaleRead,
+    SnapshotRead,
 }
 
 impl QueryTransactionEnd {
@@ -76,6 +77,7 @@ impl QueryTransactionEnd {
             }
             // A one-statement stale transaction must end even after Next/Close fails.
             Self::StaleRead => session.discard_stale_statement_transaction(),
+            Self::SnapshotRead => session.statement_snapshot = None,
             _ => {}
         }
         Ok(())

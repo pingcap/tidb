@@ -663,3 +663,89 @@ fn snapshot_selection_retains_schema_and_rolls_back_effective_ts_on_failure() {
         "numeric zero clears planner historical-read policy"
     );
 }
+
+/// Go isolation snapshot tests: a statement snapshot never replaces the active txn.
+#[test]
+fn snapshot_provider_batch_preserves_transaction_writes_and_timestamp() {
+    for mode in ["OPTIMISTIC", "PESSIMISTIC"] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE sp_batch (id INT PRIMARY KEY, v INT)")
+            .unwrap();
+        session.run("INSERT INTO sp_batch VALUES (1,10)").unwrap();
+        let historical = session.shared_catalog().lock().unwrap().clone();
+        session.set_snapshot_schema_provider(Arc::new(move |_, _, _| Ok(historical.clone())));
+        session.set_historical_read_provider(Arc::new(|ts, _, schema| {
+            Ok(HistoricalRead {
+                catalog: schema.unwrap().clone(),
+                timestamp_hold: Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts)),
+            })
+        }));
+        session.run(&format!("BEGIN {mode}")).unwrap();
+        session.run("UPDATE sp_batch SET v=20 WHERE id=1").unwrap();
+        let ordinary_ts = session.current_tso().value();
+        session.run("SAVEPOINT before_snapshot").unwrap();
+        session.run("SET tidb_snapshot=100").unwrap();
+        assert_eq!(
+            session.run("SELECT v FROM sp_batch").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(10)]])
+        );
+        assert!(session.in_transaction());
+        assert_eq!(session.current_tso().value(), ordinary_ts);
+        assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&100));
+        assert!(session.run("SELECT missing FROM sp_batch").is_err());
+        assert!(session.in_transaction());
+        session.run("SET tidb_snapshot=''").unwrap();
+        assert_eq!(
+            session.run("SELECT v FROM sp_batch").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(20)]])
+        );
+        session
+            .run("ROLLBACK TO SAVEPOINT before_snapshot")
+            .unwrap();
+        session.run("COMMIT").unwrap();
+        assert_eq!(
+            session.run("SELECT v FROM sp_batch").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(20)]])
+        );
+    }
+}
+
+#[test]
+fn snapshot_provider_batch_result_close_preserves_outer_transaction_and_cursor_pin() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE sp_close (v INT)").unwrap();
+    session
+        .run("INSERT INTO sp_close VALUES (10),(11)")
+        .unwrap();
+    let historical = session.shared_catalog().lock().unwrap().clone();
+    session.set_snapshot_schema_provider(Arc::new(move |_, _, _| Ok(historical.clone())));
+    session.set_historical_read_provider(Arc::new(|ts, _, schema| {
+        Ok(HistoricalRead {
+            catalog: schema.unwrap().clone(),
+            timestamp_hold: Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts)),
+        })
+    }));
+    session.run("BEGIN").unwrap();
+    session.run("SET tidb_snapshot=987654321").unwrap();
+    let sql = "SELECT * FROM sp_close";
+    let statement = session.parse_statement(sql).unwrap();
+    let OpenedStatement::Rows(mut result) = session.open_record_set_parsed(statement, sql).unwrap()
+    else {
+        panic!("query")
+    };
+    assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&987654321));
+    let mut authority = session.result_materialization_authority();
+    let cursor_pin = authority.take_start_ts_guard();
+    result.close(&mut session).unwrap();
+    result.close(&mut session).unwrap();
+    assert!(session.in_transaction());
+    assert!(
+        tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&987654321),
+        "cursor outlives the statement"
+    );
+    drop(cursor_pin);
+    assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&987654321));
+    session.run("SET tidb_snapshot=''").unwrap();
+    session.run("ROLLBACK").unwrap();
+}

@@ -85,7 +85,7 @@
 //! `LoadPrivilegeLoop` watches that key, not this one -- so driving the
 //! privilege reloader from the schema-version key would be a guess.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -100,15 +100,21 @@ use crate::cluster_catalog::ClusterCatalog;
 pub struct SharedCatalog {
     published: RwLock<Arc<ClusterCatalog>>,
     historical: Mutex<std::collections::BTreeMap<i64, Arc<ClusterCatalog>>>,
+    capacity: AtomicUsize,
 }
 
 impl SharedCatalog {
     /// Publishes an initial catalog, normally the node's startup full load.
     #[must_use]
     pub fn new(catalog: ClusterCatalog) -> Self {
+        let catalog = Arc::new(catalog);
         Self {
-            published: RwLock::new(Arc::new(catalog)),
-            historical: Mutex::default(),
+            published: RwLock::new(Arc::clone(&catalog)),
+            historical: Mutex::new(std::collections::BTreeMap::from([(
+                catalog.schema_version,
+                catalog,
+            )])),
+            capacity: AtomicUsize::new(16),
         }
     }
 
@@ -135,13 +141,14 @@ impl SharedCatalog {
                 .historical
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.capacity.store(capacity, Ordering::Relaxed);
             let latest = self.load();
             versions.insert(latest.schema_version, latest);
-            let found = versions.get(&version).cloned();
+            // Go ReSize retains the newest entries before GetByVersion.
             while versions.len() > capacity {
                 versions.pop_first();
             }
-            found
+            versions.get(&version).cloned()
         };
         if let Some(found) = found {
             return Ok(found);
@@ -157,7 +164,8 @@ impl SharedCatalog {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let found = versions.entry(version).or_insert(loaded).clone();
-        while versions.len() > capacity {
+        // A concurrent request may have resized while storage was loading.
+        while versions.len() > self.capacity.load(Ordering::Relaxed) {
             versions.pop_first();
         }
         Ok(found)
@@ -165,11 +173,22 @@ impl SharedCatalog {
 
     /// Replaces the published catalog atomically.
     pub fn store(&self, catalog: ClusterCatalog) {
+        // Publication and retained-version admission share the same lock order
+        // as historical lookup. Every published schema enters the cache.
+        let catalog = Arc::new(catalog);
+        let mut versions = self
+            .historical
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        versions.insert(catalog.schema_version, Arc::clone(&catalog));
+        while versions.len() > self.capacity.load(Ordering::Relaxed) {
+            versions.pop_first();
+        }
         let mut guard = match self.published.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        *guard = Arc::new(catalog);
+        *guard = catalog;
     }
 }
 
@@ -473,6 +492,86 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn snapshot_provider_batch_publications_retain_previous_versions() {
+        struct NoScan;
+        impl crate::cluster_catalog::MetaSnapshot for NoScan {
+            fn get(
+                &mut self,
+                key: &[u8],
+            ) -> Result<Option<Vec<u8>>, crate::cluster_catalog::ClusterCatalogError> {
+                Ok(Some(if key == tidb_meta::key::schema_version_kv_key() {
+                    b"7".to_vec()
+                } else {
+                    b"{}".to_vec()
+                }))
+            }
+            fn scan_prefix(
+                &mut self,
+                _: &[u8],
+            ) -> Result<
+                crate::cluster_catalog::MetaPairs,
+                crate::cluster_catalog::ClusterCatalogError,
+            > {
+                panic!("a published retained version must not be full-loaded again")
+            }
+        }
+        let shared = SharedCatalog::new(catalog_at(7));
+        shared.store(catalog_at(8));
+        assert_eq!(
+            shared
+                .historical_at(&mut NoScan, 16)
+                .unwrap()
+                .schema_version,
+            7
+        );
+        assert_eq!(shared.load().schema_version, 8);
+    }
+
+    #[test]
+    fn snapshot_provider_batch_resize_precedes_lookup() {
+        struct Snapshot {
+            version: i64,
+            scans: usize,
+        }
+        impl crate::cluster_catalog::MetaSnapshot for Snapshot {
+            fn get(
+                &mut self,
+                key: &[u8],
+            ) -> Result<Option<Vec<u8>>, crate::cluster_catalog::ClusterCatalogError> {
+                Ok(Some(if key == tidb_meta::key::schema_version_kv_key() {
+                    self.version.to_string().into_bytes()
+                } else {
+                    b"{}".to_vec()
+                }))
+            }
+            fn scan_prefix(
+                &mut self,
+                _: &[u8],
+            ) -> Result<
+                crate::cluster_catalog::MetaPairs,
+                crate::cluster_catalog::ClusterCatalogError,
+            > {
+                self.scans += 1;
+                Ok(Vec::new())
+            }
+        }
+        let shared = SharedCatalog::new(catalog_at(10));
+        let mut snapshot = Snapshot {
+            version: 7,
+            scans: 0,
+        };
+        shared.historical_at(&mut snapshot, 4).unwrap();
+        snapshot.version = 8;
+        shared.historical_at(&mut snapshot, 4).unwrap();
+        snapshot.version = 9;
+        shared.historical_at(&mut snapshot, 4).unwrap();
+        snapshot.version = 7;
+        snapshot.scans = 0;
+        shared.historical_at(&mut snapshot, 2).unwrap();
+        assert!(snapshot.scans > 0, "Go ReSize evicts before GetByVersion");
+    }
 
     #[test]
     fn historical_read_batch_version_cache_preserves_latest_and_live_capacity() {

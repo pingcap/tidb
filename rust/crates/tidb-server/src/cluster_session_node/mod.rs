@@ -3293,7 +3293,7 @@ impl ClusterSessionFactory {
         {
             let transactions = Arc::clone(&self.transactions);
             let historical_catalog = Arc::clone(&self.catalog);
-            let historical_storage = storage.clone();
+            let historical_storage = storage.snapshot_only();
             let historical_slot = Arc::clone(&slot);
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
@@ -3342,7 +3342,7 @@ impl ClusterSessionFactory {
         {
             let transactions = Arc::clone(&self.transactions);
             let catalogs = Arc::clone(&self.catalog);
-            let connection_storage = storage.clone();
+            let connection_storage = storage.snapshot_only();
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {

@@ -2596,3 +2596,9 @@ Snapshot selection continuation: [plan](snapshot-validation-batch-execplan.md) a
 Comment-only harness cleanup continues the existing [test-build cleanup plan](test-build-cleanup-execplan.md). The [receipt](parity/current-audit/comment-test-cleanup-validation.json) retains exact retired identities and recovery coordinates; no behavioral root or complete package is accepted by this removal.
 
 The [aggregate-model cleanup](parity/current-audit/aggregate-leaf-cleanup-validation.json) removes unused JSON/percentile models after tracing their only test callers and moving distinctive vectors to the live HashAgg owners. Package and root acceptance remain unchanged.
+
+The shared snapshot continuation maintains S04, I04 and O09 together through
+statement-only storage/catalog overrides, cursor timestamp retention and bounded
+publication caching. See [the current plan](schema-snapshot-batch-execplan.md)
+and [validation](parity/current-audit/schema-snapshot-batch-validation.json).
+These are existing-owner repairs; complete package and lazy V2/GC obligations remain open.

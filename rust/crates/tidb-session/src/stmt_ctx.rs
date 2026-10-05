@@ -326,7 +326,7 @@ impl Session {
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
         if let Some(authority) = self.statement_result_authority.borrow().as_ref() {
-            return authority.clone().with_current_tso(self.current_tso());
+            return authority.clone().with_current_tso(self.result_read_tso());
         }
         let snapshot = self.statement_var_snapshot();
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
@@ -338,7 +338,17 @@ impl Session {
         );
         self.statement_result_authority
             .replace(Some(authority.clone()));
-        authority.with_current_tso(self.current_tso())
+        authority.with_current_tso(self.result_read_tso())
+    }
+
+    fn result_read_tso(&self) -> tidb_executor::CurrentTso {
+        if let Some((ts, _)) = &self.statement_snapshot {
+            let read = tidb_executor::CurrentTso::default();
+            read.publish(*ts);
+            read
+        } else {
+            self.current_tso()
+        }
     }
 
     fn build_statement_result_authority(
@@ -1188,7 +1198,11 @@ impl Session {
             breakpoint_notify_func: self.breakpoint_notify_func(),
             last_insert_id: Arc::clone(&self.published_last_insert_id),
             current_tso: self.current_tso(),
-            staged_writes: std::sync::Arc::clone(&self.staged_writes),
+            staged_writes: if self.statement_snapshot.is_some() {
+                std::sync::Arc::default()
+            } else {
+                std::sync::Arc::clone(&self.staged_writes)
+            },
             retry_auto_ids: Arc::clone(&self.retry_auto_ids),
             row_id_shards: Arc::clone(&self.row_id_shards),
             planned_apply: Arc::clone(&self.planned_apply),
