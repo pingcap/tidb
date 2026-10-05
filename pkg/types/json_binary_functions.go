@@ -22,6 +22,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strconv"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -1414,4 +1415,72 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 		}
 	}
 	return nil
+}
+
+// FlattenPathValues flattens bj into one "<path>=<value>" entry per scalar leaf,
+// for example `$.cells.c1.state="error"` and `$.cells.c1.errorCode=7`.
+//
+// The value is JSON-encoded so that the string "7" and the number 7 produce
+// different entries. Array positions are dropped, so an element is reported
+// under the path of its enclosing array; together with that, the entries of a
+// candidate document are a subset of the entries of any document that
+// JSON_CONTAINS it. Integral floats are written as integers so that 7 and 7.0
+// share an entry, as they compare equal. Empty objects and arrays produce no
+// entries. Duplicate entries are removed, and order follows the document.
+func (bj BinaryJSON) FlattenPathValues() ([]string, error) {
+	var (
+		entries []string
+		seen    = make(map[string]struct{})
+		path    = make([]byte, 0, 64)
+		entry   []byte
+	)
+	path = append(path, '$')
+	var walk func(path []byte, bj BinaryJSON) error
+	walk = func(path []byte, bj BinaryJSON) error {
+		switch bj.TypeCode {
+		case JSONTypeCodeObject:
+			for i := range bj.GetElemCount() {
+				childPath := append(path, '.')
+				childPath = append(childPath, quoteJSONString(string(bj.objectGetKey(i)))...)
+				if err := walk(childPath, bj.objectGetVal(i)); err != nil {
+					return err
+				}
+			}
+			return nil
+		case JSONTypeCodeArray:
+			for i := range bj.GetElemCount() {
+				if err := walk(path, bj.ArrayGetElem(i)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		entry = append(entry[:0], path...)
+		entry = append(entry, '=')
+		var err error
+		if entry, err = bj.appendFlattenValue(entry); err != nil {
+			return err
+		}
+		if _, ok := seen[string(entry)]; !ok {
+			s := string(entry)
+			seen[s] = struct{}{}
+			entries = append(entries, s)
+		}
+		return nil
+	}
+	if err := walk(path, bj); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// appendFlattenValue appends the JSON encoding of a scalar for FlattenPathValues.
+func (bj BinaryJSON) appendFlattenValue(buf []byte) ([]byte, error) {
+	if bj.TypeCode == JSONTypeCodeFloat64 {
+		f := bj.GetFloat64()
+		if f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 {
+			return strconv.AppendInt(buf, int64(f), 10), nil
+		}
+	}
+	return bj.marshalTo(buf)
 }

@@ -887,6 +887,34 @@ func TestJSONKeys(t *testing.T) {
 	}
 }
 
+func TestTiDBJSONFlatten(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBJSONFlatten]
+	tbl := []struct {
+		input    any
+		expected any
+	}{
+		{nil, nil},
+		{`{}`, `[]`},
+		{`{"cells": {"ccf_1": {"state": "error", "errorCode": [1, 7]}}}`,
+			`["$.cells.ccf_1.errorCode=1", "$.cells.ccf_1.errorCode=7", "$.cells.ccf_1.state=\"error\""]`},
+		{`{"a": "7", "b": 7}`, `["$.a=\"7\"", "$.b=7"]`},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		if tt.expected == nil {
+			require.True(t, d.IsNull())
+			continue
+		}
+		expected, err := types.ParseBinaryJSONFromString(tt.expected.(string))
+		require.NoError(t, err)
+		require.Equal(t, 0, types.CompareBinaryJSON(expected, d.GetMysqlJSON()), "input %v got %s", tt.input, d.GetMysqlJSON())
+	}
+}
 func TestJSONDepth(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONDepth]

@@ -159,3 +159,75 @@ func TestBinaryCompare(t *testing.T) {
 		require.Equal(t, test.result, CompareBinaryJSON(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
 	}
 }
+
+func TestFlattenPathValues(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected []string
+	}{
+		{`{"cells": {"ccf_1": {"state": "error", "errorCode": [1, 7]}, "ccf_2": {"state": "results"}}}`,
+			[]string{`$.cells.ccf_1.errorCode=1`, `$.cells.ccf_1.errorCode=7`, `$.cells.ccf_1.state="error"`, `$.cells.ccf_2.state="results"`}},
+		// The string "7" and the number 7 are different entries; 7.0 shares an entry with 7.
+		{`{"a": "7", "b": 7, "c": 7.0, "d": 7.5}`, []string{`$.a="7"`, `$.b=7`, `$.c=7`, `$.d=7.5`}},
+		{`{"t": true, "f": false, "n": null}`, []string{`$.f=false`, `$.n=null`, `$.t=true`}},
+		// Keys that are not identifiers are quoted, as in JSON path syntax.
+		{`{"a.b": 1, "x y": 2, "*": 3, "q\"": 4}`, []string{`$."*"=3`, `$."a.b"=1`, `$."q\""=4`, `$."x y"=2`}},
+		// Array positions are dropped, nested arrays are flattened, and duplicates are removed.
+		{`{"a": [[1, 2], [2, {"b": 3}]]}`, []string{`$.a=1`, `$.a=2`, `$.a.b=3`}},
+		// Empty objects and arrays produce no entries.
+		{`{"a": {}, "b": [], "c": 1}`, []string{`$.c=1`}},
+		{`{}`, nil},
+		{`[]`, nil},
+		// A scalar document produces a single root entry.
+		{`"x"`, []string{`$="x"`}},
+		{`[1, "1"]`, []string{`$=1`, `$="1"`}},
+	}
+	for _, tc := range testCases {
+		bj, err := ParseBinaryJSONFromString(tc.input)
+		require.NoError(t, err)
+		entries, err := bj.FlattenPathValues()
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, entries, tc.input)
+	}
+}
+
+// TestFlattenPathValuesContainment checks the property the path-value index relies on:
+// if JSON_CONTAINS(doc, candidate), every entry of candidate is also an entry of doc.
+func TestFlattenPathValuesContainment(t *testing.T) {
+	doc := `{"cells": {"ccf_1": {"state": "error", "errorCode": [1, 7], "tags": [{"k": "a"}, {"k": "b"}]}, "ccf_2": {"state": "results", "v": 7.0}}}`
+	candidates := []string{
+		`{"cells": {"ccf_1": {"state": "error"}}}`,
+		`{"cells": {"ccf_1": {"errorCode": [7]}}}`,
+		`{"cells": {"ccf_1": {"errorCode": 7}}}`,
+		`{"cells": {"ccf_1": {"tags": [{"k": "b"}]}}}`,
+		`{"cells": {"ccf_1": {"tags": {"k": "a"}}}}`,
+		`{"cells": {"ccf_2": {"v": 7}}}`,
+		`{"cells": {"ccf_1": {"state": "error"}, "ccf_2": {"state": "results"}}}`,
+		`{"cells": {"ccf_1": {"state": "results"}}}`,
+		`{"cells": {"ccf_3": {"state": "error"}}}`,
+		`{"cells": {"ccf_1": {"errorCode": ["7"]}}}`,
+	}
+	docJSON, err := ParseBinaryJSONFromString(doc)
+	require.NoError(t, err)
+	docEntries, err := docJSON.FlattenPathValues()
+	require.NoError(t, err)
+	docSet := make(map[string]struct{}, len(docEntries))
+	for _, e := range docEntries {
+		docSet[e] = struct{}{}
+	}
+	containedCount := 0
+	for _, c := range candidates {
+		candJSON, err := ParseBinaryJSONFromString(c)
+		require.NoError(t, err)
+		if !ContainsBinaryJSON(docJSON, candJSON) {
+			continue
+		}
+		containedCount++
+		candEntries, err := candJSON.FlattenPathValues()
+		require.NoError(t, err)
+		for _, e := range candEntries {
+			require.Contains(t, docSet, e, "candidate %s", c)
+		}
+	}
+	require.Equal(t, 7, containedCount)
+}

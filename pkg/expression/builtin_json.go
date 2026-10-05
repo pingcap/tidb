@@ -64,6 +64,7 @@ var (
 	_ functionClass = &jsonStorageSizeFunctionClass{}
 	_ functionClass = &jsonDepthFunctionClass{}
 	_ functionClass = &jsonKeysFunctionClass{}
+	_ functionClass = &tidbJSONFlattenFunctionClass{}
 	_ functionClass = &jsonLengthFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
@@ -89,6 +90,7 @@ var (
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
+	_ builtinFunc = &builtinTiDBJSONFlattenSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
 	_ builtinFunc = &builtinJSONValidJSONSig{}
 	_ builtinFunc = &builtinJSONValidStringSig{}
@@ -1935,6 +1937,65 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 
 	return res.GetKeys(), false, nil
+}
+
+type tidbJSONFlattenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbJSONFlattenFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
+}
+
+func (c *tidbJSONFlattenFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	// Evaluated in TiDB only: no pb code, so it is never pushed down.
+	sig := &builtinTiDBJSONFlattenSig{bf}
+	return sig, nil
+}
+
+// builtinTiDBJSONFlattenSig implements TIDB_JSON_FLATTEN(json_doc), which returns a JSON
+// array of "<path>=<value>" strings, one per scalar leaf. See BinaryJSON.FlattenPathValues.
+type builtinTiDBJSONFlattenSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinTiDBJSONFlattenSig) Clone() builtinFunc {
+	newSig := &builtinTiDBJSONFlattenSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBJSONFlattenSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	doc, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	entries, err := doc.FlattenPathValues()
+	if err != nil {
+		return res, true, err
+	}
+	elems := make([]any, 0, len(entries))
+	for _, e := range entries {
+		elems = append(elems, e)
+	}
+	res, err = types.CreateBinaryJSONWithCheck(elems)
+	if err != nil {
+		return res, true, err
+	}
+	return res, false, nil
 }
 
 type jsonLengthFunctionClass struct {

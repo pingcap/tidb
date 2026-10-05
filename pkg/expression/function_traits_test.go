@@ -254,6 +254,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"tidb_encode_index_key",
 		"tidb_encode_record_key",
 		"tidb_encode_sql_digest",
+		"tidb_json_flatten",
 		"tidb_mvcc_info",
 		"tidb_parse_tso",
 		"tidb_parse_tso_logical",
