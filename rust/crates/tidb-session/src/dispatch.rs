@@ -1717,10 +1717,10 @@ impl Session {
     /// schema version` at first use, and the metadata-lock gate blocks a DDL
     /// job while some live map holds one of its tables below the job's
     /// version (`RemoveLockDDLJobs`). Go records at planner resolution; this
-    /// port records at the same statement funnel from the parsed names,
-    /// which is why a name that resolves to no stored table (a view -- Go
-    /// would record its BASE tables) reports `record_unresolved` and the
-    /// gate falls back to blocking conservatively.
+    /// port records at the same statement funnel from the parsed names and
+    /// expands views to their concrete base-table IDs. A name that resolves
+    /// to no stored table reports `record_unresolved` and the gate falls back
+    /// to blocking conservatively.
     ///
     /// Go's exemption is kept verbatim: a READ-ONLY statement under
     /// autocommit records nothing (`IsAutoCommitTxn && IsReadOnly` returns
