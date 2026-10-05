@@ -775,16 +775,6 @@ mod tests {
             .sum()
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_constructor_return_values_can_be_ignored() {
-        StateInfo::new(STATE_NORMAL_RUNNING);
-        MemSyncer::new();
-        let client =
-            Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
-        EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
-    }
-
     #[test]
     fn state_info_uses_go_json() {
         let state = StateInfo::new(STATE_UPGRADING);

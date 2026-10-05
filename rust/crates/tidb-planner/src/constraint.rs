@@ -297,11 +297,4 @@ mod tests {
         );
         assert_eq!(result.len(), 3);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        delete_true_exprs(true, &tidb_expr::NoColumns, vec![]);
-        delete_true_exprs_by_schema(&Schema::new(vec![]), vec![]);
-    }
 }

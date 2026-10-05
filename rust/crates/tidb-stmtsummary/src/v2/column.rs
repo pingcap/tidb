@@ -837,11 +837,4 @@ mod tests {
         assert_eq!(row.get_int64(5), nanos(Duration::from_micros(2500)));
         assert_eq!(row.get_int64(6), nanos(Duration::from_millis(5)));
     }
-
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v2_alignment_column_returns_can_be_ignored() {
-        make_column_factories(&[]);
-        let _ = column_factory("");
-    }
 }

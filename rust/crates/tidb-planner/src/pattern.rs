@@ -239,25 +239,3 @@ pub fn build_pattern(
         children: children.into_iter().collect(),
     }
 }
-
-#[cfg(test)]
-mod return_contract_tests {
-    use super::{build_pattern, get_operand, new_pattern, LogicalOperatorKind, Operand};
-    use crate::pattern_engine::{EngineType, EngineTypeSet};
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        EngineType::TiDb.as_str();
-        EngineTypeSet::ALL.contains(EngineType::TiDb);
-        Operand::Any.as_str();
-        Operand::Any.matches(Operand::Join);
-        get_operand(LogicalOperatorKind::Join);
-
-        let pattern = new_pattern(Operand::Any, EngineTypeSet::ALL);
-        pattern.matches(Operand::Join, EngineType::TiDb);
-        pattern.matches_operand_any(EngineType::TiDb);
-        new_pattern(Operand::Join, EngineTypeSet::ALL);
-        build_pattern(Operand::Join, EngineTypeSet::ALL, []);
-    }
-}

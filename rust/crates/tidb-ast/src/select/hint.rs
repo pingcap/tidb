@@ -718,18 +718,3 @@ impl crate::Visitable for LeadingElement {
     }
 }
 // END GENERATED AST VISITOR IMPLEMENTATIONS
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn restore_return_may_be_ignored_like_go() {
-        let hint = Hint {
-            name: "STRAIGHT_JOIN".to_owned(),
-            kind: HintKind::Nullary { qb_name: None },
-        };
-        hint.restore();
-    }
-}

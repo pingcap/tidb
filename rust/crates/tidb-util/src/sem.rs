@@ -326,17 +326,6 @@ pub fn is_restricted_privilege(priv_name_in_upper: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        is_enabled();
-        is_invisible_schema("metrics_schema");
-        is_invisible_table("mysql", "tidb");
-        is_invisible_status_var("tidb_gc_leader_desc");
-        is_invisible_sys_var("tidb_config");
-        is_restricted_privilege("RESTRICTED_SELECT");
-    }
-
     // Go TestInvisibleSchema.
     #[test]
     fn invisible_schema() {

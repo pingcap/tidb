@@ -530,14 +530,6 @@ mod tests {
     }
 
     #[test]
-    #[deny(unused_must_use)]
-    fn go_notifier_constructor_may_be_ignored_like_go() {
-        let pool: Arc<dyn SessionPool> = Arc::new(MockPool);
-        let store: Arc<dyn Store> = Arc::new(MockStore::default());
-        DdlNotifier::new(pool, store, Duration::from_millis(1));
-    }
-
-    #[test]
     fn retries_in_order_and_cleans_up_after_every_handler() {
         let pool: Arc<dyn SessionPool> = Arc::new(MockPool);
         let store = Arc::new(MockStore::default());

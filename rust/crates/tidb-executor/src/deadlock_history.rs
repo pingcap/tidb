@@ -501,24 +501,4 @@ mod tests {
         history.push(record(time));
         assert_eq!(history.get_all()[0].id, 5);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn deadlock_history_returns_may_be_ignored_like_go() {
-        let detail = DeadlockDetail {
-            lock_ts: 0,
-            lock_key: Vec::new(),
-            deadlock_key_hash: 0,
-            deadlock_key: Vec::new(),
-            is_retryable: false,
-            wait_chain: Vec::new(),
-        };
-        err_deadlock_to_deadlock_record(&detail);
-
-        let record = record(timestamp(2021, 5, 14, 15, 28, 30, 123_456));
-        record.to_datum(0, super::COL_DEADLOCK_ID);
-        DeadlockHistory::new(1);
-        let history = DeadlockHistory::new(1);
-        history.get_all();
-    }
 }

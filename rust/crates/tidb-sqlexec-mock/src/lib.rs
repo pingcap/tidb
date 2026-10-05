@@ -256,14 +256,6 @@ mod tests {
         mock.verify();
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn generated_constructor_and_expect_result_may_be_ignored_like_go() {
-        MockRestrictedSqlExecutor::new();
-        let mock = MockRestrictedSqlExecutor::new();
-        mock.expect();
-    }
-
     #[test]
     #[should_panic(expected = "missing 1 restricted SQL executor call")]
     fn an_unconsumed_expectation_is_rejected() {

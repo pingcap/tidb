@@ -350,14 +350,4 @@ mod tests {
             .set_into_pb(&mut operator);
         assert_eq!(operator.access_objects, old);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        ScanAccessObject::default().normalized_string();
-        IndexAccess::default().to_pb();
-        OtherAccessObject::default().normalized_string();
-        DynamicPartitionAccessObjects::default().normalized_string();
-        AccessObject::Other(OtherAccessObject::default()).normalized_string();
-    }
 }

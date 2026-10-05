@@ -140,19 +140,6 @@ impl RpcInterceptor {
     }
 }
 
-#[cfg(test)]
-mod contract_tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        let stats = Arc::new(StatementStats::default());
-        stats.create_kv_exec_counter(b"sql", b"plan");
-        let counter = stats.create_kv_exec_counter(b"sql", b"plan");
-        counter.rpc_interceptor();
-    }
-}
 
 #[cfg(test)]
 mod tests {

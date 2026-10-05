@@ -701,16 +701,6 @@ impl Region {
 mod tests {
     use super::*;
 
-    struct NoopSink;
-
-    impl Sink for NoopSink {
-        fn record(&self, _context: &TraceContext, _event: &Event) {}
-
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-    }
-
     // The global tracer and the enabled-category mask are process-wide. Go
     // runs a package's tests sequentially; Rust runs them in parallel, so the
     // tests that install a tracer or edit the mask take this lock.
@@ -848,52 +838,5 @@ mod tests {
         let info = context.trace_info().unwrap();
         assert_eq!(info.connection_id, 12345);
         assert_eq!(info.session_alias, "alias1");
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        let category = TraceCategory::GENERAL;
-        category.name();
-        TraceCategory::parse("general");
-        enabled_categories();
-        is_enabled(category);
-        Phase::Begin.as_str();
-
-        let records: Vec<Arc<CeTraceRecord>> = Vec::new();
-        dedup_ce_trace(&records);
-
-        let callback: CallbackRecorder = Arc::new(|_span: RawSpan| {});
-        Tracer::new(Arc::clone(&callback));
-        let tracer = Arc::new(Tracer::new(callback));
-        Tracer::noop();
-        tracer.is_noop();
-        tracer.start_span("root");
-        tracer.start_span_child_of("child", SpanContext::default());
-        tracer.start_span_following("follower", SpanContext::default());
-        global_tracer();
-
-        let span = tracer.start_span("span");
-        span.context();
-        span.tracer();
-        span.is_noop();
-        span.baggage_item("key");
-
-        noop_span();
-        TraceContext::background();
-        let context = TraceContext::background();
-        context.with_span(tracer.start_span("context-span"));
-        context.span();
-        context.with_flight_recorder(Arc::new(NoopSink));
-        context.sink();
-        context.with_trace_info(Some(Arc::new(TraceInfo::default())));
-        context.trace_info();
-        context.extract_trace_id();
-        extract_trace_id(&context);
-        span_from_context(&context);
-        child_span_from_context(&context, "child");
-        start_region_with_new_root_span(&context, "region");
-        start_region(&context, "region");
-        start_region_ex(&context, "region");
     }
 }

@@ -73,14 +73,3 @@ pub fn new_memory_buffer() -> StrBuffer<Vec<u8>> {
 
 /// Returns the source-compatible writer error type for adapter callers.
 pub type BufferError = io::Error;
-
-#[cfg(test)]
-mod return_contract_tests {
-    use super::new_str_buffer;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        new_str_buffer(Vec::<u8>::new());
-    }
-}

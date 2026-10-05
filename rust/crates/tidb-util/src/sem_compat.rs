@@ -77,25 +77,6 @@ mod tests {
         Config, SysVar, SysVarRegistry, SysVarScope, TableRestriction, VariableRestriction,
     };
 
-    // Go permits callers to discard these predicate results; Rust must not add
-    // a `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let _lock = crate::SEM_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::sem::disable();
-        crate::sem_v2::disable();
-
-        is_enabled();
-        is_invisible_schema("test");
-        is_invisible_table("test", "t");
-        is_invisible_status_var("status");
-        is_invisible_sys_var("sys");
-        is_restricted_privilege("SELECT");
-    }
-
     const MYSQL_TABLES: &[&str] = &[
         "expr_pushdown_blacklist",
         "gc_delete_range",

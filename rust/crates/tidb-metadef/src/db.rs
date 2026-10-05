@@ -98,14 +98,4 @@ mod tests {
         assert!(is_system_db("mysql"));
         assert!(!is_system_db("sys"));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn database_predicate_returns_may_be_ignored_like_go() {
-        is_mem_or_sys_db("ordinary");
-        is_mem_db("ordinary");
-        is_system_related_db("ordinary");
-        is_system_db("ordinary");
-        is_br_related_db("ordinary");
-    }
 }

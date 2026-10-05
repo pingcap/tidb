@@ -98,17 +98,4 @@ mod tests {
             assert_eq!(generate_exec_id(&info), expected);
         }
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn disttask_returns_may_be_ignored_like_go() {
-        let info = ServerInfo::default();
-        generate_exec_id(&info);
-        match_server_info(std::slice::from_ref(&info), "");
-        find_server_info(std::slice::from_ref(&info), "");
-
-        let syncer = Syncer::new(ServerInfo::default(), None);
-        generate_subtask_exec_id(&syncer, "missing");
-        generate_subtask_exec_id_for_test(&HashMap::new(), "missing");
-    }
 }

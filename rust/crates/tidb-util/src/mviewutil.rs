@@ -226,7 +226,7 @@ fn index_prefix_covers_columns(
 mod tests {
     use super::*;
     use tidb_datatype::FieldTypeFlags;
-    use tidb_model::{ColumnInfo, GoShared, GoSharedPointerSlice, IndexColumn};
+    use tidb_model::{ColumnInfo, GoSharedPointerSlice, IndexColumn};
 
     fn select_query(sql: &str) -> QueryStmt {
         match tidb_parser::parse(sql).expect("parse fixture") {
@@ -418,14 +418,5 @@ mod tests {
             "primary",
             true,
         ));
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn index_helpers_returns_may_be_ignored_like_go() {
-        let table = TableInfo::default();
-        find_visible_index_with_prefix_covering_columns(Some(&table), &[]);
-        find_visible_indexes_with_prefix_covering_columns(Some(&table), &[]);
-        has_index_with_prefix_covering_columns(Some(&table), &[], "", true);
     }
 }

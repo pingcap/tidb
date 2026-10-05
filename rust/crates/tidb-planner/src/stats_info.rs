@@ -649,7 +649,7 @@ fn source_min(left: f64, right: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistColl, StatsInfo, derive_limit_stats, group_ndvs_to_string};
+    use super::{HistColl, StatsInfo};
     use crate::cardinality::ndv::GroupNdv;
     use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
     use tidb_expr::column::Column;
@@ -722,18 +722,6 @@ mod tests {
         );
         assert!(profile.group_ndv_for_cols(&[nine]).is_none());
         assert!(profile.group_ndv_for_cols(&[]).is_none());
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn stats_info_returns_may_be_ignored_like_go() {
-        let profile = StatsInfo::new(10.0, [(1, 5.0)]);
-        profile.scale_by_expect_cnt(5.0, 1.0);
-        profile.scale(0.5, 1.0);
-        profile.count();
-        profile.group_ndv_for_cols(&[]);
-        group_ndvs_to_string(&[]);
-        derive_limit_stats(&profile, 5.0);
     }
 
     #[test]

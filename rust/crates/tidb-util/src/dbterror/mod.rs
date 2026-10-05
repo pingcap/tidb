@@ -337,11 +337,4 @@ mod tests {
         }
         set_redaction_mode(RedactionMode::Disabled);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn constructors_return_may_be_ignored_like_go() {
-        CLASS_UTIL.new_std(errcode::ErrUnknown);
-        CLASS_UTIL.new_std_err(errcode::ErrUnknown, catalog_message(errcode::ErrUnknown));
-    }
 }

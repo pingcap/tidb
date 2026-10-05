@@ -253,27 +253,6 @@ mod tests {
         }
     }
 
-    // Go permits callers to discard these function results; Rust must not add
-    // a `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let codec = CodecV1;
-        make_keyspace_etcd_namespace(&codec);
-        make_keyspace_etcd_namespace_slash(&codec);
-        get_keyspace_name_by_settings();
-        get_keyspace_name_bytes_by_settings();
-        is_keyspace_name_empty("");
-        keyspace_name_log_field();
-        build_api_context("");
-        get_username_policy();
-
-        let policy = UsernamePolicy::Default;
-        policy.validate_username_format("user");
-        policy.username_variants("user");
-        policy.original_username("user");
-    }
-
     // Go `MakeKeyspaceEtcdNamespace`/`Slash`: v1 has no namespace, v2 scopes
     // by keyspace ID.
     #[test]

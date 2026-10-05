@@ -284,17 +284,6 @@ mod tests {
 
     use super::*;
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_mock_constructor_and_expect_returns_can_be_ignored() {
-        MockSchemaLoader::new();
-        let schema_loader = MockSchemaLoader::new();
-        schema_loader.expect();
-        MockManager::new();
-        let manager = MockManager::new();
-        manager.expect();
-    }
-
     #[test]
     fn schema_loader_and_scheduler_contract() {
         let loader = MockSchemaLoader::new();

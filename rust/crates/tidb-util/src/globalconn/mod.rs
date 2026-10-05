@@ -357,16 +357,6 @@ mod tests {
     use std::sync::atomic::{AtomicI64, AtomicU32, Ordering::SeqCst};
     use std::sync::{Arc, Barrier, Mutex};
 
-    // Go permits callers to ignore these return values; Rust must not add a
-    // `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let gcid = parse_conn_id(0).unwrap().0;
-        gcid.to_conn_id();
-        SimpleAllocator::new();
-    }
-
     // Go `TestToConnID`.
     #[test]
     fn to_conn_id() {

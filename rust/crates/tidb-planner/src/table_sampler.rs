@@ -109,19 +109,4 @@ mod tests {
         assert_eq!(info.partition_ids, [11, 12]);
         assert!(info.memory_usage() >= i64::try_from(std::mem::size_of_val(&info)).unwrap());
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        let schema = Schema::new(vec![]);
-        let node = TableSample {
-            method: Some(SampleMethod::Region),
-            expr: None,
-            unit: None,
-            repeatable: None,
-        };
-        new_table_sample_info(None, &schema, vec![]);
-        let info = new_table_sample_info(Some(&node), &schema, vec![]).unwrap();
-        info.memory_usage();
-    }
 }

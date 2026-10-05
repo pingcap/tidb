@@ -298,21 +298,6 @@ mod tests {
             pseudo_estimation_outdate()
         ));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        pseudo_estimation_not_available();
-        pseudo_estimation_outdate();
-        plan_cache_hit_counter(false);
-        plan_cache_miss_counter(false);
-        non_prep_plan_cache_unsupported_counter();
-        plan_cache_instance_num_counter(false);
-        plan_cache_instance_memory_usage(false);
-        plan_cache_instance_evict();
-        plan_cache_lookup_duration(false);
-        plan_cache_clone_duration();
-    }
 }
 
 /// Go `InitMetricsVars`: binds the child handles at startup so the

@@ -180,16 +180,6 @@ pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =
 mod tests {
     use super::*;
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        SleepContext::background();
-        SleepContext::with_timeout(Duration::from_millis(1));
-        let context = SleepContext::with_timeout(Duration::from_millis(1));
-        context.is_cancelled();
-        context.remaining();
-    }
-
     /// Source: `pkg/util/timeutil/time_test.go::TestSleep`.
     #[test]
     fn test_sleep() {

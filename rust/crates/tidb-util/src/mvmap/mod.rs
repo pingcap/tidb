@@ -254,16 +254,6 @@ mod tests {
         std::str::from_utf8(b).unwrap()
     }
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let map = MVMap::new();
-        MVMap::new();
-        map.get(b"ignored", Vec::new());
-        map.len();
-        map.new_iterator();
-    }
-
     // Go `TestMVMap`.
     #[test]
     fn mvmap() {

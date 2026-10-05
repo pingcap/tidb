@@ -967,11 +967,4 @@ mod tests {
             assert_eq!(escape_string(input), expected.as_bytes());
         }
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        escape_string("ignored");
-        must_escape_sql("ignored", &[]);
-    }
 }

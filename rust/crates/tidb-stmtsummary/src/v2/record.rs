@@ -1702,14 +1702,4 @@ mod tests {
         assert_eq!(record.table_names, "db2.tb2");
         assert_eq!(record.normalized_sql, format_sql(&info.normalized_sql));
     }
-
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v2_alignment_record_returns_can_be_ignored() {
-        generate_stmt_exec_info_4_test("");
-        let info = generate_stmt_exec_info_4_test("");
-        new_stmt_record(&info);
-        format_sql("");
-        max_sql_length();
-    }
 }

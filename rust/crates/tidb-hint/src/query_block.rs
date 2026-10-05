@@ -495,32 +495,3 @@ fn collect_leading_tables<'a>(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_query_block_api_returns_may_be_ignored_like_go() {
-        QBHintHandler::new();
-        let handler = QBHintHandler::new();
-        handler.new_build_state();
-        handler.max_select_stmt_offset();
-        handler.hint_offset(None, 0);
-        let table = HintTable {
-            db_name: None,
-            name: "t".to_owned(),
-            qb_name: None,
-            partitions: Vec::new(),
-        };
-        handler.tables_have_valid_qb_names(&[&table]);
-        let hint = Hint {
-            name: "HINT".to_owned(),
-            kind: HintKind::Nullary { qb_name: None },
-        };
-        handler.is_hint_for_view(&hint);
-        let state = handler.new_build_state();
-        handler.unused_view_hint_warnings(&state);
-    }
-}

@@ -88,14 +88,4 @@ mod tests {
         }
         assert!(observed.iter().filter(|seen| !**seen).count() < 24);
     }
-
-    #[test]
-    #[allow(non_snake_case)]
-    #[deny(unused_must_use)]
-    fn TestReturnValuesMayBeIgnoredLikeGo() {
-        buf(0);
-        uint32_n(0);
-        uint64_n(0);
-        super::uint32();
-    }
 }

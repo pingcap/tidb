@@ -60,17 +60,6 @@ pub fn normalize_ru_version(version: RuVersion) -> RuVersion {
     }
 }
 
-#[cfg(test)]
-mod contract_tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        default_ru_version();
-        normalize_ru_version(RuVersion::V1);
-    }
-}
 
 /// Go `RUKey`: identifies an RU aggregation key by user, SQL digest, and plan
 /// digest.

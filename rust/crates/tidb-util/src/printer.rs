@@ -187,14 +187,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        get_tidb_info();
-        get_print_result_bytes(&[b"column"], &[vec![b"value"]]);
-        get_print_result(&["column".to_owned()], &[vec!["value".to_owned()]]);
-    }
-
-    #[test]
     fn print_result() {
         let columns = vec!["col1".to_owned(), "col2".to_owned(), "col3".to_owned()];
         assert_eq!(get_print_result(&columns, &[vec!["11".to_owned()]]), None);

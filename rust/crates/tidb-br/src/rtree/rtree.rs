@@ -1495,41 +1495,6 @@ mod tests {
         }
     }
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn direct_source_returns_may_be_ignored_like_go() {
-        let key_range = KeyRange::new(b"a", b"b");
-        key_range.contains(b"a");
-        key_range.contains_range(b"a", b"b");
-
-        let left: RangeStats = RangeStats {
-            range: Range::new(b"a", b"b"),
-            size: 0,
-            count: 0,
-        };
-        let right: RangeStats = RangeStats {
-            range: Range::new(b"b", b"c"),
-            size: 0,
-            count: 0,
-        };
-        left.range.bytes_and_keys();
-
-        RangeStatsTree::new();
-        let stats_tree = RangeStatsTree::default();
-        stats_tree.len();
-        needs_merge(&left, &right, 1, 1);
-
-        RangeTree::new();
-        RangeTree::new_with_physical_id(1);
-        let range_tree = RangeTree::default();
-        range_tree.len();
-
-        ProgressRangeTree::new(None, false);
-        let progress_tree = ProgressRangeTree::new(None, false);
-        progress_tree.len();
-        progress_tree.get_checksum_map();
-    }
-
     fn rpc_range(start: &[u8], end: &[u8]) -> kvrpcpb::KeyRange {
         kvrpcpb::KeyRange {
             start_key: start.to_vec(),

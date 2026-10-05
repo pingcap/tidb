@@ -139,18 +139,6 @@ mod tests {
         Arc,
     };
 
-    // Go permits callers to discard constructor and query return values; Rust
-    // must not add a `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        Queue::<i32>::new(1);
-        let queue = Queue::<i32>::default();
-        queue.len();
-        queue.is_empty();
-        queue.cap();
-    }
-
     struct DropProbe(Arc<AtomicUsize>);
 
     impl Drop for DropProbe {

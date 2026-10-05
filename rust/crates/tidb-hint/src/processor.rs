@@ -595,7 +595,6 @@ pub fn restore_optimizer_hints(hints: &[Hint]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StmtHints;
 
     fn read_from_storage(groups: &[(&str, &[&str])]) -> Hint {
         Hint {
@@ -637,36 +636,5 @@ mod tests {
             restore_optimizer_hints(&hints),
             "read_from_storage(tiflash[`t1`]), read_from_storage(tikv[`t2`])"
         );
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_processor_returns_may_be_ignored_like_go() {
-        StmtHints::default().task_map_need_backup();
-
-        let hints = HintsSet::default();
-        hints.stmt_hints();
-        hints.contains_table_hint("use_plan_cache");
-        hints.restore();
-
-        let statement = tidb_parser::parse("select 1").unwrap();
-        collect_hint(&statement);
-        extract_table_hints_from_stmt_node(&statement);
-        contain_table_hint_in_stmt_node(&statement, "use_plan_cache");
-        let index_hint = IndexHint {
-            kind: IndexHintKind::Use,
-            scope: IndexHintScope::All,
-            indexes: vec!["idx".to_owned()],
-        };
-        restore_index_hint(&index_hint);
-        node_type_for_stmt(&statement);
-        check_binding_from_history_complete(&statement, "");
-
-        let hint = Hint {
-            name: "STRAIGHT_JOIN".to_owned(),
-            kind: HintKind::Nullary { qb_name: None },
-        };
-        restore_table_optimizer_hint(&hint);
-        restore_optimizer_hints(&[hint]);
     }
 }

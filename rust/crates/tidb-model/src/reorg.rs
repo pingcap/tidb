@@ -870,20 +870,6 @@ mod tests {
     const TEST_DEFAULTS: DDLReorgProcessDefaults =
         DDLReorgProcessDefaults::new(test_worker_count, test_batch_size);
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_reorg_returns_may_be_ignored_like_go() {
-        DDLReorgMeta::new(0, TimeZoneLocation::default(), "");
-
-        let meta = DDLReorgMeta::default();
-        meta.shallow_copy();
-        meta.get_concurrency(TEST_DEFAULTS);
-        meta.get_batch_size(TEST_DEFAULTS);
-        meta.get_max_write_speed();
-        meta.get_use_new_collate_or_default(false);
-        ReorgType::INGEST.need_merge_process();
-    }
-
     #[test]
     fn backfill_state_strings() {
         assert_eq!(BackfillState::RUNNING.to_string(), "backfill state running");

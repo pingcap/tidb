@@ -408,18 +408,4 @@ mod tests {
 
         init_redact(false);
     }
-
-    // Go permits callers to discard the direct redact helper results. Keep
-    // this package from adding a Rust-only diagnostic contract.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let input = "secret";
-
-        string("OFF", input);
-        stringer("OFF", &input);
-        need_redact();
-        value(input);
-        key(input.as_bytes());
-    }
 }

@@ -229,14 +229,3 @@ impl Hasher for HashEqualer {
         &self.cache
     }
 }
-
-#[cfg(test)]
-mod return_contract_tests {
-    use super::new_hash_equaler;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        new_hash_equaler();
-    }
-}

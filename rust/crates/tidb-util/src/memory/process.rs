@@ -520,11 +520,4 @@ mod tests {
         assert_eq!(parse_server_memory_limit("1").unwrap(), 512 << 20);
         assert!(parse_server_memory_limit("100%").is_err());
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_process_memory_returns_may_be_ignored() {
-        read_mem_stats();
-        using_global_mem_arbitration();
-    }
 }

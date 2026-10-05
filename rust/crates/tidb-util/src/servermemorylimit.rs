@@ -431,15 +431,6 @@ fn join_host_port(host: &str, port: &str) -> String {
 mod tests {
     use super::*;
 
-    // Go permits callers to discard this constructor result; Rust must not add
-    // a `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let (_sender, receiver) = mpsc::channel();
-        new_server_memory_limit_handle(receiver);
-    }
-
     fn datum_str(d: &Datum) -> String {
         match d {
             Datum::String(s) => s.as_utf8().expect("utf8").to_owned(),

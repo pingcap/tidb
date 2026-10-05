@@ -398,12 +398,4 @@ mod tests {
             ]
         );
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn cdc_name_set_returns_may_be_ignored_like_go() {
-        let names = CDCNameSet::default();
-        names.is_empty();
-        names.message_to_user();
-    }
 }

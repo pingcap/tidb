@@ -822,42 +822,6 @@ pub fn find_index_column_by_name(
 mod tests {
     use super::*;
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_index_returns_may_be_ignored_like_go() {
-        indexable_fn_name_to_distance_metric("");
-        indexable_distance_metric_to_fn_name("");
-        get_global_index_v1_supported();
-
-        let table = TableInfo::default();
-        let index = IndexInfo::default();
-        gen_unique_changing_index_name(&table, &index);
-        full_text_parser_sql_name("");
-        get_full_text_parser_type_by_sql_name("");
-        ColumnarIndexType::NA.sql_name();
-        field_type_to_inverted_index_info(&FieldType::new(FieldTypeCode::Long), 1);
-
-        index.is_changing();
-        index.is_removing();
-        index.get_removing_origin_name();
-        index.get_changing_origin_name();
-        index.has_prefix_index();
-        index.has_column_in_index_columns(&table, 1);
-        index.find_column_by_name("");
-        index.is_public();
-        index.is_columnar_index();
-        index.get_columnar_index_type();
-        index.has_condition();
-
-        let indices = GoSharedPointerSlice::<IndexInfo>::default();
-        find_index_by_columns(&table, &indices, &[]);
-        is_index_prefix_covered(&table, &index, &[]);
-        find_index_by_columns_for_foreign_key(&table, &indices, &[]);
-        is_index_prefix_covered_for_foreign_key(&table, &index, &[]);
-        find_index_info_by_id(&indices, 1);
-        find_index_column_by_name(&index.columns, "");
-    }
-
     // Go's `ast.IndexType` is a plain `int`, and its declaration warns that a
     // value "may come from a previous version persisted in TableInfo. So you
     // must keep it compatible when modifying it." An `index_type` this build

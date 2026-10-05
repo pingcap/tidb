@@ -702,42 +702,6 @@ mod tests {
         }
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_context_query_returns_can_be_ignored() {
-        let table = GoShared::new(TableInfo {
-            name: CiString::new("t"),
-            columns: vec![column("c0", 0, 0)].into(),
-            ..TableInfo::default()
-        });
-        let index = GoShared::new(IndexInfo {
-            id: 1,
-            name: CiString::new("i"),
-            columns: vec![index_column("c0", 0)].into(),
-            state: SchemaState::PUBLIC,
-            ..IndexInfo::default()
-        });
-        let ids = SimplePlanColumnIdAllocator::new(0);
-        let single =
-            new_cop_context_single_index(context(&ids), 0, table.clone(), index.clone(), "", false)
-                .expect("single context builds");
-        single.base();
-        single.index_column_output_offsets(0);
-        single.index_info(0);
-        single.base.schema_and_names();
-
-        let enum_context = CopContext::Single(single);
-        enum_context.base();
-        enum_context.index_column_output_offsets(0);
-        enum_context.index_info(0);
-
-        let multi = new_cop_context_multi_index(context(&ids), 0, table, vec![index], "", false)
-            .expect("multi context builds");
-        multi.base();
-        multi.index_column_output_offsets(0);
-        multi.index_info(0);
-    }
-
     // Go `TestNewCopContextSingleIndex`.
     #[test]
     fn new_cop_context_single_index_matches_all_handle_shapes() {

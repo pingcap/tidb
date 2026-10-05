@@ -214,10 +214,4 @@ mod tests {
             assert!(is_reserved_id(id));
         }
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn reserved_id_return_may_be_ignored_like_go() {
-        is_reserved_id(123);
-    }
 }

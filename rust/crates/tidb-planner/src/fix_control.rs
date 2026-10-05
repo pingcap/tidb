@@ -829,19 +829,4 @@ mod tests {
             ["repeated assignment for fix control: 1. existing value: \"\\u0085\". new value: \"\\u200b\"."]
         );
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        let (control, _) = OptimizerFixControl::parse("1:ON").unwrap();
-        control.as_map();
-        control.get_str(1);
-        control.get_str_with_default(1, "default");
-        control.get_bool(1);
-        control.get_bool_with_default(1, false);
-        control.get_int(1);
-        control.get_int_with_default(1, 0);
-        control.get_float(1);
-        control.get_float_with_default(1, 0.0);
-    }
 }

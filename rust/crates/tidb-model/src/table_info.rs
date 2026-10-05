@@ -1120,42 +1120,6 @@ mod tests {
     }
 
     #[test]
-    #[deny(unused_must_use)]
-    fn go_table_info_returns_may_be_ignored_like_go() {
-        let table = TableInfo::default();
-
-        table.get_partition_info();
-        table.get_update_time();
-        table.get_pk_col_info();
-        table.get_pk_name();
-        table.contains_auto_random_bits();
-        table.is_auto_random_bit_col_unsigned();
-        table.cols();
-        table.cols_with_gaps();
-        table.present_cols();
-        table.find_public_column_by_name("");
-        table.get_primary_key();
-        table.find_column_by_id(0);
-        table.get_column_by_id(0);
-        table.find_index_by_name("");
-        table.find_index_by_id(0);
-        table.find_constraint_info_by_name("");
-        table.get_auto_increment_col_info();
-        table.column_is_in_index(None);
-        table.has_clustered_index();
-        table.is_auto_inc_col_unsigned();
-        table.find_column_name_by_id(0);
-        table.find_index_name_by_id(0);
-        table.get_non_temp_columns();
-        table.sep_auto_inc();
-        table.storage_class_string();
-        table.is_view();
-        table.is_sequence();
-        table.is_base_table();
-        table.is_locked();
-    }
-
-    #[test]
     fn clone_uses_the_source_top_level_deep_and_shallow_pointer_policy() {
         let column = GoShared::new(column("c", 0, true, false));
         let index = GoShared::new(IndexInfo::default());

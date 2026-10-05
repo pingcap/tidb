@@ -568,24 +568,6 @@ mod tests {
         buf
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v1_evicted_returns_can_be_ignored() {
-        StmtSummaryByDigestEvicted::new();
-        let evicted = StmtSummaryByDigestEvicted::new();
-        evicted.history_len();
-        evicted.history();
-        evicted.to_evicted_count_datum();
-        evicted.collect_history_summaries(1);
-
-        StmtSummaryByDigestEvictedElement::new(0, 1);
-        let element = StmtSummaryByDigestEvictedElement::new(0, 1);
-        element.to_evicted_count_datum();
-
-        let map = StmtSummaryByDigestMap::new();
-        map.to_evicted_count_datum();
-    }
-
     /// Go `getEvicted`.
     fn get_evicted(element: &StmtSummaryByDigestEvictedElement) -> String {
         format!(

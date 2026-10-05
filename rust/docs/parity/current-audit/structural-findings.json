@@ -806,9 +806,9 @@
     "scope": "One-use and external timestamp entrypoints, read-only/prepared admission, shared storage oracle and transaction lifetime; existing-owner repair, not complete package acceptance."
   },
   "latest_test_cleanup": {
-    "date": "2026-10-04",
-    "receipt": "test-build-cleanup-validation.json",
-    "scope": "14 test-only module inputs removed from normal builds (13,829 lines), 370 behavioral cases preserved; two nonbehavioral checks and one unregistered helper removed; 441 distinct selected cases pass; three independently reproduced pre-existing failures remain enabled. Four stale assertions corrected. Five working-doc summaries consolidated. Finding statuses unchanged."
+    "date": "2026-10-05 UTC",
+    "receipt": "discard-check-cleanup-validation.json",
+    "scope": "122 discard-only tests across 37 crates, 20 empty unit modules, three integration files, one helper and three completed plans removed; 681 retained test bodies unchanged. Finding statuses unchanged."
   },
   "test_cleanup_history": [
     {
@@ -898,6 +898,11 @@
       "date": "2026-10-04",
       "receipt": "test-harness-retirement-validation.json#window_leaf_continuation",
       "scope": "Six unused window source modules and four model-test files retired (15 old cases). Useful vectors migrate to one grouped live executor test; all 14 live window tests pass. Memory accounting and all finding statuses remain unaccepted/unchanged."
+    },
+    {
+      "date": "2026-10-04",
+      "receipt": "test-build-cleanup-validation.json",
+      "scope": "14 test-only module inputs removed from normal builds (13,829 lines), 370 behavioral cases preserved; two nonbehavioral checks and one unregistered helper removed; 441 distinct selected cases pass; three independently reproduced pre-existing failures remain enabled. Four stale assertions corrected. Five working-doc summaries consolidated. Finding statuses unchanged."
     }
   ],
   "repair_history": [

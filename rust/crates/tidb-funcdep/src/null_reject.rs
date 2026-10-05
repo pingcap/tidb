@@ -214,12 +214,4 @@ mod tests {
             &schema
         ));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let predicate = call("gt", vec![column(A), int(3)]);
-        is_null_rejected(&predicate, A);
-        is_null_rejected_by(&predicate, &[A]);
-    }
 }

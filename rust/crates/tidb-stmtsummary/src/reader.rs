@@ -1365,29 +1365,6 @@ pub(crate) mod tests {
         new_stmt_summary_reader_with_column_names_for_test(ss_map, &column_names)
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v1_reader_returns_can_be_ignored() {
-        StmtSummaryReader::new(
-            None,
-            true,
-            Vec::new(),
-            String::new(),
-            SessionTimeZone::utc(),
-        );
-        let map = StmtSummaryByDigestMap::new();
-        let reader = new_stmt_summary_reader_for_test(&map);
-        reader.column_names();
-        reader.get_stmt_summary_cumulative_rows();
-        reader.get_stmt_summary_current_rows();
-        reader.get_stmt_summary_history_rows();
-
-        StmtSummaryChecker::new(std::collections::HashSet::new());
-        let checker = StmtSummaryChecker::new(std::collections::HashSet::new());
-        checker.is_digest_valid("");
-        let _ = column_value_factory(CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR);
-    }
-
     /// Go `TestColumnValueFactoryDoubleUintMetrics`.
     ///
     /// Go calls `factory(nil, nil, nil, stats)`; the ported factory takes the

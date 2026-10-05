@@ -156,10 +156,4 @@ mod tests {
         assert_eq!(back.target_mode, TableMode::IMPORT);
         assert_eq!(back.schema_name.lowercase(), "db");
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn can_transition_return_may_be_ignored_like_go() {
-        TableMode::NORMAL.can_transition_to(TableMode::IMPORT);
-    }
 }

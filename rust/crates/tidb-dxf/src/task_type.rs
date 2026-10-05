@@ -71,11 +71,4 @@ mod tests {
             assert_eq!(int2type(*val), *tp);
         }
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_task_type_returns_may_be_ignored_like_go() {
-        type2int(&TASK_TYPE_EXAMPLE);
-        int2type(1);
-    }
 }

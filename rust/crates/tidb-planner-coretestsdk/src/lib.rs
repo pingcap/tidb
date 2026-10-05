@@ -834,32 +834,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        mock_signed_table();
-        mock_unsigned_table();
-        mock_no_pk_table();
-        mock_view();
-        mock_partition_info_schema(Vec::new());
-        mock_range_partition_table();
-        mock_hash_partition_table();
-        mock_list_partition_table();
-        mock_global_index_hash_partition_table();
-        mock_state_none_column_table();
-        get_field_value("", "");
-        mock_context();
-
-        let suite = create_planner_suite_elems();
-        suite.get_parser();
-        suite.get_is();
-        suite.get_sctx();
-        suite.get_ctx();
-
-        create_planner_suite(mock_context(), MockInfoSchema::default());
-        create_planner_suite_elems();
-    }
-
-    #[test]
     fn get_field_value_preserves_source_boundaries() {
         assert_eq!(get_field_value("x:", "prefix x:value, tail"), "value");
         assert_eq!(get_field_value("x:", "x:value tail"), "");

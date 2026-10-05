@@ -237,7 +237,7 @@ For each bounded behavior cluster:
   `#[must_use]` diagnostics. The focused regression failed pre-fix with
   exactly seven diagnostics and passes after the edit; all 323 owner tests
   pass. Evidence is recorded in `receipts/meta_model_materialized_view.md`
-  and `docs/operations/meta-model-reorg-audit-execplan.md`.
+  and `receipts/meta_model_materialized_view.md`.
 - 2026-09-06 (`pkg/ddl/placement` Go pointer-builder semantics): the complete
   13-artifact, 3,844-line Go package and complete `tidb-placement` owner were
   re-read at current Go master, including every production/test/support
@@ -3382,7 +3382,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   lint errors and passes afterward. Current and detached latest-master Go
   tests, focused Rust regressions, Ready formatting, pinned lint, and diff
   hygiene pass. Details are in `receipts/util_disk.md` and
-  `docs/operations/util-disk-audit-execplan.md`.
+  `receipts/util_disk.md`.
 
 - 2026-09-02: re-audited the complete root `pkg/util/traceevent` boundary at
   current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: seven
@@ -5851,7 +5851,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   panic/order and wrapping sort behavior, synchronized-map semantics, and the
   stats TopN consumer; current and detached Go suites plus all eight Rust owner
   tests pass. Details are in `receipts/util_generic.md` and
-  `docs/operations/util-generic-audit-execplan.md`.
+  `receipts/util_generic.md`.
 - 2026-08-29: re-read all four pinned Go `pkg/util/checksum` artifacts and
   removed two supplemental signed-overflow tests plus their private fixture.
   Production keeps Go's wrapping arithmetic and zeropool-backed reader path;
@@ -6333,7 +6333,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       real server/chunk/memory-alarm consumers through them, and remove the
       Rust-only spill-policy surface from the package. The five-artifact
       inventory and Ready gates are in `receipts/util_disk.md` and
-      `docs/operations/util-disk-audit-execplan.md`.
+      `receipts/util_disk.md`.
 - [x] Complete the pinned root `pkg/util/sem` package in its `tidb-util`
       owner, verify its full policy and cross-crate sysvar wiring, retain its
       five source tests, and remove supplementary Rust-only assertions. The

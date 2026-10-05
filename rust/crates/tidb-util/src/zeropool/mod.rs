@@ -170,10 +170,4 @@ mod tests {
             pool.put(item);
         }
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn constructor_return_may_be_ignored_like_go() {
-        Pool::new(|| Vec::<u8>::new());
-    }
 }

@@ -2176,67 +2176,6 @@ mod tests {
         assert!(new_stmt_summary(&Config::default()).is_err());
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v2_alignment_summary_returns_can_be_ignored() {
-        time_now();
-        let _ = global_stmt_summary();
-
-        if std::hint::black_box(false) {
-            StmtSummary::new_for_test(1);
-            StmtSummary::new_for_test_with_sinks(
-                1,
-                Arc::new(MockStmtStorage::default()),
-                Arc::new(crate::statement_summary::NoopWindowMetricsSink),
-                Arc::new(NoopEvictedLogMetricsSink),
-            );
-            enabled();
-            enabled_internal();
-        }
-
-        let summary = StmtSummary::new_for_test(1);
-        summary.storage();
-        summary.window();
-        summary.evicted_dropped();
-        summary.enabled();
-        summary.enable_internal_query();
-        summary.max_stmt_count();
-        summary.max_sql_length();
-        summary.refresh_interval();
-        summary.persist_evicted();
-        summary.group_by_user();
-        summary.evicted();
-
-        let window = summary.window();
-        let window = window.lock().unwrap();
-        window.evicted_count();
-        window.evicted_count_distinct();
-        window.evicted_other();
-        drop(window);
-
-        new_stmt_window(time_now(), 1, None);
-        StmtEvicted::new();
-        let evicted = StmtEvicted::new();
-        evicted.count();
-        new_evicted_aggregate_record();
-        let record = new_evicted_aggregate_record();
-        clone_record_for_log(&record);
-
-        let storage = MockStmtStorage::default();
-        storage.windows();
-        storage.evicted();
-
-        RotatingFileLogWriter::from_config(&Config {
-            filename: "unused.log".to_owned(),
-            ..Config::default()
-        });
-        let writer: Arc<dyn StmtLogWriter> = Arc::new(BufferWriter::default());
-        StmtLogStorage::new(Arc::clone(&writer));
-        StmtLogStorage::with_metrics(writer, Arc::new(NoopEvictedLogMetricsSink));
-
-        summary.close();
-    }
-
     #[test]
     fn go_v2_alignment_rotating_writer_is_silent() {
         const CHILD_ENV: &str = "TIDB_STMTSUMMARY_SILENT_WRITER_CHILD";

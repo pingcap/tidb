@@ -420,16 +420,4 @@ mod tests {
         );
         assert!(source.partial_index_noncacheable_ids.contains(&10));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        let predicate = compare("gt", integer_column(1), integer(0));
-        check_constraints(
-            true,
-            std::slice::from_ref(&predicate),
-            std::slice::from_ref(&predicate),
-        );
-        always_meet_constraints(&[], &[]);
-    }
 }

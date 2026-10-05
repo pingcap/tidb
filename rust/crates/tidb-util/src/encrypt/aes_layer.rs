@@ -454,22 +454,4 @@ mod tests {
             logical_length,
         );
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        crate::encrypt::pkcs7_pad(&[], 16);
-        crate::encrypt::derive_key_mysql(&[], 16);
-        crate::encrypt::sql_decode(b"value", b"password");
-        crate::encrypt::sql_encode(b"value", b"password");
-
-        let cipher = CtrCipher::new().expect("create cipher");
-        Writer::new(MemoryFile::default(), &cipher);
-        let writer = Writer::new(MemoryFile::default(), &cipher);
-        writer.available_size();
-        writer.buffered();
-        writer.get_cache();
-        writer.get_cache_data_offset();
-        Reader::new(MemoryFile::default(), &cipher);
-    }
 }

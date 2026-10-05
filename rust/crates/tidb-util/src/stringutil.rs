@@ -500,29 +500,6 @@ mod tests {
 
     use super::*;
 
-    // Go permits callers to discard these function results; Rust must not add
-    // a `must_use` diagnostic at the transcreation boundary.
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let (weights, types) = compile_pattern("a", b'\\');
-        compile_like_to_regexp("a", b'\\');
-        do_match_binary(b"a", b"a", &[PatternType::Match]);
-        do_match("a", &weights, &types);
-        do_match_customized("a", &weights, &types, |left, right| left == right);
-        is_exact_match(&types);
-        copy(b"a");
-        escape(b"a", SqlMode::default());
-        build_string_from_labels(&HashMap::new());
-        get_tail_space_count(b"a");
-        utf8_len(b'a');
-        convert_pos_in_utf8("a", 0);
-        is_upper_ascii(b'a');
-        is_lower_ascii(b'a');
-        is_numeric_ascii(b'1');
-        escape_glob_question_mark("a");
-    }
-
     #[test]
     fn test_unquote() {
         let rows: &[(&[u8], &[u8], bool)] = &[

@@ -2157,32 +2157,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_v2_alignment_reader_returns_can_be_ignored() {
-        new_mem_reader(
-            None,
-            &[],
-            String::new(),
-            SessionTimeZone::utc(),
-            None,
-            false,
-            None,
-            Vec::new(),
-        );
-        let reader = new_mem_reader(
-            None,
-            &[],
-            String::new(),
-            SessionTimeZone::utc(),
-            None,
-            false,
-            None,
-            Vec::new(),
-        );
-        reader.rows();
-    }
-
     #[test]
     fn go_v2_alignment_reader_send_retry_has_bounded_stack() {
         const CHILD_ENV: &str = "TIDB_STMTSUMMARY_BOUNDED_SEND_CHILD";

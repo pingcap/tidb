@@ -1247,14 +1247,4 @@ mod tests {
         let res = find_common_equiv_classes(&[&fd1, &fd2, &fd3]);
         assert_eq!(res.len(), 0);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        let fd = FdSet::new();
-        fd.not_null_cols();
-        fd.registered_unique_id(&[]);
-        fd.group_by_cols();
-        fd.has_agg_built();
-    }
 }

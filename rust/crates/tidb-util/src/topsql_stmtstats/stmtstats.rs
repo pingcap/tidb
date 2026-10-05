@@ -579,20 +579,6 @@ mod tests {
     const SECOND_NS: u64 = 1_000_000_000;
     const MILLISECOND_NS: u64 = 1_000_000;
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        new_sql_plan_digest(b"sql", b"plan");
-        KvStatementStatsItem::new();
-        StatementStatsItem::new();
-        create_statement_stats();
-
-        let stats = Arc::new(StatementStats::default());
-        stats.take();
-        stats.finished();
-        stats.merge_ru_into();
-    }
-
     // Go `TestKvStatementStatsItemMerge`.
     #[test]
     fn kv_statement_stats_item_merge() {

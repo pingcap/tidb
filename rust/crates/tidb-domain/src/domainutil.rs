@@ -241,18 +241,3 @@ impl std::fmt::Display for RepairKeyType {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn repair_query_returns_may_be_ignored_like_go() {
-        let repair = RepairInfo::new();
-        repair.in_repair_mode();
-        repair.get_repair_table_list();
-        repair.get_must_load_repair_table_list_by_db("test", &HashMap::new());
-        repair.get_repaired_table_info_by_table_name("test", "t");
-    }
-}

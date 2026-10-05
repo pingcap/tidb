@@ -2071,18 +2071,4 @@ mod tests {
         put_kv_to_etcd_mono(&ctx, &etcd, 3, "testKey", "1").unwrap();
         assert_eq!(Some(b"1".to_vec()), etcd.get_value("testKey"));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        // Go permits callers to discard ordinary constructor/getter results;
-        // these Rust-shaped wrappers must not impose a Rust-only diagnostic.
-        Context::background();
-        let parent = Context::background();
-        Context::with_cancel(&parent);
-        Context::with_timeout(&parent, Duration::from_secs(1));
-        crate::check_vers_first_wait_time();
-        crate::mem_syncer::MemSyncer::new();
-        new_etcd_syncer(Arc::new(FakeEtcd::default()), "ignored");
-    }
 }

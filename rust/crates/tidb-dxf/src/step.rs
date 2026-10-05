@@ -260,12 +260,4 @@ mod tests {
         assert!(!is_valid_business_step(&BACKFILL, STEP_PREPARED));
         assert!(!is_valid_business_step(&BACKFILL, Step(123)));
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_step_returns_may_be_ignored_like_go() {
-        step2str(&BACKFILL, STEP_INIT);
-        is_valid_step(&BACKFILL, STEP_INIT);
-        is_valid_business_step(&BACKFILL, STEP_INIT);
-    }
 }

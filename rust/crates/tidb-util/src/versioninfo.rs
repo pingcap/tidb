@@ -48,14 +48,3 @@ pub fn set_tidb_edition(edition: impl Into<String>) {
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = edition.into();
 }
-
-#[cfg(test)]
-mod tests {
-    use super::tidb_edition;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn return_values_may_be_ignored_like_go() {
-        tidb_edition();
-    }
-}

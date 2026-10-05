@@ -1,6 +1,6 @@
 # Structural parity audit: current evidence
 
-Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [timestamp entrypoints and lifecycle](timestamp-entrypoints-batch-validation.json). Latest build/test cleanup: [statistics discard-check receipt](statistics-test-cleanup-validation.json); [earlier build-input cleanup](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
+Use the [JSON register](structural-findings.json) and [readable register](structural-findings.md) for current dispositions; use the [batch map](remaining-batches.md) for work allocation. Latest behavioral evidence: [timestamp entrypoints and lifecycle](timestamp-entrypoints-batch-validation.json). Latest build/test cleanup: [workspace discard-check removal](discard-check-cleanup-validation.json); earlier [statistics](statistics-test-cleanup-validation.json) and [build-input cleanup](test-build-cleanup-validation.json). Finding repair is not complete Go package acceptance. Keep current counts in the registers and update the latest evidence links here; do not copy each new batch narrative into every working document.
 
 ## Work from these owners
 

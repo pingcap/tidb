@@ -182,15 +182,6 @@ mod tests {
         assert!(is_add_column_denied(Some(BdrRole::Primary), &denied_shape));
     }
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn bdr_policy_returns_may_be_ignored_like_go() {
-        is_add_column_denied(None, &[]);
-        let long = FieldType::parser(FieldTypeCode::Long);
-        is_modify_column_denied(None, &long, &long, &[]);
-        is_denied(None, ActionType::ACTION_NONE, None);
-    }
-
     // Go `TestIsAddColumnDenied`'s allowed shapes.
     #[test]
     fn add_column_allows_nullable_and_defaulted_forms() {

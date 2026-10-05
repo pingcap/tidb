@@ -946,30 +946,4 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], hints[0]);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_plan_api_returns_may_be_ignored_like_go() {
-        let table = HintedTable::default();
-        table.matches(&table);
-        let index = HintedIndex {
-            database_name: "db".to_owned(),
-            table_name: "tbl".to_owned(),
-            partitions: Vec::new(),
-            kind: HintedIndexKind::Use,
-            index_names: vec!["idx".to_owned()],
-            push_down_lookup: true,
-            matched: false,
-        };
-        index.matches("db", "tbl");
-        index.should_push_down_index_lookup();
-        index.hint_type_string();
-        index.index_string();
-        restore_join_hint("inl_join", &[]);
-        restore_index_hint("use_index", &index);
-        restore_storage_hint(&[], &[]);
-        extract_unmatched_tables(&[table]);
-        remove_duplicated_hints(&[]);
-        collect_unmatched_hint_warnings(&PlanHints::default());
-    }
 }

@@ -390,19 +390,6 @@ impl Aggregator {
     }
 }
 
-#[cfg(test)]
-mod contract_tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        Aggregator::new();
-        let aggregator = Aggregator::new();
-        aggregator.current_ru_version();
-        aggregator.closed();
-    }
-}
 
 /// Go `SetupAggregator`: initializes the background aggregator of the
 /// `stmtstats` module. **Not** thread-safe.

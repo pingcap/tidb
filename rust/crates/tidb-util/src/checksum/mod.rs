@@ -734,16 +734,4 @@ mod tests {
         assert!(result.error.is_none());
         assert_eq!(read, data);
     }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn TestReturnValuesMayBeIgnoredLikeGo() {
-        Writer::new(MemoryFile::default());
-        let writer = Writer::new(MemoryFile::default());
-        writer.available_size();
-        writer.buffered();
-        writer.get_cache();
-        writer.get_cache_data_offset();
-        Reader::new(MemoryFile::default());
-    }
 }

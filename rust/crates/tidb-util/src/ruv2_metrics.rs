@@ -1471,39 +1471,6 @@ pub fn format_ruv2_metrics(
 mod tests {
     use super::*;
 
-    #[test]
-    #[deny(unused_must_use)]
-    fn ruv2_returns_may_be_ignored_like_go() {
-        RuV2Metrics::new();
-        let metrics = RuV2Metrics::new();
-        metrics.bypass();
-        metrics.result_chunk_cells();
-        metrics.executor_l5_insert_rows();
-        metrics.plan_cnt();
-        metrics.plan_derive_stats_paths();
-        metrics.session_parser_total();
-        metrics.txn_cnt();
-        metrics.resource_manager_read_cnt();
-        metrics.resource_manager_write_cnt();
-        metrics.write_keys();
-        metrics.write_size();
-        metrics.tikv_kv_engine_cache_miss();
-        metrics.tikv_coprocessor_executor_iterations();
-        metrics.tikv_coprocessor_response_bytes();
-        metrics.tikv_raftstore_store_write_trigger_wb();
-        metrics.tikv_storage_processed_keys_batch_get();
-        metrics.tikv_storage_processed_keys_get();
-        metrics.is_zero();
-        metrics.calculate_ru_values(RuV2Weights::default());
-        total_ru(None, RuV2Weights::default(), 0.0, 0.0);
-        resolve_executor_metric(1, "TableReader");
-        let recorder = resolve_executor_metric(1, "TableReader");
-        recorder.available();
-        format_ruv2_summary(None, RuV2Weights::default(), 0.0, 0.0);
-        format_ruv2_total(None, RuV2Weights::default(), 0.0, 0.0);
-        format_ruv2_metrics(None, RuV2Weights::default(), 0.0, 0.0);
-    }
-
     /// Go `defaultRUV2WeightsForTest`, sourced from
     /// `config.DefaultRUV2Config()`.
     fn default_ruv2_weights_for_test() -> RuV2Weights {

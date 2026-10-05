@@ -270,37 +270,3 @@ pub const ZERO_COST_VER2: CostVer2 = CostVer2 {
     cost: 0.0,
     trace: None,
 };
-
-#[cfg(test)]
-mod return_contract_tests {
-    use super::{
-        add_cost_without_trace, div_cost_ver2, has_cost_flag, mul_cost_ver2, new_cost_ver2,
-        new_zero_cost_ver2, sum_cost_ver2, trace_cost, CostVer2Factor, PlanCostOption,
-        COST_FLAG_TRACE,
-    };
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_return_values_may_be_ignored_like_go() {
-        PlanCostOption::new();
-        let mut options = PlanCostOption::new();
-        options.with_cost_flag(COST_FLAG_TRACE);
-        let factor = CostVer2Factor::new("factor", 1.0);
-        let traced = new_zero_cost_ver2(true);
-
-        traced.value();
-        traced.trace();
-        if let Some(trace) = traced.trace() {
-            trace.formula();
-            trace.factor_costs();
-        }
-        has_cost_flag(COST_FLAG_TRACE, COST_FLAG_TRACE);
-        trace_cost(Some(&options));
-        new_zero_cost_ver2(false);
-        new_cost_ver2(Some(&options), &factor, 1.0, || "factor".to_owned());
-        sum_cost_ver2(std::slice::from_ref(&traced));
-        div_cost_ver2(&traced, 2.0);
-        mul_cost_ver2(&traced, 2.0);
-        add_cost_without_trace(traced, 1.0);
-    }
-}

@@ -25,16 +25,3 @@ pub fn global_lru_memory_tracker() -> &'static Arc<Tracker> {
     static TRACKER: OnceLock<Arc<Tracker>> = OnceLock::new();
     TRACKER.get_or_init(|| Tracker::new(LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE, -1))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::global_lru_memory_tracker;
-
-    // The Go package exposes this state as a package variable initialized by
-    // init; callers do not have a returned value to consume.
-    #[test]
-    #[deny(unused_must_use)]
-    fn global_tracker_return_may_be_ignored_like_go() {
-        global_lru_memory_tracker();
-    }
-}

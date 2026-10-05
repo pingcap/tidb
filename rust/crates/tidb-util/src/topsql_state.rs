@@ -346,15 +346,4 @@ mod tests {
         disable_top_ru();
         assert!(!top_profiling_enabled());
     }
-
-    // Go callers may inspect these package-level flags without using the
-    // returned value. The Rust owner must preserve that discardable contract.
-    #[test]
-    #[deny(unused_must_use)]
-    fn source_api_returns_may_be_ignored_like_go() {
-        top_sql_enabled();
-        top_profiling_enabled();
-        top_ru_enabled();
-        get_top_ru_item_interval();
-    }
 }

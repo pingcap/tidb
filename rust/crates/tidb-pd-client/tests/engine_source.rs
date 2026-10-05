@@ -15,10 +15,9 @@
 //! Source-shaped tests for Go `pkg/util/engine`.
 
 use tidb_pd_client::{
-    is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response, PdNodeState, PdStore,
+    is_tiflash_http_response, is_tiflash_write_http_response, PdNodeState, PdStore,
     PdStoreState,
 };
-use tidb_proto::metapb;
 
 fn pd_store(labels: &[(&str, &str)]) -> PdStore {
     PdStore {
@@ -70,15 +69,4 @@ fn TestIsTiFlashWriteHTTPResp() {
             "labels: {labels:?}"
         );
     }
-}
-
-#[test]
-#[deny(unused_must_use)]
-fn TestReturnValuesMayBeIgnoredLikeGo() {
-    let protobuf_store = metapb::Store::default();
-    is_tiflash(&protobuf_store);
-
-    let pd_store = pd_store(&[]);
-    is_tiflash_http_response(&pd_store);
-    is_tiflash_write_http_response(&pd_store);
 }
