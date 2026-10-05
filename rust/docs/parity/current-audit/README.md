@@ -21,7 +21,7 @@ Native fixes belong in client-rust first. Synchronize validated upstream source 
 
 Group related source fixes and test filters. Keep meaningful Go behavior/error/rollback assertions in the owning session tests. Remove placeholder or adapter-only harnesses after caller migration, with a recorded inventory; do not manufacture concurrency coverage from a serial loop. Run affected checks and required `make lint` once at the completed batch boundary. The actual executable `hooks/pre-commit` selected by `core.hooksPath=hooks` must run `cd rust && cargo build --locked -p tidb-server` on normal commits. Never bypass hooks; if pushing is later authorized, repeat that locked build immediately before every push and verify the remote SHA.
 
-**No push or push dry run.** Preserve the exact destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. Historical permission diagnostic: `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403); account role versus GitHub-app installation scope is undetermined. The user is arranging access. Preserve concurrent remote integration commits; never reset or force-push over them.
+**Publication authorized by the user on 2026-10-05.** Preserve the exact destinations `pingcap/tidb hparser-integration` and `ngaut/client-rust master`. Historical permission diagnostic: `remote: Permission to pingcap/tidb.git denied to ngaut.` (HTTP 403); account role versus GitHub-app installation scope is undetermined. Write access must be established by the actual authorized push; the earlier denial is historical evidence. Merge concurrent remote integration commits before publication; never reset or force-push over them.
 
 ## Historical evidence
 

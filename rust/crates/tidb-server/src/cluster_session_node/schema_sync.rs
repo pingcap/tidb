@@ -50,11 +50,6 @@ use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 
-/// A schema watch can be observed before the corresponding MDL row is
-/// visible to a fresh snapshot. Retry empty reads so a node cannot miss the
-/// only notification for a DDL job and block the owner forever.
-const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
-
 /// The tables live local work still reads at older schema versions.
 ///
 /// Go's shape, ported from `RemoveLockDDLJobs`
@@ -236,6 +231,10 @@ impl tidb_session::MdlRelatedTableSink for ConnectionMdlSink {
 /// lease) made each step of every other node's DDL wait up to that long.
 pub const MDL_CHECK_LOOK_DURATION: Duration = Duration::from_millis(50);
 
+/// Go refreshes `tidb_mdl_info` after a schema reload. An empty result can
+/// race the owner's MDL row write, so retry that read at a bounded cadence.
+const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
+
 /// The background acknowledger; dropping it stops the thread.
 pub struct SchemaSyncAck {
     stop: Arc<AtomicBool>,
@@ -375,12 +374,12 @@ fn run_ack_loop<C, L, P>(
 {
     // Go's `jobCache`: (job id -> version already acknowledged).
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
-    // The version whose mdl rows were last read, and whether any read job
-    // is still owed its ack (a pin held it back, or a PUT failed).
+    // Keep rows loaded by the schema-reload path. MDL checks run every tick,
+    // but Go does not rescan the system table for every check.
+    let mut mdl_jobs = Vec::new();
     let mut scanned_version: Option<i64> = None;
-    let mut reported_loaded_version: Option<(bool, i64)> = None;
-    let mut owed = false;
     let mut next_mdl_scan = Instant::now();
+    let mut reported_loaded_version: Option<(bool, i64)> = None;
     while !stop.load(Ordering::SeqCst) {
         // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
         // the etcd session that registered this node is gone, so the owner
@@ -417,49 +416,61 @@ fn run_ack_loop<C, L, P>(
             }
         }
 
-        // Go MDLCheckLoop does not report per-job versions when MDL is off.
-        // The non-MDL syncer would write an old job's version over the newer
-        // loaded self-version above. The table is otherwise re-read only
-        // when the loaded version moved or an acknowledgement is still owed.
-        if mdl_enabled
-            && (scanned_version != Some(loaded) || owed || Instant::now() >= next_mdl_scan)
-        {
-            match load_mdl_jobs(opener, timeout, &catalog.load()) {
-                Ok(jobs) => {
-                    scanned_version = Some(loaded);
-                    next_mdl_scan = if jobs.is_empty() {
-                        Instant::now() + EMPTY_MDL_RETRY
-                    } else {
-                        Instant::now() + Duration::from_secs(3600)
-                    };
-                    // The owner deletes a finished job's row; forgetting its
-                    // cache entry with it keeps the cache from growing for
-                    // the process's life.
-                    acked.retain(|job_id, _| jobs.iter().any(|job| job.job_id == *job_id));
-                    let due = acks_due(loaded, pins, &jobs, &acked);
-                    owed = jobs.iter().any(|job| {
-                        acked
-                            .get(&job.job_id)
-                            .is_none_or(|&sent| sent < job.version)
-                    });
-                    for job in due {
-                        match syncer.update_self_version(syncer_context, job.job_id, job.version) {
-                            Ok(()) => {
-                                eprintln!(
-                                    "{{\"event\":\"schema_sync_acked\",\"job_id\":{},\"version\":{}}}",
-                                    job.job_id, job.version
-                                );
-                                acked.insert(job.job_id, job.version);
-                            }
-                            Err(error) => {
-                                emit_warning("schema_sync_ack_put_failed", &error);
-                                owed = true;
-                            }
-                        }
+        if mdl_enabled {
+            if should_refresh_mdl_jobs(
+                scanned_version,
+                loaded,
+                mdl_jobs.is_empty(),
+                Instant::now(),
+                next_mdl_scan,
+            ) {
+                match load_mdl_jobs(opener, timeout, &catalog.load()) {
+                    Ok(jobs) => {
+                        scanned_version = Some(loaded);
+                        next_mdl_scan = if jobs.is_empty() {
+                            Instant::now() + EMPTY_MDL_RETRY
+                        } else {
+                            Instant::now() + Duration::from_secs(3600)
+                        };
+                        mdl_jobs = jobs;
+                        // The owner deletes a finished job's row; forgetting
+                        // its cache entry keeps the cache from growing.
+                        acked.retain(|job_id, _| {
+                            mdl_jobs.iter().any(|job| job.job_id == *job_id)
+                        });
+                    }
+                    Err(error) => {
+                        next_mdl_scan = Instant::now() + EMPTY_MDL_RETRY;
+                        emit_warning("schema_sync_mdl_read_failed", &error);
                     }
                 }
-                Err(error) => emit_warning("schema_sync_mdl_read_failed", &error),
             }
+
+            // Re-evaluate pins every tick, but use cached rows. This is the
+            // Go MDLCheckLoop split between refreshMDLCheckTableInfo and
+            // CheckOldRunningTxn.
+            let due = acks_due(loaded, pins, &mdl_jobs, &acked);
+            for job in due {
+                match syncer.update_self_version(syncer_context, job.job_id, job.version) {
+                    Ok(()) => {
+                        eprintln!(
+                            "{{\"event\":\"schema_sync_acked\",\"job_id\":{},\"version\":{}}}",
+                            job.job_id, job.version
+                        );
+                        acked.insert(job.job_id, job.version);
+                    }
+                    Err(error) => {
+                        emit_warning("schema_sync_ack_put_failed", &error);
+                    }
+                }
+            }
+        } else {
+            // Do not carry MDL rows across a runtime mode switch. The Go
+            // non-MDL path reports only the leased self-version.
+            mdl_jobs.clear();
+            acked.clear();
+            scanned_version = None;
+            next_mdl_scan = Instant::now();
         }
 
         // A sleep in small slices so a shutdown never waits a whole tick.
@@ -470,6 +481,16 @@ fn run_ack_loop<C, L, P>(
             remaining = remaining.saturating_sub(slice);
         }
     }
+}
+
+fn should_refresh_mdl_jobs(
+    scanned_version: Option<i64>,
+    loaded_version: i64,
+    jobs_empty: bool,
+    now: Instant,
+    next_retry: Instant,
+) -> bool {
+    scanned_version != Some(loaded_version) || (jobs_empty && now >= next_retry)
 }
 
 fn emit_warning(event: &str, error: &impl std::fmt::Display) {
@@ -620,6 +641,40 @@ mod tests {
             &reloader.waker(),
             &reloader.stats_source(),
             &stop
+        ));
+    }
+
+    #[test]
+    fn mdl_job_refresh_matches_go_reload_and_empty_retry_cadence() {
+        let now = Instant::now();
+        assert!(should_refresh_mdl_jobs(
+            None,
+            7,
+            true,
+            now,
+            now + Duration::from_secs(10),
+        ));
+        assert!(!should_refresh_mdl_jobs(Some(7), 7, false, now, now,));
+        assert!(!should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            true,
+            now,
+            now + Duration::from_secs(1),
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            true,
+            now + Duration::from_secs(1),
+            now,
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            8,
+            false,
+            now,
+            now + Duration::from_secs(10),
         ));
     }
 
