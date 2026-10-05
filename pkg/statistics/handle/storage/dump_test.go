@@ -35,6 +35,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -259,12 +260,15 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_fm_sketch")
 	dom.StatsHandle().Clear()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	// Loading does not restore the partition FM sketches that a later global merge needs.
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 
 	// compare
 	for i, def := range pi.Definitions {
@@ -272,6 +276,59 @@ func TestLoadPartitionStats(t *testing.T) {
 		requireTableEqual(t, originPartStats[i], newPartStats)
 	}
 	requireTableEqual(t, originGlobalStats, dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo))
+
+	tk.MustExec("analyze table t partition p0")
+	globalStats := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, originPartStats[0].GetCol(1).NDV, globalStats.GetCol(1).NDV)
+	require.Equal(t, originPartStats[0].GetIdx(1).NDV, globalStats.GetIdx(1).NDV)
+
+	// Dumps without sketches must not retain sketches from different statistics.
+	for _, partition := range jsonTbl.Partitions {
+		for _, col := range partition.Columns {
+			col.FMSketch = nil
+		}
+		for _, idx := range partition.Indices {
+			idx.FMSketch = nil
+		}
+	}
+	require.NoError(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
+}
+
+func TestLoadStatsFMSketchConcurrentAnalyze(t *testing.T) {
+	for _, isIndex := range []int{0, 1} {
+		t.Run(fmt.Sprintf("is_index=%d", isIndex), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int, key(a)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+			tk.MustExec("insert into t values (1), (2), (11), (12)")
+			tk.MustExec("analyze table t with 0 topn")
+			table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			tableInfo := table.Meta()
+			partitionID := tableInfo.Partition.Definitions[0].ID
+			h := dom.StatsHandle()
+			jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
+			require.NoError(t, err)
+			tk.MustExec("insert into t values (3)")
+
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/afterSaveColOrIdxStatsToStorage", func(tableID int64, index int) {
+				if tableID != partitionID || index != isIndex {
+					return
+				}
+				// Force ANALYZE to commit after the loaded histogram, before loading can save any later sketches.
+				tk.MustExec("analyze table t partition p0 with 0 topn")
+			})
+			require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 1))
+			stats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
+			require.NoError(t, err)
+			hist, _, _, fms, ok := stats.GetStatsInfo(1, isIndex == 1, false)
+			require.True(t, ok)
+			require.Equal(t, int64(3), hist.NDV)
+			require.Equal(t, hist.NDV, fms.NDV())
+		})
+	}
 }
 
 func TestLoadPredicateColumns(t *testing.T) {

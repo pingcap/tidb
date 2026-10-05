@@ -216,6 +216,7 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		failpoint.InjectCall("afterSaveColOrIdxStatsToStorage", tableID, isIndex)
 		// Check if saving was slow and update stats version if needed
 		version, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
