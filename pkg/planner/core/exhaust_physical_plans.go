@@ -856,10 +856,44 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+	// rangeOtherConds are the join's other conditions that may be used to build runtime
+	// ranges on the inner side, see pruneIndexJoinRangeCondsForAgg.
+	rangeOtherConds []expression.Expression
 }
 
-// checkIndexJoinInnerTaskWithAgg checks if join key set, together with the inner columns that
-// join inequalities may turn into scan ranges, is subset of group by items.
+// pruneIndexJoinRangeCondsForAgg drops the join's other conditions that reference a column of
+// the aggregation which is not a direct GROUP BY column. Those conditions are only used to build
+// runtime ranges (e.g. `a.c2 > t1.c2` on index(c1, c2)); a range on such a column would filter
+// rows below the aggregation and split groups. The index join still evaluates all of its other
+// conditions above the aggregation, and equality-only access paths remain available.
+func pruneIndexJoinRangeCondsForAgg(conds []expression.Expression, la *logicalop.LogicalAggregation) []expression.Expression {
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+	kept := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		safe := true
+		for _, col := range expression.ExtractColumns(cond) {
+			if !la.Schema().Contains(col) {
+				// columns from the outer side.
+				continue
+			}
+			if _, ok := groupByCols[col.UniqueID]; !ok {
+				safe = false
+				break
+			}
+		}
+		if safe {
+			kept = append(kept, cond)
+		}
+	}
+	return kept
+}
+
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
 // Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
 // Current limitation:
 // This check currently relies on UniqueID matching between:
@@ -871,7 +905,7 @@ type indexJoinInnerChildWrapper struct {
 // nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
-func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, otherConds []expression.Expression, dataSourceSchema *expression.Schema) bool {
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
 	// Only direct GROUP BY columns count as grouping keys. A column that merely
 	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
 	// partition the groups by that column, so probing per join-key value would
@@ -890,26 +924,6 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinK
 	for _, key := range innerJoinKeys {
 		if expression.ExprFromSchema(key, dataSourceSchema) {
 			innerKeysFromDataSource[key.UniqueID] = struct{}{}
-		}
-	}
-	// Inequalities in the join's other conditions can also become scan ranges below the
-	// aggregation (see indexJoinPathBuildColManager), e.g. `a.c2 > t1.c2` with index(c1, c2).
-	// Such a range filters rows before they are aggregated, so the inner column must be a
-	// grouping key as well.
-	for _, cond := range otherConds {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok {
-			continue
-		}
-		switch sf.FuncName.L {
-		case ast.LT, ast.LE, ast.GT, ast.GE:
-		default:
-			continue
-		}
-		for _, arg := range sf.GetArgs() {
-			if col, ok := arg.(*expression.Column); ok && expression.ExprFromSchema(col, dataSourceSchema) {
-				innerKeysFromDataSource[col.UniqueID] = struct{}{}
-			}
 		}
 	}
 	if len(innerKeysFromDataSource) > len(groupByCols) {
@@ -952,9 +966,13 @@ childLoop:
 	if wrapper.ds == nil || wrapper.ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
 	}
+	wrapper.rangeOtherConds = p.OtherConditions
 	for _, child := range wrapper.zippedChildren {
-		if la, ok := child.(*logicalop.LogicalAggregation); ok && !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, p.OtherConditions, wrapper.ds.Schema()) {
-			return nil
+		if la, ok := child.(*logicalop.LogicalAggregation); ok {
+			if !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, wrapper.ds.Schema()) {
+				return nil
+			}
+			wrapper.rangeOtherConds = pruneIndexJoinRangeCondsForAgg(wrapper.rangeOtherConds, la)
 		}
 	}
 	return wrapper
@@ -987,7 +1005,7 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
@@ -1084,7 +1102,7 @@ func buildIndexJoinInner2IndexScan(
 		}
 		return false
 	}
-	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, indexValid)
+	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, indexValid)
 	if indexJoinResult == nil {
 		return nil
 	}

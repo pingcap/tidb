@@ -1293,22 +1293,66 @@ set @@sql_mode='';
 explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 id	estRows	task	access object	operator info
 Projection	7992.00	root		planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj4.c2, planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj5.c2, Column#7
-└─HashJoin	7992.00	root		inner join, equal:[eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj5.c1)], other cond:gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)
-  ├─Selection(Build)	6393.60	root		not(isnull(planner__core__indexjoin.tj5.c2))
-  │ └─HashAgg	7992.00	root		group by:planner__core__indexjoin.tj5.c1, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__indexjoin.tj5.c1)->planner__core__indexjoin.tj5.c1, funcs:firstrow(Column#10)->planner__core__indexjoin.tj5.c2
-  │   └─IndexReader	7992.00	root		index:HashAgg
-  │     └─HashAgg	7992.00	cop[tikv]		group by:planner__core__indexjoin.tj5.c1, funcs:count(1)->Column#8, funcs:firstrow(planner__core__indexjoin.tj5.c2)->Column#10
-  │       └─IndexFullScan	9990.00	cop[tikv]	table:tj5, index:idx(c1, c2)	keep order:false, stats:pseudo
-  └─TableReader(Probe)	9980.01	root		data:Selection
-    └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
-      └─TableFullScan	10000.00	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+└─IndexJoin	7992.00	root		inner join, inner:Selection, outer key:planner__core__indexjoin.tj4.c1, inner key:planner__core__indexjoin.tj5.c1, equal cond:eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj5.c1), other cond:gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)
+  ├─TableReader(Build)	9980.01	root		data:Selection
+  │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+  └─Selection(Probe)	63808191.94	root		not(isnull(planner__core__indexjoin.tj5.c2))
+    └─HashAgg	7992.00	root		group by:planner__core__indexjoin.tj5.c1, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__indexjoin.tj5.c1)->planner__core__indexjoin.tj5.c1, funcs:firstrow(Column#10)->planner__core__indexjoin.tj5.c2
+      └─IndexReader	7992.00	root		index:HashAgg
+        └─HashAgg	7992.00	cop[tikv]		group by:planner__core__indexjoin.tj5.c1, funcs:count(1)->Column#8, funcs:firstrow(planner__core__indexjoin.tj5.c2)->Column#10
+          └─Selection	7992.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj5.c1))
+            └─IndexRangeScan	8000.00	cop[tikv]	table:tj5, index:idx(c1, c2)	range: decided by [eq(planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj4.c1)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_JOIN(a_t) */ or /*+ TIDB_INLJ(a_t) */ is inapplicable
 select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 coalesce(max(a_t.cnt), 2)
 2
 select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
+drop table if exists tj8;
+create table tj8(c1 int, c2 int, key idx(c1));
+insert into tj8 values(1, 10), (1, 20);
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+id	estRows	task	access object	operator info
+Projection	7992.00	root		planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj4.c2, planner__core__indexjoin.tj8.c1, planner__core__indexjoin.tj8.c2, Column#7
+└─IndexJoin	7992.00	root		inner join, inner:Selection, outer key:planner__core__indexjoin.tj4.c1, inner key:planner__core__indexjoin.tj8.c1, equal cond:eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj8.c1), other cond:gt(planner__core__indexjoin.tj8.c2, planner__core__indexjoin.tj4.c2)
+  ├─TableReader(Build)	9980.01	root		data:Selection
+  │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+  └─Selection(Probe)	63808191.94	root		not(isnull(planner__core__indexjoin.tj8.c2))
+    └─HashAgg	7992.00	root		group by:planner__core__indexjoin.tj8.c1, funcs:count(Column#9)->Column#7, funcs:firstrow(planner__core__indexjoin.tj8.c1)->planner__core__indexjoin.tj8.c1, funcs:firstrow(Column#11)->planner__core__indexjoin.tj8.c2
+      └─IndexLookUp	7992.00	root		
+        ├─Selection(Build)	7992.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj8.c1))
+        │ └─IndexRangeScan	8000.00	cop[tikv]	table:tj8, index:idx(c1)	range: decided by [eq(planner__core__indexjoin.tj8.c1, planner__core__indexjoin.tj4.c1)], keep order:false, stats:pseudo
+        └─HashAgg(Probe)	7992.00	cop[tikv]		group by:planner__core__indexjoin.tj8.c1, funcs:count(1)->Column#9, funcs:firstrow(planner__core__indexjoin.tj8.c2)->Column#11
+          └─TableRowIDScan	7992.00	cop[tikv]	table:tj8	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
+select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+id	estRows	task	access object	operator info
+Projection	7992.00	root		planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj4.c2, planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj5.c2, Column#7
+└─IndexJoin	7992.00	root		inner join, inner:Selection, outer key:planner__core__indexjoin.tj4.c1, inner key:planner__core__indexjoin.tj5.c1, equal cond:eq(planner__core__indexjoin.tj4.c1, planner__core__indexjoin.tj5.c1), other cond:gt(planner__core__indexjoin.tj5.c2, planner__core__indexjoin.tj4.c2)
+  ├─TableReader(Build)	9980.01	root		data:Selection
+  │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__indexjoin.tj4.c1)), not(isnull(planner__core__indexjoin.tj4.c2))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:tj4	keep order:false, stats:pseudo
+  └─Selection(Probe)	63808191.94	root		not(isnull(planner__core__indexjoin.tj5.c2))
+    └─HashAgg	7992.00	root		group by:Column#8, planner__core__indexjoin.tj5.c1, funcs:count(Column#9)->Column#7, funcs:firstrow(planner__core__indexjoin.tj5.c1)->planner__core__indexjoin.tj5.c1, funcs:firstrow(Column#11)->planner__core__indexjoin.tj5.c2
+      └─IndexReader	7992.00	root		index:HashAgg
+        └─HashAgg	7992.00	cop[tikv]		group by:intdiv(planner__core__indexjoin.tj5.c2, 100), planner__core__indexjoin.tj5.c1, funcs:count(1)->Column#9, funcs:firstrow(planner__core__indexjoin.tj5.c2)->Column#11
+          └─Selection	7992.00	cop[tikv]		not(isnull(planner__core__indexjoin.tj5.c1))
+            └─IndexRangeScan	8000.00	cop[tikv]	table:tj5, index:idx(c1, c2)	range: decided by [eq(planner__core__indexjoin.tj5.c1, planner__core__indexjoin.tj4.c1)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+coalesce(max(a_t.cnt), 2)
+2
+select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 coalesce(max(a_t.cnt), 2)
 2
 set @@sql_mode=default;

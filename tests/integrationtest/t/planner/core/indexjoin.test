@@ -148,7 +148,8 @@ select /*+ INL_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, coun
 select /*+ HASH_JOIN(a_t) */ tj1.c2, a_t.cnt from tj1 inner join (select c2, count(*) cnt from tj2 group by c2 % 2) a_t on tj1.c2 = a_t.c2 order by tj1.c2, a_t.cnt;
 set @@sql_mode=default;
 
-# Case 6: UNSAFE - join inequality (a_t.c2 > tj4.c2) would become an index range on c2 below the agg, but c2 is not in GROUP BY (c1) -> INL_JOIN hint should be rejected
+# Case 6: join inequality (a_t.c2 > tj4.c2) on c2, which is not in GROUP BY (c1). A range on c2 below the agg would split groups,
+# so the condition is not used for inner ranges: INL_JOIN only uses the equality range on c1 and keeps a_t.c2 > tj4.c2 as a join condition.
 # a_t.c2 is firstrow(c2), so the join matches with cnt = 2 or not at all; coalesce(max(cnt), 2) is 2 either way, while the wrong plan gives 1.
 drop table if exists tj4, tj5;
 create table tj4(c1 int, c2 int);
@@ -160,6 +161,18 @@ explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select
 show warnings;
 select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+# Case 6.1: same query with index(c1) only -> the equality-only INL_JOIN plan is still chosen
+drop table if exists tj8;
+create table tj8(c1 int, c2 int, key idx(c1));
+insert into tj8 values(1, 10), (1, 20);
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+show warnings;
+select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj8 group by c1) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+# Case 6.2: c2 only appears inside a GROUP BY expression (c2 div 100), so it is not a grouping key -> no range on c2 below the agg
+explain format='brief' select /*+ INL_JOIN(a_t) */ * from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+select /*+ INL_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
+select /*+ HASH_JOIN(a_t) */ coalesce(max(a_t.cnt), 2) from tj4 inner join (select c1, c2, count(*) cnt from tj5 group by c1, c2 div 100) a_t on tj4.c1 = a_t.c1 and a_t.c2 > tj4.c2;
 set @@sql_mode=default;
 
 # Case 7: SAFE - join inequality column (c2) IS in GROUP BY (c1, c2) -> INL_JOIN with range on c2 should work
