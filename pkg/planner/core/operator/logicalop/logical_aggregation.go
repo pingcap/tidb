@@ -817,6 +817,12 @@ func (la *LogicalAggregation) canPushFirstRowPredicate(cond expression.Expressio
 	if la.exprDeterminedByGroupBy(cond) {
 		return true
 	}
+	// The FD check below only proves the predicate's columns are constant within a group. A
+	// predicate with mutable effects (e.g. RAND()) is still evaluated once per group above the
+	// aggregation but once per input row below it, so it would filter rows inside a group.
+	if expression.IsMutableEffectsExpr(cond) {
+		return false
+	}
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == 0 {
 		return false

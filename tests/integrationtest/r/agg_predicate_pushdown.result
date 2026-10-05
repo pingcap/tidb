@@ -228,3 +228,18 @@ d	cnt
 2	2
 set @@sql_mode=default;
 drop table t1, t2;
+drop table if exists t3, t4;
+create table t3(id int primary key, c1 int, c2 int);
+create table t4(c1 int, v int);
+explain format='plan_tree' select a.id, a.cnt from (select t3.id, t3.c2, count(*) cnt from t3 left join t4 on t3.c1 = t4.c1 group by t3.id) a where rand() < a.c2;
+id	task	access object	operator info
+Projection	root		agg_predicate_pushdown.t3.id, Column
+└─Selection	root		lt(rand(), cast(agg_predicate_pushdown.t3.c2, double BINARY))
+  └─HashAgg	root		group by:agg_predicate_pushdown.t3.id, funcs:count(1)->Column, funcs:firstrow(agg_predicate_pushdown.t3.id)->agg_predicate_pushdown.t3.id, funcs:firstrow(agg_predicate_pushdown.t3.c2)->agg_predicate_pushdown.t3.c2
+    └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(agg_predicate_pushdown.t3.c1, agg_predicate_pushdown.t4.c1)]
+      ├─TableReader(Build)	root		data:Selection
+      │ └─Selection	cop[tikv]		not(isnull(agg_predicate_pushdown.t4.c1))
+      │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+      └─TableReader(Probe)	root		data:TableFullScan
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+drop table t3, t4;

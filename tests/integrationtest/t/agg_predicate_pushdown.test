@@ -122,3 +122,11 @@ select d, cnt from (select c1 + 1 d, count(*) cnt from t2 group by c1 + 1) a whe
 
 set @@sql_mode=default;
 drop table t1, t2;
+
+# A predicate with mutable effects (RAND()) must stay above the aggregation even when the GROUP BY
+# columns determine its columns: below the aggregation it would be evaluated per input row.
+drop table if exists t3, t4;
+create table t3(id int primary key, c1 int, c2 int);
+create table t4(c1 int, v int);
+explain format='plan_tree' select a.id, a.cnt from (select t3.id, t3.c2, count(*) cnt from t3 left join t4 on t3.c1 = t4.c1 group by t3.id) a where rand() < a.c2;
+drop table t3, t4;
