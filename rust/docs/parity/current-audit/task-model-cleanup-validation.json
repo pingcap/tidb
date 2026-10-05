@@ -1,0 +1,261 @@
+{
+  "base": "eb31889eab13d07727868682a95efed6402fc385",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Retire unused scalar implementation cost and disconnected cascades task/scheduler/stack models with their private harnesses. Preserve hash/equality owners and tests.",
+  "modules": [
+    "implementation_cost",
+    "scheduler_contract",
+    "stack_contract",
+    "task_scheduler",
+    "task_stack"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-planner/src/implementation_cost.rs",
+      "lines": 73,
+      "sha256": "7ee30de5be5ff6a456347dc03207ecd23ab96367ce6071587a884b349b672822",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/scheduler_contract.rs",
+      "lines": 33,
+      "sha256": "d239f611ee2c76d2e308e38407e3d3ad58a98e44295d58bde3f439d2f2f927c7",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/stack_contract.rs",
+      "lines": 41,
+      "sha256": "b57409b409f1c17ce28616f82a12a12cb2eb9d60fde13c592f374cdea7338137",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/task_scheduler.rs",
+      "lines": 91,
+      "sha256": "c00ae5c64c91914fdb0fafd2d8931a864cd1dcf368f44e6e4cca96efc6b62f08",
+      "tests": []
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/task_stack.rs",
+      "lines": 100,
+      "sha256": "62ab6cd625ae89646ea8929e7676c52558a3a34059a98212aa7bcbd825e0451e",
+      "tests": []
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/implementation_cost.rs",
+      "lines": 41,
+      "sha256": "a8cfa6cf0a942997e5db56a09348ad1120502a3c98452e23eb51544e61da5639",
+      "tests": [
+        "base_cost_resets_sums_and_supports_explicit_override",
+        "cost_limits_preserve_identity_and_subtract_children"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/scheduler_contract.rs",
+      "lines": 76,
+      "sha256": "cd08aacddb9fd3e7bf5830ddf97a4ffafea4e2963ab7929598ed176679bd8347",
+      "tests": [
+        "scheduler_contract_dispatches_opaque_tasks_in_lifo_order",
+        "scheduler_contract_destroy_releases_pending_tasks"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/stack_contract.rs",
+      "lines": 82,
+      "sha256": "df2d6431e3dc4e2e4f4bf65218c89d3fe79d603106cace2958ac01f3af7db66b",
+      "tests": [
+        "stack_contract_preserves_lifo_pop_and_empty_behavior",
+        "stack_contract_destroy_clears_pending_tasks"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/task_scheduler.rs",
+      "lines": 62,
+      "sha256": "fee653a7652087736b132b9fdfceb74128a50d6150ba716701dfa44afcab2f8d",
+      "tests": [
+        "scheduler_stops_at_first_lifo_task_error",
+        "scheduler_drains_successful_tasks_and_destroy_clears_pending"
+      ]
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/task_stack.rs",
+      "lines": 61,
+      "sha256": "724c7b6bddbdbf12d4b0deb73f2ff7f598bf130c634f4ef81ab956281dc5c26d",
+      "tests": [
+        "source_default_stack_shape_and_empty_pop",
+        "source_stack_is_lifo_and_destroy_reuses_capacity"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/base_impl_cost_arithmetic_source.rs",
+      "lines": 43,
+      "sha256": "f0fde7d1366f68e366c09a0ed1b8db3543105a29817535be33ca96345810e730",
+      "tests": [
+        "base_impl_cost_starts_at_zero_and_tracks_set_cost"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/cascades_task_scheduler_stack_source.rs",
+      "lines": 109,
+      "sha256": "cdcffc4a4d09cbb3c1708ff7b882abe21ec751d9445a33c332115e31d59f9ef0",
+      "tests": [
+        "simple_task_scheduler_surfaces_first_failing_task_message",
+        "task_stack_pooled_lifecycle_drains_lifo_and_retains_capacity"
+      ]
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/cascades_task_stack_source.rs",
+      "lines": 115,
+      "sha256": "2f40c2ca2eef5db938b3e0215f8f01994dce97c9320ca7407e2adf30c040081f",
+      "tests": [
+        "stack2_pointer_fill_drains_1000_tasks_lifo",
+        "stack_interface_fill_drains_1000_tasks_lifo"
+      ]
+    }
+  ],
+  "tests_removed": 15,
+  "source_test_lines_removed": 927,
+  "upstream_obligations": [
+    {
+      "path": "pkg/planner/cascades/task/BUILD.bazel",
+      "sha256": "e188a921a1776932f34647dc01d1ddb330fa6306f113b1bb12cf515a3d7901e5"
+    },
+    {
+      "path": "pkg/planner/cascades/task/base.go",
+      "sha256": "ed3ac7723d6209d0382286104b32edec6e23744db45d83d33c00a9e524f33dec"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task.go",
+      "sha256": "6b659315953d7f7337e6507700eddc8fefcaa3c8de74c32ba132d592fe935227"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_apply_rule.go",
+      "sha256": "a1058d77327b7ec05c847f29d81d96d8605f6e6ddec0efea8139955334cc3b84"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_opt_group.go",
+      "sha256": "b4625d806ca6cc5e059e571cd7cee475c105039c66c3f1ad707e664387ebfd07"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_opt_group_expression.go",
+      "sha256": "3f062de2448369645eb495158ac6aaec533353c79af33e58dc2ecb3ef07e1dbd"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_scheduler.go",
+      "sha256": "4a7a6cc24fdb5e4057656195a1c95ecc21a40b7a3a29d81d4e704416af54957f"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_scheduler_test.go",
+      "sha256": "0560faec3ced4acc4cee6fc4d58d6b348c6c91dbb53140ccccdf838ce8ac5b00"
+    },
+    {
+      "path": "pkg/planner/cascades/task/task_test.go",
+      "sha256": "cdd6e1f8506651e7518d76c07e34d68531b5e8a68c155b625389ec5459795b76"
+    },
+    {
+      "path": "pkg/planner/cascades/base/BUILD.bazel",
+      "sha256": "6a53d04fef4bb80fa0135cc1e7787b83fa030b9826a608dc716b457094d2ad19"
+    },
+    {
+      "path": "pkg/planner/cascades/base/base.go",
+      "sha256": "98461f2a6edf41e594463f33fe8ea5664e7a758661b1d0a4604c609261a89c23"
+    },
+    {
+      "path": "pkg/planner/cascades/base/base_test.go",
+      "sha256": "da04b7dfdfe5be52c706ce7a55e5d595df64d774b8b742c3d331e982f04082c6"
+    },
+    {
+      "path": "pkg/planner/cascades/base/hash_equaler.go",
+      "sha256": "03fbfe7aafab777bd0c7508126555f07f3525042271d255f492e5ee022fa410d"
+    },
+    {
+      "path": "pkg/planner/cascades/base/hash_equaler_test.go",
+      "sha256": "d698f27ee399e78ae3f1364596a6db36bb90001da826bc682a38bc70fd2f327b"
+    },
+    {
+      "path": "pkg/planner/cascades/base/task_scheduler_base.go",
+      "sha256": "93da685d8c4e9e31cb10e1cdd743e224c8df4c76a423065d5dcbbd026b49bdd1"
+    },
+    {
+      "path": "pkg/planner/cascades/base/task_stack_base.go",
+      "sha256": "5b707a47275f55c9e7cfdec40f52da4caefa08e4d5ff69dc797b84c80e054db7"
+    },
+    {
+      "path": "pkg/planner/implementation/BUILD.bazel",
+      "sha256": "57668d9a1e4b751d73d3de2e0716d0c9d0e16ba79f9d5340598c43109dfa3667"
+    },
+    {
+      "path": "pkg/planner/implementation/base.go",
+      "sha256": "508c0c36be493458465ba5280f17b430e9508d5c386aabdd73cf991fa4fc9a18"
+    },
+    {
+      "path": "pkg/planner/implementation/base_test.go",
+      "sha256": "55707536cb0224cacead86c0e47cdc47873e6e37572d22cd979636fa3395270e"
+    },
+    {
+      "path": "pkg/planner/implementation/datasource.go",
+      "sha256": "6f5fad4265efd97e035f1578614d46d2239ba9d941e330e8cd5496b8cdbce056"
+    },
+    {
+      "path": "pkg/planner/implementation/join.go",
+      "sha256": "97ab55f8e2bf20448cb5f7a88393d6e753c1a030595c1276420a0661f78c99ec"
+    },
+    {
+      "path": "pkg/planner/implementation/main_test.go",
+      "sha256": "a6cf6a812035b84a7f37f2e9e96cece223ae9fbcd753a69fd0a91dd22b8ac62d"
+    },
+    {
+      "path": "pkg/planner/implementation/simple_plans.go",
+      "sha256": "9df90612cad6369118df844e6071bad14565609189f0582cbac83e5e67f8a86d"
+    },
+    {
+      "path": "pkg/planner/implementation/sort.go",
+      "sha256": "ec338324aa5b5e6616e9732eb16230107573f0b6f63f5e05970fd135e9cfa216"
+    }
+  ],
+  "caller_evidence": "All tracked Rust scoped module paths and distinct exported owner names have no remaining references beyond lib.rs and cascades_base reexports. Generic TaskError in statistics initialization and task_stack local variable in memory alarms belong to independent live owners.",
+  "go_ownership_difference": "Go SimpleTaskScheduler owns base.Stack from stackPool; execution and descriptions share base.Task. Retired Rust scheduler owns an independent Vec<Task>, stack owns another description-only StackTask, and stack_contract declares a third task interface without a live implementation. Scalar ImplementationCost never attaches physical plans.",
+  "validation": {
+    "status": "passed; publication gates run at commit/push",
+    "command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets",
+    "lint_command": "make lint",
+    "logs": "/workspace/.cloud-setup/task-model-cleanup",
+    "all_target_check": "passed",
+    "lint": "passed",
+    "diff_check": "passed",
+    "retained_hashes": {
+      "unchanged_files": 3680,
+      "allowed_source_edits": [
+        "rust/crates/tidb-planner/src/cascades_base.rs",
+        "rust/crates/tidb-planner/src/lib.rs"
+      ],
+      "retained_hash_tests_byte_identical": true,
+      "unexpected_changes": []
+    },
+    "registration": [
+      {
+        "package": "tidb-planner",
+        "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+        "sha256": "5ac0cb9f14b2d242d6269d84bcd3a460c0e93861b0dd5a81632a2611cfe52c46"
+      },
+      {
+        "package": "difftest-planner-tests",
+        "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+        "sha256": "963b1f99761337f7fb69ae15fea7279322ad2f9cde2673c93a465db8ef17fe1b"
+      }
+    ],
+    "self_review": "No runtime logic changes; only declaration, facade documentation/reexport edits outside deletion set. Retained hashing test bodies are identical. No original Go, manifest, dependency or maintained-script edits."
+  },
+  "limits": [
+    "No package acceptance or finding closure",
+    "No measured speedup",
+    "No behavioral suite rerun for pure unreachable deletion",
+    "Full Go suites and live TiKV not run"
+  ],
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "changed": false
+  }
+}

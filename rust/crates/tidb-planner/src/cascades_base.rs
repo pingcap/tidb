@@ -12,32 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/cascades/base` lands as a complete package.
+//! Shared hash/equality surface from Go `pkg/planner/cascades/base`.
 //!
-//! The Go package is four declaration files whose production symbols were
-//! already transcreated as separate leaves in this crate, so this module is the
-//! package's single named surface rather than a second implementation: it
-//! re-exports every production symbol under one path and owns the package's
-//! test suite, which no leaf carried.
-//!
-//! Symbol ownership:
-//!
-//! - `base.go` -> [`crate::base_traits`] (`Hash64`, `Equals`, `HashEquals`).
-//! - `hash_equaler.go` -> [`crate::hash_equaler`] (`Hasher`, `Hash64a`,
-//!   `NewHashEqualer`, `NilFlag`, `NotNilFlag`, and the unexported `hasher`
-//!   state plus `offset64`/`prime64`).
-//! - `task_scheduler_base.go` -> [`crate::scheduler_contract`] (`Scheduler`).
-//! - `task_stack_base.go` -> [`crate::stack_contract`] (`Stack`, `Task`).
-//!
-//! The sole internal Go import, `pkg/planner/cascades/util`, is already ported
-//! as [`crate::string_writer`], so nothing in this package is blocked on it.
+//! `base_traits` owns Hash64/Equals/HashEquals; `hash_equaler` owns the hasher
+//! and nil markers. Their source-backed tests below remain active. The unused
+//! task/scheduler/stack adapters were retired; those Go interfaces and their
+//! shared lifecycle remain integration obligations. This module is not a
+//! complete-package parity claim.
 
 pub use crate::base_traits::{Equals, Hash64, HashEquals};
 pub use crate::hash_equaler::{
     new_hash_equaler, Hash64a, HashEqualer, Hasher, NIL_FLAG, NOT_NIL_FLAG,
 };
-pub use crate::scheduler_contract::Scheduler;
-pub use crate::stack_contract::{Stack, StackTask};
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,11 @@
 # `pkg/planner/cascades/base` — Go-master parity audit receipt
 
+Current status (2026-10-05): the disconnected scheduler/stack/cost models and
+private task harnesses described here have been retired. Hash/equality owners
+and their tests remain. This historical receipt does not establish complete
+package acceptance; see the [current cleanup evidence](../../docs/parity/current-audit/task-model-cleanup-validation.json).
+
+
 Go authority: `origin/master` at
 `aec988ea500de42dd6c8b2cf429dff907ce5bd41`.
 
