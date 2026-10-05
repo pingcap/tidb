@@ -96,7 +96,9 @@ git -C "$SCRATCH_DIR" ls-files -z --cached --others --exclude-standard > "$STAGI
 mkdir "$STAGING_DIR/source"
 (cd "$SCRATCH_DIR" && tar --null -T "$STAGING_DIR/files" -cf -) | tar -xf - -C "$STAGING_DIR/source"
 mkdir -p "$VENDOR_DIR"
-rsync -a --delete --exclude='/target/' "$STAGING_DIR/source/" "$VENDOR_DIR/"
+# Regeneration changes mtimes even for identical bindings. Compare content and
+# preserve unchanged destination mtimes so Cargo can reuse valid build outputs.
+rsync -a --checksum --no-times --delete --exclude='/target/' "$STAGING_DIR/source/" "$VENDOR_DIR/"
 
 {
   echo "- $(date -u +%Y-%m-%dT%H:%M:%SZ): synced to ngaut/client-rust@${SYNCED_COMMIT} (committed ${SYNCED_DATE}), patches: $(ls "$PATCH_DIR" 2>/dev/null | wc -l | tr -d ' ') applied"

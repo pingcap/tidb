@@ -619,13 +619,29 @@ pub(super) fn is_retryable_endpoint_error(
 pub(crate) struct PdChannelCache {
     clients: HashMap<String, TonicPdClient<Channel>>,
     security: Arc<ClusterSecurity>,
+    pub(super) tso_discovery: Arc<tokio::sync::Mutex<TsoDiscoveryState>>,
+}
+
+#[derive(Default)]
+pub(super) struct TsoDiscoveryState {
+    pub(super) discovery: tikv_client::pd_service_discovery::TsoDiscovery,
+    pub(super) route: Option<(
+        tikv_client::pd_service_discovery::TsoRoute,
+        std::time::Instant,
+        String,
+    )>,
 }
 
 impl PdChannelCache {
+    pub(super) fn security(&self) -> Arc<ClusterSecurity> {
+        self.security.clone()
+    }
+
     pub(super) fn new(security: Arc<ClusterSecurity>) -> Self {
         Self {
             clients: HashMap::new(),
             security,
+            tso_discovery: Default::default(),
         }
     }
 }

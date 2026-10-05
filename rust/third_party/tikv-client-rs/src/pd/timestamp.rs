@@ -18,6 +18,7 @@ use super::batch::Controller;
 use super::deadline::{DeadlineDone, Watcher};
 use crate::async_util::Cancellation;
 use crate::internal_err;
+#[cfg(test)]
 use crate::proto::pdpb::pd_client::PdClient;
 use crate::proto::pdpb::*;
 use crate::{Error, Result};
@@ -49,28 +50,48 @@ pub(crate) struct TimestampOracle {
     inner: Arc<OracleInner>,
 }
 
+enum Transport {
+    #[cfg(test)]
+    Pd(PdClient<Channel>),
+    Discovered(super::service_discovery::TsoRoute, Channel),
+}
+
 impl TimestampOracle {
-    pub(crate) fn new(
+    pub(crate) fn discovered(
         cluster_id: u64,
-        pd_client: &PdClient<Channel>,
+        route: super::service_discovery::TsoRoute,
+        channel: Channel,
         timeout: Duration,
-    ) -> Result<TimestampOracle> {
+    ) -> Result<Self> {
+        Self::with_transport(cluster_id, Transport::Discovered(route, channel), timeout)
+    }
+
+    fn with_transport(cluster_id: u64, transport: Transport, timeout: Duration) -> Result<Self> {
         let (request_tx, request_rx) = mpsc::channel(MAX_BATCH_SIZE);
         let cancellation = Cancellation::default();
         let worker = tokio::spawn(run_tso(
             cluster_id,
-            pd_client.clone(),
+            transport,
             request_rx,
             timeout,
             cancellation.clone(),
         ));
-        Ok(TimestampOracle {
+        Ok(Self {
             inner: Arc::new(OracleInner {
                 request_tx,
                 cancellation,
                 worker: Mutex::new(Some(worker)),
             }),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(
+        cluster_id: u64,
+        pd_client: &PdClient<Channel>,
+        timeout: Duration,
+    ) -> Result<TimestampOracle> {
+        Self::with_transport(cluster_id, Transport::Pd(pd_client.clone()), timeout)
     }
 
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
@@ -109,7 +130,7 @@ impl TimestampOracle {
 
 async fn run_tso(
     cluster_id: u64,
-    mut pd_client: PdClient<Channel>,
+    transport: Transport,
     request_rx: mpsc::Receiver<TimestampRequest>,
     timeout: Duration,
     cancellation: Cancellation,
@@ -129,8 +150,13 @@ async fn run_tso(
         result = async {
             // Include response-header establishment in the stream cancellation
             // scope. The request stream starts each deadline before yielding its RPC.
-            let mut responses = pd_client.tso(request_stream).await?.into_inner();
-            while let Some(response) = responses.message().await? {
+            let mut responses: super::service_discovery::TsoResponses = match transport {
+                #[cfg(test)]
+                Transport::Pd(mut client) => Box::pin(client.tso(request_stream).await?.into_inner()),
+                Transport::Discovered(route, channel) => route.open(channel, request_stream).await?,
+            };
+            while let Some(response) = responses.next().await {
+                let response = response?;
                 allocate_timestamps(&response, &mut *pending_requests.lock().await)?;
             }
             Err(super::errs::ERR_CLIENT_TSO_STREAM_CLOSED.error().with_stack().into())

@@ -207,9 +207,10 @@ pub trait RetryClientTrait {
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
 pub struct RetryClient<Cl = Cluster> {
     // Tuple is the cluster and the time of the cluster's last reconnect.
-    cluster: RwLock<(Cl, Instant)>,
+    cluster: Arc<RwLock<(Cl, Instant)>>,
     connection: Connection,
-    reconnect: tokio::sync::Mutex<()>,
+    reconnect: Arc<tokio::sync::Mutex<()>>,
+    discovery_worker: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     cancellation: Cancellation,
     timeout: Duration,
 }
@@ -222,9 +223,10 @@ impl<Cl> RetryClient<Cl> {
     ) -> RetryClient<Cl> {
         let connection = Connection::new(security_mgr);
         RetryClient {
-            cluster: RwLock::new((cluster, Instant::now())),
+            cluster: Arc::new(RwLock::new((cluster, Instant::now()))),
             connection,
-            reconnect: tokio::sync::Mutex::new(()),
+            reconnect: Arc::new(tokio::sync::Mutex::new(())),
+            discovery_worker: tokio::sync::Mutex::new(None),
             cancellation: Cancellation::default(),
             timeout,
         }
@@ -319,20 +321,51 @@ impl RetryClient<Cluster> {
             },
         )
         .await?;
-        let cluster = RwLock::new((
-            connected
-                .into_inner()
-                .unwrap()
-                .expect("successful PD initialization"),
-            Instant::now(),
-        ));
-        Ok(RetryClient {
-            cluster,
-            connection,
-            reconnect: tokio::sync::Mutex::new(()),
-            cancellation: Cancellation::default(),
-            timeout,
-        })
+        let cluster = connected
+            .into_inner()
+            .unwrap()
+            .expect("successful PD initialization");
+        let client = Self::new_with_cluster(connection.security_manager(), timeout, cluster);
+        client.start_discovery().await;
+        Ok(client)
+    }
+
+    async fn start_discovery(&self) {
+        let cluster = Arc::downgrade(&self.cluster);
+        let connection = self.connection.clone();
+        let refresh = self.reconnect.clone();
+        let cancellation = self.cancellation.clone();
+        let timeout = self.timeout;
+        let worker = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => break,
+                    _ = sleep(super::service_discovery::UPDATE_INTERVAL) => {},
+                }
+                let Some(cluster) = cluster.upgrade() else {
+                    break;
+                };
+                let result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => break,
+                    result = refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None) => result,
+                };
+                if let Err(error) = result {
+                    log::warn!("PD service discovery refresh: {error}");
+                }
+            }
+        });
+        *self.discovery_worker.lock().await = Some(worker);
+    }
+
+    /// Installs keyspace-aware timestamp routing before API-v2 publication.
+    pub async fn set_keyspace(&self, meta: &keyspacepb::KeyspaceMeta) -> Result<()> {
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(Error::ContextCanceled),
+            result = refresh_cluster(&self.cluster, &self.connection, &self.reconnect, self.timeout, 0, Some(meta)) => result,
+        }
     }
 
     #[cfg(test)]
@@ -344,6 +377,13 @@ impl RetryClient<Cluster> {
     /// while request handles are retained. A cancelled close can be resumed.
     pub async fn close(&self) {
         self.cancellation.cancel();
+        let mut worker = self.discovery_worker.lock().await;
+        if let Some(handle) = worker.as_mut() {
+            if let Err(error) = handle.await {
+                log::error!("PD discovery worker failed: {error}");
+            }
+            worker.take();
+        }
         let _refresh = self.reconnect.lock().await;
         let retire = self.cluster.write().await.0.start_close();
         retire.await;
@@ -673,42 +713,55 @@ impl Reconnect for RetryClient<Cluster> {
     }
 
     async fn reconnect(&self, interval_sec: u64) -> Result<()> {
-        let reconnect = async {
-            let reconnect_begin = Instant::now();
-            // Serialize refreshes, not requests. An in-flight RPC retains its own
-            // handle and cannot delay discovery or publication of a new leader.
-            let _refresh = self.reconnect.lock().await;
-            let prepare = {
-                let guard = self.cluster.read().await;
-                if reconnect_begin <= guard.1 + Duration::from_secs(interval_sec) {
-                    return Ok(());
-                }
-                self.connection.prepare_reconnect(&guard.0, self.timeout)
-            };
-            log::warn!("updating pd client");
-            let leader = prepare.await?;
-            let retire = {
-                let mut guard = self.cluster.write().await;
-                guard.0.install_leader(leader, self.timeout)?
-            };
-            retire.await;
-            {
-                let mut guard = self.cluster.write().await;
-                guard.0.finish_retirement();
-                guard.1 = Instant::now();
-            }
-            log::info!(
-                "updating PD client done, spent {:?}",
-                reconnect_begin.elapsed()
-            );
-            Ok(())
-        };
+        let reconnect = refresh_cluster(
+            &self.cluster,
+            &self.connection,
+            &self.reconnect,
+            self.timeout,
+            interval_sec,
+            None,
+        );
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(Error::ContextCanceled),
             result = reconnect => result,
         }
     }
+}
+
+impl<Cl> Drop for RetryClient<Cl> {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
+async fn refresh_cluster(
+    cluster: &RwLock<(Cluster, Instant)>,
+    connection: &Connection,
+    refresh: &tokio::sync::Mutex<()>,
+    timeout: Duration,
+    interval_sec: u64,
+    keyspace: Option<&keyspacepb::KeyspaceMeta>,
+) -> Result<()> {
+    let begin = Instant::now();
+    let _refresh = refresh.lock().await;
+    let prepare = {
+        let guard = cluster.read().await;
+        if keyspace.is_none()
+            && interval_sec > 0
+            && begin <= guard.1 + Duration::from_secs(interval_sec)
+        {
+            return Ok(());
+        }
+        connection.prepare_keyspace_reconnect(&guard.0, timeout, keyspace)
+    };
+    let leader = prepare.await?;
+    let retire = cluster.write().await.0.install_leader(leader, timeout)?;
+    retire.await;
+    let mut guard = cluster.write().await;
+    guard.0.finish_retirement();
+    guard.1 = Instant::now();
+    Ok(())
 }
 
 #[cfg(test)]

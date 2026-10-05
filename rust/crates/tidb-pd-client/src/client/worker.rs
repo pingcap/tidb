@@ -50,8 +50,7 @@ use super::failover::{
     batch_scan_regions_with_failover, endpoint_attempt_order, foreground_leader_only,
     get_all_stores_with_failover, get_gc_state_with_failover, get_prev_region_with_failover,
     get_region_by_id_with_failover, get_region_with_failover, get_store_with_failover,
-    refresh_membership, retain_member_clients, scan_regions_with_failover, tonic_client,
-    PdChannelCache,
+    refresh_membership, retain_member_clients, scan_regions_with_failover, PdChannelCache,
 };
 use super::requests::{get_members, get_prev_region, get_region, get_region_by_id, scan_regions};
 use super::topology::invalid_topology;
@@ -72,18 +71,41 @@ pub(super) fn run_worker(
     state: Arc<RwLock<PdSharedState>>,
     shutdown: watch::Receiver<bool>,
 ) {
+    let mut discovery_worker =
+        DiscoveryWorker::start(&clients, timeout, state.clone(), shutdown.clone());
     let mut tso_stream = None;
     let mut last_timestamp = None;
     // Non-TSO commands displaced while draining the channel for TSO waiters.
     let mut deferred: VecDeque<WorkerCommand> = VecDeque::new();
     loop {
-        let command = match deferred.pop_front() {
-            Some(command) => command,
-            None => match receiver.recv() {
-                Ok(command) => command,
-                Err(_) => break,
-            },
-        };
+        let command =
+            match deferred.pop_front() {
+                Some(command) => command,
+                None => {
+                    match receiver.recv_timeout(tikv_client::pd_service_discovery::UPDATE_INTERVAL)
+                    {
+                        Ok(command) => command,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if *shutdown.borrow() {
+                                // The owner signals cancellation before enqueueing
+                                // Close. Keep receiving until we acknowledge it.
+                                continue;
+                            }
+                            if let Ok(discovery) = clients.tso_discovery.try_lock() {
+                                if let Some((route, _, _)) = &discovery.route {
+                                    if tso_stream.as_ref().is_some_and(
+                                        |stream: &RetainedTsoStream| stream.route() != route,
+                                    ) {
+                                        tso_stream = None;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            };
         if *shutdown.borrow() {
             match command {
                 WorkerCommand::RefreshMembers { reply } => {
@@ -123,6 +145,7 @@ pub(super) fn run_worker(
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::Close { reply } => {
+                    discovery_worker.close();
                     drop(tso_stream.take());
                     let _ = reply.send(());
                     break;
@@ -440,6 +463,7 @@ pub(super) fn run_worker(
                 let _ = reply.send(result);
             }
             WorkerCommand::Close { reply } => {
+                discovery_worker.close();
                 drop(tso_stream.take());
                 let _ = reply.send(());
                 break;
@@ -458,7 +482,6 @@ pub(super) fn get_timestamps_with_retry(
     last_timestamp: &mut Option<TimestampParts>,
 ) -> Result<TsoBatch, PdClientError> {
     let TsoBatchSpec { deadline, count } = spec;
-    let mut last_error = None;
     // Go's dispatcher retries EVERY processRequest failure until the context
     // is done (dispatcher.go:356-398) -- there is no attempt cap; the batch
     // deadline is the natural bound.
@@ -466,20 +489,36 @@ pub(super) fn get_timestamps_with_retry(
     loop {
         let snapshot = state.read().expect("PD state lock poisoned").clone();
         let leader = snapshot.members.leader_url;
-        if stream
-            .as_ref()
-            .is_some_and(|stream| stream.endpoint() != leader.as_str())
-        {
-            *stream = None;
-        }
-
         let result: Result<TsoBatch, PdClientError> = (|| {
+            let route = discover_tso(
+                runtime,
+                clients,
+                &leader,
+                snapshot.members.cluster_id,
+                deadline,
+                control.shutdown,
+                stream.is_none(),
+            )?;
+            if stream
+                .as_ref()
+                .is_some_and(|stream| stream.route() != &route)
+            {
+                *stream = None;
+            }
             let batch = if stream.is_none() {
-                let client = tonic_client(runtime, clients, &leader)?;
+                let channel = {
+                    let _guard = runtime.enter();
+                    crate::secure_endpoint(&route.endpoint, &clients.security())
+                        .map_err(|error| PdClientError::InvalidEndpoint {
+                            endpoint: route.endpoint.clone(),
+                            message: error.to_string(),
+                        })?
+                        .connect_lazy()
+                };
                 let (opened, timestamp) = RetainedTsoStream::open_and_request(
                     runtime,
-                    client,
-                    &leader,
+                    channel,
+                    route,
                     snapshot.members.cluster_id,
                     deadline,
                     control.shutdown,
@@ -524,7 +563,6 @@ pub(super) fn get_timestamps_with_retry(
                 if Instant::now() >= deadline {
                     return Err(timeout_error(&leader.to_string(), Duration::ZERO));
                 }
-                last_error = Some(error);
                 attempt += 1;
             }
         }
@@ -557,7 +595,6 @@ pub(super) fn get_timestamps_with_retry(
             }
         }
     }
-    Err(last_error.expect("bounded TSO retry loop records every failure"))
 }
 
 pub(super) fn refresh_membership_before_deadline(
@@ -650,4 +687,128 @@ pub(super) fn bootstrap_members(
         }
     }
     unreachable!("bounded bootstrap loop always returns")
+}
+
+// Discovery uses the native owner; the synchronous adapter only supplies its
+// TLS policy and cancellation/deadline budget. Metadata still targets PD.
+fn discover_tso(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    leader: &str,
+    cluster_id: u64,
+    deadline: Instant,
+    shutdown: &watch::Receiver<bool>,
+    force: bool,
+) -> Result<tikv_client::pd_service_discovery::TsoRoute, PdClientError> {
+    let timeout = remaining_tso_time(deadline, leader)?;
+    let mut shutdown = shutdown.clone();
+    runtime.block_on(async {
+        tokio::select! {
+            biased;
+            () = super::shutdown_requested(&mut shutdown) => Err(PdClientError::Closed),
+            result = tokio::time::timeout(timeout, refresh_tso(&clients.tso_discovery, clients.security(), leader, cluster_id, timeout, force)) => result.unwrap_or_else(|_| Err(timeout_error(leader, timeout))),
+        }
+    })
+}
+
+async fn refresh_tso(
+    shared: &tokio::sync::Mutex<super::failover::TsoDiscoveryState>,
+    security: Arc<crate::ClusterSecurity>,
+    leader: &str,
+    cluster_id: u64,
+    timeout: Duration,
+    force: bool,
+) -> Result<tikv_client::pd_service_discovery::TsoRoute, PdClientError> {
+    // Only timestamp discovery serializes here. Metadata commands never wait
+    // for the independent periodic probe or hold this guard.
+    let mut shared = shared.lock().await;
+    if !force {
+        if let Some((route, checked, previous_leader)) = &shared.route {
+            if previous_leader == leader
+                && checked.elapsed() < tikv_client::pd_service_discovery::UPDATE_INTERVAL
+            {
+                return Ok(route.clone());
+            }
+        }
+    }
+    let mut discovery = shared.discovery.clone();
+    let (route, _) = discovery
+        .discover(cluster_id, leader, timeout, |endpoint| {
+            let security = security.clone();
+            async move {
+                crate::secure_endpoint(&endpoint, &security)
+                    .map(|endpoint| endpoint.connect_lazy())
+                    .map_err(|error| tonic::Status::unavailable(error.to_string()))
+            }
+        })
+        .await
+        .map_err(|error| PdClientError::Transport {
+            operation: PdOperation::Tso,
+            endpoint: leader.to_owned(),
+            code: format!("{:?}", error.code()),
+            message: error.message().to_owned(),
+        })?;
+    shared.discovery = discovery;
+    shared.route = Some((route.clone(), Instant::now(), leader.to_owned()));
+    Ok(route)
+}
+
+struct DiscoveryWorker {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DiscoveryWorker {
+    fn start(
+        clients: &PdChannelCache,
+        timeout: Duration,
+        state: Arc<RwLock<PdSharedState>>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Self {
+        let discovery = clients.tso_discovery.clone();
+        let security = clients.security();
+        let (stop, mut stopped) = tokio::sync::oneshot::channel();
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("PD discovery runtime");
+            runtime.block_on(async {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut stopped => break,
+                        () = super::shutdown_requested(&mut shutdown) => break,
+                        () = tokio::time::sleep(tikv_client::pd_service_discovery::UPDATE_INTERVAL) => {},
+                    }
+                    let snapshot = state.read().expect("PD state lock poisoned").clone();
+                    tokio::select! {
+                        biased;
+                        _ = &mut stopped => break,
+                        () = super::shutdown_requested(&mut shutdown) => break,
+                        _ = refresh_tso(&discovery, security.clone(), &snapshot.members.leader_url, snapshot.members.cluster_id, timeout, true) => {},
+                    }
+                }
+            });
+        });
+        Self {
+            stop: Some(stop),
+            worker: Some(worker),
+        }
+    }
+
+    fn close(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            worker.join().expect("PD discovery worker panicked");
+        }
+    }
+}
+
+impl Drop for DiscoveryWorker {
+    fn drop(&mut self) {
+        self.close();
+    }
 }

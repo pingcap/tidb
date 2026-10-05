@@ -11,8 +11,8 @@
     "tracked": 86,
     "unresolved": 56,
     "repaired": 30,
-    "open": 30,
-    "partial": 26
+    "open": 29,
+    "partial": 27
   },
   "findings": [
     {
@@ -584,21 +584,21 @@
     },
     {
       "id": "P03",
-      "status": "open",
+      "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "The local PD client only follows PD member leadership and its PD Tso stream. It has no service-mode discovery/switching or independent TSO-service owner.",
-      "rust_evidence": "`rust/crates/tidb-pd-client/src/client/topology.rs:36`, `rust/crates/tidb-pd-client/src/tso.rs:207`, complete PD contract does not supply discovery",
+      "finding": "**P2; partially repaired:** TiDB now consumes native GetClusterInfo service-mode discovery, independent TSO group routing and both wire protocols. An owned periodic discovery worker is independent of metadata commands, bounded by cancellation, and joined on shutdown. Empty/error modes cannot silently select classic PD; API mode uses group primary and legacy default-primary policy. Complete discovery/root/TSO package acceptance, follower/health/channel owners and remaining service-mode consumers are still open.",
+      "rust_evidence": "`rust/crates/tidb-pd-client/src/{client/worker.rs,client/failover.rs,tso.rs}`; native `src/pd/service_discovery.rs`; [batch validation](pd-service-discovery-batch-validation.json)",
       "go_owner": "Pinned `pd/client/servicediscovery/service_discovery.go::checkServiceModeChanged`, `tso_service_discovery.go` and `client.go`: discover PD/API mode, TSO URLs and fallback policy. Classic-PD success does not certify microservice mode.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. PD member/leader discovery and classic Tso remain the only active discovery path; no service-mode/independent TSO service switch is composed. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from 11dbe67777 against freshly fetched Go master 93a01d31f6 and its PD client afa43111d149. Two native and two TiDB baseline regressions fail; 163 native PD, 27 TiDB unit and 52 integration tests pass after repair, with one existing live-PD test ignored. The old blanket absence of service-mode/TSO discovery is stale and removed. Remaining provider/option and package obligations are explicit in pd-service-discovery-batch-validation.json."
     },
     {
       "id": "P06",
       "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "**P2; partially repaired:** native TSO now has batch deadlines, cancellation and joined stream retirement; shared connectionctx, batch, retry, opt, metrics, circuitbreaker and errs prerequisites have published receipts. Healthy same-URL refresh preserves streams. Public PdRpcClient.close now joins region-cache work, TiKV and PD/TSO in source order; concurrent/interrupted close retains completion, cache-owned RPCs cancel, and interrupted reconnect retains retired-stream joins. Retained PD requests cannot reopen a closed owner. Complete root/discovery/TSO lifecycle, options and package acceptance remain open. grpcutil experiments are isolated and unaccepted; Go default pick_first reconnects on demand after an established Ready connection becomes Idle, so that demand-driven behavior is not itself a mismatch. Current residual evidence: Cluster still uses only PD GetMembers and the leader Tso stream; GetClusterInfo service-mode switching and operational follower-proxy option consumers remain absent.",
-      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`; [explicit shutdown receipt](../../pd-shutdown-ownership-execplan.md)",
+      "finding": "**P2; partially repaired:** native batching, deadlines, cancellation and joined current/retired stream ownership now compose GetClusterInfo, independent keyspace-group discovery and PD/TSO wire routing. Periodic refresh retains healthy routes, retires changed routes, rejects stale revisions and joins on close. V2 metadata configures routing before client publication. Metadata leadership publishes independently of TSO discovery errors. Follower-proxy/forwarding option consumers, complete health/channel/grpcutil ownership and GetMinTS provider selection remain open; no complete parent-package acceptance is claimed.",
+      "rust_evidence": "`rust/third_party/tikv-client-rs/src/pd/timestamp.rs::TimestampOracle::close`; `src/pd/client.rs::PdRpcClient::close`; `src/pd/retry.rs`; receipts `pd-deadline-owner-repair.md`, `pd-connectionctx-owner-repair.md`, `pd-batch-owner-repair.md`, `pd-retry-owner-repair.md`, `pd-opt-owner-repair.md`, `pd-metrics-owner-repair.md`, `pd-circuitbreaker-owner-repair.md`, `pd-retry-value-ownership-repair.md`, `pd-errors-owner-repair.md`; `pd-grpcutil-contract/h2-candidate-review.md`; `pd-grpcutil-contract/h2-preface-review.md`; [explicit shutdown receipt](../../pd-shutdown-ownership-execplan.md); `src/pd/service_discovery.rs`, `cluster.rs`, `retry.rs`; [batch validation](pd-service-discovery-batch-validation.json)",
       "go_owner": "Pinned PD root Close, clients/tso/client.go::Close, servicediscovery and pkg/utils/grpcutil, with client-go tikv.KVStore.Close. Native 5928b6e through 6163ecf add complete prerequisite receipts, including retry value-copy correction 69877b9; those prerequisites alone did not accept parent packages or close P03/P06/P07. P07's subsequent owned-request repair is recorded separately; P03/P06 remain open/partial. The later explicit-shutdown repair composes cancellation, request admission and joined current/retired streams in the existing native owner. Preserve remaining source-dependent Idle/demand reconnection, setup/readiness and TLS obligations; broader parent-package acceptance remains open. The original eight-pass/two-fail accessor remains rejected. A separate opt-in protocol-preface experiment now passes 14 tests and the Go oracle; complete transport/package acceptance remains open, with no production integration.",
-      "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Public native close, retained request ownership and interrupted stream retirement are repaired. Native Cluster still owns only the PD leader Tso stream and GetMembers discovery; it has no operational GetClusterInfo service-mode/TSO-service switching or follower-proxy option consumer. Pinned Go servicediscovery and clients/tso compose both. This residual is source-confirmed, not inferred from missing package acceptance or demand-driven Idle reconnect. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+      "review_basis": "Cloud batch from 11dbe67777 against freshly fetched Go master 93a01d31f6 and its PD client afa43111d149. Two native and two TiDB baseline regressions fail; 163 native PD, 27 TiDB unit and 52 integration tests pass after repair, with one existing live-PD test ignored. The old blanket absence of service-mode/TSO discovery is stale and removed. Remaining provider/option and package obligations are explicit in pd-service-discovery-batch-validation.json."
     },
     {
       "id": "P07",
@@ -793,17 +793,17 @@
   "review_receipt": "mdl-mode-review.md",
   "latest_repair": {
     "date": "2026-10-05",
-    "integration_start": "78196d5f4f549a5327506d25f773b8c9fb292c1b",
+    "integration_start": "11dbe677777675c5c7cf2c8ee3b9c901883f2b89",
     "findings": [
-      "S04",
-      "N03"
+      "P03",
+      "P06"
     ],
     "statuses": {
-      "S04": "partial",
-      "N03": "partial"
+      "P03": "partial",
+      "P06": "partial"
     },
-    "receipt": "timestamp-entrypoints-batch-validation.json",
-    "scope": "One-use and external timestamp entrypoints, read-only/prepared admission, shared storage oracle and transaction lifetime; existing-owner repair, not complete package acceptance."
+    "receipt": "pd-service-discovery-batch-validation.json",
+    "scope": "Shared service-mode, keyspace-group and protocol routing with independently owned refresh and joined close; existing-owner repair, not complete package acceptance."
   },
   "latest_test_cleanup": {
     "date": "2026-10-05 UTC",
@@ -1238,6 +1238,20 @@
       },
       "receipt": "snapshot-validation-batch-validation.json",
       "scope": "SET-time storage/GC/schema selection, retained schema lifetime, effective-version resolution and typed snapshot policy consumers. Complete parent packages remain unaccepted."
+    },
+    {
+      "date": "2026-10-05",
+      "integration_start": "78196d5f4f549a5327506d25f773b8c9fb292c1b",
+      "findings": [
+        "S04",
+        "N03"
+      ],
+      "statuses": {
+        "S04": "partial",
+        "N03": "partial"
+      },
+      "receipt": "timestamp-entrypoints-batch-validation.json",
+      "scope": "One-use and external timestamp entrypoints, read-only/prepared admission, shared storage oracle and transaction lifetime; existing-owner repair, not complete package acceptance."
     }
   ],
   "execution_batches": {

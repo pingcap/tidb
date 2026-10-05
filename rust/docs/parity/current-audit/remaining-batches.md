@@ -107,4 +107,4 @@ Integration dependencies: B02, B06.
 
 ## Current evidence boundary
 
-The current batch rechecks E03/T01/K03. Exact validation and source identities are in its receipt. It does not freshly reproduce the other 53 unresolved roots or accept any complete Go package.
+The PD/TSO batch rechecks P03 and P06. Their blanket absence-of-discovery evidence is retired: both clients now use the native service-mode and group-routing owner. [Validation and residual obligations](pd-service-discovery-batch-validation.json) record 163 native PD tests and 79 TiDB PD tests passing, with one existing live-PD test ignored. P03/P06 remain partial because provider/option consumers and whole-package acceptance remain incomplete. This batch does not freshly reproduce the other 54 unresolved roots.

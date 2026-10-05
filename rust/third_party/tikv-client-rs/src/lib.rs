@@ -260,6 +260,8 @@ pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
 pub use crate::pd::opt as pd_options;
 #[doc(inline)]
+pub use crate::pd::service_discovery as pd_service_discovery;
+#[doc(inline)]
 pub use crate::pd::PdClient;
 #[doc(inline)]
 pub use crate::pd::{get_store_liveness_timeout, set_store_liveness_timeout};

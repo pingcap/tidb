@@ -13,7 +13,7 @@ use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
 use super::*;
 use crate::pd::{Connection, RetryClient, RetryClientTrait};
-use crate::proto::{metapb, pdpb};
+use crate::proto::{metapb, pdpb, tsopb};
 use crate::SecurityManager;
 
 #[derive(Clone, Copy)]
@@ -35,6 +35,12 @@ struct PdServer {
     region_entered: Arc<tokio::sync::Semaphore>,
     region_release: Arc<tokio::sync::Semaphore>,
     region_id: Arc<AtomicUsize>,
+    group: Arc<std::sync::RwLock<tsopb::KeyspaceGroup>>,
+    revision: Arc<AtomicUsize>,
+    discovery_requests: Arc<AtomicUsize>,
+    stall_discovery: Arc<std::sync::atomic::AtomicBool>,
+    tso_headers: Arc<std::sync::Mutex<Vec<tsopb::RequestHeader>>>,
+    cluster_info: Arc<std::sync::RwLock<Option<pdpb::GetClusterInfoResponse>>>,
     reply: Reply,
     received: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -67,6 +73,14 @@ where
     fn call(&mut self, request: http::Request<B>) -> Self::Future {
         let service = self.clone();
         match request.uri().path() {
+            "/pdpb.PD/GetClusterInfo" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetClusterInfoResponse,
+                    pdpb::GetClusterInfoRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
             "/pdpb.PD/GetMembers" => Box::pin(async move {
                 Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
                     pdpb::GetMembersResponse,
@@ -330,7 +344,7 @@ impl Server {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let service = PdServer {
             endpoint: endpoint.clone(),
-            leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint])),
+            leader_urls: Arc::new(std::sync::RwLock::new(vec![endpoint.clone()])),
             member_failures: Arc::new(AtomicUsize::new(0)),
             member_requests: Arc::new(AtomicUsize::new(0)),
             stall_members: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -338,6 +352,18 @@ impl Server {
             region_entered: Arc::new(tokio::sync::Semaphore::new(0)),
             region_release: Arc::new(tokio::sync::Semaphore::new(0)),
             region_id: Arc::new(AtomicUsize::new(1)),
+            group: Arc::new(std::sync::RwLock::new(tsopb::KeyspaceGroup {
+                members: vec![tsopb::KeyspaceGroupMember {
+                    address: endpoint.clone(),
+                    is_primary: true,
+                }],
+                ..Default::default()
+            })),
+            revision: Arc::new(AtomicUsize::new(1)),
+            discovery_requests: Arc::new(AtomicUsize::new(0)),
+            stall_discovery: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tso_headers: Arc::new(std::sync::Mutex::new(Vec::new())),
+            cluster_info: Arc::new(std::sync::RwLock::new(None)),
             reply,
             received: Arc::new(AtomicUsize::new(0)),
             dropped: Arc::new(AtomicUsize::new(0)),
@@ -345,6 +371,7 @@ impl Server {
         let task_service = service.clone();
         let task = tokio::spawn(async move {
             tonic::transport::Server::builder()
+                .add_service(TsoServer(task_service.clone()))
                 .add_service(task_service)
                 .serve_with_incoming(TcpListenerStream::new(listener))
                 .await
@@ -1043,7 +1070,7 @@ async fn source_pd_error_owner_reports_stream_eof() {
         Duration::from_secs(5),
         run_tso(
             42,
-            PdClient::new(channel),
+            Transport::Pd(PdClient::new(channel)),
             rx,
             Duration::from_secs(2),
             Cancellation::default(),
@@ -1347,5 +1374,329 @@ async fn source_pd_shutdown_cancels_background_rpc_before_closing_pd() {
     );
     assert!(!cache.spawn_background_task(|_| async { panic!("closed cache accepted work") }));
     assert_eq!(client.clone().get_all_stores().await.unwrap()[0].id, 9);
+    client.close().await;
+}
+
+impl tonic::server::UnaryService<pdpb::GetClusterInfoRequest> for PdServer {
+    type Response = pdpb::GetClusterInfoResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, _: tonic::Request<pdpb::GetClusterInfoRequest>) -> Self::Future {
+        let response = self.cluster_info.read().unwrap().clone();
+        Box::pin(async move {
+            response
+                .map(tonic::Response::new)
+                .ok_or_else(|| tonic::Status::unimplemented("old PD"))
+        })
+    }
+}
+
+#[tokio::test]
+async fn source_service_empty_modes_rejected() {
+    let server = Server::start(Reply::Timestamp).await;
+    *server.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse::default());
+    let result = Connection::new(Arc::new(SecurityManager::default()))
+        .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
+        .await;
+    assert!(
+        result.is_err(),
+        "empty service modes must not select classic PD Tso"
+    );
+}
+
+#[tokio::test]
+async fn source_service_api_missing_tso_never_uses_pd_leader() {
+    let server = Server::start(Reply::Timestamp).await;
+    *server.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        ..Default::default()
+    });
+    let result = Connection::new(Arc::new(SecurityManager::default()))
+        .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
+        .await;
+    assert!(
+        result.is_err(),
+        "failed TSO discovery must not select classic PD Tso"
+    );
+    assert_eq!(server.service.received.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Clone)]
+struct TsoServer(PdServer);
+impl tonic::server::NamedService for TsoServer {
+    const NAME: &'static str = "tsopb.TSO";
+}
+impl<B> Service<http::Request<B>> for TsoServer
+where
+    B: Body + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = http::Response<tonic::body::BoxBody>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        match request.uri().path() {
+            "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
+                Ok(
+                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        .unary(service, request)
+                        .await,
+                )
+            }),
+            "/tsopb.TSO/Tso" => Box::pin(async move {
+                Ok(
+                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                        .streaming(service, request)
+                        .await,
+                )
+            }),
+            _ => unreachable!(),
+        }
+    }
+}
+impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for TsoServer {
+    type Response = tsopb::FindGroupByKeyspaceIdResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(
+        &mut self,
+        request: tonic::Request<tsopb::FindGroupByKeyspaceIdRequest>,
+    ) -> Self::Future {
+        let service = self.0.clone();
+        Box::pin(async move {
+            assert!(request.metadata().contains_key("grpc-timeout"));
+            let request = request.into_inner();
+            let header = request.header.unwrap();
+            assert_eq!(header.cluster_id, 42);
+            assert_eq!(
+                header.callee_id,
+                service.endpoint.strip_prefix("http://").unwrap()
+            );
+            service.discovery_requests.fetch_add(1, Ordering::SeqCst);
+            if service.stall_discovery.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            Ok(tonic::Response::new(tsopb::FindGroupByKeyspaceIdResponse {
+                header: Some(tsopb::ResponseHeader {
+                    cluster_id: 42,
+                    ..Default::default()
+                }),
+                keyspace_group: Some(service.group.read().unwrap().clone()),
+                mod_revision: service.revision.load(Ordering::SeqCst) as u64,
+            }))
+        })
+    }
+}
+impl tonic::server::StreamingService<tsopb::TsoRequest> for TsoServer {
+    type Response = tsopb::TsoResponse;
+    type ResponseStream =
+        Pin<Box<dyn Stream<Item = std::result::Result<Self::Response, tonic::Status>> + Send>>;
+    type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+    fn call(
+        &mut self,
+        request: tonic::Request<tonic::Streaming<tsopb::TsoRequest>>,
+    ) -> Self::Future {
+        let service = self.0.clone();
+        Box::pin(async move {
+            let active = ActiveStream(service.dropped.clone());
+            let stream = futures::stream::unfold(
+                (request.into_inner(), active, service, 0_i64),
+                |(mut requests, active, service, mut logical)| async move {
+                    let request = requests.message().await.unwrap()?;
+                    service.received.fetch_add(1, Ordering::SeqCst);
+                    let header = request.header.unwrap();
+                    assert_eq!(header.cluster_id, 42);
+                    assert_eq!(
+                        header.callee_id,
+                        service.endpoint.strip_prefix("http://").unwrap()
+                    );
+                    service.tso_headers.lock().unwrap().push(header.clone());
+                    logical += i64::from(request.count);
+                    Some((
+                        Ok(tsopb::TsoResponse {
+                            header: Some(tsopb::ResponseHeader {
+                                cluster_id: 42,
+                                keyspace_group_id: header.keyspace_group_id,
+                                ..Default::default()
+                            }),
+                            count: request.count,
+                            timestamp: Some(pdpb::Timestamp {
+                                physical: 200,
+                                logical,
+                                suffix_bits: 0,
+                            }),
+                        }),
+                        (requests, active, service, logical),
+                    ))
+                },
+            );
+            Ok(tonic::Response::new(
+                Box::pin(stream) as Self::ResponseStream
+            ))
+        })
+    }
+}
+
+fn api_mode(pd: &Server, tso: &Server) {
+    *pd.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![tso.service.endpoint.clone()],
+        ..Default::default()
+    });
+}
+
+#[tokio::test]
+async fn source_service_routes_keyspace_and_retires_on_group_move() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let first = Server::start(Reply::Timestamp).await;
+    let second = Server::start(Reply::Timestamp).await;
+    api_mode(&pd, &first);
+    let client = metadata_client(&pd).await;
+    let timestamp = client.clone().get_timestamp().await.unwrap();
+    assert_eq!(timestamp.physical, 200);
+    assert_eq!(pd.service.received.load(Ordering::SeqCst), 0);
+    let old = client.tso_for_test().await;
+    client.reconnect_for_test().await.unwrap();
+    assert!(
+        !old.cancellation().is_cancelled(),
+        "unchanged route must retain stream"
+    );
+    let meta = crate::proto::keyspacepb::KeyspaceMeta {
+        keyspace: Some(crate::proto::keyspacepb::keyspace_meta::Keyspace::Id(27)),
+        config: [("tso_keyspace_group_id".into(), "9".into())].into(),
+        ..Default::default()
+    };
+    client.set_keyspace(&meta).await.unwrap();
+    assert!(old.cancellation().is_cancelled());
+    client.clone().get_timestamp().await.unwrap();
+    let headers = first.service.tso_headers.lock().unwrap().clone();
+    assert_eq!(
+        headers.last().unwrap().keyspace,
+        Some(tsopb::request_header::Keyspace::KeyspaceId(27))
+    );
+    let old = client.tso_for_test().await;
+    *first.service.group.write().unwrap() = tsopb::KeyspaceGroup {
+        id: 9,
+        members: vec![tsopb::KeyspaceGroupMember {
+            address: second.service.endpoint.clone(),
+            is_primary: true,
+        }],
+        ..Default::default()
+    };
+    first.service.revision.store(2, Ordering::SeqCst);
+    client.reconnect_for_test().await.unwrap();
+    assert!(old.cancellation().is_cancelled());
+    client.clone().get_timestamp().await.unwrap();
+    assert_eq!(
+        second.service.tso_headers.lock().unwrap()[0].keyspace_group_id,
+        9
+    );
+    first.service.revision.store(1, Ordering::SeqCst);
+    assert!(client.reconnect_for_test().await.is_err());
+    // A stale observation must not replace the accepted route.
+    client.clone().get_timestamp().await.unwrap();
+    assert_eq!(second.service.received.load(Ordering::SeqCst), 2);
+    client.close().await;
+}
+
+#[tokio::test]
+async fn source_service_background_mode_switch_and_close() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    let client = Arc::new(
+        RetryClient::connect(
+            &[pd.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap(),
+    );
+    let classic = client.clone().get_timestamp().await.unwrap();
+    assert_eq!(classic.physical, 100);
+    let old = client.tso_for_test().await;
+    api_mode(&pd, &tso);
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while !old.cancellation().is_cancelled() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
+    let active = client.tso_for_test().await;
+    client.close().await;
+    assert!(active.cancellation().is_cancelled());
+    let probes = tso.service.discovery_requests.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(3100)).await;
+    assert_eq!(
+        tso.service.discovery_requests.load(Ordering::SeqCst),
+        probes
+    );
+    assert!(client.clone().get_timestamp().await.is_err());
+}
+
+#[tokio::test]
+async fn source_service_header_errors_do_not_fall_back() {
+    let server = Server::start(Reply::Timestamp).await;
+    *server.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        header: Some(pdpb::ResponseHeader {
+            error: Some(pdpb::Error {
+                message: "discovery unavailable".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        service_modes: vec![pdpb::ServiceMode::PdSvcMode as i32],
+        ..Default::default()
+    });
+    assert!(Connection::new(Arc::new(SecurityManager::default()))
+        .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn source_service_failed_initial_probe_rotates_to_healthy_endpoint() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let a = Server::start(Reply::Timestamp).await;
+    let b = Server::start(Reply::Timestamp).await;
+    let (stalled, healthy) = if a.service.endpoint < b.service.endpoint {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    stalled
+        .service
+        .stall_discovery
+        .store(true, Ordering::SeqCst);
+    *pd.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![
+            stalled.service.endpoint.clone(),
+            healthy.service.endpoint.clone(),
+        ],
+        ..Default::default()
+    });
+    let connection = Connection::new(Arc::new(SecurityManager::default()));
+    let endpoints = [pd.service.endpoint.clone()];
+    assert!(connection
+        .connect_cluster(&endpoints, Duration::from_millis(100))
+        .await
+        .is_err());
+    let cluster = connection
+        .connect_cluster(&endpoints, Duration::from_secs(1))
+        .await
+        .expect("failed probes must advance selection even before initial publication");
+    let client = Arc::new(RetryClient::new_with_cluster(
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(1),
+        cluster,
+    ));
+    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
+    assert_eq!(stalled.service.discovery_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(healthy.service.discovery_requests.load(Ordering::SeqCst), 1);
     client.close().await;
 }

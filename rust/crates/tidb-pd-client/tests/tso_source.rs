@@ -36,6 +36,10 @@ enum TsoReply {
 }
 
 struct State {
+    cluster_info: Option<pdpb::GetClusterInfoResponse>,
+    discovery_delay: Duration,
+    discovery_requests: usize,
+    micro_requests: Vec<tsopb::TsoRequest>,
     replies: VecDeque<TsoReply>,
     requests: Vec<pdpb::TsoRequest>,
     stream_opens: usize,
@@ -82,6 +86,21 @@ struct MockPd {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
+    async fn get_cluster_info(
+        &self,
+        _: tonic::Request<pdpb::GetClusterInfoRequest>,
+    ) -> Result<tonic::Response<pdpb::GetClusterInfoResponse>, tonic::Status> {
+        let (delay, response) = {
+            let mut state = self.state.lock().unwrap();
+            state.discovery_requests += 1;
+            (state.discovery_delay, state.cluster_info.clone())
+        };
+        tokio::time::sleep(delay).await;
+        response
+            .map(tonic::Response::new)
+            .ok_or_else(|| tonic::Status::unimplemented("old PD"))
+    }
+
     async fn tso(
         &self,
         request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
@@ -254,6 +273,10 @@ impl Server {
         let address = listener.local_addr().unwrap();
         let endpoint = format!("http://{address}");
         let state = Arc::new(Mutex::new(State {
+            cluster_info: None,
+            discovery_delay: Duration::ZERO,
+            discovery_requests: 0,
+            micro_requests: Vec::new(),
             replies: replies.into_iter().collect(),
             requests: Vec::new(),
             stream_opens: 0,
@@ -276,6 +299,7 @@ impl Server {
                 .unwrap();
             runtime.block_on(async move {
                 let server = tonic::transport::Server::builder()
+                    .add_service(Microservice(service.clone()))
                     .add_service(PdServer::new(service))
                     .serve_with_shutdown(address, async {
                         let _ = shutdown_rx.await;
@@ -633,4 +657,162 @@ fn a_failed_batch_fails_every_waiter_in_it() {
     // the terminal error is the deadline miss; batching itself is pinned by
     // concurrent_waiters_never_share_a_timestamp.
     client.shutdown().unwrap();
+}
+
+#[derive(Clone)]
+struct Microservice(MockPd);
+impl tonic::server::NamedService for Microservice {
+    const NAME: &'static str = "tsopb.TSO";
+}
+impl<B> tonic::codegen::Service<tonic::codegen::http::Request<B>> for Microservice
+where
+    B: tonic::codegen::Body + Send + 'static,
+    B::Error: Into<tonic::codegen::StdError> + Send + 'static,
+{
+    type Response = tonic::codegen::http::Response<tonic::body::Body>;
+    type Error = std::convert::Infallible;
+    type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+    fn poll_ready(
+        &mut self,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, request: tonic::codegen::http::Request<B>) -> Self::Future {
+        let service = self.clone();
+        match request.uri().path() {
+            "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                    .unary(service, request)
+                    .await)
+            }),
+            "/tsopb.TSO/Tso" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                    .streaming(service, request)
+                    .await)
+            }),
+            _ => unreachable!(),
+        }
+    }
+}
+use tikv_client::proto::tsopb;
+impl tonic::server::UnaryService<tsopb::FindGroupByKeyspaceIdRequest> for Microservice {
+    type Response = tsopb::FindGroupByKeyspaceIdResponse;
+    type Future = tonic::codegen::BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+    fn call(&mut self, _: tonic::Request<tsopb::FindGroupByKeyspaceIdRequest>) -> Self::Future {
+        let address = self.0.address.clone();
+        Box::pin(async move {
+            Ok(tonic::Response::new(tsopb::FindGroupByKeyspaceIdResponse {
+                keyspace_group: Some(tsopb::KeyspaceGroup {
+                    members: vec![tsopb::KeyspaceGroupMember {
+                        address,
+                        is_primary: true,
+                    }],
+                    ..Default::default()
+                }),
+                mod_revision: 1,
+                ..Default::default()
+            }))
+        })
+    }
+}
+impl tonic::server::StreamingService<tsopb::TsoRequest> for Microservice {
+    type Response = tsopb::TsoResponse;
+    type ResponseStream = ReceiverStream<Result<Self::Response, tonic::Status>>;
+    type Future = tonic::codegen::BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+    fn call(
+        &mut self,
+        request: tonic::Request<tonic::Streaming<tsopb::TsoRequest>>,
+    ) -> Self::Future {
+        let state = self.0.state.clone();
+        Box::pin(async move {
+            let mut requests = request.into_inner();
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tokio::spawn(async move {
+                let mut logical = 0;
+                while let Ok(Some(request)) = requests.message().await {
+                    logical += i64::from(request.count);
+                    let response = tsopb::TsoResponse {
+                        header: Some(tsopb::ResponseHeader {
+                            cluster_id: CLUSTER_ID,
+                            ..Default::default()
+                        }),
+                        count: request.count,
+                        timestamp: Some(pdpb::Timestamp {
+                            physical: 500,
+                            logical,
+                            suffix_bits: 0,
+                        }),
+                    };
+                    state.lock().unwrap().micro_requests.push(request);
+                    if tx.send(Ok(response)).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        })
+    }
+}
+
+#[test]
+fn source_service_api_routes_to_independent_timestamp_server() {
+    let pd = Server::start_auto_batching();
+    let tso = Server::start_auto_batching();
+    pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        tso_urls: vec![tso.address.clone()],
+        ..Default::default()
+    });
+    let client = PdClient::connect(&pd.address, Duration::from_secs(1)).unwrap();
+    assert_eq!(client.get_timestamp().unwrap(), (500_u64 << 18) + 1);
+    assert_eq!(client.get_timestamp().unwrap(), (500_u64 << 18) + 2);
+    assert!(pd.state.lock().unwrap().requests.is_empty());
+    let state = tso.state.lock().unwrap();
+    assert_eq!(state.micro_requests.len(), 2);
+    let header = state.micro_requests[0].header.as_ref().unwrap();
+    assert_eq!(header.cluster_id, CLUSTER_ID);
+    assert_eq!(
+        header.keyspace,
+        Some(tsopb::request_header::Keyspace::KeyspaceId(u32::MAX))
+    );
+}
+
+#[test]
+fn source_service_api_discovery_failure_never_allocates_from_pd() {
+    let pd = Server::start_auto_batching();
+    pd.state.lock().unwrap().cluster_info = Some(pdpb::GetClusterInfoResponse {
+        service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
+        ..Default::default()
+    });
+    let client = PdClient::connect(&pd.address, Duration::from_millis(150)).unwrap();
+    assert!(client.get_timestamp().is_err());
+    assert!(pd.state.lock().unwrap().requests.is_empty());
+}
+
+#[test]
+fn source_service_background_probe_does_not_block_metadata_or_shutdown() {
+    let pd = Server::start_auto_batching();
+    pd.state.lock().unwrap().discovery_delay = Duration::from_secs(10);
+    let client = PdClient::connect(&pd.address, Duration::from_secs(15)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while pd.state.lock().unwrap().discovery_requests == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background discovery never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let start = std::time::Instant::now();
+    client.refresh_members().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "metadata waited for a timestamp probe"
+    );
+    let start = std::time::Instant::now();
+    client.shutdown().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "shutdown did not cancel discovery"
+    );
 }

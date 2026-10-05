@@ -15,6 +15,7 @@ use tonic::IntoRequest;
 use tonic::Request;
 
 use super::connectionctx::{ConnectionCtx, Manager};
+use super::service_discovery::{TsoDiscovery, TsoRoute};
 use super::timestamp::TimestampOracle;
 use crate::internal_err;
 use crate::proto::keyspacepb;
@@ -30,6 +31,8 @@ pub struct Cluster {
     client: Option<pdpb::pd_client::PdClient<Channel>>,
     keyspace_client: Option<keyspacepb::keyspace_client::KeyspaceClient<Channel>>,
     members: pdpb::GetMembersResponse,
+    discovery: TsoDiscovery,
+    route: TsoRoute,
     // Native mode has one leader stream. Its URL and cancellation lifetime
     // belong to the same manager used by Go TSO, independently of metadata RPCs.
     tso: Manager<TimestampOracle>,
@@ -409,19 +412,32 @@ impl Cluster {
 impl Cluster {
     pub(crate) fn install_leader(
         &mut self,
-        (client, keyspace_client, members, url): LeaderConnection,
+        leader: LeaderConnection,
         timeout: Duration,
     ) -> Result<impl Future<Output = ()> + Send + 'static> {
         if self.client.is_none() {
             return Err(Error::ContextCanceled);
         }
+        let LeaderConnection {
+            client,
+            keyspace_client,
+            members,
+            timestamp,
+        } = leader;
+        // Metadata leadership can change while TSO discovery is unavailable.
+        // Publish its valid connection independently, retaining the old TSO route.
+        self.client = Some(client);
+        self.keyspace_client = Some(keyspace_client);
+        self.members = members;
+        let (discovery, route, channel) = timestamp?;
+        let url = route.endpoint.clone();
         let previous = self.tso.randomly_pick();
-        let reuse = previous.as_ref().is_some_and(|connection| {
-            connection.stream_url == url && !connection.ctx.is_cancelled()
-        });
+        let reuse = previous
+            .as_ref()
+            .is_some_and(|connection| self.route == route && !connection.ctx.is_cancelled());
         let mut rejected = None;
         if !reuse {
-            let candidate = tso_connection(self.id, &client, url.clone(), timeout)?;
+            let candidate = tso_connection(self.id, route.clone(), channel, timeout)?;
             // Go's dispatcher releases canceled contexts before reconnecting.
             // A canceled same-URL entry must not reject its replacement.
             self.tso.release(&url);
@@ -430,9 +446,8 @@ impl Cluster {
                 rejected = Some(candidate);
             }
         }
-        self.client = Some(client);
-        self.keyspace_client = Some(keyspace_client);
-        self.members = members;
+        self.discovery = discovery;
+        self.route = route;
         self.retired_tso.extend(rejected);
         if !reuse {
             self.retired_tso.extend(previous);
@@ -478,11 +493,12 @@ impl Drop for Cluster {
 
 fn tso_connection(
     cluster_id: u64,
-    client: &pdpb::pd_client::PdClient<Channel>,
-    url: String,
+    route: TsoRoute,
+    channel: Channel,
     timeout: Duration,
 ) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
-    let oracle = TimestampOracle::new(cluster_id, client, timeout)?;
+    let url = route.endpoint.clone();
+    let oracle = TimestampOracle::discovered(cluster_id, route, channel, timeout)?;
     let ctx = oracle.cancellation();
     let cancel = ctx.clone();
     Ok(Arc::new(ConnectionCtx::new(
@@ -499,21 +515,31 @@ fn keyspace_scope(keyspace_id: u32) -> pdpb::KeyspaceScope {
     }
 }
 
-pub(crate) type LeaderConnection = (
-    pdpb::pd_client::PdClient<Channel>,
-    keyspacepb::keyspace_client::KeyspaceClient<Channel>,
-    pdpb::GetMembersResponse,
-    String,
-);
+pub(crate) struct LeaderConnection {
+    client: pdpb::pd_client::PdClient<Channel>,
+    keyspace_client: keyspacepb::keyspace_client::KeyspaceClient<Channel>,
+    members: pdpb::GetMembersResponse,
+    timestamp: Result<(TsoDiscovery, TsoRoute, Channel)>,
+}
 
 /// An object for connecting and reconnecting to a PD cluster.
+#[derive(Clone)]
 pub struct Connection {
     security_mgr: Arc<SecurityManager>,
+    // Initialization retries share probe selection before a Cluster exists.
+    discovery: TsoDiscovery,
 }
 
 impl Connection {
+    pub(crate) fn security_manager(&self) -> Arc<SecurityManager> {
+        self.security_mgr.clone()
+    }
+
     pub fn new(security_mgr: Arc<SecurityManager>) -> Connection {
-        Connection { security_mgr }
+        Connection {
+            security_mgr,
+            discovery: TsoDiscovery::default(),
+        }
     }
 
     pub async fn connect_cluster(
@@ -525,13 +551,17 @@ impl Connection {
         let (client, keyspace_client, members, url) =
             self.try_connect_leader(&members, timeout).await?;
         let id = members.header.as_ref().unwrap().cluster_id;
+        let mut discovery = self.discovery.clone();
+        let (route, channel) = self.discover(&mut discovery, id, &url, timeout).await?;
         let tso = Manager::new();
-        tso.store(&tso_connection(id, &client, url, timeout)?, false);
+        tso.store(&tso_connection(id, route.clone(), channel, timeout)?, false);
         let cluster = Cluster {
             id,
             client: Some(client),
             keyspace_client: Some(keyspace_client),
             members,
+            discovery,
+            route,
             tso,
             retired_tso: Vec::new(),
         };
@@ -542,11 +572,8 @@ impl Connection {
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
         warn!("updating pd client");
         let start = Instant::now();
-        let (client, keyspace_client, members, url) =
-            self.prepare_reconnect(cluster, timeout).await?;
-        cluster
-            .install_leader((client, keyspace_client, members, url), timeout)?
-            .await;
+        let leader = self.prepare_reconnect(cluster, timeout).await?;
+        cluster.install_leader(leader, timeout)?.await;
         cluster.finish_retirement();
 
         info!("updating PD client done, spent {:?}", start.elapsed());
@@ -558,15 +585,61 @@ impl Connection {
         cluster: &Cluster,
         timeout: Duration,
     ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
-        let connection = Self::new(self.security_mgr.clone());
+        self.prepare_keyspace_reconnect(cluster, timeout, None)
+    }
+
+    pub(crate) fn prepare_keyspace_reconnect(
+        &self,
+        cluster: &Cluster,
+        timeout: Duration,
+        keyspace: Option<&keyspacepb::KeyspaceMeta>,
+    ) -> impl Future<Output = Result<LeaderConnection>> + Send + 'static {
+        let connection = self.clone();
+        let mut discovery = cluster.discovery.clone();
+        let keyspace_result = keyspace
+            .map(|meta| discovery.set_keyspace(meta))
+            .transpose();
         let members = cluster.members.clone();
         let closed = cluster.client.is_none();
         async move {
             if closed {
                 return Err(Error::ContextCanceled);
             }
-            connection.try_connect_leader(&members, timeout).await
+            keyspace_result?;
+            let (client, keyspace_client, members, url) =
+                connection.try_connect_leader(&members, timeout).await?;
+            let id = members.header.as_ref().unwrap().cluster_id;
+            let timestamp = connection
+                .discover(&mut discovery, id, &url, timeout)
+                .await
+                .map(|(route, channel)| (discovery, route, channel));
+            Ok(LeaderConnection {
+                client,
+                keyspace_client,
+                members,
+                timestamp,
+            })
         }
+    }
+
+    async fn discover(
+        &self,
+        discovery: &mut TsoDiscovery,
+        id: u64,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<(TsoRoute, Channel)> {
+        Ok(discovery
+            .discover(id, url, timeout, |url| {
+                let security = self.security_mgr.clone();
+                async move {
+                    security
+                        .connect(&url, |channel| channel)
+                        .await
+                        .map_err(|error| tonic::Status::unavailable(error.to_string()))
+                }
+            })
+            .await?)
     }
 
     async fn validate_endpoints(

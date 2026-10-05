@@ -1,0 +1,269 @@
+{
+  "date": "2026-10-05 UTC",
+  "integration_start": "11dbe677777675c5c7cf2c8ee3b9c901883f2b89",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "pd_module": "v0.0.0-20260805103528-afa43111d149",
+  "native_base": "19a56ccda1e128218cd33c69709038219aced9bc",
+  "native_published": "bb8206e7d080973192fd7f11e0d852845e3277dc",
+  "findings": [
+    "P03",
+    "P06"
+  ],
+  "complete_package_acceptance": false,
+  "implemented": [
+    "One native service-mode/keyspace-group discovery and PD/TSO protocol adapter consumed by native Cluster and TiDB.",
+    "GetClusterInfo rejects empty modes and header errors; only Unimplemented selects classic compatibility.",
+    "API mode resolves group primary through FindGroupByKeyspaceID, includes keyspace/group/callee headers, rejects stale revisions, and never falls back to the PD leader Tso endpoint.",
+    "Legacy default-primary lookup uses PD MetaStorage and serialized TSO Participant; nonzero assigned groups prohibit legacy fallback. This legacy path is implemented but not exercised against a live legacy cluster.",
+    "Native refresh preserves healthy equal routes, retires changed routes, retains interrupted retirement, and joins periodic discovery before streams on close. Valid metadata leader publication is independent of TSO discovery errors.",
+    "API-v2 metadata configures native keyspace routing before publishing the V2 client.",
+    "TiDB periodic discovery has an independent owned thread/runtime. Metadata bypasses its lock; timestamp discovery waits stay within the original deadline. Explicit shutdown cancels and joins discovery before acknowledgement.",
+    "Shared round-robin attempt selection survives failed/cancelled snapshots and initial Connection retries; failed group metadata remains unpublished. A stalled first endpoint no longer prevents reaching a healthy alternate."
+  ],
+  "removed": [
+    "TiDB PD-only Tso wire opening; both wire protocols now use the native route adapter.",
+    "Unused MAX_TSO_RETRIES constant, dead last_error accumulator and unreachable retry tail.",
+    "Duplicate global collector-schema assertions; retained metadata/TSO observation assertions share one fixture instead of racing two initializers. Native Go metric-oracle cases remain enabled."
+  ],
+  "validation": {
+    "native_before": {
+      "command": "cargo test --locked -p tikv-client --lib source_service_",
+      "failed": 2,
+      "passed": 0,
+      "log": "before-retry.log"
+    },
+    "tidb_before": {
+      "command": "cargo test -p tidb-pd-client --test all source_service_",
+      "failed": 2,
+      "passed": 0,
+      "log": "tidb-before-retry.log",
+      "lock_update": "Adds existing tonic-prost test dependency; subsequent checks/builds use --locked."
+    },
+    "native_after": {
+      "command": "cargo test --locked -p tikv-client --lib pd::",
+      "passed": 163,
+      "failed": 0,
+      "log": "native-pd-rotation-fixed.log"
+    },
+    "native_all_targets": {
+      "command": "cargo check --locked -p tikv-client --all-targets",
+      "exit": 0,
+      "log": "native-final-check.log"
+    },
+    "tidb_after": {
+      "command": "cargo test --locked -p tidb-pd-client",
+      "unit_passed": 27,
+      "integration_passed": 52,
+      "failed": 0,
+      "ignored": 1,
+      "ignored_reason": "existing live-PD etcd test requires TIDB_ETCD_PROBE_PD",
+      "doctests": 0,
+      "log": "tidb-pd-rotation.log"
+    },
+    "tidb_all_targets": {
+      "command": "cargo check --locked -p tidb-pd-client -p tidb-txnkv --all-targets",
+      "exit": 0,
+      "log": "tidb-check-rotation.log"
+    },
+    "lint": {
+      "command": "make lint",
+      "exit": 0,
+      "log": "lint-rotation.log"
+    },
+    "no_op_sync": {
+      "files_checked": 322,
+      "changed_contents_or_mtimes": [],
+      "command": "bash rust/scripts/sync-tikv-client-rs.sh",
+      "exit": 0
+    },
+    "native_rotation_before": {
+      "command": "cargo test --locked -p tikv-client --lib source_service_failed_initial_probe_rotates",
+      "failed": 1,
+      "passed": 0,
+      "log": "rotation-before.log",
+      "source": "852d4b1081feeeb34b0fa72d0b10fc34b58579af"
+    }
+  },
+  "initial_failures": [
+    "Native baseline compilation first exhausted disk; 21 inactive test executable links were removed, retaining source, libraries and the server. The rerun reproduced both behavior failures.",
+    "TiDB fixture required tonic 0.14 Body/tonic-prost compatibility; native discovery required a public re-export. Corrected without bypassing native publication or maintained sync.",
+    "Full TiDB unit run initially passed 27, failed one global metrics fixture, and ignored one. The isolated case passed. Go metrics.go uses CAS without waiting for competing registration; two independent global fixtures raced. Combined their adapter assertions and removed duplicated native-schema coverage; final full package passes.",
+    "Final review reproduced a stalled first TSO endpoint selected repeatedly after failed initial discovery. Shared attempt cursor now advances independently of accepted route snapshots; all 163 native PD tests pass."
+  ],
+  "remaining": [
+    "Operational follower-proxy/forwarding options, full member-health and channel-cache/grpcutil contracts remain unaccepted.",
+    "Go GetMinTS selects ordinary GetTS for the PD provider; native Cluster.get_min_timestamp still always issues GetMinTS. This separate service-mode consumer remains a confirmed residual.",
+    "Complete root, servicediscovery, clients/tso and grpcutil package acceptance, original Go case mapping and all generated/platform/support obligations remain open.",
+    "API-v2 bootstrap without a default-group service, live multi-node failover/migration, legacy MetaStorage fallback, live cluster TLS, full Go suites and benchmarks were not verified. Existing localhost TLS integration cases passed.",
+    "The other 54 unresolved finding roots were not freshly reproduced by this batch."
+  ],
+  "publication": {
+    "native": "Three normal master pushes succeeded; remote bb8206e7d080973192fd7f11e0d852845e3277dc verified. Every push followed its successful fresh locked TiDB server build.",
+    "tidb_gate": "Actual hooks/pre-commit must pass cd rust && cargo build --locked -p tidb-server; repeat immediately before normal push and verify remote SHA. Final results are recorded in Cloud final-handoff.json and the final response."
+  },
+  "cloud_logs": "/workspace/.cloud-setup/pd-service-batch",
+  "inspected_go_artifacts": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "Makefile",
+      "sha256": "d7a663b4fb8b1645925c4339230039d4878bf5b89058c457fc5ff1591bee8a85",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "client.go",
+      "sha256": "a86903d73da7230b7fc0d3b6da20ddd63ba0be17097bef5f5cc0d4653e870cf8",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "client_test.go",
+      "sha256": "fd91d8c5dceaaaa2d3316dcb1972a11db695be00c605b6e7ebad4d5cfdb4210a",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/client.go",
+      "sha256": "b0dfc87a67b9da975ff59cb9b353390f63b2d1a22a6195cc9a4446d597ff8ce1",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/dispatcher.go",
+      "sha256": "08bf54eb52fe26142fcd2b5dcbe6487e56acccb1e4e41090c6fe6f858dc19820",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/dispatcher_test.go",
+      "sha256": "14b85206ada0b37cff9a7615518c7bb2bab69035abef4fb43a9f687947f6b6eb",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/request.go",
+      "sha256": "b3d69292c26b3da4ae46323f4af2ea4e4fbe32d1565c2628968385d7c38d523b",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/request_test.go",
+      "sha256": "3ae4662de27a60b517f7ec2389abcdf43113b410e1a0b3eb210419567bb587a9",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/stream.go",
+      "sha256": "3429bfeae2d3d9386a866708fcc6694c26245dc6e098bfed70356ce83951ca36",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "clients/tso/stream_test.go",
+      "sha256": "755898f5b942a46639a0794e17ffc6ed85c4d08d7979f099b9549230a9eabe96",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "gc_client.go",
+      "sha256": "f50908e58752ee9ef800ef75a6570b6edc07f34e85776952fa88284125d04647",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "go.mod",
+      "sha256": "605ab9c4968bdca8e467915daa89591fca118d9a6ef0d91fd8db568bae695841",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "8228e83031fc1dc7ff297f05fc166d7bd8013b374e9026c01fa357cae16e5acb",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "inner_client.go",
+      "sha256": "9e11e9d887c88c67cf95c1bdeb12eb31a9641717deee09e44538a49a23d8d39c",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "keyspace_client.go",
+      "sha256": "860d64ad148a902b9c85c04fff4c805bdbb7cfd6b8bb2d6447f7c0ee8704129e",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "keyspace_client_test.go",
+      "sha256": "ff84e63d377d38373972db311560524ffdf0d861b423eb0fac2ce0c0ac7ae544",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "meta_storage_client.go",
+      "sha256": "5adfd9af711d72b27a0c74c25663eb19760399bac52553fc7614f9f11aff3c2a",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil.go",
+      "sha256": "ebc67fbf697902dbc96a38144978d27aa5bdfb8eef8bf68813ea95cf3a767273",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "pkg/utils/grpcutil/grpcutil_test.go",
+      "sha256": "6b14798d41f0252c7dc508a790c04d60fe793771d275eb9c292719d1a426f72b",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "resource_manager_client.go",
+      "sha256": "13a8dd3ddfdc589effa83889b95a4539da283998f2dcb33bcda6fab25a062aad",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "resource_manager_client_test.go",
+      "sha256": "a255b8f94daddb5ac20a5a619d1786ee9f42a820e2bd60de7d38f4a0a12067e8",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/callbacks.go",
+      "sha256": "5f927301227919e13a6c30a0466b749e25765e85e8ca69d73fa131972b318f25",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/mock_service_discovery.go",
+      "sha256": "bb36615732f3228f1078b74c347124837651fe81b5173144d4de456abc69e3a1",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery.go",
+      "sha256": "1c2a011ce5e9761c560a721117293c64d69db3587e2676ef76bd699fceac466e",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/resource_manager_service_discovery_test.go",
+      "sha256": "28c9cb214e9ab7beb4d4bf9d930c1e6203ae5b6a146f0bcc2c5264a5a7c24094",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/router_service_discovery.go",
+      "sha256": "09a3f34fec352c4ae1032d211438140fef1a946b9168723bcc713d64febd777e",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/service_discovery.go",
+      "sha256": "620648327631b098c3a6a840648e0dc6c071ce3a6f5d5c9a8ed98d05ebad3bd9",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/service_discovery_test.go",
+      "sha256": "b6b576284cddf5b090a1449a6c16a51a311df785de5e9f180edf916f6f48bbaf",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery.go",
+      "sha256": "8947f1332fe40283e360608f3f49450d39ea2797beb56da018957ac8456d35de",
+      "acceptance": "not claimed; existing-owner repair only"
+    },
+    {
+      "path": "servicediscovery/tso_service_discovery_test.go",
+      "sha256": "a2379d4732fddd244d08d0c8e38e2e0f928d937ba2fd830ac5461c9091aa94a9",
+      "acceptance": "not claimed; existing-owner repair only"
+    }
+  ],
+  "self_review": [
+    "Preserved the Close acknowledgement after cancellation even when the command arrives after an idle timer tick.",
+    "All vendor changes came from the maintained sync script; unchanged protocol outputs retained their contents and no-op timestamps.",
+    "Cargo.lock changes only add the existing tonic-prost test dependency.",
+    "No incomplete upstream Go package is marked accepted."
+  ],
+  "ready_profile": "Go-master .agents/skills/tidb-verify-profile/SKILL.md Ready checked; editable branch retired the wrapper and retains AGENTS.md as authority. Source scope: Rust implementation/tests, maintained sync shell and audit docs. No Go/Bazel/failpoint trigger."
+}

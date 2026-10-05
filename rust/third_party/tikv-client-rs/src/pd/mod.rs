@@ -21,3 +21,5 @@ pub use self::codec::{CodecPdClient, PdRegionCodec};
 pub use self::retry::RegionScanOptions;
 pub use self::retry::RetryClient;
 pub use self::retry::RetryClientTrait;
+
+pub mod service_discovery;

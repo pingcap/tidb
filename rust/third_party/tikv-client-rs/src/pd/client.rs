@@ -1445,6 +1445,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
                                 unreachable!("PD metadata always constructs a numeric V2 keyspace")
                             }
                         };
+                        pd.set_keyspace(&meta).await?;
                         Ok((PdRegionCodec::v2(mode, keyspace_id)?, Some(meta)))
                     }
                 }

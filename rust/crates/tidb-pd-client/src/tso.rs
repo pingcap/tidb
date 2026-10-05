@@ -14,14 +14,14 @@
 
 use std::time::{Duration, Instant};
 
-use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
+use tidb_proto::pdpb;
+use tikv_client::pd_service_discovery::{TsoResponses, TsoRoute};
 use tokio::sync::watch;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tonic::transport::Channel;
 
 use crate::{PdClientError, PdOperation};
 
-pub(crate) const MAX_TSO_RETRIES: usize = 20;
 /// Go `constants.RetryInterval` (client-go constants/constants.go:39).
 pub(crate) const TSO_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -200,20 +200,22 @@ impl TimestampParts {
 
 pub(crate) struct RetainedTsoStream {
     endpoint: String,
+    route: TsoRoute,
     requests: tokio::sync::mpsc::Sender<pdpb::TsoRequest>,
-    responses: tonic::Streaming<pdpb::TsoResponse>,
+    responses: TsoResponses,
 }
 
 impl RetainedTsoStream {
     pub(crate) fn open_and_request(
         runtime: &tokio::runtime::Runtime,
-        client: &mut TonicPdClient<Channel>,
-        endpoint: &str,
+        channel: Channel,
+        route: TsoRoute,
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
         count: u32,
     ) -> Result<(Self, TsoBatch), PdClientError> {
+        let endpoint = route.endpoint.as_str();
         let timeout = remaining(deadline, endpoint)?;
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let request = tso_request(cluster_id, count);
@@ -235,13 +237,10 @@ impl RetainedTsoStream {
                     .send(request)
                     .await
                     .map_err(|_| tonic::Status::unavailable("PD Tso request stream is closed"))?;
-                let mut responses = client
-                    .tso(ReceiverStream::new(receiver))
-                    .await?
-                    .into_inner();
-                let response = responses.message().await?.ok_or_else(|| {
-                    tonic::Status::unavailable("PD Tso response stream is closed")
-                })?;
+                let mut responses = route.open(channel, ReceiverStream::new(receiver)).await?;
+                let response = StreamExt::next(&mut responses).await.ok_or_else(|| {
+                    tonic::Status::unavailable("TSO response stream is closed")
+                })??;
                 Ok::<_, tonic::Status>((responses, response))
                 }) => Some(response),
             }
@@ -256,6 +255,7 @@ impl RetainedTsoStream {
         Ok((
             Self {
                 endpoint: endpoint.to_owned(),
+                route,
                 requests,
                 responses,
             },
@@ -263,8 +263,8 @@ impl RetainedTsoStream {
         ))
     }
 
-    pub(crate) fn endpoint(&self) -> &str {
-        &self.endpoint
+    pub(crate) fn route(&self) -> &TsoRoute {
+        &self.route
     }
 
     pub(crate) fn request(
@@ -289,9 +289,9 @@ impl RetainedTsoStream {
                     self.requests.send(request).await.map_err(|_| {
                         tonic::Status::unavailable("PD Tso request stream is closed")
                     })?;
-                    self.responses.message().await?.ok_or_else(|| {
-                        tonic::Status::unavailable("PD Tso response stream is closed")
-                    })
+                    StreamExt::next(&mut self.responses).await.ok_or_else(|| {
+                        tonic::Status::unavailable("TSO response stream is closed")
+                    })?
                 })
                 => Some(response),
             }
@@ -317,9 +317,7 @@ fn tso_request(cluster_id: u64, count: u32) -> pdpb::TsoRequest {
     pdpb::TsoRequest {
         header: Some(pdpb::RequestHeader {
             cluster_id,
-            sender_id: 0,
-            caller_id: String::new(),
-            caller_component: String::new(),
+            ..Default::default()
         }),
         count,
         dc_location: String::new(),
