@@ -1,83 +1,72 @@
-# Retire disconnected scheduler, stack and cost models
+# Retire disconnected planner rule models
 
 This living ExecPlan follows root PLANS.md. Earlier cleanup receipts remain
 indexed in parity/current-audit/README.md; Git preserves historical source.
 
 ## Purpose / Big Picture
 
-
-Remove unused cascades task interfaces, separate scheduler/stack implementations
-and the scalar implementation-cost adapter with their private test harnesses.
-Keep live planner owners and hash/equality regressions unchanged. Fewer compiled
-inputs are observable; no measured speedup or Go package acceptance is claimed.
+Remove eight unused rule models and their nine private harnesses together.
+Preserve real logical-plan rules and migrate the useful childless-TableDual
+regression into an existing real-plan test. Reduce compiled inputs without
+claiming measured speedup or complete Go package acceptance.
 
 ## Context and Orientation
 
-
-Base eb31889eab13d07727868682a95efed6402fc385 on /workspace/tidb hparser-integration.
+Base 3781259475fb31754186f7b86b083bc0d4b656c5 on /workspace/tidb hparser-integration.
 Go master is b36c940a4332c866d8b0e2afde88f5e7c2fd7fed; native client remains
-cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1. Delete tidb-planner/src modules
-implementation_cost, scheduler_contract, stack_contract, task_scheduler and
-task_stack, five corresponding difftest files, and planner tests
-base_impl_cost_arithmetic_source, cascades_task_scheduler_stack_source and
-cascades_task_stack_source. Remove five lib.rs declarations and two task-related
-cascades_base.rs reexports; preserve that module's hash tests byte-for-byte.
+cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1. Retire rule_set, rule_type,
+topn_push_down, derive_topn_from_window, push_down_sequence, condition_to_dual,
+eliminate_empty_selection and eliminate_unionall_dual_item at the crate root.
+Keep their real logical/ owners, whose names overlap. Go's rule wrappers invoke
+shared LogicalPlan methods; private miniature trees do not implement that path.
 
 ## Progress
 
-
-- [x] Refresh refs and trace all tracked caller references; no live optimizer consumers.
-- [x] Delete five modules, eight harnesses, 15 tests and 927 source/test lines; correct stale ownership and complete-package claims.
-- [x] Verify 3,680 retained files, unchanged hash tests and fresh registration; grouped all-target check, lint and self-review pass.
-- [ ] Commit with actual locked-build hook, rebuild immediately before push, verify remote and update Cloud recovery/startup state.
+- [x] Refresh refs and trace scoped imports and owner symbols across tracked Rust sources.
+- [x] Remove eight models, nine harnesses and 30 private tests (1,471 source/test lines).
+- [x] Migrate the childless-TableDual case and remove stale ownership/coverage claims.
+- [x] Grouped all-target check, migrated regression (1 passed), lint, 3,658 unchanged retained inputs and self-review.
+- [ ] Normal commit with actual locked-build hook, fresh build immediately before push, remote verification and Cloud handoff.
 
 ## Milestones and Plan of Work
 
-
-Trace the complete dependency group, including reexports and difftests outside
-crates/. Delete unused owners and their tests together. Update the retained
-cascades_base hash surface to state its actual scope; mark old mixed-scope
-receipts historical without discarding valid hash test evidence. Record original
-Go artifact hashes as obligations in task-model-cleanup-validation.json.
+Delete the complete private dependency group, including difftests outside the
+owning crate. Retain real planner owners and their tests. Replace obsolete
+adapter claims in mixed historical receipts without discarding original Go
+obligations. Record deletion hashes and upstream anchors in the cleanup receipt.
 
 ## Validation and Acceptance
 
-
-Source /workspace/.cloud-setup/env.sh in every shell. From rust/ run:
-
-    CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets
-
-From root run make lint and git diff --check. Compare retained source, manifests
-and scripts with before hashes; only lib.rs declarations and cascades_base.rs
-doc/reexport lines may differ. Its hash tests must remain byte-identical. Fresh
-all_tests.rs files must exclude all eight retired harnesses. No behavioral
-rerun is needed for pure unreachable deletion. Normal commit must execute
+Source /workspace/.cloud-setup/env.sh in each shell. From rust/ run the affected
+planner, difftest-planner-tests and server all-target locked check together.
+Run the existing a_sequence_is_pushed_through_a_unary_operator test containing
+the migrated TableDual case. From root run make lint and git diff --check.
+Verify retained inputs: only eight lib declarations, five comment-only source
+edits and the additive existing-test extension may differ. Fresh generated
+registrations must exclude all nine deleted harnesses. Normal commit must run
 hooks/pre-commit through core.hooksPath=hooks and pass cd rust && cargo build
---locked -p tidb-server. Repeat that exact build immediately before each push.
+--locked -p tidb-server; repeat immediately before every authorized push.
 
 ## Surprises & Discoveries
 
-
-Go's scheduler obtains base.Stack from stackPool and executes the same base.Task
-that supplies descriptions. The disconnected Rust copies split this into three
-incompatible task traits. ImplementationCost accepts only scalar costs and has
-no physical-plan attachment or production caller. Generic TaskError and
-task_stack matches in statistics/memory-alarm code are unrelated and retained.
+The real UnionAll owner's comment alleging divergent adapter change flags was
+stale: an earlier adapter repair had already fixed the flag. Remove the stale
+claim, not the real rule. The childless-TableDual guard exercised a toy tree;
+move its useful shape to the real rule's existing unary-sequence regression.
 
 ## Decision Log
 
-
-Delete the complete unused task/cost group while preserving the shared hashing
-owner and its tests. Original Go task lifecycle and complete-package obligations
-remain open; standalone private checks do not establish integration. Decision
-date: 2026-10-05 UTC. No dependencies or maintained scripts change.
+Keep behavioral and Rust correctness tests on retained implementations. Delete
+private tests with their unreachable models. No source behavior, dependencies,
+maintained scripts or original Go tests change. Decision date: 2026-10-05 UTC.
+The migrated regression establishes structural coverage, not the Go SQL test's
+full pipeline coverage. No new harness or permanent script is introduced.
 
 ## Outcomes & Retrospective
 
-
-Evidence is in parity/current-audit/task-model-cleanup-validation.json; findings
-remain 86 tracked / 30 repaired / 56 unresolved. Before-images, hashes and final
-publication handoff are in /workspace/.cloud-setup/task-model-cleanup. Recover
-individual files with git show eb31889eab13d07727868682a95efed6402fc385:<path> into
-a temporary file before reviewing restoration. Preserve concurrent changes and
-never reset or force-push. No new interface or permanent script is introduced.
+Evidence: parity/current-audit/rule-model-cleanup-validation.json. Registers
+remain 86 tracked / 30 repaired / 56 unresolved: cleanup is not finding closure.
+Before-images and final publication handoff: /workspace/.cloud-setup/rule-model-cleanup.
+Recover individual files with git show 3781259475fb31754186f7b86b083bc0d4b656c5:<path>
+into a temporary file before reviewing restoration. Preserve concurrent work;
+never reset or force-push. Full Go suites, live TiKV and performance are unverified.

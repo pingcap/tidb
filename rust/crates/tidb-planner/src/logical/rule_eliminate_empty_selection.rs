@@ -125,10 +125,6 @@ pub fn eliminate_empty_selection(plan: LogicalPlan) -> LogicalPlan {
 
 /// Go `EmptySelectionEliminator`
 /// (`rule_eliminate_empty_selection.go:25`), Go rule #32.
-///
-/// [`crate::eliminate_empty_selection`] is the crate's trait-shaped seed of the
-/// same rule and is KEPT — `difftests/planner-tests` consumes it from outside
-/// this crate.
 #[derive(Debug)]
 pub struct EmptySelectionEliminator;
 

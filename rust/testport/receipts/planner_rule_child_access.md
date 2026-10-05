@@ -356,42 +356,15 @@ Not covered here: `resolve_redundant_column_from_natural_using_join_plan`'s
 confirmed (`ResolveRedundantColumn` is join-local), so it is left as is.
 
 >>>>>>> 2cb4c6b4f1 (rust: align expression-rewriter child boundaries)
-## Follow-up batch: source-shaped adapter parity
+## Retired follow-up: source-shaped adapter parity
 
-The same Go owner also has a small public adapter in
-`rust/crates/tidb-planner/src/eliminate_unionall_dual_item.rs`, consumed by
-`rust/difftests/planner-tests/tests/eliminate_unionall_dual_item.rs`. A
-refreshed inventory covers all 344 tracked planner artifacts (343 Rust
-sources plus `Cargo.toml`, 140,507 lines), including 155 test-like sources,
-four inline/golden fixture-like artifacts, the aggregate-test build input, and
-the absence of platform-specific variants. The companion difftest package has
-82 tracked artifacts (81 Rust tests plus `Cargo.toml`, 6,639 lines); its
-generated `OUT_DIR/all_tests.rs` is a build artifact, not a checked-in source.
-No Go, Bazel, generated output, or platform file changed.
-
-The adapter now follows the source rule's narrow `planChanged` contract:
-removing branches from a union that still has a branch returns `false`, while
-replacing an all-empty union still returns `true`. Its projection probe also
-indexes the first child directly, matching Go's panic boundary instead of a
-Rust-only safe `None` fallback. The difftest vectors were updated to expect
-the source flag and to pin the childless-projection panic.
-
-Focused regressions in the owning crate are
-`dropping_a_branch_from_a_nonempty_union_does_not_set_changed` and
-`a_childless_projection_panics_at_the_source_child_access`; both failed on the
-pre-fix adapter and pass after the fix. The aggregate difftest target remains
-blocked by unrelated stale APIs in `join_reorder_projection_inline.rs`,
-`physical_sort.rs`, and `physical_table_reader.rs`; those files were not
-changed.
-
-Validation for this follow-up used the Ready Rust scope: the two focused unit
-tests pass, `cargo fmt --all -- --check` and `git diff --check` pass, and the
-owning crate remains covered by the existing planner Ready evidence above.
-
-Risks are limited to malformed source-shaped trees (which now panic at Go's
-direct index) and the returned change flag for valid non-empty unions; no
-planner tree or SQL execution path is altered. There is no new allocation or
-hot-path traversal cost.
+The disconnected UnionAll adapter and its private tests were removed by the
+[rule-model cleanup](../../docs/parity/current-audit/rule-model-cleanup-validation.json).
+An earlier repair had already aligned that adapter's narrow `planChanged` flag
+and direct child access; the real owner's comment claiming a remaining adapter
+flag divergence was stale and is removed too. The real implementation in
+`src/logical/rule_eliminate_unionall_dual_item.rs` and its regressions remain.
+Historical adapter checks did not establish SQL-path or complete-package parity.
 
 ## Audit (no code change): join-reorder cluster
 

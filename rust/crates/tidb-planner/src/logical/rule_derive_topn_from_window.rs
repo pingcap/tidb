@@ -234,10 +234,6 @@ pub fn derive_topn(ctx: &RuleContext<'_>, plan: LogicalPlan) -> LogicalPlan {
 
 /// Go `DeriveTopNFromWindow` (`rule_derive_topn_from_window.go:24`), Go rule
 /// #19.
-///
-/// [`crate::derive_topn_from_window`] is the crate's trait-shaped seed of the
-/// same rule and is KEPT — `difftests/planner-tests` consumes it from outside
-/// this crate.
 #[derive(Debug)]
 pub struct DeriveTopNFromWindow;
 

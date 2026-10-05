@@ -26,10 +26,7 @@
 //! empty-union-becomes-dual case only. Dropping a branch from a union that
 //! still has branches left does NOT set it — see `flag := false` after the
 //! union-all block, which starts fresh below the drop. That is preserved
-//! exactly here; the toy-tree twin [`crate::eliminate_unionall_dual_item`]
-//! reports the drop as a change, which is a divergence in that module, and it
-//! is KEPT as it stands because `difftests/planner-tests` consumes it from
-//! outside this crate.
+//! exactly here.
 //!
 //! # Only `LogicalUnionAll`, never `LogicalPartitionUnionAll`
 //!

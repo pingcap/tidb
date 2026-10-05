@@ -898,9 +898,7 @@ fn is_const_false(expr: &Expression) -> bool {
 /// column references still resolve.
 ///
 /// Returns `None` when Go returns `nil`, i.e. the caller keeps the plan it
-/// has. [`crate::condition_to_dual`] carries the same decision over normalized
-/// truth tokens and is KEPT — `difftests/planner-tests` consumes it from
-/// outside this crate.
+/// has.
 #[must_use]
 pub fn conds_to_table_dual(
     ctx: &RuleContext<'_>,

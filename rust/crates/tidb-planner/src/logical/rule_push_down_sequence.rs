@@ -238,9 +238,6 @@ pub fn push_down_sequence(ctx: &RuleContext<'_>, plan: LogicalPlan) -> LogicalPl
 }
 
 /// Go `PushDownSequenceSolver` (`rule_push_down_sequence.go:25`), Go rule #30.
-///
-/// The toy-tree twin of this traversal is [`crate::push_down_sequence`], which
-/// is KEPT — `difftests/planner-tests` consumes it from outside this crate.
 #[derive(Debug)]
 pub struct PushDownSequenceSolver;
 

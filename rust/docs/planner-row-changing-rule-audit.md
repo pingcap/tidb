@@ -17,62 +17,16 @@ observed.
 
 ---
 
-## 0. The structural fact that shapes the whole audit
+## 0. Historical scope
 
-`tidb-planner`'s `rule_*`-derived modules are **dependency-closed leaf
-transcreations of the Go rule *wrappers*, not of the rules**, and **none of
-them is on the live query path**.
-
-* `outer_to_inner_join.rs` transcribed `rule_outer_to_inner_join.go:39` —
-  including the fact that the Go wrapper does nothing but delegate to
-  `LogicalPlan.ConvertOuterToInnerJoin`, whose null-rejection analysis has no
-  Rust counterpart. It was **deleted** (batch52): it was never declared in
-  `tidb-planner/src/lib.rs`, so no crate in the workspace ever compiled it —
-  proved by appending `compile_error!` to it and building
-  `--workspace --tests` clean. A delegation to a delegate nobody wrote, in a
-  file nobody compiles, is not coverage.
-* Three more never-compiled files went with it in batch52, on the same
-  evidence (`compile_error!` appended, `cargo build --workspace --tests`
-  clean): `logical_property.rs` (Go's memo `LogicalProperty` over opaque
-  identity tokens — this tier has no memo group to hold one),
-  `logical_mock.rs` (Go's test-only `MockDataSource.Init`, over an opaque
-  `PlanContext` token — this tier has no `BaseLogicalPlan`), and
-  `wrap_cast.rs`. `wrap_cast.rs` is the sharpest case: Go's
-  `WrapCastForAggFuncs` is a five-line mode gate whose whole content is the
-  delegate `baseFuncDesc.WrapCastForAggArgs`, and that delegate's rules —
-  the `noNeedCastAggFuncs` set keyed BY FUNCTION NAME, the `RetTp.EvalType()`
-  dispatch, the per-argument `TypeNull` skip, the `LEAD`/`LAG`/`NTH_VALUE`
-  second-argument skip — could not be expressed in the file at all: its own
-  constructor `new_agg_function` passes `""` for the name.
-  `crates/tidb-planner/src/configured_catalog.rs` is NOT in this class and was
-  kept: it is compiled, through `#[path = "configured_catalog.rs"]` in
-  `read_only_scan.rs`, and `lib.rs`'s `pub use read_only_scan::configured_catalog`
-  re-exports it rather than shadowing a rival.
-* A workspace-wide sweep for `.rs` files named by no `mod` declaration and no
-  `#[path]` attribute finds nothing else: the remaining hits are `include!`d
-  generated tables (`tidb-datatype`'s `charset_data/*`, `encoding_labels.rs`),
-  Cargo's own auto-discovered `src/bin/*` targets, and a fuzz target.
-* `topn_push_down.rs:31` likewise wraps `rule_topn_push_down.go` and delegates.
-* `column_pruning.rs`, `condition_to_dual.rs`,
-  `rule_set.rs` model the *legality classification* over caller-supplied
-  normalised metadata; no caller supplies it.
-* `predicate_partition.rs::partition_predicates` has **zero callers outside
-  its own file** (grep across `rust/crates`).
-
-The rules that actually decide rows for a live `SELECT` are, in the order the
-driver runs them:
-
-| live rule | file | Go counterpart |
-| --- | --- | --- |
-| column pruning | `tidb-executor/src/column_prune.rs:135`, `:325` | `rule/rule_column_pruning.go` |
-| access-path / range choice | `tidb-executor/src/driver/access.rs` | `DetachCondAndBuildRangeForIndex`, `findBestTask` |
-| scan filter push-down | `driver/access.rs:311` `negotiate_scan_filter` | `rule_predicate_push_down.go` (DataSource arm) |
-| WHERE-equality push into a join | `driver/predicate_push_down.rs:102` | `LogicalJoin.PredicatePushDown` (inner arm) |
-| LIMIT push into a scan | `driver/access.rs:1453` `scan_limit_cap` | cop-task `Limit` / `TopN` |
-| equi-key split | `hash_join.rs:170` `split_equi` | `extractOnCondition` → `EqualConditions` |
-
-So: **an audit "for wrong rows" over `tidb-planner` alone finds nothing,
-because `tidb-planner` runs nothing.** Both surfaces are covered below.
+This is a historical source-only audit, not the current ownership map or a
+validation receipt. Its former inventory of disconnected rule adapters is
+retired: the rule-model cleanup removed the unused wrappers and private tests.
+Current implementations live under `tidb-planner/src/logical/`; consult the
+[current register](parity/current-audit/README.md) for dispositions and the
+[cleanup receipt](parity/current-audit/rule-model-cleanup-validation.json)
+for retained owners and verification. The findings below preserve the original
+reasoning; their old paths, line numbers and status claims are not current.
 
 ---
 
@@ -289,17 +243,13 @@ compile error rather than an unvisited subtree; an unresolvable column returns
 `None` and the full-width path raises the proper MySQL error. The narrowing
 happens **before** any expression is built, so there is no offset to remap.
 
-### 2.5 Constant-condition → TableDual — `condition_to_dual.rs:51`
+### 2.5 Constant-condition → TableDual (retired adapter)
 
-Matches `pkg/planner/core/operator/logicalop/expression_util.go:24-52`
-statement for statement, including the two non-obvious parts:
-
-* a `Null` constant **anywhere** in the list produces a dual regardless of
-  list length (Go's loop at `:29-38` runs before the `len(conds) != 1` test at
-  `:39`), and
-* `IsConstFalse` (`:54-65`) treats a NULL constant as false and a
-  conversion error as *not* false — which is what `ConditionTruth::Null` /
-  `ConditionTruth::ConversionError` model.
+The old `condition_to_dual.rs` normalized-truth model and private tests were
+removed. The retained `logical/rule.rs::conds_to_table_dual` operates on real
+expressions. Its Go owner remains
+`pkg/planner/core/operator/logicalop/expression_util.go`; removing the adapter
+does not establish complete expression or planner package parity.
 
 ### 2.6 Correlated subqueries: `NOT IN` with NULL, and the empty inner side
 
@@ -405,13 +355,9 @@ Explicitly **not** verified:
 
 * Nothing was executed. No query in this document was run on either side.
   Every "returns" is derived from reading the two implementations.
-* The module docs of `eliminate_empty_selection.rs`,
-  `eliminate_unionall_dual_item.rs`, `push_down_sequence.rs`,
-  `resolve_grouping_expand.rs`, `derive_topn_from_window.rs` and
-  `join_reorder_projection_inline.rs` were read and all six declare the same
-  "caller-owned plan adapter, optimizer integration external" contract as §0,
-  but their bodies were not diffed against Go line by line.
-  `projection_elimination.rs` was (§2.7).
+* Historical wrapper documentation was inspected, but wrapper tests did not
+  validate the real logical-plan implementations. Those retired adapters are
+  listed in the cleanup receipt; no live rule validation follows from this audit.
 * `split_scan_predicates` (the single-table scan-filter split feeding
   `negotiate_scan_filter`) was not audited; it is `exec-u2-pushdown`'s
   surface. This audit only established that it cannot run across a join

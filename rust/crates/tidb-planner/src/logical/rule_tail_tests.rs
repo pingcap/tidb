@@ -232,6 +232,27 @@ fn a_sequence_is_pushed_through_a_unary_operator() {
     assert_eq!(kind(&inner.children()[1]), "DataSource");
 
     out.dismantle();
+
+    // Go TestPushDownSequenceWithTableDual: a constant-false CTE branch
+    // leaves a childless TableDual. Keep this guard on the actual rule owner.
+    let plan = sequence(
+        &allocator,
+        vec![
+            cte(&allocator),
+            projection(&allocator, &[1], dual(&allocator, &[1], 0)),
+        ],
+    );
+    let out = push_down_sequence(&ctx, plan);
+    assert_eq!(kind(&out), "Projection");
+    let inner = &out.children()[0];
+    assert_eq!(kind(inner), "Sequence");
+    assert_eq!(inner.children().len(), 2);
+    assert_eq!(kind(&inner.children()[0]), "CTE");
+    let LogicalPlan::TableDual(dual) = &inner.children()[1] else {
+        panic!("sequence must stop above the childless dual");
+    };
+    assert_eq!(dual.row_count, 0);
+    out.dismantle();
 }
 
 #[test]

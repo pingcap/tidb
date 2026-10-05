@@ -1,0 +1,286 @@
+{
+  "base": "3781259475fb31754186f7b86b083bc0d4b656c5",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "native_unchanged": "cfafb1eb01594cecd5926fa63e57e2a6e20c7ee1",
+  "scope": "Remove unused miniature rule models and private harnesses; migrate useful childless-TableDual structural regression to existing real-plan test. No executable production changes.",
+  "modules": [
+    "rule_set",
+    "rule_type",
+    "topn_push_down",
+    "derive_topn_from_window",
+    "push_down_sequence",
+    "condition_to_dual",
+    "eliminate_empty_selection",
+    "eliminate_unionall_dual_item"
+  ],
+  "removed_files": [
+    {
+      "path": "rust/crates/tidb-planner/src/rule_set.rs",
+      "lines": 142,
+      "tests": [
+        "mask_filter_preserves_rule_order_and_duplicates",
+        "empty_mask_filters_every_rule",
+        "operand_filter_switches_only_for_intermediate_apply",
+        "special_set_can_be_empty_without_default_fallback"
+      ],
+      "sha256": "0a67c194326319810137fcc59df1f7cca338915f8d58dc44fbe28b214c43349e"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/rule_type.rs",
+      "lines": 111,
+      "tests": [],
+      "sha256": "ccf7f2fd4f2ffa08b3cb947ab22dc2822f4f7cf107ef5679878e845432007890"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/topn_push_down.rs",
+      "lines": 48,
+      "tests": [],
+      "sha256": "6ccc153e9a55bb40fc755c452887d5e40cf6edf080945b5c5dc881a797e04315"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/derive_topn_from_window.rs",
+      "lines": 49,
+      "tests": [],
+      "sha256": "bc8c40b023d784605844789e19ea561b23a48f196027d493fa1bea5a51f56363"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/push_down_sequence.rs",
+      "lines": 159,
+      "tests": [],
+      "sha256": "f2b35ab70b84729fd0f6a08b98cd3b12f7daf884c2bde5c207024dea7b869490"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/condition_to_dual.rs",
+      "lines": 111,
+      "tests": [
+        "null_and_false_are_const_false_but_true_is_not",
+        "single_false_or_null_builds_a_dual",
+        "empty_and_multi_condition_lists_remain_unchanged",
+        "plan_cache_guard_suppresses_all_dual_construction"
+      ],
+      "sha256": "6108ca758348e5c09bb8bfd3c3a62597ae28f9994a0d79229256fc691a9d2acf"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/eliminate_empty_selection.rs",
+      "lines": 50,
+      "tests": [],
+      "sha256": "789a23e13e1c49031c7d30ff462b8fe6c6c224955a02ef648ab113935130fc6c"
+    },
+    {
+      "path": "rust/crates/tidb-planner/src/eliminate_unionall_dual_item.rs",
+      "lines": 168,
+      "tests": [],
+      "sha256": "68d2c562d41fb421eecdacbd47df8bda00b1a3437e6073d211c882512ac73c41"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/rule_set.rs",
+      "lines": 33,
+      "tests": [
+        "applied_rule_mask_keeps_source_order",
+        "intermediate_apply_uses_only_special_rules"
+      ],
+      "sha256": "4e7fe9fbd629c26c09ceb1baf60aaebcf5e51573ef21c6a183598b98370fd59c"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/rule_type.rs",
+      "lines": 59,
+      "tests": [
+        "source_iota_values_round_trip",
+        "source_string_labels_preserve_join_special_case_and_fallback"
+      ],
+      "sha256": "e1e3dd7266d0ee4ec7ee8941a161384d8d0dd28550d80f8adec6e5920d30c270"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/topn_push_down.rs",
+      "lines": 59,
+      "tests": [
+        "source_rule_calls_plan_with_nil_parent_and_false_change_flag",
+        "source_rule_name_is_stable"
+      ],
+      "sha256": "5a0a83d15343aca621103f3205ea6203e32a52290ba0c5f975cae68faf6dcbb1"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/derive_topn_from_window.rs",
+      "lines": 50,
+      "tests": [
+        "source_rule_calls_derive_callback_and_keeps_false_change_flag",
+        "source_rule_name_is_stable"
+      ],
+      "sha256": "374e130d0cc2d9789c585e3c0f5ea718b517564a7525dd4667433c800e1cdb63"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/push_down_sequence.rs",
+      "lines": 97,
+      "tests": [
+        "nested_sequences_merge_ctes_and_push_through_data_source",
+        "unary_descent_and_multi_child_attachment_preserve_sequence_boundary",
+        "childless_operator_is_attached_without_indexing_a_missing_child",
+        "source_rule_name_is_stable"
+      ],
+      "sha256": "15292a162954cfe34bfcd231eb4541e6ca9dcada58497ea23c366e13cdcc1663"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/condition_to_dual.rs",
+      "lines": 42,
+      "tests": [
+        "contradictory_inner_predicate_reduces_to_dual",
+        "plan_cache_guard_preserves_original_predicate",
+        "null_and_cardinality_boundaries_match_source"
+      ],
+      "sha256": "439b2c2cfde41e9c9a5d5981e467a8ff3964f2c923bd39c7c0594b9b8a8b3129"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/eliminate_empty_selection.rs",
+      "lines": 49,
+      "tests": [
+        "source_rule_calls_recursive_plan_callback_and_keeps_false_flag",
+        "source_rule_name_is_stable"
+      ],
+      "sha256": "713f3111a9e745680b092a5a013dd4baba73108f147cf92aefb8d16736ed544f"
+    },
+    {
+      "path": "rust/difftests/planner-tests/tests/eliminate_unionall_dual_item.rs",
+      "lines": 112,
+      "tests": [
+        "removes_direct_and_projected_zero_row_duals_before_recursing",
+        "replaces_all_zero_row_union_branches_with_schema_preserving_dual",
+        "recursive_rewrite_preserves_nonzero_duals_and_reports_gos_narrow_flag",
+        "source_rule_name_is_stable"
+      ],
+      "sha256": "b1145489e6e26693f23355cd8dc759b78911cdc31d96ed331e6ebb59a28ff6ad"
+    },
+    {
+      "path": "rust/crates/tidb-planner/tests/core_issuetest_regression_guards_source.rs",
+      "lines": 132,
+      "tests": [
+        "push_down_sequence_attaches_above_childless_table_dual"
+      ],
+      "sha256": "2bbce5a6b567e06311273044ed2f799190ca5d5fcc820e6a75b9afc3b74819aa"
+    }
+  ],
+  "tests_removed": 30,
+  "source_test_lines_removed": 1471,
+  "go_anchors": [
+    {
+      "path": "pkg/planner/core/rule_topn_push_down.go",
+      "sha256": "8be6a08c48dbc9e8b7ab694789fa2cf28f0c1e21c9b71d0186c420e5b70d86fd"
+    },
+    {
+      "path": "pkg/planner/core/rule_derive_topn_from_window.go",
+      "sha256": "208a1a0ff8d31d8af82e9fc845788a41f8d081f86fe70ea18d7c9b651a9e78f4"
+    },
+    {
+      "path": "pkg/planner/core/rule_push_down_sequence.go",
+      "sha256": "bb7012726ee27e483e012abc202a612c0f2d88864595269a824d768f59dfafb5"
+    },
+    {
+      "path": "pkg/planner/core/rule_eliminate_empty_selection.go",
+      "sha256": "408cdca5e2536e7fefe1f8aeec675805d4103c24aa24a8465ecf8aba57cedd38"
+    },
+    {
+      "path": "pkg/planner/core/rule_eliminate_unionall_dual_item.go",
+      "sha256": "e3b361715f2c816a72262cf79da1c845beabe3d5bcd6f11c436839a9f82181b2"
+    },
+    {
+      "path": "pkg/planner/core/operator/logicalop/expression_util.go",
+      "sha256": "8e98f64e1329fc402c43123620ab40bfae13eacd17ebd912a7cbb2d240b0dda1"
+    },
+    {
+      "path": "pkg/planner/core/issuetest/panicrisk_tier2_test.go",
+      "sha256": "f00fa93c9f24dda2d26d4d1d26ae8f95820ec456546a20cfdc06ef75d9430478"
+    },
+    {
+      "path": "pkg/planner/core/casetest/rule/rule_derive_topn_from_window_test.go",
+      "sha256": "2b73887d7a24600cfe93d5564178a69e07ab82c1c6cc9a85dd9e4c84e46f629b"
+    },
+    {
+      "path": "pkg/planner/core/casetest/rule/rule_eliminate_empty_selection_test.go",
+      "sha256": "73c243dd0662af8204ffd5d6fb58a7bc7c9dfb7339239696280e7eefbf0231c8"
+    },
+    {
+      "path": "pkg/planner/cascades/rule/rule_type.go",
+      "sha256": "c346e0cbaaf6af72889032deee1af3246d3fb7fedfb600726d58cd201877310a"
+    },
+    {
+      "path": "pkg/planner/cascades/rule/ruleset/rule_set.go",
+      "sha256": "c8eab7c75d63e542d55253877517221b2d4e24895ff956c2ca33a7608c135ea9"
+    }
+  ],
+  "upstream_obligations": {
+    "artifact_count": 582,
+    "inventory": "/workspace/.cloud-setup/rule-model-cleanup/upstream-artifacts.json",
+    "inventory_sha256": "6f6d78cb59e7d483c8a8b630c2d3473fd33ec03b1f2c04dc0bb27eef572d913f",
+    "acceptance": "Unverified; original tests, generated/platform/build and fixture obligations remain."
+  },
+  "caller_evidence": "Scoped imports and distinct exported owner names across all tracked Rust sources identify only retired modules/private tests. Remaining same-name matches belong to real logical rules or unrelated DDL labels. Five real rule files changed only in comments; lib.rs loses eight declarations.",
+  "retained_owners": [
+    "logical/rule.rs",
+    "logical/rewrite.rs",
+    "logical/rule_derive_topn_from_window.rs",
+    "logical/rule_push_down_sequence.rs",
+    "logical/rule_eliminate_empty_selection.rs",
+    "logical/rule_eliminate_unionall_dual_item.rs"
+  ],
+  "test_migration": {
+    "existing_test": "logical::rule_tail_tests::a_sequence_is_pushed_through_a_unary_operator",
+    "case": "Projection over a sequence retaining CTE then zero-row childless TableDual; stops descending at the leaf.",
+    "limit": "Structural regression only; Go SQL query/shared-CTE full pipeline not run."
+  },
+  "stale_claim_removed": "UnionAll adapter narrow planChanged behavior had already been repaired; the real owner comment alleging its divergence was obsolete. Historical adapter coverage is not whole-package or live SQL evidence.",
+  "validation": {
+    "status": "passed; actual commit/push publication gates follow",
+    "all_target_command": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-planner -p difftest-planner-tests -p tidb-server --all-targets",
+    "regression_command": "CARGO_BUILD_JOBS=1 cargo test --locked -p tidb-planner --lib a_sequence_is_pushed_through_a_unary_operator -- --test-threads=1",
+    "lint_command": "make lint",
+    "logs": "/workspace/.cloud-setup/rule-model-cleanup",
+    "all_target_check": "passed",
+    "lint": "passed",
+    "retained_inputs": {
+      "unchanged_files": 3658,
+      "allowed_source_edits": [
+        "rust/crates/tidb-planner/src/lib.rs",
+        "rust/crates/tidb-planner/src/logical/rule.rs",
+        "rust/crates/tidb-planner/src/logical/rule_derive_topn_from_window.rs",
+        "rust/crates/tidb-planner/src/logical/rule_eliminate_empty_selection.rs",
+        "rust/crates/tidb-planner/src/logical/rule_eliminate_unionall_dual_item.rs",
+        "rust/crates/tidb-planner/src/logical/rule_push_down_sequence.rs",
+        "rust/crates/tidb-planner/src/logical/rule_tail_tests.rs"
+      ],
+      "five_real_rule_implementations_code_identical": true,
+      "existing_test_body_retained_with_additive_migration": true,
+      "registration": [
+        {
+          "package": "tidb-planner",
+          "path": "/workspace/tidb/rust/target/debug/build/tidb-planner/375cdb9aaea8b91b/out/all_tests.rs",
+          "sha256": "33e9d17ab473fa565cca020543cd049d72a424d33ca3460034889908d73f0a55"
+        },
+        {
+          "package": "difftest-planner-tests",
+          "path": "/workspace/tidb/rust/target/debug/build/difftest-planner-tests/52af738f24d48aa6/out/all_tests.rs",
+          "sha256": "29334398bffc47cb89e4e37885cbcc4f1908e449574b1b3e937e52813782fe81"
+        }
+      ],
+      "unexpected_changes": []
+    },
+    "migrated_regression": "1 passed; 0 failed",
+    "diff_check": "passed",
+    "self_review": "Only declaration removal, comment-only ownership corrections and additive migration into an existing real-plan test outside deletion set; no production logic, dependency, maintained-script or original Go changes.",
+    "logs_sha256": {
+      "check.log": "7affbceba7ac44b9f6e71a8b311ebe9c633e08c0edc4ef1c6106ca974980f80a",
+      "regression.log": "f88d582c4c952874c21669c2ccbd204b9c935b692fab1aa7d583f0cf5c99860a",
+      "lint.log": "bdfef3c4479b319414ea8028eaaee1b89de2f26c0398bb8f90fba4ee1bdc060e"
+    }
+  },
+  "limits": [
+    "No package acceptance or finding closure",
+    "No measured speedup",
+    "Full Go suites and live TiKV not run",
+    "Original Go SQL regression not run; structural case migrated"
+  ],
+  "findings": {
+    "tracked": 86,
+    "repaired": 30,
+    "unresolved": 56,
+    "changed": false
+  }
+}
