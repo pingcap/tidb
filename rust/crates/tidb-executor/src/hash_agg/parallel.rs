@@ -2976,6 +2976,94 @@ mod tests {
         FieldType::new(FieldTypeCode::NewDecimal)
     }
 
+    #[test]
+    fn json_and_percentile_merge_spill_reset_follow_go() {
+        // Go aggfuncs' JSON and percentile merge tests, through the same
+        // partial states, merge and spill owners used by parallel HashAgg.
+        let cases = [
+            (
+                AggKind::JsonArrayAgg { value_type: long() },
+                vec![
+                    (Datum::Null, vec![]),
+                    (Datum::UInt(u64::MAX), vec![]),
+                    (Datum::new_string("quote\nslash\\"), vec![]),
+                    (Datum::Real(2.5), vec![]),
+                ],
+                "[null, 18446744073709551615, \"quote\\nslash\\\\\", 2.5]",
+            ),
+            (
+                AggKind::JsonObjectAgg {
+                    value_type: long(),
+                    key_is_binary: false,
+                },
+                vec![
+                    (Datum::new_string("b"), vec![Datum::Null]),
+                    (Datum::new_string("a"), vec![Datum::Int(1)]),
+                    (Datum::new_string("a"), vec![Datum::UInt(u64::MAX)]),
+                    (Datum::new_string("quote\nkey"), vec![Datum::Int(2)]),
+                ],
+                "{\"a\": 18446744073709551615, \"b\": null, \"quote\\nkey\": 2}",
+            ),
+            (
+                AggKind::ApproxPercentile(Some(50)),
+                vec![
+                    (Datum::Null, vec![]),
+                    (Datum::Int(0), vec![]),
+                    (Datum::Int(1), vec![]),
+                    (Datum::Int(2), vec![]),
+                    (Datum::Int(3), vec![]),
+                    (Datum::Int(4), vec![]),
+                ],
+                "2",
+            ),
+            (
+                AggKind::ApproxPercentile(Some(100)),
+                (1..=28).map(|value| (Datum::Int(value), vec![])).collect(),
+                "28",
+            ),
+            (
+                AggKind::ApproxPercentile(Some(100)),
+                vec![(Datum::Real(0.0), vec![]), (Datum::Real(4.0), vec![])],
+                "4",
+            ),
+        ];
+        for (kind, rows, expected) in cases {
+            let func = AggFunc::new(kind, Some(col(0)));
+            let mut left = AggState::new_parallel(&func);
+            let mut right = AggState::new_parallel(&func);
+            assert_eq!(left.partial.finish(&[], 4).unwrap(), Datum::Null);
+            let split = rows.len() / 2;
+            for (index, (value, extra)) in rows.into_iter().enumerate() {
+                let target = if index < split { &mut left } else { &mut right };
+                target
+                    .update(Some(value), &extra, Vec::new(), None)
+                    .unwrap();
+            }
+            merge_state(&mut left, &mut right, &func).unwrap();
+            assert_eq!(
+                left.partial.finish(&[], 4).unwrap().sql_string().unwrap(),
+                expected
+            );
+
+            let mut writer = SpillWriter::new();
+            write_state(&mut writer, &left, &func).unwrap();
+            let mut reader = SpillReader::new(&writer.0).unwrap();
+            let mut restored = read_state(&mut reader, &func).unwrap();
+            reader.finish().unwrap();
+            assert_eq!(
+                restored
+                    .partial
+                    .finish(&[], 4)
+                    .unwrap()
+                    .sql_string()
+                    .unwrap(),
+                expected
+            );
+            restored.reset(&func);
+            assert_eq!(restored.partial.finish(&[], 4).unwrap(), Datum::Null);
+        }
+    }
+
     fn col(index: i64) -> Expression {
         let mut c = Column::new(index + 1, long());
         c.index = index;

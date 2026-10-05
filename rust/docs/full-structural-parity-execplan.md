@@ -2594,3 +2594,5 @@ The [observed-plan batch](observation-plan-batch-execplan.md) advances existing 
 Snapshot selection continuation: [plan](snapshot-validation-batch-execplan.md) and [receipt](parity/current-audit/snapshot-validation-batch-validation.json) track the shared SET/GC/schema/typed-policy repair. Named parents remain partial; the register owns current dispositions.
 
 Comment-only harness cleanup continues the existing [test-build cleanup plan](test-build-cleanup-execplan.md). The [receipt](parity/current-audit/comment-test-cleanup-validation.json) retains exact retired identities and recovery coordinates; no behavioral root or complete package is accepted by this removal.
+
+The [aggregate-model cleanup](parity/current-audit/aggregate-leaf-cleanup-validation.json) removes unused JSON/percentile models after tracing their only test callers and moving distinctive vectors to the live HashAgg owners. Package and root acceptance remain unchanged.

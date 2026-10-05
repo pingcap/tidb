@@ -1,0 +1,140 @@
+{
+  "base": "1432306a5b7c64e46d8cd49dc1b32ffedb6a50d4",
+  "go_master": "93a01d31f6da205ae4bf376825293903a6899fdb",
+  "scope": "Remove three unreachable aggregate models and thirteen private tests. No production consumer imports them; ordinary SQL and parallel partials use tidb-executor HashAgg. No complete Go package accepted.",
+  "removed": [
+    {
+      "path": "rust/crates/tidb-exec/src/json_arrayagg.rs",
+      "sha256": "7a8b45743189337458cca3e794d6308f40b6513d91acfb5c970aa62588997d34",
+      "tests": [],
+      "lines": 164
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/json_arrayagg_source.rs",
+      "sha256": "298175d55f2fe6e727c892a4f37cbf23806e4b5ea534d7af1225a1925505a1c0",
+      "tests": [
+        "json_arrayagg_merge_preserves_source_order",
+        "json_arrayagg_values_and_empty_result_match_source",
+        "json_arrayagg_memory_shape_and_reset_match_source",
+        "json_arrayagg_rejects_non_finite_real_before_mutation"
+      ],
+      "lines": 91
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/json_objectagg.rs",
+      "sha256": "e125ceb074d3a2b47907f32f64a9a6787ec7f8ccb3573a4ec84b08c2ea419ee3",
+      "tests": [],
+      "lines": 178
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/json_objectagg_source.rs",
+      "sha256": "3d4688182c2c0559482be30cad5dc38fca7c64059a087e9622b069e7b0998b39",
+      "tests": [
+        "json_objectagg_merge_preserves_last_value_and_sorted_keys",
+        "json_objectagg_values_and_empty_result_match_source",
+        "json_objectagg_memory_shape_and_reset_match_source",
+        "json_objectagg_rejects_null_and_binary_keys_before_mutation"
+      ],
+      "lines": 93
+    },
+    {
+      "path": "rust/crates/tidb-exec/src/percentile.rs",
+      "sha256": "b04164cbb76a32e2bfff1f5df7cc3276a15dcb172433eaceef2e51bda9ca6681",
+      "tests": [],
+      "lines": 166
+    },
+    {
+      "path": "rust/crates/tidb-exec/tests/percentile_source.rs",
+      "sha256": "3fd21017509f2ef123bb185fd696210d825cdd845d60a148f75392db7fe9ace7",
+      "tests": [
+        "percentile_int_update_and_empty_result_match_source",
+        "percentile_real_update_and_empty_result_match_source",
+        "percentile_merge_keeps_destination_then_source_and_clears_source",
+        "percentile_index_100_matches_fix26807_selection_boundary",
+        "percentile_state_size_and_unsupported_variants_are_explicit"
+      ],
+      "lines": 93
+    }
+  ],
+  "caller_check": "Workspace-wide symbol/import search leaves no caller of the retired types or modules. No dependency change; native client unchanged.",
+  "coverage": {
+    "json_values": "Existing tidb-session tests_json covers ordered arrays, duplicate object keys, NULL/empty groups, nested JSON, binary value wrapping and rejected NULL/binary keys. Existing hash_agg::json_agg_opaque cases retain protocol-specific value typing.",
+    "merge_spill_reset": "Migrated vectors in hash_agg::parallel::tests::json_and_percentile_merge_spill_reset_follow_go run actual partial merge, spill/reload and reset for both JSON aggregates and int/real percentiles, including unsigned max, escaping and source overwrite order.",
+    "percentile": "Retained registered HashAgg and session cases cover NULL/empty inputs, ordinal ranks and DISTINCT admission. Migrated live merge case preserves the exact original 1..=28 maximum vector as well as integer median and real maximum. An older tests_aggfuncs_variance_sum_percentile_source.rs file is unregistered and is NOT counted as executed coverage. Complete type/variant/error obligations remain open.",
+    "retired_only": "Native size_of identities and discarded model len/is_empty checks do not establish Go memory accounting. The private JSON pre-mutation nonfinite assertion did not establish Go error timing. Full memory/error lifecycle obligations remain open."
+  },
+  "validation": [
+    {
+      "command": "cargo test --locked -p tidb-executor -p tidb-session --lib -- json_and_percentile_merge_spill_reset_follow_go approx_percentile json_agg tests_json --test-threads=1",
+      "cwd": "rust",
+      "exit": 0,
+      "results": [
+        "ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1541 filtered out; finished in 0.01s",
+        "ok. 15 passed; 0 failed; 0 ignored; 0 measured; 2009 filtered out; finished in 4.29s"
+      ],
+      "sha256": "48c5a8328e1678fef1b118147d0f26fbca93fcd0ced300d1eaa9869910535cdc",
+      "log": "/workspace/.cloud-setup/aggregate-leaf-cleanup/behavior.log"
+    },
+    {
+      "command": "cargo test --locked -p tidb-executor --lib json_and_percentile_merge_spill_reset_follow_go -- --test-threads=1",
+      "cwd": "rust",
+      "exit": 0,
+      "results": [
+        "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1545 filtered out; finished in 0.00s"
+      ],
+      "sha256": "cd8e724c80b71d22e390410e65aef58ca6001bd8434d7234ae71299788fe7ff4",
+      "log": "/workspace/.cloud-setup/aggregate-leaf-cleanup/final-vector.log"
+    },
+    {
+      "command": "cargo check --locked -p tidb-exec -p tidb-executor -p tidb-server --all-targets",
+      "cwd": "rust",
+      "exit": 0,
+      "results": [],
+      "sha256": "134da3205e73f2a979e3acd56f608eaba55fc20e59d99e03623d1d2657485699",
+      "log": "/workspace/.cloud-setup/aggregate-leaf-cleanup/check.log"
+    },
+    {
+      "command": "make lint",
+      "cwd": ".",
+      "exit": 0,
+      "results": [],
+      "sha256": "cc0580a947665935c48015f8e0aab15a7a03491168dc9c76d2b07a171f54f467",
+      "log": "/workspace/.cloud-setup/aggregate-leaf-cleanup/lint.log"
+    }
+  ],
+  "not_verified": [
+    "Full Go or Rust suites",
+    "Live multi-node workloads",
+    "Measured build/runtime speedup",
+    "Out-of-tree consumers of removed public model APIs"
+  ],
+  "go_evidence": [
+    {
+      "path": "pkg/executor/aggfuncs/func_json_arrayagg.go",
+      "sha256": "395b2eac7e697f711a0240533bd9c1714049eee426fa1d7acaec49a05fe65380"
+    },
+    {
+      "path": "pkg/executor/aggfuncs/func_json_arrayagg_test.go",
+      "sha256": "1273041b68d55bd5a9fed10ba02f7239fa0b3a1d34d08ba86a29f762efc264c0"
+    },
+    {
+      "path": "pkg/executor/aggfuncs/func_json_objectagg.go",
+      "sha256": "0c411ed641ec36bbff9de74ab6b076c5293df7f36d6e6a34c1c635f7811dad23"
+    },
+    {
+      "path": "pkg/executor/aggfuncs/func_json_objectagg_test.go",
+      "sha256": "3c55abcf877f310b63deb77553564f00d56ff4a54cf208540bdf95aa79623c89"
+    },
+    {
+      "path": "pkg/executor/aggfuncs/func_percentile.go",
+      "sha256": "8bf1ccbb77b067f1c40eb3751b268c12399b8852d92349359e7cd81a1609a26a"
+    },
+    {
+      "path": "pkg/executor/aggfuncs/func_percentile_test.go",
+      "sha256": "da6b0ea0cf6f83c7cd796fd2373c1720c5ad16d4b51461a3432ac9a966e12a3f"
+    }
+  ],
+  "distinct_tests_passed": 20,
+  "final_vector_note": "The initial grouped run passed 5 executor and 15 session cases. The final rerun validates the added 1..=28 maximum vector in the same consolidated executor case; it is not an extra distinct test.",
+  "publication": "Actual precommit and fresh prepush locked tidb-server builds plus exact remote verification are recorded in /workspace/.cloud-setup/aggregate-leaf-cleanup/final-handoff.json."
+}

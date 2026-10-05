@@ -293,3 +293,5 @@ The canonical-variance continuation of [harness retirement](test-harness-retirem
 The [window-model cleanup](test-harness-retirement-validation.json) retires six unused source modules and 15 model tests. Forty-three useful vectors execute through the live window suite in both modes, across chunks and reopen; all 14 cases pass. Unused-layout checks are retired, while Go memory/accounting obligations and finding statuses remain unchanged.
 
 The [comment-only harness cleanup](comment-test-cleanup-validation.json) removes 260 nonbehavioral test entries, ten empty modules and stale mapping rows. All 178 retained test bodies are byte-for-byte unchanged. Go obligations remain outstanding; current finding dispositions stay 30 repaired and 56 unresolved (28 open, 28 partial).
+
+The [aggregate-model cleanup](aggregate-leaf-cleanup-validation.json) retires three unused JSON/percentile models and thirteen private tests. Existing HashAgg and session owners retain behavioral validation; private native-size checks do not discharge Go memory obligations. Finding dispositions are unchanged.

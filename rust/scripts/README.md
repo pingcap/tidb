@@ -65,6 +65,11 @@ remain in the cleanup receipts, not as empty executable test registrations.
 Do not treat absence of a Rust lint annotation or an empty passing test as SQL
 or lifecycle parity.
 
+The unused `tidb-exec` JSON array/object and percentile models are retired.
+Their Go-backed value/merge/reset vectors run through the existing
+`tidb-executor::hash_agg` and session JSON suites. Do not restore private
+string-fragment accumulators or tests of their native structure sizes.
+
 ## Shared SQL server checks
 
 Both storage engines use the ordinary session and shared catalog. Static table
