@@ -31,15 +31,14 @@
 
 use std::time::Duration;
 
-use crate::mysql_system_tables::{
-    scan_system_table_from_int_handle, SystemRow, SystemTableError, SystemTableView,
-};
+use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_datatype::Datum;
 use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 
-use crate::cluster_catalog::ClusterCatalog;
+use crate::cluster_catalog::{ClusterCatalog, MetaPairs, MetaSnapshot};
 
 /// One running DDL job the owner is waiting on.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,13 +88,24 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let loaded = {
+    let loaded: Result<MetaPairs, SystemTableError> = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        // Go's restricted SQL query has `job_id >= min_job_id`.  Use the
-        // clustered integer handle as the storage lower bound so historical
-        // DDL rows do not get decoded on every MDL refresh.  The row-level
-        // predicate below remains as a defensive check for legacy layouts.
-        scan_system_table_from_int_handle(&mut snapshot, &view, min_job_id)
+        // Go executes the restricted SQL query against a fresh session. Keep
+        // the same result semantics by scanning the system-table record
+        // prefix and applying both predicates after decoding. This avoids
+        // depending on a native range seek whose region behavior differs
+        // between TiDB nodes while the MDL row is being published.
+        let mut pairs = scan_system_table(&mut snapshot, &view)?;
+        // The Go SQL planner's lower bound is the current minimum job ID.
+        // If a region scan races publication of that row, use the equivalent
+        // clustered-key point read before treating the table as empty.
+        if pairs.is_empty() && min_job_id > 0 {
+            let key = view.record_prefix(&[Datum::Int(min_job_id)])?;
+            if let Some(value) = snapshot.get(&key)? {
+                pairs.push((key, value));
+            }
+        }
+        Ok(pairs)
     };
     transaction
         .finish_without_writes()
@@ -110,7 +120,7 @@ pub fn load_mdl_jobs<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
             // read it, never acking a version this node did not see.
             continue;
         };
-        if job_id < min_job_id {
+        if job_id < min_job_id || version > catalog.schema_version {
             continue;
         }
         // Decoded exactly as Go: `Str2Int64Map` on the stored text, where an
