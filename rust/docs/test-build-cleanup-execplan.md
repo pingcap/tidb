@@ -246,3 +246,62 @@ test body changes. Publication evidence belongs in Cloud
 `session-leaf-cleanup/final-handoff.json`. Retire the redundant sessionstates audit plan and mark its retained source
 inventory receipt historical; the deleted timing seed was never a runtime
 owner. No runtime speedup or measured compile-time improvement is claimed.
+
+## Unused configured join and result adapters
+
+
+Base `4d28b313c35f8c6bc7850e2dc3595182cf35243f`, Go `b36c940a4332c866d8b0e2afde88f5e7c2fd7fed`.
+Retire the isolated configured INNER/CROSS join runtime and its ordered wrapper,
+plus tableless result-response, status-to-packet, summary-row reader, result-row
+count and missing-handle adapters. Delete their seven modules, seven dedicated
+test files and exports in `rust/crates/tidb-exec/src/lib.rs` together. This
+removes 35 private tests and 3239 file lines plus 13 export/documentation lines.
+
+### Progress
+
+
+- [x] Trace the whole deletion set, including methods implemented on the retained multi-read session; no callers remain outside the selected set and exports.
+- [x] Compare original anchors against refreshed Go master, preserve actual physical builder and wire owners, and retire the seven modules/harnesses together.
+- [x] All 3,746 retained source/manifest/script files are identical, generated registrations exclude all seven harnesses, affected all-target checks and lint pass.
+- [ ] Normal hook commit, fresh locked prepush build, exact remote verification and Cloud draft/recovery refresh.
+
+### Surprises & Discoveries
+
+
+The configured join retains all right rows and owns a private nested-loop
+runtime, yet has no server/session consumer. Live joins, limits and TopN are
+built by `tidb-executor/src/driver/physical_builder.rs`, matching the shared
+Go executor builder ownership. The configured TopN state still has live server
+consumers and stays intact. The tableless metadata wrapper's comment predates
+the real catalog-backed planner. The status wrapper similarly has no wire
+caller; retain the actual protocol/connection writers and their assertions.
+Historical PD receipts mention these private harnesses, including old failures;
+mark those sections historical without erasing their results or changing the
+used TopN tests. Original Go obligations and finding dispositions stay open.
+
+### Decision Log
+
+
+Remove complete unreachable runtime paths, not merely their tests. Keep live
+and Rust-specific correctness tests, source metadata/protocol owners and active
+service safeguards. No new deletion-only tests or permanent check scripts.
+
+### Validation and recovery
+
+
+Source `/workspace/.cloud-setup/env.sh`; in `rust/`, run
+`CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets`.
+Run root `make lint` and `git diff --check`. Compare retained source, manifest
+and script hashes to base, except removed lib.rs exports; check the regenerated
+aggregate test list excludes all seven modules. No live algorithm changes, so
+no behavioral suite rerun is needed. Commit through the actual hook and run
+`cd rust && cargo build --locked -p tidb-server` immediately before pushing.
+Recover individual files with the git-show command in
+[the receipt](parity/current-audit/result-path-cleanup-validation.json).
+
+### Outcomes & Retrospective
+
+
+Deletion and grouped validation complete. No runtime or build timing
+improvement is claimed. Cloud `result-path-cleanup/final-handoff.json` records
+publication and environment persistence after the tracked validation completes.

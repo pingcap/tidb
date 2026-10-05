@@ -1,5 +1,11 @@
 # `pkg/server` wire result-set terminal metadata parity receipt
 
+Historical evidence: the unused configured-join/result adapters and their
+private tests were retired on 2026-10-05. See
+[the cleanup receipt](../../docs/parity/current-audit/result-path-cleanup-validation.json).
+The original results below are preserved; they are not current test commands
+or proof of live SQL coverage. Shared TopN, protocol and execution tests remain.
+
 Status: bounded Rust alignment; the complete Go package inventory was
 enumerated before editing, and the deprecated-EOF result-set behavior was
 traced through its Go packet owner and every Rust writer call site. This is not

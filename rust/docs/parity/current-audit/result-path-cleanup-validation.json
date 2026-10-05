@@ -1,0 +1,62 @@
+{
+  "base": "4d28b313c35f8c6bc7850e2dc3595182cf35243f",
+  "go_master": "b36c940a4332c866d8b0e2afde88f5e7c2fd7fed",
+  "scope": "Delete unreachable configured join/ordered runtime and isolated result adapters, with their private harnesses; no live caller migration needed.",
+  "modules": [
+    "configured_inner_join",
+    "configured_ordered_query",
+    "result_response",
+    "status_result",
+    "statement_rows_reader",
+    "result_rows_count",
+    "lack_handles"
+  ],
+  "totals": {
+    "files_removed": 14,
+    "private_tests_removed": 35,
+    "file_lines_removed": 3239,
+    "export_lines_removed": 13
+  },
+  "caller_evidence": "Module names, all top-level exports, and both RealTiKvMultiReadSession extension entrypoints have no references outside the deleted set and lib.rs. Full tracked Rust/manifests/scripts scan includes vendor.",
+  "retained_owners": [
+    "rust/crates/tidb-executor/src/driver/physical_builder.rs",
+    "rust/crates/tidb-server/src/connection_writers.rs",
+    "rust/crates/tidb-server/src/sorting_result_set.rs",
+    "rust/crates/tidb-exec/src/configured_topn.rs",
+    "rust/crates/tidb-exec/src/distsql_recordset.rs",
+    "rust/crates/tidb-exec/src/result_metadata.rs",
+    "rust/crates/tidb-protocol/tests/resultset_source.rs"
+  ],
+  "go_anchors": [
+    "pkg/executor/adapter.go",
+    "pkg/executor/builder.go",
+    "pkg/executor/distsql.go",
+    "pkg/executor/distsql_test.go",
+    "pkg/executor/join/inner_join_probe_test.go",
+    "pkg/executor/join/joiner_test.go",
+    "pkg/executor/stmtsummary.go",
+    "pkg/executor/stmtsummary_test.go",
+    "pkg/server/conn.go",
+    "pkg/sessionctx/stmtctx/stmtctx.go",
+    "pkg/types/compare.go"
+  ],
+  "validation": {
+    "status": "passed",
+    "affected_all_targets": "CARGO_BUILD_JOBS=1 cargo check --locked -p tidb-exec -p tidb-server --all-targets (rust/)",
+    "lint": "make lint (repository root)",
+    "diff": "git diff --check",
+    "retained_source_manifest_script_files_identical": 3746,
+    "generated_registration": "All seven removed harness modules absent",
+    "behavioral_tests": "Not rerun: no live algorithm or retained test body changed",
+    "logs": "/workspace/.cloud-setup/result-path-cleanup/{check,lint}.log",
+    "publication": "Actual commit hook and fresh prepush locked build required; final results in external final-handoff.json"
+  },
+  "limits": [
+    "No finding status or complete Go package acceptance changes.",
+    "Original Go test/lifecycle obligations remain; private mock harnesses never established live SQL integration.",
+    "No measured speedup, full Go suite or live TiKV validation.",
+    "Historical PD receipts retain original failed/passed TopN results; the used configured_topn module and its tests remain unchanged."
+  ],
+  "recovery": "git show 4d28b313c35f8c6bc7850e2dc3595182cf35243f:<removed path> > /tmp/<recovered filename>; inspect before restoring individual files.",
+  "external_inventory": "/workspace/.cloud-setup/result-path-cleanup/inventory-before.json"
+}

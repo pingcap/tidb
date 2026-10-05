@@ -1,5 +1,11 @@
 # Complete PD retry ownership and initialization integration
 
+Historical evidence: the unused configured-join/result adapters and their
+private tests were retired on 2026-10-05. See
+[the cleanup receipt](result-path-cleanup-validation.json).
+The original results below are preserved; they are not current test commands
+or proof of live SQL coverage. Shared TopN, protocol and execution tests remain.
+
 ## Source, inventory and acceptance
 
 

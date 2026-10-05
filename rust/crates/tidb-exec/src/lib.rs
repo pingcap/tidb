@@ -86,8 +86,6 @@ pub mod tiflash_mpp_scan;
 pub mod tiflash_replica_manager;
 pub use tidb_executor::concurrent_entry_map;
 pub mod config_int_json;
-pub mod configured_inner_join;
-pub mod configured_ordered_query;
 pub mod configured_topn;
 pub mod cop_scan;
 pub mod dag_request;
@@ -131,7 +129,6 @@ pub use tidb_executor::join_row_table;
 pub use tidb_executor::join_table_meta;
 pub mod keydecoder;
 pub mod label_delivery;
-pub mod lack_handles;
 pub mod mdl_info_load;
 pub mod metrics_reader;
 pub mod minmax_deque;
@@ -167,9 +164,6 @@ pub mod removed_sysvar;
 mod result;
 mod result_field_resolver;
 mod result_metadata;
-mod result_response;
-/// `stmtctx.go`'s `GetResultRowsCount` over [`runtime_stats`].
-pub mod result_rows_count;
 pub mod retry_info;
 pub use tidb_executor::row_table_builder;
 pub mod runtime_stats;
@@ -190,12 +184,10 @@ pub mod slow_log_threshold;
 /// `stmtctx.go`'s once-computed stale-read TSO provider seam.
 pub mod stale_tso;
 pub use tidb_executor::statement_pushdown;
-pub mod statement_rows_reader;
 mod statement_status;
 pub mod stats_load_result;
 pub mod stats_watch;
 pub mod status_registry;
-mod status_result;
 /// `stmtctx.go`'s per-statement first-value-wins keyed cache.
 pub mod stmt_cache;
 pub mod storage_class;
@@ -232,14 +224,9 @@ pub use result_metadata::{
     AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
     ResultFieldTypeMetadata, MAX_ALIAS_IDENTIFIER_LEN, NOT_FIXED_DEC, NOT_NULL_FLAG, UNSIGNED_FLAG,
 };
-pub use result_response::{
-    derive_tableless_select_columns, derive_tableless_select_result, resolve_query_result_columns,
-    AutomaticResultResponse, AutomaticResultResponseError,
-};
 pub use statement_status::{
     PublishedStatementStatus, StatementKind, StatementStatus, StatementWarning, WarningLevel,
 };
-pub use status_result::{finish_and_snapshot, StatusResultSnapshot};
 pub use warning_publication::{
     warnings_from_json, warnings_to_json, IgnoreWarnings, StaticWarningHandler, WarningAppender,
     WarningHandler, WarningPublication, WarningSummary,

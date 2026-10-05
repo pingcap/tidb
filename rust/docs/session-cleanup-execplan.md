@@ -192,7 +192,8 @@ result_schema modules in tidb-exec and their private-copy test targets. All
 15 exported identifiers have callers only inside these models and tests in
 both repositories. Go pkg/executor/adapter.go recordSet.Fields consumes the
 planner schema and names through colNames2ResultFields; the live Rust
-result_response/result_metadata path stays intact. Consolidate the real
+result_metadata path stays intact. The unconsumed result_response wrapper was
+subsequently retired by the result-path cleanup. Consolidate the real
 result_field_resolver tests into the existing aggregate, eliminating a fifth
 standalone link without deleting those assertions.
 
